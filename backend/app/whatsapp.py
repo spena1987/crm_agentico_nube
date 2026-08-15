@@ -180,12 +180,9 @@ class WhatsAppManager:
             except Exception:
                 pass
 
-        if force_restart and self.client:
-            try:
-                self.add_log("INFO", "Reiniciando conexión con WhatsApp...")
-                self.client.disconnect()
-            except Exception:
-                pass
+        if force_restart:
+            self.add_log("INFO", "Reiniciando conexión con WhatsApp y limpiando estado previo...")
+            self.desconectar_y_logout()
 
         self.status = "INITIALIZING"
         self.add_log("INFO", f"Inicializando cliente de WhatsApp en {self.db_path}...")
@@ -201,7 +198,7 @@ class WhatsAppManager:
                     self.qr_code_raw = data_qr.decode("utf-8", errors="ignore") if isinstance(data_qr, bytes) else str(data_qr)
                     qr = segno.make(data_qr)
                     self.qr_code_data_uri = qr.png_data_uri(scale=7)
-                    self.add_log("INFO", "Código QR capturado de WhatsApp y listo para la pantalla web.")
+                    self.add_log("INFO", f"¡Código QR generado con éxito! ({len(self.qr_code_data_uri)} bytes Data-URI)")
                 except Exception as e:
                     self.add_log("ERROR", f"Error procesando QR callback: {e}")
 
@@ -224,7 +221,7 @@ class WhatsAppManager:
                         self.status = "PAIRING_QR_READY"
                         qr = segno.make(raw_code)
                         self.qr_code_data_uri = qr.png_data_uri(scale=7)
-                        self.add_log("INFO", "Código QR recibido vía QREv.")
+                        self.add_log("INFO", f"¡Código QR recibido vía QREv! ({len(self.qr_code_data_uri)} bytes)")
                 except Exception as e:
                     self.add_log("ERROR", f"Error procesando evento QREv: {e}")
 
@@ -257,8 +254,9 @@ class WhatsAppManager:
             # 5. Evento de Desconexión de Red
             @self.client.event(DisconnectedEv)
             def on_disconnected_event(c, event: DisconnectedEv):
-                self.status = "DISCONNECTED"
-                self.add_log("WARNING", "Cliente de WhatsApp desconectado de la red.")
+                if self.status != "PAIRING_QR_READY":
+                    self.status = "DISCONNECTED"
+                self.add_log("WARNING", "Cliente de WhatsApp desconectado temporalmente de la red.")
 
             # 6. Evento de Mensaje Entrante (Texto, Fotos, Audios, Documentos, etc.)
             @self.client.event(MessageEv)
