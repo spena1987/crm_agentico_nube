@@ -21,14 +21,16 @@ import {
   Sparkles,
   Calendar,
   Stethoscope,
-  UserCheck,
   Save,
   Loader2,
-  ExternalLink,
-  ChevronRight,
-  User
+  User,
+  Trash2,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react'
 import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
+import ModalEditarPaciente from '@/components/ModalEditarPaciente'
+import ModalConfirmarEliminar from '@/components/ModalConfirmarEliminar'
 
 interface Paciente {
   id: string
@@ -61,8 +63,16 @@ export default function PacientesPage() {
   const [guardandoNotas, setGuardandoNotas] = useState(false)
   const [guardandoMedico, setGuardandoMedico] = useState(false)
   const [mensajeGuardado, setMensajeGuardado] = useState<string | null>(null)
+  const [errorAccion, setErrorAccion] = useState<string | null>(null)
 
-  // Modales
+  // Estados de acciones (Sincronizar, Editar, Eliminar)
+  const [sincronizandoGeclisa, setSincronizandoGeclisa] = useState(false)
+  const [mostrarModalEditar, setMostrarModalEditar] = useState(false)
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false)
+  const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false)
+  const [eliminandoPaciente, setEliminandoPaciente] = useState(false)
+
+  // Modales de alta
   const [mostrarModalGeclisa, setMostrarModalGeclisa] = useState(false)
   const [mostrarModalManual, setMostrarModalManual] = useState(false)
 
@@ -113,6 +123,7 @@ export default function PacientesPage() {
       setNotasTemp(pacienteSeleccionado.historial_notas || '')
       setMedicoCabeceraTemp(pacienteSeleccionado.medico_cabecera || '')
       setMensajeGuardado(null)
+      setErrorAccion(null)
     }
   }, [selectedPacienteId, pacienteSeleccionado?.id])
 
@@ -126,6 +137,119 @@ export default function PacientesPage() {
       return [nuevoPaciente, ...prev].sort((a, b) => a.nombre.localeCompare(b.nombre))
     })
     setSelectedPacienteId(nuevoPaciente.id)
+  }
+
+  // Sincronizar datos en vivo desde Geclisa
+  const handleSincronizarGeclisa = async () => {
+    if (!pacienteSeleccionado) return
+    setErrorAccion(null)
+    setMensajeGuardado(null)
+    setSincronizandoGeclisa(true)
+
+    try {
+      const res = await fetch(`/api/geclisa/pacientes/sincronizar/${pacienteSeleccionado.id}`, {
+        method: 'POST',
+        headers: { 'Accept': 'application/json' }
+      })
+
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.mensaje || 'No se pudo sincronizar la información con Geclisa.')
+      }
+
+      const pacienteActualizado: Paciente = data.paciente
+      setPacientes((prev) =>
+        prev.map((p) => (p.id === pacienteActualizado.id ? pacienteActualizado : p))
+      )
+      setMensajeGuardado(`✔ Datos de ${pacienteActualizado.nombre} actualizados con éxito desde Geclisa.`)
+      setTimeout(() => setMensajeGuardado(null), 4000)
+    } catch (err: any) {
+      console.error('Error sincronizando con Geclisa:', err)
+      setErrorAccion(err.message || 'Error al conectar con el servidor de Geclisa.')
+    } finally {
+      setSincronizandoGeclisa(false)
+    }
+  }
+
+  // Guardar edición de datos en el CRM
+  const handleGuardarEdicionPaciente = async (datos: Partial<Paciente>) => {
+    if (!pacienteSeleccionado) return
+    setGuardandoEdicion(true)
+    setErrorAccion(null)
+
+    try {
+      const res = await fetch(`/api/pacientes/${pacienteSeleccionado.id}`, {
+        method: 'PUT',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json' 
+        },
+        body: JSON.stringify(datos)
+      })
+
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || 'Error al modificar los datos del paciente.')
+      }
+
+      const pacienteActualizado: Paciente = data.paciente
+      setPacientes((prev) =>
+        prev.map((p) => (p.id === pacienteActualizado.id ? pacienteActualizado : p)).sort((a, b) => a.nombre.localeCompare(b.nombre))
+      )
+      setMostrarModalEditar(false)
+      setMensajeGuardado(`✔ Datos de ${pacienteActualizado.nombre} actualizados correctamente en el CRM.`)
+      setTimeout(() => setMensajeGuardado(null), 4000)
+    } catch (err: any) {
+      console.error('Error guardando modificaciones:', err)
+      throw err
+    } finally {
+      setGuardandoEdicion(false)
+    }
+  }
+
+  // Eliminar paciente en cascada
+  const handleEliminarPaciente = async () => {
+    if (!pacienteSeleccionado) return
+    setEliminandoPaciente(true)
+    setErrorAccion(null)
+
+    try {
+      const idAEliminar = pacienteSeleccionado.id
+      const nombreEliminado = pacienteSeleccionado.nombre
+
+      const res = await fetch(`/api/pacientes/${idAEliminar}`, {
+        method: 'DELETE',
+        headers: { 'Accept': 'application/json' }
+      })
+
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || 'Error al eliminar el paciente.')
+      }
+
+      // Remover del estado local
+      const listaRestante = pacientes.filter((p) => p.id !== idAEliminar)
+      setPacientes(listaRestante)
+      
+      // Auto-seleccionar el primer paciente restante o null
+      if (listaRestante.length > 0) {
+        setSelectedPacienteId(listaRestante[0].id)
+      } else {
+        setSelectedPacienteId(null)
+      }
+
+      setMostrarModalEliminar(false)
+      setMensajeGuardado(`✔ Expediente de ${nombreEliminado} eliminado correctamente.`)
+      setTimeout(() => setMensajeGuardado(null), 4000)
+    } catch (err: any) {
+      console.error('Error eliminando paciente:', err)
+      setErrorAccion(err.message || 'Error al eliminar el paciente.')
+    } finally {
+      setEliminandoPaciente(false)
+    }
   }
 
   // Guardar notas médicas
@@ -260,12 +384,12 @@ export default function PacientesPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-2rem)] max-w-7xl mx-auto w-full gap-3">
       
-      {/* Barra Superior de Acciones */}
+      {/* Barra Superior de Acciones Globales */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-[var(--border)] shrink-0">
         <div>
           <h1 className="text-xl font-extrabold tracking-tight">Expedientes de Pacientes</h1>
           <p className="text-xs text-[var(--secondary)]">
-            Base clínica y demográfica sincronizada con Geclisa y canal de WhatsApp.
+            Gestión integral, consulta hospitalaria con Geclisa y canal de WhatsApp.
           </p>
         </div>
 
@@ -402,7 +526,7 @@ export default function PacientesPage() {
             <div className="p-6 space-y-6 flex-1">
               
               {/* Header del Expediente y Acciones */}
-              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-5 rounded-2xl bg-neutral-900/60 border border-[var(--border)] shadow-sm">
+              <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 p-5 rounded-2xl bg-neutral-900/60 border border-[var(--border)] shadow-sm">
                 <div className="flex items-center gap-4">
                   <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center font-black text-xl text-white shadow-md shrink-0">
                     {(pacienteSeleccionado.nombre?.[0] || 'P').toUpperCase()}
@@ -439,31 +563,85 @@ export default function PacientesPage() {
                   </div>
                 </div>
 
-                {/* Botones de Gestión Inmediata */}
-                <div className="flex flex-wrap items-center gap-2.5">
+                {/* Toolbar de Acciones del Paciente (WhatsApp, Presupuesto, Geclisa, Editar, Eliminar) */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* WhatsApp */}
                   <Link
                     href={`/chat?pacienteId=${pacienteSeleccionado.id}&telefono=${encodeURIComponent(pacienteSeleccionado.telefono)}`}
-                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-2 transition-all shadow-md"
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md"
+                    title="Abrir chat de WhatsApp"
                   >
-                    <MessageSquare size={15} />
-                    Abrir Conversación WhatsApp
+                    <MessageSquare size={14} />
+                    WhatsApp
                   </Link>
 
+                  {/* Presupuesto */}
                   <Link
                     href="/presupuestos"
-                    className="px-3.5 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                    title="Crear presupuesto médico"
                   >
                     <Receipt size={14} className="text-blue-400" />
-                    Crear Presupuesto
+                    Presupuesto
                   </Link>
+
+                  {/* Sincronizar desde Geclisa */}
+                  <button
+                    type="button"
+                    onClick={handleSincronizarGeclisa}
+                    disabled={sincronizandoGeclisa}
+                    className="px-3 py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    title="Actualizar datos desde el servidor hospitalario Geclisa"
+                  >
+                    {sincronizandoGeclisa ? (
+                      <>
+                        <Loader2 size={14} className="animate-spin text-blue-400" />
+                        Sincronizando...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} className="text-blue-400" />
+                        Sincronizar Geclisa
+                      </>
+                    )}
+                  </button>
+
+                  {/* Modificar en CRM */}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalEditar(true)}
+                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                    title="Modificar todos los datos del paciente en el CRM"
+                  >
+                    <Edit3 size={14} className="text-amber-400" />
+                    Modificar
+                  </button>
+
+                  {/* Eliminar Paciente */}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalEliminar(true)}
+                    className="px-3 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-500/30 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                    title="Eliminar paciente y registros vinculados en cascada"
+                  >
+                    <Trash2 size={14} />
+                    Eliminar
+                  </button>
                 </div>
               </div>
 
-              {/* Mensaje de Feedback de Guardado */}
+              {/* Mensajes de Feedback o Error */}
               {mensajeGuardado && (
-                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
-                  <Check size={14} className="text-emerald-400 shrink-0" />
-                  <span>{mensajeGuardado}</span>
+                <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2.5 animate-in fade-in">
+                  <Check size={15} className="text-emerald-400 shrink-0" />
+                  <span className="font-medium">{mensajeGuardado}</span>
+                </div>
+              )}
+
+              {errorAccion && (
+                <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2.5 animate-in fade-in">
+                  <AlertCircle size={15} className="text-red-400 shrink-0" />
+                  <span>{errorAccion}</span>
                 </div>
               )}
 
@@ -487,7 +665,7 @@ export default function PacientesPage() {
                       placeholder="Ej: Dr. Carlos Martínez (Ginecología / Fertilidad)"
                       value={medicoCabeceraTemp}
                       onChange={(e) => setMedicoCabeceraTemp(e.target.value)}
-                      className="flex-1 px-3 py-2 bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none"
+                      className="flex-1 px-3 py-2 bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none font-medium"
                     />
                     <button
                       type="button"
@@ -526,7 +704,7 @@ export default function PacientesPage() {
                   <div className="space-y-1 text-xs text-gray-300">
                     <div className="flex items-center gap-2">
                       <span className="text-gray-500 font-medium">WhatsApp:</span>
-                      <span className="font-mono text-emerald-400">{pacienteSeleccionado.telefono}</span>
+                      <span className="font-mono text-emerald-400 font-semibold">{pacienteSeleccionado.telefono}</span>
                     </div>
                     {pacienteSeleccionado.telefono_fijo && (
                       <div className="flex items-center gap-2">
@@ -623,7 +801,7 @@ export default function PacientesPage() {
               <div className="space-y-1">
                 <h3 className="text-base font-bold text-white">Selecciona un paciente del lateral izquierdo</h3>
                 <p className="text-xs text-[var(--secondary)] max-w-sm">
-                  Haz clic sobre cualquier expediente para ver su información médica, asignar su médico de cabecera o abrir su chat de WhatsApp.
+                  Haz clic sobre cualquier expediente para ver su información médica, sincronizar con Geclisa, modificar o iniciar conversaciones por WhatsApp.
                 </p>
               </div>
               <button
@@ -644,6 +822,24 @@ export default function PacientesPage() {
         isOpen={mostrarModalGeclisa}
         onClose={() => setMostrarModalGeclisa(false)}
         onPacienteImportado={handlePacienteImportado}
+      />
+
+      {/* Modal Modificar Datos en CRM */}
+      <ModalEditarPaciente
+        isOpen={mostrarModalEditar}
+        paciente={pacienteSeleccionado}
+        guardando={guardandoEdicion}
+        onClose={() => setMostrarModalEditar(false)}
+        onSave={handleGuardarEdicionPaciente}
+      />
+
+      {/* Modal Confirmar Eliminación en Cascada */}
+      <ModalConfirmarEliminar
+        isOpen={mostrarModalEliminar}
+        nombrePaciente={pacienteSeleccionado?.nombre || 'este paciente'}
+        eliminando={eliminandoPaciente}
+        onClose={() => setMostrarModalEliminar(false)}
+        onConfirm={handleEliminarPaciente}
       />
 
       {/* Modal para Crear Paciente Manual */}

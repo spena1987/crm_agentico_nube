@@ -588,6 +588,166 @@ def importar_paciente_geclisa(payload: Dict[str, Any] = Body(...)):
         logger.error(f"Error al importar paciente desde Geclisa: {e}")
         raise HTTPException(status_code=500, detail=f"Error al importar paciente: {str(e)}")
 
+@app.post("/api/geclisa/pacientes/sincronizar/{paciente_id}")
+def sincronizar_paciente_geclisa(paciente_id: str):
+    """
+    Consulta en vivo a Geclisa y actualiza los datos del paciente en Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+        
+    try:
+        # 1. Obtener paciente de Supabase
+        res = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise HTTPException(status_code=404, detail="Paciente no encontrado en el CRM.")
+            
+        paciente_actual = res.data[0]
+        ficha_id = paciente_actual.get("geclisa_ficha_id")
+        dni = paciente_actual.get("dni")
+        
+        datos_geclisa = None
+        if ficha_id:
+            logger.info(f"Sincronizando paciente {paciente_id} por fichaId {ficha_id}...")
+            datos_geclisa = geclisa_client.buscar_paciente_por_ficha(int(ficha_id))
+        elif dni:
+            logger.info(f"Sincronizando paciente {paciente_id} por DNI {dni}...")
+            datos_geclisa = geclisa_client.buscar_paciente_por_dni(str(dni))
+            
+        if not datos_geclisa or not datos_geclisa.get("encontrado"):
+            msg = datos_geclisa.get("mensaje") if datos_geclisa else "El paciente no posee Ficha ID ni DNI para consultar en Geclisa."
+            raise HTTPException(status_code=404, detail=msg or "No se encontraron datos en Geclisa para este paciente.")
+
+        # 2. Mezclar datos preservando campos propios del CRM si no vienen de Geclisa
+        payload_actualizado = {
+            "id": paciente_id,
+            "geclisa_ficha_id": datos_geclisa.get("ficha_id") or ficha_id,
+            "dni": datos_geclisa.get("dni") or dni,
+            "nombre_completo": datos_geclisa.get("nombre_completo") or paciente_actual.get("nombre"),
+            "nombre": datos_geclisa.get("nombre") or paciente_actual.get("nombre"),
+            "telefono": datos_geclisa.get("telefono") or paciente_actual.get("telefono"),
+            "telefono_fijo": datos_geclisa.get("telefono_fijo") or paciente_actual.get("telefono_fijo"),
+            "email": datos_geclisa.get("email") or paciente_actual.get("email"),
+            "nro_hc": datos_geclisa.get("nro_hc") or paciente_actual.get("nro_hc"),
+            "obra_social": datos_geclisa.get("obra_social") or paciente_actual.get("obra_social"),
+            "plan_cobertura": datos_geclisa.get("plan_cobertura") or paciente_actual.get("plan_cobertura"),
+            "direccion": datos_geclisa.get("direccion") or paciente_actual.get("direccion"),
+            "fecha_nacimiento": datos_geclisa.get("fecha_nacimiento") or paciente_actual.get("fecha_nacimiento"),
+            "sexo": datos_geclisa.get("sexo") or paciente_actual.get("sexo"),
+            "medico_cabecera": paciente_actual.get("medico_cabecera"),
+            "medico_cabecera_id": paciente_actual.get("medico_cabecera_id"),
+            "medico_cabecera_nombre": paciente_actual.get("medico_cabecera_nombre"),
+            "medico_cabecera_matricula": paciente_actual.get("medico_cabecera_matricula"),
+            "medico_cabecera_especialidad": paciente_actual.get("medico_cabecera_especialidad"),
+        }
+
+        paciente_actualizado = crear_o_actualizar_paciente_geclisa(payload_actualizado)
+        return {
+            "success": True,
+            "mensaje": f"Expediente de {paciente_actualizado.get('nombre')} sincronizado con Geclisa.",
+            "paciente": paciente_actualizado
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al sincronizar paciente con Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al sincronizar paciente: {str(e)}")
+
+@app.put("/api/pacientes/{paciente_id}")
+def actualizar_paciente_crm(paciente_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Actualiza directamente los datos de un paciente en el CRM (Supabase).
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+        
+    try:
+        from app.services.phone_normalizer import normalize_phone_number
+        
+        datos_actualizar = {}
+        if "nombre" in payload and payload["nombre"]:
+            datos_actualizar["nombre"] = str(payload["nombre"]).strip()
+        if "dni" in payload:
+            datos_actualizar["dni"] = str(payload["dni"]).strip() if payload["dni"] else None
+        if "nro_hc" in payload:
+            datos_actualizar["nro_hc"] = str(payload["nro_hc"]).strip() if payload["nro_hc"] else None
+        if "telefono" in payload and payload["telefono"]:
+            raw_tel = str(payload["telefono"]).strip()
+            datos_actualizar["telefono"] = normalize_phone_number(raw_tel) if not raw_tel.startswith("temp_") else raw_tel
+        if "telefono_fijo" in payload:
+            datos_actualizar["telefono_fijo"] = str(payload["telefono_fijo"]).strip() if payload["telefono_fijo"] else None
+        if "email" in payload:
+            datos_actualizar["email"] = str(payload["email"]).strip() if payload["email"] else None
+        if "obra_social" in payload:
+            datos_actualizar["obra_social"] = str(payload["obra_social"]).strip() if payload["obra_social"] else None
+        if "plan_cobertura" in payload:
+            datos_actualizar["plan_cobertura"] = str(payload["plan_cobertura"]).strip() if payload["plan_cobertura"] else None
+        if "medico_cabecera" in payload:
+            datos_actualizar["medico_cabecera"] = str(payload["medico_cabecera"]).strip() if payload["medico_cabecera"] else None
+        if "medico_cabecera_id" in payload:
+            datos_actualizar["medico_cabecera_id"] = int(payload["medico_cabecera_id"]) if payload["medico_cabecera_id"] else None
+        if "medico_cabecera_nombre" in payload:
+            datos_actualizar["medico_cabecera_nombre"] = str(payload["medico_cabecera_nombre"]).strip() if payload["medico_cabecera_nombre"] else None
+        if "medico_cabecera_matricula" in payload:
+            datos_actualizar["medico_cabecera_matricula"] = str(payload["medico_cabecera_matricula"]).strip() if payload["medico_cabecera_matricula"] else None
+        if "medico_cabecera_especialidad" in payload:
+            datos_actualizar["medico_cabecera_especialidad"] = str(payload["medico_cabecera_especialidad"]).strip() if payload["medico_cabecera_especialidad"] else None
+        if "direccion" in payload:
+            datos_actualizar["direccion"] = str(payload["direccion"]).strip() if payload["direccion"] else None
+        if "fecha_nacimiento" in payload:
+            datos_actualizar["fecha_nacimiento"] = str(payload["fecha_nacimiento"]).strip() if payload["fecha_nacimiento"] else None
+        if "sexo" in payload:
+            datos_actualizar["sexo"] = str(payload["sexo"]).strip() if payload["sexo"] else None
+        if "historial_notas" in payload:
+            datos_actualizar["historial_notas"] = str(payload["historial_notas"]) if payload["historial_notas"] is not None else None
+
+        res = supabase.table("pacientes").update(datos_actualizar).eq("id", paciente_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise HTTPException(status_code=404, detail="Paciente no encontrado para actualizar.")
+
+        paciente_actualizado = res.data[0]
+        return {
+            "success": True,
+            "mensaje": f"Datos de {paciente_actualizado.get('nombre')} modificados correctamente.",
+            "paciente": paciente_actualizado
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al actualizar paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al actualizar paciente: {str(e)}")
+
+@app.delete("/api/pacientes/{paciente_id}")
+def eliminar_paciente_crm(paciente_id: str):
+    """
+    Elimina permanentemente a un paciente y todo su historial relacionado en cascada (conversaciones, mensajes, presupuestos).
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+        
+    try:
+        # Verificar existencia
+        check_p = supabase.table("pacientes").select("id, nombre").eq("id", paciente_id).execute()
+        if not check_p.data or len(check_p.data) == 0:
+            raise HTTPException(status_code=404, detail="Paciente no encontrado.")
+            
+        nombre_paciente = check_p.data[0].get("nombre", "Paciente")
+        
+        # Eliminar en Supabase (las claves foráneas en CASCADE borrarán conversaciones, mensajes y presupuestos)
+        supabase.table("pacientes").delete().eq("id", paciente_id).execute()
+        
+        logger.info(f"Paciente {paciente_id} ({nombre_paciente}) eliminado con éxito en cascada.")
+        return {
+            "success": True,
+            "mensaje": f"Expediente de {nombre_paciente} y todos sus registros asociados han sido eliminados correctamente."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al eliminar paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al eliminar paciente: {str(e)}")
+
+
 @app.get("/api/geclisa/prestadores/buscar")
 def buscar_geclisa_prestadores(query: Optional[str] = ""):
     """
