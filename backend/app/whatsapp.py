@@ -7,7 +7,7 @@ import datetime
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
 
-# Dependencias del Daemon de WhatsApp
+NEONIZE_IMPORT_ERROR: Optional[str] = None
 try:
     from neonize.client import NewClient
     from neonize.events import (
@@ -18,8 +18,9 @@ try:
     from neonize.utils.jid import build_jid, Jid2String
     import segno
     NEONIZE_AVAILABLE = True
-except (ImportError, Exception):
+except Exception as e:
     NEONIZE_AVAILABLE = False
+    NEONIZE_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
     segno = None
     NewClient = Any
     MessageEv = Any
@@ -120,6 +121,7 @@ class WhatsAppManager:
 
         return {
             "available": NEONIZE_AVAILABLE,
+            "import_error": NEONIZE_IMPORT_ERROR,
             "status": effective_status,
             "is_logged_in": is_client_connected or (self.status == "CONNECTED"),
             "qr_ready": bool(self.qr_code_data_uri and not is_client_connected),
