@@ -80,6 +80,22 @@ class WhatsAppManager:
         self.max_logs: int = 100
         self.db_path = os.getenv("NEONIZE_DB_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "neonize.db"))
         self._lock = threading.Lock()
+        
+        # Redirigir telemetría interna de Neonize y Whatsmeow al buffer web
+        try:
+            neonize_logger = logging.getLogger("neonize")
+            neonize_logger.setLevel(logging.INFO)
+            class NeonizeLogHandler(logging.Handler):
+                def emit(inner_self, record):
+                    try:
+                        lvl = "INFO" if record.levelno < logging.WARNING else ("WARNING" if record.levelno < logging.ERROR else "ERROR")
+                        self.add_log(lvl, f"[Neonize] {record.getMessage()}")
+                    except Exception:
+                        pass
+            neonize_logger.addHandler(NeonizeLogHandler())
+        except Exception:
+            pass
+
         self.add_log("INFO", "WhatsAppManager inicializado con soporte multimedia y filtrado de eventos.")
 
     def add_log(self, level: str, message: str):
