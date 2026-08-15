@@ -3,7 +3,18 @@
  * Permite cambiar entre local (http://localhost:8000) y producción (URL de Railway)
  * simplemente configurando la variable de entorno NEXT_PUBLIC_BACKEND_URL en Vercel.
  */
-export const BACKEND_URL = 
+const rawBackendUrl = 
   process.env.NEXT_PUBLIC_BACKEND_URL || 
   process.env.NEXT_PUBLIC_API_URL || 
   'http://localhost:8000';
+
+const formatUrl = (url: string) => {
+  let clean = (url || '').trim()
+  if (!clean) return 'http://localhost:8000'
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    clean = `https://${clean}`
+  }
+  return clean.replace(/\/+$/, '')
+}
+
+export const BACKEND_URL = formatUrl(rawBackendUrl);
