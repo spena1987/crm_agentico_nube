@@ -206,13 +206,7 @@ class WhatsAppManager:
                 except Exception as e:
                     self.add_log("ERROR", f"Error procesando QR callback: {e}")
 
-            # Vincular a todos los puntos de escucha de Neonize para garantizar captura
-            if hasattr(self.client, "event") and hasattr(self.client.event, "qr"):
-                self.client.event.qr(on_qr_callback)
-            if hasattr(self.client, "event"):
-                self.client.event._qr = on_qr_callback
-            if hasattr(self.client, "qr"):
-                self.client.qr(on_qr_callback)
+            self.client.event.qr(on_qr_callback)
 
             # Fallback secundario de QREv
             @self.client.event(QREv)
