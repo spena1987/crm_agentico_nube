@@ -300,9 +300,17 @@ export default function WhatsAppConfigCard() {
                     </p>
                     <button
                       onClick={() => handleConnect(true)}
-                      className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all"
+                      disabled={conectando}
+                      className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all disabled:opacity-50 flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95"
                     >
-                      Generar Código QR
+                      {conectando ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          <span>Solicitando QR a WhatsApp...</span>
+                        </>
+                      ) : (
+                        <span>Generar Código QR</span>
+                      )}
                     </button>
                   </div>
                 )}
