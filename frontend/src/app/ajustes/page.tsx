@@ -1,24 +1,26 @@
 'use client'
 
 import React, { useState } from 'react'
-import { QrCode, Bot, Building2, Terminal, Settings, ShieldCheck, BookOpen } from 'lucide-react'
+import { QrCode, Bot, Building2, Terminal, Settings, ShieldCheck, BookOpen, FileCheck } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
 import SystemLogsCard from '@/components/settings/SystemLogsCard'
 import NomencladorSettingsCard from '@/components/settings/NomencladorSettingsCard'
+import BudgetTemplateDesignerCard from '@/components/settings/BudgetTemplateDesignerCard'
 
-type TabType = 'whatsapp' | 'bot' | 'clinica' | 'nomenclador' | 'logs'
+type TabType = 'whatsapp' | 'bot' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'logs'
 
 export default function AjustesPage() {
   const [activeTab, setActiveTab] = useState<TabType>('whatsapp')
 
   const tabs = [
-    { id: 'whatsapp' as TabType, label: 'WhatsApp & Vinculación QR', icon: QrCode, description: 'Sincronización multidispositivo con tu teléfono móvil' },
-    { id: 'bot' as TabType, label: 'Agente IA & Automatización', icon: Bot, description: 'Directivas de Gemini, retardo de tipeo y escalamiento' },
-    { id: 'clinica' as TabType, label: 'Perfil de la Clínica', icon: Building2, description: 'Datos del consultorio, horarios y mensajes' },
-    { id: 'nomenclador' as TabType, label: 'Nomenclador & Aranceles', icon: BookOpen, description: 'Catálogos Geclisa, prácticas propias y precios' },
-    { id: 'logs' as TabType, label: 'Monitor & Logs en Vivo', icon: Terminal, description: 'Consola técnica de eventos del daemon de WhatsApp' },
+    { id: 'whatsapp' as TabType, label: 'WhatsApp & QR', icon: QrCode, description: 'Sincronización multidispositivo' },
+    { id: 'bot' as TabType, label: 'Agente IA', icon: Bot, description: 'Directivas y escalamiento' },
+    { id: 'clinica' as TabType, label: 'Perfil Clínica', icon: Building2, description: 'Datos del consultorio' },
+    { id: 'nomenclador' as TabType, label: 'Nomencladores', icon: BookOpen, description: 'Aranceles y catálogo' },
+    { id: 'plantilla_presupuesto' as TabType, label: 'Diseñador PDF', icon: FileCheck, description: 'Plantilla de presupuestos' },
+    { id: 'logs' as TabType, label: 'Monitor Logs', icon: Terminal, description: 'Consola técnica en vivo' },
   ]
 
   return (
@@ -78,6 +80,7 @@ export default function AjustesPage() {
         {activeTab === 'bot' && <BotSettingsCard />}
         {activeTab === 'clinica' && <ClinicProfileCard />}
         {activeTab === 'nomenclador' && <NomencladorSettingsCard />}
+        {activeTab === 'plantilla_presupuesto' && <BudgetTemplateDesignerCard />}
         {activeTab === 'logs' && <SystemLogsCard />}
       </div>
     </div>

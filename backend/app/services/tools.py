@@ -78,65 +78,98 @@ def crear_borrador_presupuesto(paciente_id: str, items: list[ItemPresupuesto]) -
         presupuesto = presupuesto_resp.data[0]
         presupuesto_id = presupuesto["id"]
 
-        # 3. Consultar servicios e insertar ítems
+        # 3. Consultar catálogo de prácticas e insertar ítems
+        from datetime import date
+        today_str = date.today().isoformat()
+        
         items_creados = []
+        total_acumulado = 0.0
+        
         for item in items:
             # Compatibilidad con dict o Pydantic
             if hasattr(item, "codigo_servicio"):
-                codigo = item.codigo_servicio
-                cantidad = item.cantidad
+                codigo = str(item.codigo_servicio).strip().upper()
+                cantidad = int(item.cantidad or 1)
+                nombre_pres = getattr(item, "nombre_prestacion", None)
+                precio_unitario = getattr(item, "precio_unitario", None)
+                moneda = getattr(item, "moneda", "ARS") or "ARS"
             else:
-                codigo = item.get("codigo_servicio")
-                cantidad = item.get("cantidad", 1)
-            
-            # Buscar el servicio en el catálogo o en practicas_crm
-            servicio_resp = supabase.table("servicios_precios").select("*").eq("codigo", codigo.upper()).execute()
-            if servicio_resp.data:
-                servicio = servicio_resp.data[0]
-                # Si el payload envió un precio unitario específico, lo respetamos; de lo contrario el del catálogo
-                precio_unitario = float(item.get("precio_unitario") if isinstance(item, dict) and "precio_unitario" in item else servicio["precio"])
-            else:
-                # Buscar en practicas_crm
-                crm_resp = supabase.table("practicas_crm").select("*").eq("codigo", codigo.upper()).execute()
-                if crm_resp.data:
-                    p_crm = crm_resp.data[0]
-                    nombre_pres = p_crm["nombre"]
-                    precio_unitario = float(item.get("precio_unitario") if isinstance(item, dict) and "precio_unitario" in item else p_crm["precio"])
-                else:
-                    nombre_pres = item.get("nombre_prestacion") if isinstance(item, dict) else f"Práctica {codigo}"
-                    precio_unitario = float(item.get("precio_unitario") if isinstance(item, dict) and "precio_unitario" in item else 0.0)
-
-                # Registrar en servicios_precios para satisfacer la FK
-                ins_serv = supabase.table("servicios_precios").insert({
-                    "nombre_prestacion": nombre_pres or f"Práctica {codigo}",
-                    "codigo": codigo.upper(),
-                    "precio": precio_unitario,
-                    "activo": True
-                }).execute()
-                servicio = ins_serv.data[0] if ins_serv.data else {"id": None, "nombre_prestacion": nombre_pres, "codigo": codigo.upper()}
-
+                codigo = str(item.get("codigo_servicio") or item.get("codigo", "")).strip().upper()
+                cantidad = int(item.get("cantidad", 1))
+                nombre_pres = item.get("nombre_prestacion") or item.get("nombre")
+                precio_unitario = item.get("precio_unitario")
+                moneda = item.get("moneda") or "ARS"
+                
+            # Si falta nombre o precio, consultar en nomenclador_practicas y aranceles
+            if not nombre_pres or precio_unitario is None or float(precio_unitario) == 0.0:
+                p_resp = supabase.table("nomenclador_practicas")\
+                    .select("id, nombre, categoria, nomencladores(moneda_default)")\
+                    .eq("codigo", codigo)\
+                    .limit(1)\
+                    .execute()
+                    
+                if p_resp.data:
+                    p_info = p_resp.data[0]
+                    if not nombre_pres:
+                        nombre_pres = p_info["nombre"]
+                    if not moneda:
+                        moneda = (p_info.get("nomencladores") or {}).get("moneda_default", "ARS")
+                        
+                    # Consultar arancel vigente
+                    ar_resp = supabase.table("nomenclador_aranceles")\
+                        .select("precio, moneda")\
+                        .eq("practica_id", p_info["id"])\
+                        .lte("vigencia_desde", today_str)\
+                        .order("vigencia_desde", desc=True)\
+                        .limit(1)\
+                        .execute()
+                        
+                    if ar_resp.data:
+                        if precio_unitario is None or float(precio_unitario) == 0.0:
+                            precio_unitario = float(ar_resp.data[0]["precio"])
+                        moneda = ar_resp.data[0].get("moneda", moneda)
+                        
+            if not nombre_pres:
+                nombre_pres = f"Práctica {codigo}"
+            precio_unitario = float(precio_unitario or 0.0)
             subtotal = precio_unitario * cantidad
+            total_acumulado += subtotal
+            
+            # Asegurar registro en servicios_precios para satisfacer FK de items_presupuesto
+            ins_serv = supabase.table("servicios_precios").upsert({
+                "codigo": codigo,
+                "nombre_prestacion": nombre_pres,
+                "precio": precio_unitario,
+                "activo": True
+            }, on_conflict="codigo").execute()
+            
+            servicio_id = ins_serv.data[0]["id"] if ins_serv.data else None
             
             item_data = {
                 "presupuesto_id": presupuesto_id,
-                "servicio_id": servicio["id"],
+                "servicio_id": servicio_id,
                 "cantidad": cantidad,
                 "precio_unitario": precio_unitario,
                 "subtotal": subtotal
             }
             item_resp = supabase.table("items_presupuesto").insert(item_data).execute()
-            if item_resp.data:
-                # Adjuntamos el nombre y código para generar el PDF
-                item_info = item_resp.data[0]
-                item_info["nombre_prestacion"] = servicio.get("nombre_prestacion") or (item.get("nombre_prestacion") if isinstance(item, dict) else codigo)
-                item_info["codigo"] = codigo.upper()
-                items_creados.append(item_info)
+            
+            item_info = item_resp.data[0] if item_resp.data else item_data
+            item_info["nombre_prestacion"] = nombre_pres
+            item_info["codigo"] = codigo
+            item_info["moneda"] = moneda.upper()
+            item_info["precio_unitario"] = precio_unitario
+            item_info["subtotal"] = subtotal
+            items_creados.append(item_info)
 
-        # 4. Obtener el presupuesto actualizado (con el total recalculado por el trigger)
+        # 4. Actualizar total en la cabecera del presupuesto
+        supabase.table("presupuestos").update({"total": total_acumulado}).eq("id", presupuesto_id).execute()
+        
         presupuesto_actualizado_resp = supabase.table("presupuestos").select("*").eq("id", presupuesto_id).execute()
         presupuesto_actualizado = presupuesto_actualizado_resp.data[0]
+        presupuesto_actualizado["total"] = total_acumulado
 
-        # 5. Generar PDF estético
+        # 5. Generar PDF profesional
         pdf_filename = generar_pdf_presupuesto(presupuesto_actualizado, paciente, items_creados)
         pdf_url = f"/static/{pdf_filename}"
 

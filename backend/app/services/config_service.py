@@ -25,6 +25,27 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "email_contacto": "contacto@centromediconube.com",
         "horarios_atencion": "Lunes a Viernes de 08:00 a 20:00 hs. Sábados de 09:00 a 13:00 hs.",
         "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?"
+    },
+    "plantilla_presupuesto": {
+        "titulo_documento": "PRESUPUESTO MÉDICO",
+        "nombre_institucion": "CLÍNICA MÉDICA NUBE",
+        "subtitulo_institucion": "Atención Médica Digital & Especialidades",
+        "direccion": "Av. Corrientes 1234, CABA, Argentina",
+        "telefono": "+54 9 11 5555-0199",
+        "email": "contacto@centromediconube.com",
+        "sitio_web": "www.centromediconube.com",
+        "color_primario": "#1E3A8A",
+        "color_secundario": "#2563EB",
+        "validez_dias": 30,
+        "terminos_condiciones": [
+            "Este presupuesto tiene una validez de 30 días corridos a partir de la fecha de emisión.",
+            "Los precios cotizados respetan la moneda especificada (Pesos ARS o Dólares USD).",
+            "La confirmación de turnos quirúrgicos, prácticas y estudios de alta complejidad queda supeditada a disponibilidad de agenda y confirmación de pago.",
+            "Formas de pago habilitadas: Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración."
+        ],
+        "pie_pagina": "Documento emitido electrónicamente por el sistema CRM Médico Nube.",
+        "mostrar_firma": True,
+        "texto_firma": "Firma y Sello Profesional / Autorización Médica"
     }
 }
 

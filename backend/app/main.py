@@ -63,7 +63,10 @@ class ToggleBotRequest(BaseModel):
 
 class ItemPresupuestoInput(BaseModel):
     codigo_servicio: str
-    cantidad: int
+    nombre_prestacion: Optional[str] = None
+    cantidad: int = 1
+    precio_unitario: Optional[float] = None
+    moneda: Optional[str] = "ARS"
 
 class PresupuestoInput(BaseModel):
     paciente_id: str
@@ -335,14 +338,81 @@ def simulate_message(payload: SimuladorMensaje):
 @app.post("/api/presupuestos")
 def create_presupuesto_api(payload: PresupuestoInput):
     """
-    Crea un presupuesto para un paciente y genera el PDF correspondiente.
+    Crea un presupuesto para un paciente y genera el PDF correspondiente con valores y soporte multi-moneda.
     """
     logger.info(f"API: Crear presupuesto para paciente {payload.paciente_id}")
-    items_parsed = [{"codigo_servicio": it.codigo_servicio, "cantidad": it.cantidad} for it in payload.items]
+    items_parsed = [
+        {
+            "codigo_servicio": it.codigo_servicio,
+            "nombre_prestacion": it.nombre_prestacion,
+            "cantidad": it.cantidad,
+            "precio_unitario": it.precio_unitario,
+            "moneda": it.moneda or "ARS"
+        }
+        for it in payload.items
+    ]
     res = crear_borrador_presupuesto(payload.paciente_id, items_parsed)
     if "error" in res:
         raise HTTPException(status_code=400, detail=res["error"])
     return res
+
+@app.get("/api/presupuestos/plantilla-preview")
+def preview_plantilla_presupuesto():
+    """
+    Genera un PDF de muestra al vuelo para previsualizar el diseño de la plantilla institucional.
+    """
+    try:
+        from app.services.pdf_service import generar_pdf_presupuesto
+        from datetime import date
+        
+        sample_presupuesto = {
+            "id": "A1B2C3D4",
+            "created_at": date.today().isoformat(),
+            "estado": "borrador",
+            "total": 30500.00
+        }
+        sample_paciente = {
+            "nombre": "GARCÍA, MARÍA JOSÉ",
+            "telefono": "+54 9 11 4444-5555",
+            "email": "maria.garcia@ejemplo.com",
+            "dni": "35.890.123",
+            "obra_social": "OSDE 310"
+        }
+        sample_items = [
+            {
+                "codigo": "420101",
+                "nombre_prestacion": "Consulta Médica Especializada en Fertilidad",
+                "cantidad": 1,
+                "precio_unitario": 8500.00,
+                "moneda": "ARS",
+                "subtotal": 8500.00
+            },
+            {
+                "codigo": "180104",
+                "nombre_prestacion": "Ecografía Ginecológica Transvaginal de Alta Resolución",
+                "cantidad": 1,
+                "precio_unitario": 22000.00,
+                "moneda": "ARS",
+                "subtotal": 22000.00
+            },
+            {
+                "codigo": "FIV-ICSI-01",
+                "nombre_prestacion": "Tratamiento FIV + ICSI Completo con Criopreservación",
+                "cantidad": 1,
+                "precio_unitario": 1500.00,
+                "moneda": "USD",
+                "subtotal": 1500.00
+            }
+        ]
+        
+        filename = generar_pdf_presupuesto(sample_presupuesto, sample_paciente, sample_items)
+        return {
+            "success": True,
+            "pdf_url": f"/static/{filename}"
+        }
+    except Exception as e:
+        logger.error(f"Error al generar preview de plantilla: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================
 # ENDPOINTS DE INTEGRACIÓN CON GECLISA (HOSPITALARIO)
