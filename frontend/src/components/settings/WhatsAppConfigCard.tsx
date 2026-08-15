@@ -1,5 +1,3 @@
-'use client'
-
 import React, { useState, useEffect } from 'react'
 import { 
   QrCode, 
@@ -13,7 +11,11 @@ import {
   Zap, 
   Radio,
   ExternalLink,
-  Info
+  Info,
+  KeyRound,
+  Copy,
+  Check,
+  ChevronRight
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import { BACKEND_URL } from '@/lib/api'
@@ -24,6 +26,8 @@ interface WhatsAppStatus {
   is_logged_in: boolean
   qr_ready: boolean
   qr_expires_in: number
+  pairing_code?: string | null
+  pairing_phone?: string | null
   device_info: {
     phone: string | null
     push_name: string | null
@@ -42,6 +46,15 @@ export default function WhatsAppConfigCard() {
   const [conectando, setConectando] = useState<boolean>(false)
   const [desconectando, setDesconectando] = useState<boolean>(false)
   
+  // Vinculación por Código Numérico
+  const [pairingMethod, setPairingMethod] = useState<'code' | 'qr'>('code')
+  const [phoneNumberInput, setPhoneNumberInput] = useState<string>('549')
+  const [pairingCode, setPairingCode] = useState<string | null>(null)
+  const [pairingCountdown, setPairingCountdown] = useState<number>(0)
+  const [solicitandoCodigo, setSolicitandoCodigo] = useState<boolean>(false)
+  const [codigoCopiado, setCodigoCopiado] = useState<boolean>(false)
+  const [errorPairing, setErrorPairing] = useState<string | null>(null)
+
   // Para mensaje de prueba
   const [testPhone, setTestPhone] = useState('')
   const [testMsg, setTestMsg] = useState('¡Hola! Este es un mensaje de prueba desde MedCRM. 🩺')
@@ -55,11 +68,18 @@ export default function WhatsAppConfigCard() {
         const data: WhatsAppStatus = await res.json()
         setStatusData(data)
         
-        // Si no está conectado, solicitar siempre el código QR activo
+        if (data.pairing_code) {
+          setPairingCode(data.pairing_code)
+        }
+
+        // Si no está conectado, consultar QR
         if (!data.is_logged_in && data.status !== 'CONNECTED') {
-          await fetchQR()
+          if (pairingMethod === 'qr') {
+            await fetchQR()
+          }
         } else {
           setQrDataUri(null)
+          setPairingCode(null)
         }
       }
     } catch (err) {
@@ -86,14 +106,13 @@ export default function WhatsAppConfigCard() {
 
   useEffect(() => {
     fetchStatus()
-    // Polling inteligente cada 3.5 segundos
     const interval = setInterval(() => {
       fetchStatus()
     }, 3500)
     return () => clearInterval(interval)
-  }, [])
+  }, [pairingMethod])
 
-  // Decremento de contador
+  // Temporizador para código QR
   useEffect(() => {
     if (countdown <= 0) return
     const timer = setInterval(() => {
@@ -108,6 +127,52 @@ export default function WhatsAppConfigCard() {
     return () => clearInterval(timer)
   }, [countdown])
 
+  // Temporizador para código de emparejamiento numérico
+  useEffect(() => {
+    if (pairingCountdown <= 0) return
+    const timer = setInterval(() => {
+      setPairingCountdown((prev) => (prev > 0 ? prev - 1 : 0))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [pairingCountdown])
+
+  const handleRequestPairCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    const cleanDigits = phoneNumberInput.replace(/\D/g, '')
+    if (!cleanDigits || cleanDigits.length < 8) {
+      setErrorPairing('Ingresa el número con código de país (ej: 5491112345678).')
+      return
+    }
+
+    setSolicitandoCodigo(true)
+    setErrorPairing(null)
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/pair-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ telefono: cleanDigits })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPairingCode(data.code)
+        setPairingCountdown(data.expires_in || 120)
+      } else {
+        setErrorPairing(data.detail || data.error || 'No se pudo generar el código. Verifica la conexión.')
+      }
+    } catch (err: any) {
+      setErrorPairing(err.message || 'Error al comunicarse con el servidor.')
+    } finally {
+      setSolicitandoCodigo(false)
+    }
+  }
+
+  const handleCopyCode = () => {
+    if (!pairingCode) return
+    navigator.clipboard.writeText(pairingCode.replace('-', ''))
+    setCodigoCopiado(true)
+    setTimeout(() => setCodigoCopiado(false), 2500)
+  }
+
   const handleConnect = async (force = false) => {
     try {
       setConectando(true)
@@ -116,7 +181,9 @@ export default function WhatsAppConfigCard() {
       })
       if (res.ok) {
         await fetchStatus()
-        await fetchQR()
+        if (pairingMethod === 'qr') {
+          await fetchQR()
+        }
       }
     } catch (err) {
       console.error('Error conectando WhatsApp:', err)
@@ -136,6 +203,7 @@ export default function WhatsAppConfigCard() {
       })
       if (res.ok) {
         setQrDataUri(null)
+        setPairingCode(null)
         await fetchStatus()
       }
     } catch (err) {
@@ -182,7 +250,7 @@ export default function WhatsAppConfigCard() {
   }
 
   const isConnected = statusData?.is_logged_in || statusData?.status === 'CONNECTED'
-  const isPairing = statusData?.status === 'PAIRING_QR_READY' || (Boolean(qrDataUri) && !isConnected)
+  const isPairing = statusData?.status === 'PAIRING_QR_READY' || statusData?.status === 'PAIRING_CODE_READY' || Boolean(pairingCode) || (Boolean(qrDataUri) && !isConnected)
 
   return (
     <div className="space-y-6">
@@ -191,7 +259,7 @@ export default function WhatsAppConfigCard() {
         isConnected 
           ? 'bg-emerald-500/10 border-emerald-500/30 dark:bg-emerald-950/20' 
           : isPairing 
-            ? 'bg-amber-500/10 border-amber-500/30 dark:bg-amber-950/20' 
+            ? 'bg-blue-500/10 border-blue-500/30 dark:bg-blue-950/20' 
             : 'bg-slate-100 border-slate-200 dark:bg-slate-800/40 dark:border-slate-700'
       }`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -200,7 +268,7 @@ export default function WhatsAppConfigCard() {
               isConnected 
                 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
                 : isPairing 
-                  ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20 animate-pulse' 
+                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20 animate-pulse' 
                   : 'bg-slate-400 text-white'
             }`}>
               <Smartphone size={28} />
@@ -212,20 +280,20 @@ export default function WhatsAppConfigCard() {
                   isConnected 
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' 
                     : isPairing 
-                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300' 
+                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300' 
                       : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
                 }`}>
                   <span className={`w-2 h-2 rounded-full ${
-                    isConnected ? 'bg-emerald-500 animate-pulse' : isPairing ? 'bg-amber-500 animate-ping' : 'bg-slate-400'
+                    isConnected ? 'bg-emerald-500 animate-pulse' : isPairing ? 'bg-blue-500 animate-ping' : 'bg-slate-400'
                   }`} />
-                  {isConnected ? 'Conectado y Operativo' : isPairing ? 'Esperando Escaneo de QR' : 'Desconectado'}
+                  {isConnected ? 'Conectado y Operativo' : isPairing ? 'Esperando Vinculación' : 'Desconectado'}
                 </span>
               </div>
               <p className="text-sm text-[var(--secondary)] mt-0.5">
                 {isConnected 
                   ? `Vinculado al número ${statusData?.device_info?.phone ? formatPhoneDisplay(statusData.device_info.phone) : 'Móvil'} • Sesión multidispositivo activa`
                   : isPairing 
-                    ? 'Abre WhatsApp en tu teléfono y escanea el código QR a continuación.'
+                    ? 'Ingresa el código en tu WhatsApp o escanea el QR para autorizar MedCRM.'
                     : 'Inicia el proceso para sincronizar tu cuenta de WhatsApp con el CRM.'}
               </p>
             </div>
@@ -257,78 +325,209 @@ export default function WhatsAppConfigCard() {
         </div>
       </div>
 
-      {/* Grid Principal: QR Scanner vs Información del Dispositivo */}
+      {/* Grid Principal: Vinculación vs Mensaje de Prueba */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Lado Izquierdo: QR o Ficha de Dispositivo */}
+        {/* Lado Izquierdo: Vinculación (Código / QR) o Ficha de Dispositivo */}
         <div className="lg:col-span-7 space-y-6">
           {!isConnected ? (
-            /* Tarjeta de Código QR */
-            <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm flex flex-col items-center text-center">
-              <div className="flex items-center gap-2 mb-2">
-                <QrCode className="text-blue-600" size={24} />
-                <h3 className="font-bold text-base">Escanear Código QR</h3>
-              </div>
-              <p className="text-xs text-[var(--secondary)] max-w-sm mb-6">
-                Abre WhatsApp en tu teléfono celular y escanea este código para autorizar a MedCRM.
-              </p>
-
-              {/* Contenedor del QR */}
-              <div className="relative p-4 rounded-2xl bg-white border-2 border-dashed border-blue-500/40 shadow-inner flex flex-col items-center justify-center min-h-[280px] min-w-[280px]">
-                {qrDataUri ? (
-                  <div className="flex flex-col items-center animate-fade-in">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img 
-                      src={qrDataUri} 
-                      alt="Código QR WhatsApp" 
-                      className="w-60 h-60 object-contain rounded-lg transition-transform hover:scale-105 duration-200"
-                    />
-                    
-                    {/* Temporizador regresivo */}
-                    <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
-                      <Radio size={14} className="text-blue-600 animate-pulse" />
-                      <span>El código se actualiza en: <strong className="text-blue-600">{countdown}s</strong></span>
-                    </div>
+            <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm">
+              
+              {/* Selector de Método: Código vs QR */}
+              <div className="flex items-center justify-between pb-4 mb-5 border-b border-[var(--border)]">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600">
+                    {pairingMethod === 'code' ? <KeyRound size={20} /> : <QrCode size={20} />}
                   </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-8 space-y-4">
-                    <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600">
-                      <RefreshCw size={24} className="animate-spin" />
+                  <div>
+                    <h3 className="font-bold text-sm">Vincular Dispositivo</h3>
+                    <p className="text-xs text-[var(--secondary)]">Selecciona tu método de sincronización preferido</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-[var(--border)]">
+                  <button
+                    onClick={() => setPairingMethod('code')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      pairingMethod === 'code'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-blue-600'
+                    }`}
+                  >
+                    <KeyRound size={13} />
+                    <span>Con Código</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPairingMethod('qr')
+                      fetchQR()
+                    }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                      pairingMethod === 'qr'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-600 dark:text-slate-300 hover:text-blue-600'
+                    }`}
+                  >
+                    <QrCode size={13} />
+                    <span>Con QR</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* OPCIÓN 1: VINCULAR CON CÓDIGO NUMÉRICO DE 8 DÍGITOS */}
+              {pairingMethod === 'code' && (
+                <div className="space-y-5 animate-fade-in">
+                  <p className="text-xs text-[var(--secondary)]">
+                    Ingresa el número de teléfono con el código de país (ej: <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-blue-600">5491112345678</code>). Generaremos un código de 8 dígitos para vincular directamente desde tu app de WhatsApp.
+                  </p>
+
+                  <form onSubmit={handleRequestPairCode} className="flex gap-2">
+                    <div className="relative flex-1">
+                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 font-semibold text-xs">
+                        +
+                      </div>
+                      <input
+                        type="text"
+                        value={phoneNumberInput}
+                        onChange={(e) => setPhoneNumberInput(e.target.value)}
+                        placeholder="5491112345678"
+                        className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono"
+                      />
                     </div>
-                    <p className="text-xs font-medium text-slate-500">
-                      Generando código QR seguro con Neonize...
-                    </p>
                     <button
-                      onClick={() => handleConnect(true)}
-                      disabled={conectando}
-                      className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all disabled:opacity-50 flex items-center gap-2 shadow-md hover:shadow-lg active:scale-95"
+                      type="submit"
+                      disabled={solicitandoCodigo}
+                      className="px-5 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all disabled:opacity-50 flex items-center gap-2 whitespace-nowrap shadow-sm"
                     >
-                      {conectando ? (
+                      {solicitandoCodigo ? (
                         <>
                           <RefreshCw size={14} className="animate-spin" />
-                          <span>Solicitando QR a WhatsApp...</span>
+                          <span>Generando...</span>
                         </>
                       ) : (
-                        <span>Generar Código QR</span>
+                        <>
+                          <KeyRound size={14} />
+                          <span>Obtener Código</span>
+                        </>
                       )}
                     </button>
-                  </div>
-                )}
-              </div>
+                  </form>
 
-              {/* Guía Paso a Paso */}
-              <div className="mt-6 w-full text-left bg-slate-50 dark:bg-slate-800/30 p-4 rounded-xl border border-[var(--border)]">
-                <p className="text-xs font-bold text-[var(--foreground)] mb-2 flex items-center gap-1.5">
-                  <Info size={14} className="text-blue-600" />
-                  Instrucciones de Vinculación:
-                </p>
-                <ol className="text-xs text-[var(--secondary)] space-y-1.5 list-decimal list-inside">
-                  <li>Abre WhatsApp en tu teléfono celular.</li>
-                  <li>Toca <strong>Menú (⋮)</strong> en Android o <strong>Ajustes (⚙️)</strong> en iPhone.</li>
-                  <li>Selecciona <strong>Dispositivos vinculados</strong> y luego <strong>Vincular un dispositivo</strong>.</li>
-                  <li>Apunta la cámara de tu teléfono hacia esta pantalla para escanear el código QR.</li>
-                </ol>
-              </div>
+                  {errorPairing && (
+                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 text-xs flex items-center gap-2">
+                      <AlertTriangle size={15} className="shrink-0" />
+                      <span>{errorPairing}</span>
+                    </div>
+                  )}
+
+                  {/* VISOR DEL CÓDIGO DE 8 DÍGITOS */}
+                  {pairingCode ? (
+                    <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-purple-500/10 border border-blue-500/30 flex flex-col items-center text-center space-y-3">
+                      <span className="text-xs font-bold uppercase tracking-widest text-blue-600">
+                        Código de Vinculación de WhatsApp
+                      </span>
+                      
+                      <div className="flex items-center gap-3">
+                        <div className="px-6 py-3 rounded-2xl bg-white dark:bg-slate-900 border-2 border-blue-500 shadow-lg text-2xl sm:text-3xl font-black font-mono tracking-widest text-blue-600 dark:text-blue-400 select-all">
+                          {pairingCode}
+                        </div>
+                        <button
+                          onClick={handleCopyCode}
+                          className="p-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all active:scale-95 flex items-center justify-center"
+                          title="Copiar código"
+                        >
+                          {codigoCopiado ? <Check size={20} /> : <Copy size={20} />}
+                        </button>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+                        <Radio size={14} className="text-blue-600 animate-pulse" />
+                        <span>Válido por: <strong className="text-blue-600">{pairingCountdown}s</strong></span>
+                      </div>
+
+                      {/* Instrucciones Rápidas */}
+                      <div className="w-full text-left bg-white/80 dark:bg-slate-900/80 p-4 rounded-xl border border-blue-200 dark:border-blue-900/40 mt-2 space-y-1.5">
+                        <p className="text-xs font-bold text-[var(--foreground)] mb-1 flex items-center gap-1.5">
+                          <Info size={14} className="text-blue-600" />
+                          Cómo ingresarlo en tu teléfono:
+                        </p>
+                        <ol className="text-xs text-[var(--secondary)] space-y-1 list-decimal list-inside">
+                          <li>Abre WhatsApp en tu celular.</li>
+                          <li>Toca <strong>Menú (⋮)</strong> o <strong>Ajustes (⚙️)</strong> &gt; <strong>Dispositivos vinculados</strong>.</li>
+                          <li>Toca <strong>Vincular un dispositivo</strong>.</li>
+                          <li>En la parte inferior de la cámara, toca <strong>&quot;Vincular con el número de teléfono&quot;</strong>.</li>
+                          <li>Escribe el código <strong className="text-blue-600 font-mono">{pairingCode}</strong>.</li>
+                        </ol>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/30 border border-[var(--border)] text-xs text-[var(--secondary)] space-y-2">
+                      <p className="font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                        <Info size={14} className="text-blue-600" />
+                        ¿Cómo funciona la vinculación por código?
+                      </p>
+                      <p>
+                        WhatsApp te permite vincularte ingresando tu número de teléfono y confirmando un código de 8 dígitos en tu móvil sin necesidad de apuntar la cámara al monitor.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* OPCIÓN 2: VINCULAR CON CÓDIGO QR */}
+              {pairingMethod === 'qr' && (
+                <div className="flex flex-col items-center text-center space-y-4 animate-fade-in">
+                  <p className="text-xs text-[var(--secondary)] max-w-sm">
+                    Abre WhatsApp en tu teléfono celular y escanea este código para autorizar a MedCRM.
+                  </p>
+
+                  <div className="relative p-4 rounded-2xl bg-white border-2 border-dashed border-blue-500/40 shadow-inner flex flex-col items-center justify-center min-h-[260px] min-w-[260px]">
+                    {qrDataUri ? (
+                      <div className="flex flex-col items-center animate-fade-in">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={qrDataUri} 
+                          alt="Código QR WhatsApp" 
+                          className="w-56 h-56 object-contain rounded-lg transition-transform hover:scale-105 duration-200"
+                        />
+                        <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
+                          <Radio size={14} className="text-blue-600 animate-pulse" />
+                          <span>El código se actualiza en: <strong className="text-blue-600">{countdown}s</strong></span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center p-6 space-y-3">
+                        <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600">
+                          <RefreshCw size={24} className={conectando ? 'animate-spin' : ''} />
+                        </div>
+                        <p className="text-xs font-medium text-slate-500">
+                          Generando código QR con Neonize...
+                        </p>
+                        <button
+                          onClick={() => handleConnect(true)}
+                          disabled={conectando}
+                          className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all disabled:opacity-50 flex items-center gap-2 shadow-sm"
+                        >
+                          {conectando ? 'Solicitando...' : 'Generar Código QR'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="w-full text-left bg-slate-50 dark:bg-slate-800/30 p-4 rounded-xl border border-[var(--border)]">
+                    <p className="text-xs font-bold text-[var(--foreground)] mb-1.5 flex items-center gap-1.5">
+                      <Info size={14} className="text-blue-600" />
+                      Instrucciones de Escaneo:
+                    </p>
+                    <ol className="text-xs text-[var(--secondary)] space-y-1 list-decimal list-inside">
+                      <li>Abre WhatsApp en tu teléfono celular.</li>
+                      <li>Toca <strong>Menú (⋮)</strong> o <strong>Ajustes (⚙️)</strong> &gt; <strong>Dispositivos vinculados</strong>.</li>
+                      <li>Toca <strong>Vincular un dispositivo</strong> y apunta la cámara a esta pantalla.</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+
             </div>
           ) : (
             /* Tarjeta de Dispositivo Vinculado */

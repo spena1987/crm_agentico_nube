@@ -192,6 +192,20 @@ def logout_whatsapp():
         raise HTTPException(status_code=500, detail="Error al cerrar sesión de WhatsApp.")
     return {"success": True, "message": "Sesión cerrada correctamente. Dispositivo desvinculado."}
 
+class PairCodeRequest(BaseModel):
+    telefono: str
+
+@app.post("/api/whatsapp/pair-code")
+def request_pair_code(req: PairCodeRequest):
+    """
+    Genera un código de 8 caracteres (XXXX-XXXX) para vincular ingresando el número de teléfono.
+    """
+    logger.info(f"Petición de código de vinculación para teléfono: {req.telefono}")
+    result = whatsapp_manager.solicitar_codigo_vinculacion(req.telefono)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):
     """

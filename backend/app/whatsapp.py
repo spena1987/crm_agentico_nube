@@ -68,6 +68,9 @@ class WhatsAppManager:
         self.qr_code_data_uri: Optional[str] = None
         self.qr_timestamp: float = 0
         self.qr_ttl_seconds: int = 30
+        self.pairing_code: Optional[str] = None
+        self.pairing_phone: Optional[str] = None
+        self.pairing_code_timestamp: float = 0
         self.device_info: Dict[str, Any] = {
             "phone": None,
             "push_name": None,
@@ -140,6 +143,8 @@ class WhatsAppManager:
         effective_status = "CONNECTED" if is_client_connected else self.status
         if not is_client_connected and self.qr_code_data_uri:
             effective_status = "PAIRING_QR_READY"
+        elif not is_client_connected and self.pairing_code:
+            effective_status = "PAIRING_CODE_READY"
 
         return {
             "available": NEONIZE_AVAILABLE,
@@ -148,6 +153,8 @@ class WhatsAppManager:
             "is_logged_in": is_client_connected or (self.status == "CONNECTED"),
             "qr_ready": bool(self.qr_code_data_uri and not is_client_connected),
             "qr_expires_in": qr_expires_in,
+            "pairing_code": self.pairing_code if not is_client_connected else None,
+            "pairing_phone": self.pairing_phone if not is_client_connected else None,
             "device_info": self.device_info,
             "db_path": self.db_path
         }
@@ -330,11 +337,14 @@ class WhatsAppManager:
             self.status = "DISCONNECTED"
             self.qr_code_data_uri = None
             self.qr_code_raw = None
+            self.pairing_code = None
+            self.pairing_phone = None
+            self.pairing_code_timestamp = 0
             self.device_info = {k: None for k in self.device_info}
             self.client = None
             
             time.sleep(0.3)
-            # Eliminar todos los archivos de sqlite y sus journals para garantizar nuevo QR
+            # Eliminar todos los archivos de sqlite y sus journals para garantizar nueva sesión limpia
             paths_to_clean = set([
                 self.db_path, 
                 "neonize.db", 
@@ -351,11 +361,83 @@ class WhatsAppManager:
                             pass
             self.add_log("INFO", "Base de datos de sesión eliminada para nueva vinculación limpia.")
 
-            self.add_log("INFO", "Sesión cerrada correctamente. Listo para nueva vinculación QR.")
+            self.add_log("INFO", "Sesión cerrada correctamente. Listo para nueva vinculación QR o Código.")
             return True
         except Exception as e:
             self.add_log("ERROR", f"Error cerrando sesión: {e}")
             return False
+
+    def solicitar_codigo_vinculacion(self, telefono: str) -> Dict[str, Any]:
+        """
+        Solicita un código de vinculación numérico de 8 caracteres (XXXX-XXXX)
+        para vincular el teléfono mediante WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.
+        """
+        if not NEONIZE_AVAILABLE:
+            return {"error": "Neonize no está disponible en este entorno", "simulado": True}
+
+        # Normalizar teléfono a formato internacional E.164 sin '+' ni espacios
+        clean_phone = normalize_phone_number(telefono)
+        clean_digits = "".join(filter(str.isdigit, clean_phone))
+        
+        if not clean_digits or len(clean_digits) < 8:
+            return {"error": f"Número de teléfono inválido: {telefono}. Debe incluir código de país (ej: 5491112345678)"}
+
+        self.add_log("INFO", f"Iniciando solicitud de código de vinculación para +{clean_digits}...")
+
+        # Verificar si el cliente está activo y conectado al socket de WhatsApp
+        is_conn = False
+        if self.client:
+            try:
+                is_conn = bool(self.client.is_connected if not callable(getattr(self.client, "is_connected", None)) else self.client.is_connected())
+            except Exception:
+                pass
+
+        if not is_conn:
+            self.iniciar_daemon(force_restart=True)
+            # Esperar a que el socket se conecte (máximo 6 segundos)
+            for _ in range(30):
+                time.sleep(0.2)
+                try:
+                    if self.client:
+                        conn = self.client.is_connected if not callable(getattr(self.client, "is_connected", None)) else self.client.is_connected()
+                        if conn:
+                            is_conn = True
+                            break
+                except Exception:
+                    pass
+
+        try:
+            if not self.client:
+                raise Exception("No se pudo inicializar la conexión con el servidor de WhatsApp.")
+
+            # PairPhone devuelve el código de 8 caracteres de WhatsApp Web
+            code = self.client.PairPhone(phone=clean_digits, show_push_notification=True)
+            self.pairing_code = code
+            self.pairing_phone = clean_digits
+            self.pairing_code_timestamp = time.time()
+            self.status = "PAIRING_CODE_READY"
+            
+            # Formatear el código con guion: ABCD-EFGH
+            formatted_code = f"{code[:4]}-{code[4:]}" if len(code) == 8 and "-" not in code else code
+            self.add_log("INFO", f"¡Código de vinculación generado exitosamente!: {formatted_code}")
+            
+            return {
+                "success": True,
+                "phone": clean_digits,
+                "code": formatted_code,
+                "raw_code": code,
+                "expires_in": 120,
+                "instructions": [
+                    "Abre WhatsApp en tu teléfono celular.",
+                    "Toca Menú (⋮) en Android o Ajustes (⚙️) en iPhone > Dispositivos vinculados.",
+                    "Toca 'Vincular un dispositivo'.",
+                    "En la parte inferior de la pantalla de escaneo, toca 'Vincular con el número de teléfono'.",
+                    f"Ingresa este código de 8 caracteres: {formatted_code}"
+                ]
+            }
+        except Exception as e:
+            self.add_log("ERROR", f"Error al generar código de vinculación para {clean_digits}: {e}")
+            return {"error": f"Error de WhatsApp al generar código: {str(e)}"}
 
     def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None) -> Dict[str, Any]:
         """
