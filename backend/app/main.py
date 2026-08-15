@@ -238,21 +238,29 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         # 1. Obtener o crear paciente
         paciente = get_paciente_by_telefono(clean_phone)
         if not paciente:
-            nombre = payload.name if payload.name and payload.name != "Paciente" else f"Paciente {clean_phone[-4:]}"
-            paciente = crear_paciente(nombre, clean_phone)
+            nombre = payload.name if payload.name and payload.name != "Paciente" else f"Paciente {clean_phone[-4:] if len(clean_phone) >= 4 else clean_phone}"
+            paciente = crear_paciente(telefono=clean_phone, nombre=nombre)
         
+        if not paciente:
+            logger.error(f"No se pudo crear ni obtener paciente para {clean_phone}")
+            return {"status": "error", "detail": "No se pudo obtener paciente"}
+
         paciente_id = paciente["id"] if isinstance(paciente, dict) else paciente.get("id")
 
         # 2. Conversación
         conversacion = get_or_create_conversacion(paciente_id)
+        if not conversacion:
+            logger.error(f"No se pudo obtener/crear conversacion para paciente {paciente_id}")
+            return {"status": "error", "detail": "No se pudo obtener conversación"}
+
         conversacion_id = conversacion["id"] if isinstance(conversacion, dict) else conversacion.get("id")
 
         # 3. Guardar mensaje entrante del paciente
         guardar_mensaje(
             conversacion_id=conversacion_id,
-            remitente="paciente",
-            texto=texto or f"[{payload.message_type.upper()}]",
-            whatsapp_message_id=payload.message_id
+            emisor="paciente",
+            contenido=texto or f"[{payload.message_type.upper()}]",
+            metadata_json={"whatsapp_message_id": payload.message_id}
         )
 
         # 4. Procesar agente IA si el bot no está desactivado para esta conversación
@@ -264,7 +272,7 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
 
         return {"status": "processed", "conversacion_id": conversacion_id}
     except Exception as e:
-        logger.error(f"Error procesando mensaje entrante Baileys: {e}")
+        logger.error(f"Error procesando mensaje entrante Baileys: {e}", exc_info=True)
         return {"status": "error", "detail": str(e)}
 
 @app.post("/api/whatsapp/send-message")

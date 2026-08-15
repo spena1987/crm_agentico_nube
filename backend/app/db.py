@@ -65,12 +65,19 @@ def get_paciente_by_geclisa_id(ficha_id: int):
         logger.error(f"Error al obtener paciente por geclisa_ficha_id {ficha_id}: {e}")
         return None
 
-def crear_paciente(telefono: str, nombre: str, email: str = None):
+def crear_paciente(telefono: str, nombre: str = None, email: str = None):
     if not supabase:
         return None
     try:
-        telefono_norm = normalize_phone_number(telefono) if not str(telefono).startswith("temp_") else str(telefono)
-        data = {"telefono": telefono_norm, "nombre": nombre}
+        # Detectar si los parámetros fueron pasados invertidos
+        if any(c.isalpha() for c in str(telefono)) and not any(c.isalpha() for c in str(nombre or "")):
+            telefono, nombre = nombre, telefono
+
+        clean_tel = str(telefono or "").strip()
+        telefono_norm = normalize_phone_number(clean_tel) if not clean_tel.startswith("temp_") else clean_tel
+        final_nombre = nombre or f"Paciente {telefono_norm[-4:] if len(telefono_norm) >= 4 else clean_tel}"
+
+        data = {"telefono": telefono_norm, "nombre": final_nombre}
         if email:
             data["email"] = email
         response = supabase.table("pacientes").insert(data).execute()
