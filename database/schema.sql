@@ -210,52 +210,60 @@ on conflict (codigo) do update set
     precio = excluded.precio;
 
 -- ====================================================================
--- 7. Tabla de Configuración de Nomenclador
+-- 7. Catálogo de Nomencladores Nativos del CRM (Multi-Moneda: ARS / USD)
 -- ====================================================================
-create table if not exists public.configuracion_nomenclador (
-    id uuid default gen_random_uuid() primary key,
-    nomencladores_activos integer[] default '{1, 6}'::integer[] not null,
-    geclisa_particular_os_id integer default 8118 not null,
-    geclisa_particular_plan_id integer default 215 not null,
-    geclisa_area_default varchar default 'A' not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-
-insert into public.configuracion_nomenclador (nomencladores_activos, geclisa_particular_os_id, geclisa_particular_plan_id, geclisa_area_default)
-select '{1, 6}'::integer[], 8118, 215, 'A'
-where not exists (select 1 from public.configuracion_nomenclador);
-
--- ====================================================================
--- 8. Tabla de Prácticas Propias del CRM (Fuera de Nomenclador)
--- ====================================================================
-create table if not exists public.practicas_crm (
-    id uuid default gen_random_uuid() primary key,
-    codigo varchar not null unique,
-    nombre varchar not null,
-    categoria varchar default 'General',
-    precio numeric(12, 2) not null check (precio >= 0),
+create table if not exists public.nomencladores (
+    id uuid primary key default gen_random_uuid(),
+    codigo varchar(50) unique not null,
+    nombre varchar(150) not null,
+    moneda_default varchar(10) default 'ARS' not null check (moneda_default in ('ARS', 'USD')),
     descripcion text,
     activo boolean default true not null,
-    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+    created_at timestamptz default timezone('utc'::text, now()) not null
 );
 
 -- ====================================================================
--- 9. Tabla de Sobrescritura de Precios (Price Overrides para Geclisa)
+-- 8. Prácticas y Prestaciones del Catálogo CRM
 -- ====================================================================
-create table if not exists public.practicas_precios_override (
-    id uuid default gen_random_uuid() primary key,
-    nom_id integer not null,
-    nom_cod varchar not null,
-    nombre_referencia varchar not null,
-    precio_override numeric(12, 2) not null check (precio_override >= 0),
-    observacion text,
+create table if not exists public.nomenclador_practicas (
+    id uuid primary key default gen_random_uuid(),
+    nomenclador_id uuid references public.nomencladores(id) on delete cascade not null,
+    codigo varchar(50) not null,
+    nombre varchar(255) not null,
+    categoria varchar(100) default 'General',
+    descripcion text,
     activo boolean default true not null,
-    updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
-    unique(nom_id, nom_cod)
+    created_at timestamptz default timezone('utc'::text, now()) not null,
+    constraint uq_nomenclador_practica_cod unique (nomenclador_id, codigo)
 );
 
-create index if not exists idx_practicas_crm_codigo on public.practicas_crm(codigo);
-create index if not exists idx_practicas_precios_override_lookup on public.practicas_precios_override(nom_id, nom_cod);
+-- ====================================================================
+-- 9. Aranceles con Vigencia Temporal y Multi-Moneda (ARS / USD)
+-- ====================================================================
+create table if not exists public.nomenclador_aranceles (
+    id uuid primary key default gen_random_uuid(),
+    practica_id uuid references public.nomenclador_practicas(id) on delete cascade not null,
+    precio numeric(12, 2) not null check (precio >= 0),
+    moneda varchar(10) default 'ARS' not null check (moneda in ('ARS', 'USD')),
+    vigencia_desde date default current_date not null,
+    vigencia_hasta date,
+    observaciones text,
+    activo boolean default true not null,
+    created_at timestamptz default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_nomenclador_practicas_busqueda on public.nomenclador_practicas(codigo, nombre, categoria);
+create index if not exists idx_aranceles_practica_vigencia_moneda on public.nomenclador_aranceles(practica_id, vigencia_desde, vigencia_hasta, moneda);
+
+-- Inserción de Nomencladores Base
+insert into public.nomencladores (codigo, nombre, moneda_default, descripcion)
+values 
+    ('CREO_USD', 'Nomenclador Creo (USD)', 'USD', 'Tratamientos de Fertilidad, Genética y Alta Complejidad'),
+    ('NACIONAL_ARS', 'Prestaciones Médicas (ARS)', 'ARS', 'Nomenclador Nacional de Consultas, Procedimientos y Estudios Ambulatorios'),
+    ('BIOQ_ARS', 'Bioquímicas (ARS)', 'ARS', 'Análisis Clínicos y Laboratorio')
+on conflict (codigo) do update set
+    nombre = excluded.nombre,
+    moneda_default = excluded.moneda_default;
 
 -- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION

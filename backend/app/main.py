@@ -8,6 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
+from fastapi.responses import Response, StreamingResponse
+import io
+import csv
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
 from app.db import (
     supabase, 
     actualizar_bot_disabled, 
@@ -15,16 +21,17 @@ from app.db import (
     get_paciente_by_geclisa_id, 
     crear_o_actualizar_paciente_geclisa,
     asignar_medico_paciente,
-    get_configuracion_nomenclador,
-    save_configuracion_nomenclador,
-    list_practicas_crm,
-    create_practica_crm,
-    update_practica_crm,
-    delete_practica_crm,
-    list_precios_override,
-    upsert_precio_override,
-    delete_precio_override,
-    get_precio_override_by_codigo
+    list_nomencladores,
+    get_nomenclador_by_id,
+    create_nomenclador,
+    update_nomenclador,
+    delete_nomenclador,
+    list_practicas_con_arancel,
+    create_or_update_practica,
+    delete_practica,
+    upsert_arancel_practica,
+    buscar_practicas_presupuesto,
+    bulk_import_practicas_aranceles
 )
 from app.whatsapp import (
     iniciar_daemon_whatsapp, 
@@ -457,349 +464,386 @@ def asignar_medico_a_paciente(paciente_id: str, payload: Dict[str, Any] = Body(.
 
 
 # ====================================================================
-# ENDPOINTS DE NOMENCLADOR, ARANCELES Y PRÁCTICAS PROPIAS (CRM)
+# ENDPOINTS REST: NOMENCLADORES PROPIOS DEL CRM (MULTI-MONEDA: ARS / USD)
 # ====================================================================
 
-@app.get("/api/nomenclador/config")
-def obtener_nomenclador_config():
+@app.get("/api/nomencladores")
+def get_all_nomencladores():
     """
-    Obtiene la configuración actual del Nomenclador (nomencladores activos y financiador particular).
+    Lista todos los nomencladores configurados en el CRM.
     """
     try:
-        cfg = get_configuracion_nomenclador()
-        return {"success": True, "config": cfg}
+        data = list_nomencladores()
+        return {"success": True, "nomencladores": data}
     except Exception as e:
-        logger.error(f"Error al obtener configuración de nomenclador: {e}")
+        logger.error(f"Error al obtener nomencladores: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/nomenclador/config")
-def guardar_nomenclador_config(payload: Dict[str, Any] = Body(...)):
+@app.post("/api/nomencladores")
+def crear_nuevo_nomenclador(payload: Dict[str, Any] = Body(...)):
     """
-    Guarda o actualiza la configuración global del Nomenclador.
-    """
-    try:
-        updated = save_configuracion_nomenclador(payload)
-        return {"success": True, "mensaje": "Configuración guardada correctamente.", "config": updated}
-    except Exception as e:
-        logger.error(f"Error al guardar configuración de nomenclador: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/nomenclador/tipos")
-def listar_tipos_nomenclador():
-    """
-    Consulta los tipos de nomencladores disponibles en Geclisa.
+    Crea un nuevo nomenclador en el CRM (con moneda ARS o USD).
     """
     try:
-        tipos = geclisa_client.obtener_tipos_nomenclador()
-        return {"success": True, "tipos": tipos}
-    except Exception as e:
-        logger.error(f"Error al listar tipos de nomenclador: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/nomenclador/practicas-crm")
-def listar_practicas_propias():
-    """
-    Lista las prácticas personalizadas creadas en el CRM (fuera del nomenclador de Geclisa).
-    """
-    try:
-        practicas = list_practicas_crm()
-        return {"success": True, "practicas": practicas}
-    except Exception as e:
-        logger.error(f"Error al listar prácticas CRM: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/nomenclador/practicas-crm")
-def crear_practica_propia(payload: Dict[str, Any] = Body(...)):
-    """
-    Crea una nueva práctica personalizada en el CRM.
-    """
-    try:
-        if not payload.get("codigo") or not payload.get("nombre"):
-            raise HTTPException(status_code=400, detail="Código y nombre son obligatorios.")
-        nueva = create_practica_crm(payload)
-        return {"success": True, "mensaje": "Práctica creada exitosamente.", "practica": nueva}
+        if not payload.get("nombre"):
+            raise HTTPException(status_code=400, detail="El nombre del nomenclador es obligatorio.")
+        creado = create_nomenclador(payload)
+        return {"success": True, "mensaje": "Nomenclador creado exitosamente.", "nomenclador": creado}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error al crear práctica CRM: {e}")
+        logger.error(f"Error al crear nomenclador: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.put("/api/nomenclador/practicas-crm/{practica_id}")
-def modificar_practica_propia(practica_id: str, payload: Dict[str, Any] = Body(...)):
+@app.put("/api/nomencladores/{nomenclador_id}")
+def editar_nomenclador(nomenclador_id: str, payload: Dict[str, Any] = Body(...)):
     """
-    Modifica una práctica personalizada del CRM.
+    Actualiza datos de un nomenclador.
     """
     try:
-        actualizada = update_practica_crm(practica_id, payload)
-        return {"success": True, "mensaje": "Práctica actualizada exitosamente.", "practica": actualizada}
+        act = update_nomenclador(nomenclador_id, payload)
+        return {"success": True, "mensaje": "Nomenclador actualizado.", "nomenclador": act}
     except Exception as e:
-        logger.error(f"Error al actualizar práctica CRM {practica_id}: {e}")
+        logger.error(f"Error al actualizar nomenclador {nomenclador_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/nomenclador/practicas-crm/{practica_id}")
-def borrar_practica_propia(practica_id: str):
+@app.delete("/api/nomencladores/{nomenclador_id}")
+def borrar_nomenclador(nomenclador_id: str):
     """
-    Elimina una práctica personalizada del CRM.
+    Elimina un nomenclador y todas sus prácticas asociadas.
     """
     try:
-        ok = delete_practica_crm(practica_id)
+        ok = delete_nomenclador(nomenclador_id)
+        return {"success": ok, "mensaje": "Nomenclador eliminado exitosamente."}
+    except Exception as e:
+        logger.error(f"Error al eliminar nomenclador {nomenclador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/nomenclador/practicas")
+def get_practicas_nomenclador(
+    nomenclador_id: Optional[str] = None,
+    fecha: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    """
+    Lista las prácticas resolviendo el arancel y moneda vigentes para la fecha.
+    """
+    try:
+        res = list_practicas_con_arancel(
+            nomenclador_id=nomenclador_id,
+            fecha_consulta=fecha,
+            q=q,
+            limit=limit,
+            offset=offset
+        )
+        return {"success": True, "total": res["total"], "practicas": res["practicas"]}
+    except Exception as e:
+        logger.error(f"Error al listar prácticas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/practicas")
+def guardar_practica(payload: Dict[str, Any] = Body(...)):
+    """
+    Crea o actualiza una práctica individual del catálogo.
+    """
+    try:
+        if not payload.get("nomenclador_id") or not payload.get("codigo") or not payload.get("nombre"):
+            raise HTTPException(status_code=400, detail="Nomenclador, código y nombre son obligatorios.")
+        guardada = create_or_update_practica(payload)
+        return {"success": True, "mensaje": "Práctica guardada correctamente.", "practica": guardada}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al guardar práctica: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/nomenclador/practicas/{practica_id}")
+def borrar_practica(practica_id: str):
+    """
+    Elimina una práctica del catálogo.
+    """
+    try:
+        ok = delete_practica(practica_id)
         return {"success": ok, "mensaje": "Práctica eliminada."}
     except Exception as e:
-        logger.error(f"Error al eliminar práctica CRM {practica_id}: {e}")
+        logger.error(f"Error al eliminar práctica {practica_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/nomenclador/precios-override")
-def listar_precios_override_crm():
+@app.post("/api/nomenclador/practicas/{practica_id}/arancel")
+def agregar_arancel_vigencia(practica_id: str, payload: Dict[str, Any] = Body(...)):
     """
-    Lista las excepciones / precios personalizados asignados a prácticas de Geclisa.
-    """
-    try:
-        overrides = list_precios_override()
-        return {"success": True, "overrides": overrides}
-    except Exception as e:
-        logger.error(f"Error al listar precios override: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/nomenclador/precios-override")
-def guardar_precio_override_crm(payload: Dict[str, Any] = Body(...)):
-    """
-    Crea o actualiza un precio personalizado en CRM para una práctica de Geclisa.
+    Registra un nuevo arancel con fecha de vigencia para una práctica.
     """
     try:
-        if not payload.get("nom_id") or not payload.get("nom_cod") or "precio_override" not in payload:
-            raise HTTPException(status_code=400, detail="nom_id, nom_cod y precio_override son obligatorios.")
-        guardado = upsert_precio_override(payload)
-        return {"success": True, "mensaje": "Precio personalizado guardado.", "override": guardado}
+        if "precio" not in payload:
+            raise HTTPException(status_code=400, detail="El precio es obligatorio.")
+        nuevo_arancel = upsert_arancel_practica(practica_id, payload)
+        return {"success": True, "mensaje": "Arancel con vigencia guardado.", "arancel": nuevo_arancel}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error al guardar precio override: {e}")
+        logger.error(f"Error al registrar arancel: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/nomenclador/precios-override/{override_id}")
-def borrar_precio_override_crm(override_id: str):
+# ====================================================================
+# BÚSQUEDA RÁPIDA MULTI-MONEDA PARA PRESUPUESTOS (NATIVO CRM)
+# ====================================================================
+
+@app.get("/api/nomenclador/buscar-presupuesto")
+def buscar_para_presupuesto(q: Optional[str] = "", fecha: Optional[str] = None):
     """
-    Elimina un precio personalizado, volviendo a usar el valor que retorne Geclisa.
+    Búsqueda optimizada por texto para el modal de presupuestos con arancel vigente.
     """
     try:
-        ok = delete_precio_override(override_id)
-        return {"success": ok, "mensaje": "Precio personalizado eliminado."}
+        resultados = buscar_practicas_presupuesto(q=q or "", fecha_consulta=fecha)
+        return {
+            "success": True,
+            "query": q,
+            "total": len(resultados),
+            "resultados": resultados
+        }
     except Exception as e:
-        logger.error(f"Error al eliminar precio override {override_id}: {e}")
+        logger.error(f"Error al buscar prácticas para presupuesto: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/nomenclador/buscar-unificado")
-def buscar_practicas_unificado(q: Optional[str] = ""):
+# ====================================================================
+# IMPORTADOR Y EXPORTADOR MASIVO EXCEL (.XLSX / .CSV)
+# ====================================================================
+
+@app.post("/api/nomenclador/importar-excel")
+async def importar_practicas_excel(
+    file: UploadFile = File(...),
+    nomenclador_id: str = Form(...),
+    modo: str = Form("upsert"),
+    default_vigencia_desde: Optional[str] = Form(None),
+    default_vigencia_hasta: Optional[str] = Form(None),
+    default_moneda: str = Form("ARS")
+):
     """
-    Búsqueda unificada inteligente para presupuestar:
-    1. Busca prácticas propias del CRM.
-    2. Busca prácticas en el Nomenclador de Geclisa filtrando por los tipos configurados.
-    3. Resuelve para cada una si tiene precio propio de CRM, override de precio en CRM, o valor de Geclisa.
-    """
-    query = (q or "").strip().upper()
-    cfg = get_configuracion_nomenclador()
-    nomencladores_activos = cfg.get("nomencladores_activos", [1, 6])
-    os_id_particular = cfg.get("geclisa_particular_os_id", 8118)
-    plan_id_particular = cfg.get("geclisa_particular_plan_id", 215)
-    
-    resultados = []
-    
-    # 1. Prácticas Propias del CRM
-    try:
-        practicas_crm = list_practicas_crm(solo_activas=True)
-        for p in practicas_crm:
-            if not query or query in p["codigo"].upper() or query in p["nombre"].upper() or query in (p.get("categoria") or "").upper():
-                resultados.append({
-                    "id": f"crm_{p['id']}",
-                    "origen": "crm_propio",
-                    "origen_label": "CRM Propio",
-                    "codigo": p["codigo"],
-                    "nombre": p["nombre"],
-                    "categoria": p.get("categoria", "General"),
-                    "descripcion": p.get("descripcion", ""),
-                    "nom_id": None,
-                    "nom_cod": p["codigo"],
-                    "tipo_nomenclador": "Práctica Interna CRM",
-                    "precio_sugerido": float(p["precio"]),
-                    "origen_precio": "crm_propio",
-                    "override_activo": False
-                })
-    except Exception as e:
-        logger.warning(f"Error al buscar prácticas propias CRM: {e}")
-
-    # 2. Prácticas de Geclisa (solo si hay query de búsqueda)
-    if query:
-        try:
-            # Traer lista de overrides existentes para hacer match rápido
-            overrides = {f"{ov['nom_id']}_{str(ov['nom_cod']).strip()}": ov for ov in list_precios_override(solo_activas=True)}
-            
-            # Consultar Geclisa
-            geclisa_items = geclisa_client.buscar_practicas_geclisa(search_string=query)
-            
-            # Filtrar por nomencladores activos
-            items_filtrados = [
-                it for it in geclisa_items 
-                if not nomencladores_activos or it.get("nomId") in nomencladores_activos
-            ]
-
-            # Función para valorizar un ítem si no tiene override
-            def procesar_item_geclisa(item):
-                n_id = item.get("nomId")
-                n_cod = str(item.get("nomCod", "")).strip()
-                n_nom = item.get("nombre") or item.get("practica") or ""
-                n_tipo = item.get("tipo") or "Geclisa"
-                
-                override_key = f"{n_id}_{n_cod}"
-                if override_key in overrides:
-                    ov = overrides[override_key]
-                    precio = float(ov["precio_override"])
-                    origen_precio = "crm_override"
-                    override_activo = True
-                else:
-                    # Consultar valorización oficial en Geclisa para Obra Social Particular
-                    val_res = geclisa_client.valorizar_practica_particular(
-                        nom_id=n_id,
-                        nom_cod=n_cod,
-                        os_id=os_id_particular,
-                        plan_id=plan_id_particular,
-                        cantidad=1
-                    )
-                    if val_res.get("exito") and val_res.get("total", 0) > 0:
-                        precio = float(val_res["total"])
-                        origen_precio = "geclisa_particular"
-                    else:
-                        precio = 0.0
-                        origen_precio = "geclisa_particular"
-                    override_activo = False
-
-                return {
-                    "id": f"geclisa_{n_id}_{n_cod}",
-                    "origen": "geclisa",
-                    "origen_label": n_tipo,
-                    "codigo": n_cod,
-                    "nombre": n_nom,
-                    "categoria": n_tipo,
-                    "descripcion": item.get("codyPractica", ""),
-                    "nom_id": n_id,
-                    "nom_cod": n_cod,
-                    "tipo_nomenclador": n_tipo,
-                    "precio_sugerido": precio,
-                    "origen_precio": origen_precio,
-                    "override_activo": override_activo
-                }
-
-            # Ejecución en paralelo con ThreadPoolExecutor
-            if items_filtrados:
-                with ThreadPoolExecutor(max_workers=min(12, len(items_filtrados))) as executor:
-                    geclisa_procesados = list(executor.map(procesar_item_geclisa, items_filtrados))
-                resultados.extend(geclisa_procesados)
-        except Exception as e:
-            logger.error(f"Error al consultar y valorizar prácticas Geclisa en búsqueda unificada: {e}")
-
-    return {
-        "success": True,
-        "query": query,
-        "total": len(resultados),
-        "resultados": resultados
-    }
-
-@app.post("/api/nomenclador/valorizar")
-def valorizar_practica_especifica(payload: Dict[str, Any] = Body(...)):
-    """
-    Resuelve y calcula el valor vigente de una práctica para cotización:
-    - Si es CRM Propia: Devuelve el precio cargado en CRM.
-    - Si tiene Override en CRM: Devuelve el precio override fijado en CRM.
-    - Si proviene de Geclisa: Consulta en vivo a Geclisa con el financiador Particular (osId: 8118 / planId: 215).
+    Procesa la importación masiva de prácticas y aranceles desde un archivo Excel o CSV.
     """
     try:
-        origen = payload.get("origen", "geclisa")
-        codigo = str(payload.get("codigo", "")).strip()
-        nom_id = payload.get("nom_id")
-        nom_cod = str(payload.get("nom_cod") or codigo).strip()
-        cantidad = int(payload.get("cantidad", 1))
+        nom = get_nomenclador_by_id(nomenclador_id)
+        if not nom:
+            raise HTTPException(status_code=404, detail="El Nomenclador de destino no existe.")
+            
+        moneda_nom = default_moneda or nom.get("moneda_default", "ARS")
+        contents = await file.read()
+        filename = (file.filename or "").lower()
         
-        cfg = get_configuracion_nomenclador()
-        os_id = int(cfg.get("geclisa_particular_os_id", 8118))
-        plan_id = int(cfg.get("geclisa_particular_plan_id", 215))
-        area = cfg.get("geclisa_area_default", "A")
-
-        # 1. Verificar si es práctica propia del CRM
-        if origen == "crm_propio" or not nom_id:
-            # Buscar en CRM
-            resp = supabase.table("practicas_crm").select("*").eq("codigo", codigo.upper()).execute()
-            if resp.data and len(resp.data) > 0:
-                p = resp.data[0]
-                unitario = float(p["precio"])
-                return {
-                    "success": True,
-                    "origen_precio": "crm_propio",
-                    "origen_label": "Práctica Propia CRM",
-                    "precio_unitario": unitario,
-                    "total": unitario * cantidad,
-                    "coseguro_neto": unitario * cantidad,
-                    "honorarios": 0.0,
-                    "gastos": unitario * cantidad,
-                    "iva": 0.0
-                }
-
-        # 2. Verificar si tiene Override en CRM
-        if nom_id and nom_cod:
-            override = get_precio_override_by_codigo(nom_id, nom_cod)
-            if override:
-                unitario = float(override["precio_override"])
-                return {
-                    "success": True,
-                    "origen_precio": "crm_override",
-                    "origen_label": "Precio Personalizado CRM",
-                    "precio_unitario": unitario,
-                    "total": unitario * cantidad,
-                    "coseguro_neto": unitario * cantidad,
-                    "honorarios": 0.0,
-                    "gastos": unitario * cantidad,
-                    "iva": 0.0,
-                    "observacion": override.get("observacion")
-                }
-
-        # 3. Consultar Geclisa Particular
-        if nom_id and nom_cod:
-            geclisa_val = geclisa_client.valorizar_practica_particular(
-                nom_id=int(nom_id),
-                nom_cod=nom_cod,
-                os_id=os_id,
-                plan_id=plan_id,
-                cantidad=cantidad,
-                area=area
-            )
-            if geclisa_val.get("exito") and geclisa_val.get("total", 0) > 0:
-                unitario = geclisa_val["total"] / max(cantidad, 1)
-                return {
-                    "success": True,
-                    "origen_precio": "geclisa_particular",
-                    "origen_label": "Arancel Particular Geclisa",
-                    "precio_unitario": unitario,
-                    "total": geclisa_val["total"],
-                    "coseguro_neto": geclisa_val.get("coseguro_neto", 0.0),
-                    "honorarios": geclisa_val.get("honorarios", 0.0),
-                    "gastos": geclisa_val.get("gastos", 0.0),
-                    "iva": geclisa_val.get("coseguro_iva", 0.0),
-                    "iva_porc": geclisa_val.get("iva_porc", 0.0)
-                }
-            else:
-                return {
-                    "success": False,
-                    "origen_precio": "sin_precio",
-                    "origen_label": "Sin valorizar en Geclisa",
-                    "precio_unitario": 0.0,
-                    "total": 0.0,
-                    "mensaje": geclisa_val.get("mensaje", "La práctica no tiene precio cargado para Particular.")
-                }
-
-        raise HTTPException(status_code=400, detail="Parámetros insuficientes para valorizar práctica.")
+        parsed_rows = []
+        
+        if filename.endswith(".xlsx") or filename.endswith(".xls"):
+            wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
+            sheet = wb.active
+            
+            headers = []
+            for cell in sheet[1]:
+                val = str(cell.value or "").strip().lower()
+                headers.append(val)
+                
+            def get_col_idx(names):
+                for name in names:
+                    for i, h in enumerate(headers):
+                        if name in h:
+                            return i
+                return -1
+                
+            col_cod = get_col_idx(["cod", "codigo", "código", "id"])
+            col_nom = get_col_idx(["nom", "nombre", "practica", "práctica", "descripcion", "descripción"])
+            col_cat = get_col_idx(["cat", "categoria", "categoría", "tipo", "rubro"])
+            col_pre = get_col_idx(["pre", "precio", "arancel", "valor", "importe", "monto"])
+            col_mon = get_col_idx(["mon", "moneda", "currency"])
+            col_vdes = get_col_idx(["desde", "vigencia_desde", "inicio"])
+            col_vhas = get_col_idx(["hasta", "vigencia_hasta", "fin"])
+            
+            if col_cod == -1 or col_nom == -1:
+                raise HTTPException(status_code=400, detail="El archivo Excel debe contener al menos las columnas 'Código' y 'Nombre/Práctica'.")
+                
+            for row in sheet.iter_rows(min_row=2, values_only=True):
+                if not row or not any(row):
+                    continue
+                codigo = str(row[col_cod] or "").strip()
+                nombre = str(row[col_nom] or "").strip()
+                if not codigo or not nombre:
+                    continue
+                    
+                categoria = str(row[col_cat] or "General").strip() if col_cat != -1 and row[col_cat] else "General"
+                precio = row[col_pre] if col_pre != -1 and row[col_pre] is not None else 0.0
+                moneda = str(row[col_mon] or moneda_nom).strip().upper() if col_mon != -1 and row[col_mon] else moneda_nom
+                
+                v_desde = None
+                if col_vdes != -1 and row[col_vdes]:
+                    v_raw = row[col_vdes]
+                    v_desde = v_raw.strftime("%Y-%m-%d") if hasattr(v_raw, "strftime") else str(v_raw).strip()
+                    
+                v_hasta = None
+                if col_vhas != -1 and row[col_vhas]:
+                    v_raw = row[col_vhas]
+                    v_hasta = v_raw.strftime("%Y-%m-%d") if hasattr(v_raw, "strftime") else str(v_raw).strip()
+                    
+                parsed_rows.append({
+                    "codigo": codigo,
+                    "nombre": nombre,
+                    "categoria": categoria,
+                    "precio": precio,
+                    "moneda": moneda,
+                    "vigencia_desde": v_desde,
+                    "vigencia_hasta": v_hasta
+                })
+        elif filename.endswith(".csv"):
+            text_content = contents.decode("utf-8-sig", errors="ignore")
+            delimiter = ";" if ";" in text_content[:200] else ","
+            reader = csv.DictReader(text_content.splitlines(), delimiter=delimiter)
+            
+            for row in reader:
+                norm_row = {k.strip().lower(): v for k, v in row.items() if k}
+                codigo = norm_row.get("codigo") or norm_row.get("código") or norm_row.get("cod") or ""
+                nombre = norm_row.get("nombre") or norm_row.get("practica") or norm_row.get("práctica") or norm_row.get("descripcion") or ""
+                if not codigo or not nombre:
+                    continue
+                categoria = norm_row.get("categoria") or norm_row.get("categoría") or "General"
+                precio = norm_row.get("precio") or norm_row.get("arancel") or norm_row.get("valor") or 0.0
+                moneda = norm_row.get("moneda") or moneda_nom
+                v_desde = norm_row.get("vigencia_desde") or norm_row.get("desde")
+                v_hasta = norm_row.get("vigencia_hasta") or norm_row.get("hasta")
+                
+                parsed_rows.append({
+                    "codigo": str(codigo).strip(),
+                    "nombre": str(nombre).strip(),
+                    "categoria": str(categoria).strip(),
+                    "precio": precio,
+                    "moneda": str(moneda).strip().upper(),
+                    "vigencia_desde": v_desde,
+                    "vigencia_hasta": v_hasta
+                })
+        else:
+            raise HTTPException(status_code=400, detail="Formato no soportado. Por favor sube un archivo .xlsx o .csv")
+            
+        if not parsed_rows:
+            raise HTTPException(status_code=400, detail="No se encontraron filas con datos válidos en el archivo.")
+            
+        res_import = bulk_import_practicas_aranceles(
+            nomenclador_id=nomenclador_id,
+            rows=parsed_rows,
+            modo=modo,
+            default_vigencia_desde=default_vigencia_desde,
+            default_vigencia_hasta=default_vigencia_hasta,
+            default_moneda=moneda_nom
+        )
+        
+        return {
+            "success": True,
+            "mensaje": f"Se procesaron {res_import['total_procesadas']} filas exitosamente ({res_import['insertadas']} aranceles actualizados).",
+            "detalle": res_import
+        }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error en endpoint valorizar práctica: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error al importar Excel: {e}")
+        raise HTTPException(status_code=500, detail=f"Error durante la importación: {str(e)}")
 
+@app.get("/api/nomenclador/descargar-plantilla")
+def descargar_plantilla_excel():
+    """
+    Genera y descarga un archivo Excel .xlsx oficial con encabezados, instrucciones y filas de muestra en ARS y USD.
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Nomenclador_Plantilla"
+    
+    headers = ["Codigo", "Nombre", "Categoria", "Precio", "Moneda", "Vigencia_Desde", "Vigencia_Hasta", "Descripcion"]
+    ws.append(headers)
+    
+    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+    ejemplos = [
+        ["420101", "Consulta Médica en Consultorio", "Consultas", 8500.00, "ARS", "2026-09-01", "2026-12-31", "Consulta ambulatoria general"],
+        ["180104", "Ecografía Ginecológica / Tocoginecológica", "Diagnóstico", 22000.00, "ARS", "2026-09-01", "", "Ecografía pelviana transvaginal"],
+        ["FIV-ICSI-01", "Tratamiento FIV + ICSI Alta Complejidad", "Fertilidad", 1500.00, "USD", "2026-09-01", "", "Incluye estimulación y laboratorio"],
+        ["KIT-MED-02", "Kit de Medicación y Criopreservación", "Laboratorio", 450.00, "USD", "2026-09-01", "2027-03-01", "Mantenimiento anual"]
+    ]
+    
+    for row in ejemplos:
+        ws.append(row)
+        
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        col_letter = openpyxl.utils.get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+        
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    headers_resp = {
+        "Content-Disposition": "attachment; filename=plantilla_nomenclador_crm.xlsx"
+    }
+    return Response(content=output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers_resp)
+
+@app.get("/api/nomenclador/exportar-excel")
+def exportar_nomenclador_excel(nomenclador_id: Optional[str] = None):
+    """
+    Exporta el catálogo completo o de un nomenclador específico a un archivo Excel .xlsx descargable.
+    """
+    try:
+        res = list_practicas_con_arancel(nomenclador_id=nomenclador_id, limit=5000)
+        practicas = res.get("practicas", [])
+        
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Catalogo_Practicas"
+        
+        headers = ["Nomenclador", "Codigo", "Nombre", "Categoria", "Precio", "Moneda", "Vigencia_Desde", "Vigencia_Hasta", "Estado"]
+        ws.append(headers)
+        
+        header_fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            
+        for p in practicas:
+            estado = "Activa" if p.get("activo") else "Inactiva"
+            ws.append([
+                p.get("nomenclador_nombre", ""),
+                p.get("codigo", ""),
+                p.get("nombre", ""),
+                p.get("categoria", "General"),
+                p.get("precio", 0.0),
+                p.get("moneda", "ARS"),
+                p.get("vigencia_desde", "") or "",
+                p.get("vigencia_hasta", "") or "",
+                estado
+            ])
+            
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or "")) for cell in col)
+            col_letter = openpyxl.utils.get_column_letter(col[0].column)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+            
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        headers_resp = {
+            "Content-Disposition": "attachment; filename=catalogo_nomencladores_crm.xlsx"
+        }
+        return Response(content=output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers_resp)
+    except Exception as e:
+        logger.error(f"Error al exportar Excel: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 

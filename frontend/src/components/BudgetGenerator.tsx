@@ -11,10 +11,7 @@ import {
   RefreshCw,
   Loader2,
   Search,
-  Sparkles,
   DollarSign,
-  Building2,
-  Check,
   X,
   AlertCircle,
   Layers,
@@ -32,31 +29,29 @@ interface Paciente {
 
 interface SearchResultPractice {
   id: string
-  origen: 'crm_propio' | 'geclisa'
-  origen_label: string
   codigo: string
   nombre: string
   categoria: string
-  nom_id?: number | null
-  nom_cod?: string
-  tipo_nomenclador: string
-  precio_sugerido: number
-  origen_precio: 'crm_propio' | 'crm_override' | 'geclisa_particular' | 'sin_precio'
-  override_activo: boolean
+  nomenclador_id: string
+  nomenclador_nombre: string
+  nomenclador_codigo: string
+  precio: number
+  moneda: 'ARS' | 'USD'
+  vigencia_desde?: string | null
+  vigencia_hasta?: string | null
+  tiene_precio: boolean
 }
 
 interface BudgetItem {
   id: string
-  origen: 'crm_propio' | 'geclisa'
   codigo: string
   nombre: string
-  tipo_nomenclador: string
-  nom_id?: number | null
-  nom_cod?: string
+  nomenclador_nombre: string
+  nomenclador_id: string
   cantidad: number
   precio_unitario: number
+  moneda: 'ARS' | 'USD'
   subtotal: number
-  origen_precio: string
 }
 
 interface ModalSelectedMap {
@@ -78,7 +73,8 @@ export default function BudgetGenerator() {
   const [searching, setSearching] = useState(false)
   const [searchResults, setSearchResults] = useState<SearchResultPractice[]>([])
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
-  const [modalFilter, setModalFilter] = useState<'todos' | 'creo' | 'nacional' | 'crm'>('todos')
+  const [modalFilterNom, setModalFilterNom] = useState<string>('todos')
+  const [modalFilterMoneda, setModalFilterMoneda] = useState<'todas' | 'ARS' | 'USD'>('todas')
   const [modalSelected, setModalSelected] = useState<ModalSelectedMap>({})
 
   // Lista de Ítems del presupuesto
@@ -101,12 +97,12 @@ export default function BudgetGenerator() {
     loadPacientes()
   }, [])
 
-  // Disparar búsqueda explícita
+  // Disparar búsqueda explícita en catálogo nativo
   const handleTriggerSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     const query = searchQuery.trim()
     if (!query) {
-      setMensaje({ tipo: 'error', texto: 'Por favor ingresa un término de búsqueda (ej. ICSI, 420101, Consulta, Ecografía).' })
+      setMensaje({ tipo: 'error', texto: 'Ingresa un código o término de búsqueda (ej. 420101, Consulta, Ecografía, FIV, ICSI).' })
       return
     }
 
@@ -114,9 +110,10 @@ export default function BudgetGenerator() {
       setSearching(true)
       setMensaje(null)
       setModalSelected({})
-      setModalFilter('todos')
+      setModalFilterNom('todos')
+      setModalFilterMoneda('todas')
 
-      const res = await fetch(`${API_BASE_URL}/api/nomenclador/buscar-unificado?q=${encodeURIComponent(query)}`)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(query)}`)
       if (res.ok) {
         const data = await res.json()
         const results: SearchResultPractice[] = data.resultados || []
@@ -142,13 +139,13 @@ export default function BudgetGenerator() {
       updated[practice.id] = {
         practice,
         cantidad: 1,
-        precio_unitario: practice.precio_sugerido || 0
+        precio_unitario: practice.precio || 0
       }
     }
     setModalSelected(updated)
   }
 
-  // Modificar cantidad de una práctica seleccionada en el modal
+  // Modificar cantidad en el modal
   const handleUpdateModalQuantity = (practiceId: string, qty: number) => {
     if (!modalSelected[practiceId]) return
     const updated = { ...modalSelected }
@@ -156,7 +153,7 @@ export default function BudgetGenerator() {
     setModalSelected(updated)
   }
 
-  // Modificar precio unitario en el modal si se desea
+  // Modificar precio unitario en el modal
   const handleUpdateModalPrice = (practiceId: string, price: number) => {
     if (!modalSelected[practiceId]) return
     const updated = { ...modalSelected }
@@ -164,11 +161,12 @@ export default function BudgetGenerator() {
     setModalSelected(updated)
   }
 
-  // Seleccionar todas / deseleccionar todas las visibles
+  // Filtrar resultados visibles en el modal
+  const uniqueNomencladores = Array.from(new Set(searchResults.map((r) => r.nomenclador_nombre)))
+
   const filteredResults = searchResults.filter((item) => {
-    if (modalFilter === 'creo') return item.nom_id === 6
-    if (modalFilter === 'nacional') return item.nom_id === 1 || item.nom_id === 2 || item.nom_id === 5
-    if (modalFilter === 'crm') return item.origen === 'crm_propio'
+    if (modalFilterNom !== 'todos' && item.nomenclador_nombre !== modalFilterNom) return false
+    if (modalFilterMoneda !== 'todas' && item.moneda !== modalFilterMoneda) return false
     return true
   })
 
@@ -186,7 +184,7 @@ export default function BudgetGenerator() {
           updated[item.id] = {
             practice: item,
             cantidad: 1,
-            precio_unitario: item.precio_sugerido || 0
+            precio_unitario: item.precio || 0
           }
         }
       })
@@ -202,25 +200,21 @@ export default function BudgetGenerator() {
     const updatedItems = [...items]
 
     selectedEntries.forEach(({ practice, cantidad, precio_unitario }) => {
-      const existIdx = updatedItems.findIndex((it) => it.codigo === practice.codigo)
+      const existIdx = updatedItems.findIndex((it) => it.codigo === practice.codigo && it.moneda === practice.moneda)
       if (existIdx > -1) {
-        // Incrementar cantidad
         updatedItems[existIdx].cantidad += cantidad
         updatedItems[existIdx].subtotal = updatedItems[existIdx].cantidad * updatedItems[existIdx].precio_unitario
       } else {
-        // Agregar nuevo ítem
         updatedItems.push({
           id: practice.id,
-          origen: practice.origen,
           codigo: practice.codigo,
           nombre: practice.nombre,
-          tipo_nomenclador: practice.tipo_nomenclador,
-          nom_id: practice.nom_id,
-          nom_cod: practice.nom_cod,
+          nomenclador_nombre: practice.nomenclador_nombre,
+          nomenclador_id: practice.nomenclador_id,
           cantidad,
           precio_unitario,
-          subtotal: cantidad * precio_unitario,
-          origen_precio: practice.origen_precio
+          moneda: practice.moneda,
+          subtotal: cantidad * precio_unitario
         })
       }
     })
@@ -229,7 +223,7 @@ export default function BudgetGenerator() {
     setIsSearchModalOpen(false)
     setModalSelected({})
     setSearchQuery('')
-    setMensaje({ tipo: 'success', texto: `Se agregaron ${selectedEntries.length} práctica(s) al presupuesto.` })
+    setMensaje({ tipo: 'success', texto: `Se agregaron ${selectedEntries.length} prestación(es) al presupuesto.` })
   }
 
   // Quitar ítem de la tabla principal
@@ -254,8 +248,9 @@ export default function BudgetGenerator() {
     setItems(updated)
   }
 
-  // Total
-  const total = items.reduce((acc, it) => acc + it.subtotal, 0)
+  // Totales por Moneda
+  const totalARS = items.filter((it) => it.moneda === 'ARS').reduce((acc, it) => acc + it.subtotal, 0)
+  const totalUSD = items.filter((it) => it.moneda === 'USD').reduce((acc, it) => acc + it.subtotal, 0)
 
   // Enviar a la API del Backend para generar presupuesto y PDF
   const handleSaveBudget = async () => {
@@ -278,7 +273,8 @@ export default function BudgetGenerator() {
         codigo_servicio: it.codigo,
         nombre_prestacion: it.nombre,
         cantidad: it.cantidad,
-        precio_unitario: it.precio_unitario
+        precio_unitario: it.precio_unitario,
+        moneda: it.moneda
       }))
     }
 
@@ -306,38 +302,7 @@ export default function BudgetGenerator() {
     }
   }
 
-  // Insignia de procedencia de tarifa
-  const renderOriginBadge = (origenPrecio: string) => {
-    switch (origenPrecio) {
-      case 'crm_propio':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 text-[10px] font-bold border border-amber-200 dark:border-amber-800">
-            <Sparkles size={10} /> CRM Propio
-          </span>
-        )
-      case 'crm_override':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold border border-emerald-200 dark:border-emerald-800">
-            <DollarSign size={10} /> Precio CRM Override
-          </span>
-        )
-      case 'geclisa_particular':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 text-[10px] font-bold border border-blue-200 dark:border-blue-800">
-            <Building2 size={10} /> Geclisa Particular
-          </span>
-        )
-      default:
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
-            Manual
-          </span>
-        )
-    }
-  }
-
   const countSelected = Object.keys(modalSelected).length
-  const modalSubtotal = Object.values(modalSelected).reduce((acc, curr) => acc + curr.cantidad * curr.precio_unitario, 0)
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto w-full p-2 md:p-4">
@@ -382,9 +347,9 @@ export default function BudgetGenerator() {
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
               <Search size={14} className="text-blue-600" />
-              Búsqueda en Nomenclador de Geclisa & Catálogo Propio
+              Búsqueda en Nomencladores y Catálogo del CRM
             </h3>
-            <span className="text-[11px] text-slate-400">Aranceles Particulares en ARS</span>
+            <span className="text-[11px] text-slate-400">Aranceles vigentes en ARS y USD</span>
           </div>
 
           {/* Formulario de Búsqueda */}
@@ -395,7 +360,7 @@ export default function BudgetGenerator() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Escribe el código o nombre de la práctica (ej: ICSI, 420101, Consulta, Ecografía)..."
+                placeholder="Escribe el código o nombre de la práctica (ej: 420101, Consulta, Ecografía, FIV, ICSI)..."
                 className="w-full text-xs pl-10 pr-3 py-3 rounded-xl border border-[var(--border)] bg-[var(--background)] focus:ring-2 focus:ring-blue-500 outline-none font-medium"
               />
             </div>
@@ -454,7 +419,7 @@ export default function BudgetGenerator() {
             <div className="text-center py-10 text-slate-400 text-xs border border-dashed border-[var(--border)] rounded-xl space-y-2">
               <Search size={24} className="mx-auto text-slate-300 dark:text-slate-700" />
               <p>No has agregado ninguna prestación al presupuesto.</p>
-              <p className="text-[11px] text-slate-500">Ingresa un término arriba y haz clic en &quot;Buscar Prácticas&quot; para seleccionar del pop-up.</p>
+              <p className="text-[11px] text-slate-500">Ingresa un término arriba y haz clic en &quot;Buscar Prácticas&quot; para abrir el pop-up de selección.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -463,7 +428,7 @@ export default function BudgetGenerator() {
                   <tr className="border-b border-[var(--border)] text-slate-400 font-semibold uppercase">
                     <th className="py-2.5 px-3">Código</th>
                     <th className="py-2.5 px-3">Descripción</th>
-                    <th className="py-2.5 px-3">Origen Tarifa</th>
+                    <th className="py-2.5 px-3">Nomenclador</th>
                     <th className="py-2.5 px-3 text-center">Cant.</th>
                     <th className="py-2.5 px-3 text-right">P. Unitario</th>
                     <th className="py-2.5 px-3 text-right">Subtotal</th>
@@ -471,49 +436,56 @@ export default function BudgetGenerator() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition">
-                      <td className="py-3 px-3 font-mono font-bold text-blue-600">{item.codigo}</td>
-                      <td className="py-3 px-3">
-                        <div className="font-semibold text-slate-800 dark:text-slate-200">{item.nombre}</div>
-                        <div className="text-[11px] text-slate-400">{item.tipo_nomenclador}</div>
-                      </td>
-                      <td className="py-3 px-3">{renderOriginBadge(item.origen_precio)}</td>
-                      <td className="py-3 px-3 text-center">
-                        <input
-                          type="number"
-                          min="1"
-                          value={item.cantidad}
-                          onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
-                          className="w-14 text-center text-xs p-1 rounded border border-[var(--border)] bg-[var(--background)] font-mono"
-                        />
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        <div className="relative inline-block w-28">
-                          <span className="absolute left-1.5 top-1 text-slate-400">$</span>
+                  {items.map((item, idx) => {
+                    const isUSD = item.moneda === 'USD'
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition">
+                        <td className="py-3 px-3 font-mono font-bold text-blue-600">{item.codigo}</td>
+                        <td className="py-3 px-3">
+                          <div className="font-semibold text-slate-800 dark:text-slate-200">{item.nombre}</div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="text-[11px] text-slate-500">{item.nomenclador_nombre}</span>
+                        </td>
+                        <td className="py-3 px-3 text-center">
                           <input
                             type="number"
-                            step="0.01"
-                            value={item.precio_unitario}
-                            onChange={(e) => handleUpdateItemPrice(idx, parseFloat(e.target.value) || 0)}
-                            className="w-full text-right text-xs pl-4 pr-1.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] font-mono font-semibold"
+                            min="1"
+                            value={item.cantidad}
+                            onChange={(e) => handleUpdateItemQuantity(idx, parseInt(e.target.value) || 1)}
+                            className="w-14 text-center text-xs p-1 rounded border border-[var(--border)] bg-[var(--background)] font-mono"
                           />
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
-                        ${item.subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                      </td>
-                      <td className="py-3 px-3 text-right">
-                        <button
-                          onClick={() => handleRemoveItem(idx)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 rounded transition"
-                          title="Eliminar"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <div className="relative inline-block w-32">
+                            <span className="absolute left-1.5 top-1 text-slate-400 text-[11px] font-bold">
+                              {isUSD ? 'USD' : '$'}
+                            </span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={item.precio_unitario}
+                              onChange={(e) => handleUpdateItemPrice(idx, parseFloat(e.target.value) || 0)}
+                              className="w-full text-right text-xs pl-8 pr-1.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] font-mono font-bold text-emerald-600"
+                            />
+                          </div>
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
+                          {isUSD ? 'USD ' : '$ '}
+                          {item.subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            onClick={() => handleRemoveItem(idx)}
+                            className="p-1.5 text-slate-400 hover:text-red-600 rounded transition"
+                            title="Eliminar"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -521,7 +493,7 @@ export default function BudgetGenerator() {
         </div>
       </div>
 
-      {/* Columna Derecha: Resumen de Cotización & Generación de PDF */}
+      {/* Columna Derecha: Resumen Multi-Moneda & Generación de PDF */}
       <div className="space-y-6">
         <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-6 sticky top-6">
           <h3 className="text-md font-bold text-slate-900 dark:text-slate-100 border-b border-[var(--border)] pb-3 flex items-center gap-2">
@@ -531,28 +503,39 @@ export default function BudgetGenerator() {
 
           <div className="space-y-3 text-xs">
             <div className="flex justify-between text-slate-500">
-              <span>Cantidad de Prácticas:</span>
+              <span>Cantidad de Prestaciones:</span>
               <span className="font-bold text-slate-700 dark:text-slate-300">{items.reduce((a, b) => a + b.cantidad, 0)}</span>
             </div>
 
-            <div className="flex justify-between text-slate-500">
-              <span>Aranceles Gravados / Honorarios:</span>
-              <span className="font-mono text-slate-700 dark:text-slate-300">
-                ${total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
+            {/* Total ARS */}
+            {totalARS > 0 && (
+              <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-xl space-y-1">
+                <div className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300 uppercase">
+                  🇦🇷 Total en Pesos Argentinos (ARS)
+                </div>
+                <div className="text-lg font-extrabold text-emerald-700 dark:text-emerald-200 font-mono">
+                  ${totalARS.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            )}
 
-            <div className="flex justify-between text-slate-500">
-              <span>Moneda de Cotización:</span>
-              <span className="font-bold text-slate-700 dark:text-slate-300">Pesos Argentinos (ARS)</span>
-            </div>
+            {/* Total USD */}
+            {totalUSD > 0 && (
+              <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl space-y-1">
+                <div className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase">
+                  🇺🇸 Total en Dólares Estadounidenses (USD)
+                </div>
+                <div className="text-lg font-extrabold text-amber-700 dark:text-amber-200 font-mono">
+                  USD {totalUSD.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            )}
 
-            <div className="border-t border-[var(--border)] pt-3 flex justify-between items-baseline">
-              <span className="text-sm font-extrabold text-slate-900 dark:text-slate-100">Total Cotizado:</span>
-              <span className="text-xl font-extrabold text-emerald-600 font-mono">
-                ${total.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
+            {totalARS === 0 && totalUSD === 0 && (
+              <div className="text-slate-400 italic text-center py-2">
+                Agrega prestaciones para calcular el total.
+              </div>
+            )}
           </div>
 
           <button
@@ -579,10 +562,6 @@ export default function BudgetGenerator() {
               <div className="flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-bold text-xs">
                 <CheckCircle size={16} className="text-emerald-600" />
                 ¡Presupuesto Emitido con Éxito!
-              </div>
-
-              <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
-                Total: <span className="font-bold">${presupuestoCreado.total?.toLocaleString('es-AR')}</span>
               </div>
 
               {presupuestoCreado.pdf_url && (
@@ -612,7 +591,7 @@ export default function BudgetGenerator() {
               <div>
                 <h3 className="text-base font-bold flex items-center gap-2">
                   <Search className="text-blue-600" size={18} />
-                  Resultados de Búsqueda de Prácticas
+                  Catálogo de Prácticas & Aranceles Vigentes
                 </h3>
                 <p className="text-xs text-[var(--secondary)] mt-0.5">
                   Búsqueda para: <span className="font-mono font-bold text-blue-600">&quot;{searchQuery}&quot;</span> • {searchResults.length} coincidencia(s) encontrada(s)
@@ -626,50 +605,56 @@ export default function BudgetGenerator() {
               </button>
             </div>
 
-            {/* Filtros por Categoría / Nomenclador dentro del Modal */}
-            <div className="flex flex-wrap gap-2 shrink-0">
+            {/* Filtros por Nomenclador y Moneda dentro del Modal */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
               <button
-                onClick={() => setModalFilter('todos')}
+                onClick={() => setModalFilterNom('todos')}
                 className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  modalFilter === 'todos'
+                  modalFilterNom === 'todos'
                     ? 'bg-blue-600 text-white shadow-sm'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
                 }`}
               >
-                Todas ({searchResults.length})
-              </button>
-              <button
-                onClick={() => setModalFilter('creo')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  modalFilter === 'creo'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                }`}
-              >
-                Nomenclador Creo ({searchResults.filter((r) => r.nom_id === 6).length})
-              </button>
-              <button
-                onClick={() => setModalFilter('nacional')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  modalFilter === 'nacional'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                }`}
-              >
-                Prestaciones Médicas ({searchResults.filter((r) => r.nom_id === 1 || r.nom_id === 2 || r.nom_id === 5).length})
-              </button>
-              <button
-                onClick={() => setModalFilter('crm')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
-                  modalFilter === 'crm'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                }`}
-              >
-                CRM Propias ({searchResults.filter((r) => r.origen === 'crm_propio').length})
+                Todos ({searchResults.length})
               </button>
 
-              <div className="ml-auto">
+              {uniqueNomencladores.map((nomNom) => (
+                <button
+                  key={nomNom}
+                  onClick={() => setModalFilterNom(nomNom)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    modalFilterNom === nomNom
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                  }`}
+                >
+                  {nomNom} ({searchResults.filter((r) => r.nomenclador_nombre === nomNom).length})
+                </button>
+              ))}
+
+              {/* Filtro Moneda */}
+              <div className="flex items-center gap-1 ml-auto">
+                <button
+                  onClick={() => setModalFilterMoneda('todas')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${modalFilterMoneda === 'todas' ? 'bg-slate-700 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}
+                >
+                  Todas
+                </button>
+                <button
+                  onClick={() => setModalFilterMoneda('ARS')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${modalFilterMoneda === 'ARS' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}
+                >
+                  ARS ($)
+                </button>
+                <button
+                  onClick={() => setModalFilterMoneda('USD')}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-bold ${modalFilterMoneda === 'USD' ? 'bg-amber-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500'}`}
+                >
+                  USD (U$D)
+                </button>
+              </div>
+
+              <div className="ml-2">
                 <button
                   type="button"
                   onClick={handleToggleSelectAll}
@@ -692,12 +677,13 @@ export default function BudgetGenerator() {
             <div className="flex-1 overflow-y-auto border border-[var(--border)] rounded-xl divide-y divide-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30">
               {filteredResults.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 text-xs">
-                  No se encontraron prácticas con el filtro seleccionado.
+                  No se encontraron prácticas con los filtros seleccionados.
                 </div>
               ) : (
                 filteredResults.map((item) => {
                   const isSelected = !!modalSelected[item.id]
                   const selectedData = modalSelected[item.id]
+                  const isUSD = item.moneda === 'USD'
 
                   return (
                     <div
@@ -723,8 +709,19 @@ export default function BudgetGenerator() {
                             <span>{item.nombre}</span>
                           </div>
                           <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
-                            <span>{item.tipo_nomenclador}</span>
-                            {renderOriginBadge(item.origen_precio)}
+                            <span>{item.nomenclador_nombre}</span>
+                            <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                              {item.categoria}
+                            </span>
+                            <span
+                              className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${
+                                isUSD
+                                  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                                  : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                              }`}
+                            >
+                              {item.moneda}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -746,27 +743,36 @@ export default function BudgetGenerator() {
 
                             <div className="flex items-center gap-1">
                               <span className="text-[11px] font-bold text-slate-500">Precio:</span>
-                              <div className="relative w-24">
-                                <span className="absolute left-1.5 top-1 text-slate-400 text-xs">$</span>
+                              <div className="relative w-28">
+                                <span className="absolute left-1.5 top-1 text-slate-400 text-[10px] font-bold">
+                                  {isUSD ? 'USD' : '$'}
+                                </span>
                                 <input
                                   type="number"
                                   step="0.01"
-                                  value={selectedData?.precio_unitario ?? (item.precio_sugerido || 0)}
+                                  value={selectedData?.precio_unitario ?? (item.precio || 0)}
                                   onChange={(e) => handleUpdateModalPrice(item.id, parseFloat(e.target.value) || 0)}
-                                  className="w-full text-right text-xs pl-3.5 pr-1.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] font-mono font-bold text-emerald-600"
+                                  className="w-full text-right text-xs pl-7 pr-1.5 py-1 rounded border border-[var(--border)] bg-[var(--background)] font-mono font-bold text-emerald-600"
                                 />
                               </div>
                             </div>
                           </div>
                         )}
 
-                        {!isSelected && (item.precio_sugerido > 0 ? (
-                          <span className="font-mono font-bold text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-950/50 px-2.5 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800">
-                            ${item.precio_sugerido.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                        {!isSelected && (item.precio > 0 ? (
+                          <span
+                            className={`font-mono font-bold text-xs px-2.5 py-1 rounded-lg border ${
+                              isUSD
+                                ? 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50 border-amber-200 dark:border-amber-800'
+                                : 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800'
+                            }`}
+                          >
+                            {isUSD ? 'USD ' : '$ '}
+                            {item.precio.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                           </span>
                         ) : (
                           <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">
-                            Sin arancel Geclisa
+                            Sin arancel cargado
                           </span>
                         ))}
 
@@ -792,13 +798,8 @@ export default function BudgetGenerator() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t border-[var(--border)] pt-3 shrink-0">
               <div className="text-xs">
                 <span className="font-bold text-slate-700 dark:text-slate-300">
-                  {countSelected} práctica(s) seleccionada(s)
+                  {countSelected} prestación(es) seleccionada(s)
                 </span>
-                {countSelected > 0 && (
-                  <span className="text-slate-500 ml-2">
-                    (Subtotal estimado: <strong className="text-emerald-600 font-mono">${modalSubtotal.toLocaleString('es-AR', { minimumFractionDigits: 2 })}</strong>)
-                  </span>
-                )}
               </div>
 
               <div className="flex items-center gap-2 self-end sm:self-auto">
