@@ -58,8 +58,7 @@ interface ModalSelectedMap {
     precio_unitario: number
   }
 }
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 
 export default function BudgetGenerator() {
   const [pacientes, setPacientes] = useState<Paciente[]>([])

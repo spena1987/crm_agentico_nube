@@ -70,8 +70,7 @@ const PALETA_COLORES = [
   { nombre: 'Púrpura Especialidades', hex: '#7E22CE' },
   { nombre: 'Gris Corporativo', hex: '#334155' }
 ]
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 
 export default function BudgetTemplateDesignerCard() {
   const [config, setConfig] = useState<PlantillaPresupuestoConfig>(DEFAULT_PLANTILLA)

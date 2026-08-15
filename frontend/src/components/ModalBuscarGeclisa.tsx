@@ -21,6 +21,7 @@ import {
   Receipt
 } from 'lucide-react'
 import Link from 'next/link'
+import { BACKEND_URL } from '@/lib/api'
 
 interface GeclisaPacienteData {
   encontrado: boolean
@@ -50,8 +51,6 @@ interface ModalBuscarGeclisaProps {
   onClose: () => void
   onPacienteImportado: (paciente: any) => void
 }
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
 
 export default function ModalBuscarGeclisa({ isOpen, onClose, onPacienteImportado }: ModalBuscarGeclisaProps) {
   const [tipoBusqueda, setTipoBusqueda] = useState<'dni' | 'ficha'>('dni')

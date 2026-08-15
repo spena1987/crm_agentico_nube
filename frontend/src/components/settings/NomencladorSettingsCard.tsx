@@ -48,8 +48,7 @@ interface PracticaCatalogo {
   arancel_id?: string | null
   tiene_arancel: boolean
 }
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 
 export default function NomencladorSettingsCard() {
   const [loading, setLoading] = useState(true)
