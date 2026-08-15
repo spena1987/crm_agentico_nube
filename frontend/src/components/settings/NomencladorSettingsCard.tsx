@@ -17,7 +17,6 @@ import {
   Loader2,
   RefreshCw,
   Clock,
-  Sparkles,
   ArrowRight,
   FileText
 } from 'lucide-react'
@@ -65,13 +64,6 @@ export default function NomencladorSettingsCard() {
   const [loadingPracticas, setLoadingPracticas] = useState(false)
 
   // Modales
-  const [modalNomOpen, setModalNomOpen] = useState(false)
-  const [nomForm, setNomForm] = useState({
-    nombre: '',
-    moneda_default: 'ARS' as 'ARS' | 'USD',
-    descripcion: ''
-  })
-
   const [modalPracticaOpen, setModalPracticaOpen] = useState(false)
   const [editingPractica, setEditingPractica] = useState<PracticaCatalogo | null>(null)
   const [practicaForm, setPracticaForm] = useState({
@@ -144,46 +136,6 @@ export default function NomencladorSettingsCard() {
     }
   }
 
-  // Crear Nomenclador
-  const handleCreateNomenclador = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!nomForm.nombre.trim()) return
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/nomencladores`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(nomForm)
-      })
-      if (res.ok) {
-        setFeedback({ tipo: 'success', texto: 'Nomenclador creado exitosamente.' })
-        setModalNomOpen(false)
-        setNomForm({ nombre: '', moneda_default: 'ARS', descripcion: '' })
-        loadNomencladores()
-      }
-    } catch (err) {
-      setFeedback({ tipo: 'error', texto: 'Error al crear nomenclador.' })
-    }
-  }
-
-  // Eliminar Nomenclador
-  const handleDeleteNomenclador = async (id: string, nombre: string) => {
-    if (!confirm(`¿Estás seguro de eliminar el nomenclador "${nombre}" y todas sus prácticas asociadas?`)) return
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/nomencladores/${id}`, {
-        method: 'DELETE'
-      })
-      if (res.ok) {
-        setFeedback({ tipo: 'success', texto: 'Nomenclador eliminado.' })
-        if (selectedNomId === id) setSelectedNomId('all')
-        loadNomencladores()
-      }
-    } catch (err) {
-      setFeedback({ tipo: 'error', texto: 'Error al eliminar nomenclador.' })
-    }
-  }
-
   // Guardar / Editar Práctica
   const handleSavePractica = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -193,13 +145,16 @@ export default function NomencladorSettingsCard() {
     }
 
     try {
+      const nomElegido = nomencladores.find((n) => n.id === practicaForm.nomenclador_id)
+      const monedaFinal = nomElegido ? nomElegido.moneda_default : practicaForm.moneda
+
       const payload = {
         nomenclador_id: practicaForm.nomenclador_id,
         codigo: practicaForm.codigo.trim().toUpperCase(),
         nombre: practicaForm.nombre.trim(),
         categoria: practicaForm.categoria.trim() || 'General',
         precio: parseFloat(practicaForm.precio) || 0.0,
-        moneda: practicaForm.moneda,
+        moneda: monedaFinal,
         vigencia_desde: practicaForm.vigencia_desde || new Date().toISOString().split('T')[0],
         vigencia_hasta: practicaForm.vigencia_hasta || null,
         descripcion: practicaForm.descripcion.trim()
@@ -248,7 +203,7 @@ export default function NomencladorSettingsCard() {
       return
     }
     if (!importNomId) {
-      setFeedback({ tipo: 'error', texto: 'Selecciona el Nomenclador de destino.' })
+      setFeedback({ tipo: 'error', texto: 'Selecciona la moneda del nomenclador (Pesos o Dólares).' })
       return
     }
 
@@ -256,10 +211,14 @@ export default function NomencladorSettingsCard() {
       setImporting(true)
       setFeedback(null)
 
+      const nomElegido = nomencladores.find((n) => n.id === importNomId)
+      const monedaDestino = nomElegido?.moneda_default || 'ARS'
+
       const formData = new FormData()
       formData.append('file', importFile)
       formData.append('nomenclador_id', importNomId)
       formData.append('modo', importModo)
+      formData.append('default_moneda', monedaDestino)
       if (importVigDesde) formData.append('default_vigencia_desde', importVigDesde)
       if (importVigHasta) formData.append('default_vigencia_hasta', importVigHasta)
 
@@ -309,11 +268,11 @@ export default function NomencladorSettingsCard() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
           <div>
             <h2 className="text-lg font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
-              <Layers className="text-blue-600" size={22} />
-              Nomencladores, Aranceles y Catálogo de Prácticas
+              <DollarSign className="text-emerald-600" size={22} />
+              Catálogo de Nomencladores y Aranceles (Pesos y Dólares)
             </h2>
             <p className="text-xs text-[var(--secondary)] mt-1">
-              Administra los nomencladores propios del CRM con soporte multi-moneda (ARS / USD), control de vigencias temporales e importación masiva vía Excel.
+              Gestiona los aranceles de tus prácticas médicas diferenciados por moneda (**Pesos ARS** y **Dólares USD**), con control de vigencias temporales e importación masiva vía Excel.
             </p>
           </div>
 
@@ -323,7 +282,7 @@ export default function NomencladorSettingsCard() {
               download
               className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-[var(--border)]"
             >
-              <Download size={14} /> Plantilla Excel
+              <Download size={14} /> Descargar Plantilla Excel
             </a>
 
             <a
@@ -331,15 +290,8 @@ export default function NomencladorSettingsCard() {
               download
               className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-[var(--border)]"
             >
-              <FileSpreadsheet size={14} /> Exportar Catálogo
+              <FileSpreadsheet size={14} /> Exportar a Excel
             </a>
-
-            <button
-              onClick={() => setModalNomOpen(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus size={15} /> Nuevo Nomenclador
-            </button>
           </div>
         </div>
 
@@ -362,48 +314,43 @@ export default function NomencladorSettingsCard() {
           </div>
         )}
 
-        {/* Pestañas de Nomencladores */}
+        {/* Pestañas de Moneda / Nomenclador */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           <button
             onClick={() => setSelectedNomId('all')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 flex items-center gap-2 ${
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 flex items-center gap-2 ${
               selectedNomId === 'all'
                 ? 'bg-blue-600 text-white shadow-sm'
                 : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
             }`}
           >
-            <span>Todos los Nomencladores</span>
+            <span>Todos los Precios</span>
             <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-black/10 dark:bg-white/10 font-mono">
               {nomencladores.reduce((acc, curr) => acc + (curr.total_practicas || 0), 0)}
             </span>
           </button>
 
-          {nomencladores.map((nom) => (
-            <div key={nom.id} className="relative group shrink-0">
+          {nomencladores.map((nom) => {
+            const isUSD = nom.moneda_default === 'USD'
+            return (
               <button
+                key={nom.id}
                 onClick={() => setSelectedNomId(nom.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
                   selectedNomId === nom.id
-                    ? 'bg-blue-600 text-white shadow-sm'
+                    ? isUSD
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-emerald-600 text-white shadow-sm'
                     : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
                 }`}
               >
-                <span>{nom.nombre}</span>
-                <span
-                  className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
-                    nom.moneda_default === 'USD'
-                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
-                      : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
-                  }`}
-                >
-                  {nom.moneda_default}
-                </span>
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-black/10 dark:bg-white/10 font-mono">
-                  {nom.total_practicas || 0}
+                <span>{isUSD ? '🇺🇸 Nomenclador en Dólares (USD)' : '🇦🇷 Nomenclador en Pesos (ARS)'}</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-black/10 dark:bg-white/10 font-mono font-bold">
+                  {nom.total_practicas || 0} prácticas
                 </span>
               </button>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -414,23 +361,23 @@ export default function NomencladorSettingsCard() {
         <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
           <h3 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
             <FileSpreadsheet className="text-emerald-600" size={18} />
-            Importación Masiva de Prácticas & Aranceles vía Excel
+            Importar Prácticas y Valores desde Excel
           </h3>
-          <span className="text-[11px] text-slate-400">Archivos soportados: .xlsx y .csv</span>
+          <span className="text-[11px] text-slate-400">Formatos aceptados: .xlsx y .csv</span>
         </div>
 
         <form onSubmit={handleImportExcel} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          {/* Nomenclador de Destino */}
+          {/* Nomenclador / Moneda de Destino */}
           <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">Nomenclador de Destino</label>
+            <label className="text-xs font-bold text-slate-500 block mb-1">Moneda del Nomenclador</label>
             <select
               value={importNomId}
               onChange={(e) => setImportNomId(e.target.value)}
-              className="w-full text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none focus:ring-2 focus:ring-blue-500"
             >
               {nomencladores.map((nom) => (
                 <option key={nom.id} value={nom.id}>
-                  {nom.nombre} ({nom.moneda_default})
+                  {nom.moneda_default === 'USD' ? '🇺🇸 Dólares (USD)' : '🇦🇷 Pesos (ARS)'} - {nom.nombre}
                 </option>
               ))}
             </select>
@@ -461,7 +408,7 @@ export default function NomencladorSettingsCard() {
             />
           </div>
 
-          {/* Selector de Archivo y Botón */}
+          {/* Selector de Archivo */}
           <div>
             <input
               type="file"
@@ -482,7 +429,7 @@ export default function NomencladorSettingsCard() {
 
           <div className="md:col-span-3 flex items-center gap-4 pt-1">
             <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
-              <span className="font-bold text-slate-400">Modo de Carga:</span>
+              <span className="font-bold text-slate-400">Modo:</span>
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input
                   type="radio"
@@ -492,7 +439,7 @@ export default function NomencladorSettingsCard() {
                   onChange={() => setImportModo('upsert')}
                   className="text-blue-600"
                 />
-                <span>Actualizar existentes y agregar nuevas (Recomendado)</span>
+                <span>Actualizar precios existentes y agregar nuevas prácticas</span>
               </label>
 
               <label className="flex items-center gap-1.5 cursor-pointer text-amber-600 dark:text-amber-400">
@@ -504,7 +451,7 @@ export default function NomencladorSettingsCard() {
                   onChange={() => setImportModo('replace')}
                   className="text-blue-600"
                 />
-                <span>Reemplazar catálogo completo del nomenclador</span>
+                <span>Reemplazar catálogo completo</span>
               </label>
             </div>
           </div>
@@ -530,7 +477,7 @@ export default function NomencladorSettingsCard() {
       </div>
 
       {/* ==================================================================== */}
-      {/* SECCIÓN 2: TABLA DE PRÁCTICAS CON VIGENCIAS Y MULTI-MONEDA */}
+      {/* SECCIÓN 2: TABLA DE PRÁCTICAS Y ARANCELES */}
       {/* ==================================================================== */}
       <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -553,7 +500,7 @@ export default function NomencladorSettingsCard() {
               className="text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
             >
               <option value="todas">Todas las Monedas</option>
-              <option value="ARS">Pesos (ARS)</option>
+              <option value="ARS">Pesos ($ ARS)</option>
               <option value="USD">Dólares (USD)</option>
             </select>
 
@@ -566,7 +513,7 @@ export default function NomencladorSettingsCard() {
               <option value="todas">Todos los Estados</option>
               <option value="vigentes">🟢 Vigentes Hoy</option>
               <option value="futuras">🟡 Programadas a Futuro</option>
-              <option value="sin_precio">⚪ Sin Arancel Cargado</option>
+              <option value="sin_precio">⚪ Sin Precio Cargado</option>
             </select>
           </div>
 
@@ -598,7 +545,6 @@ export default function NomencladorSettingsCard() {
             <thead>
               <tr className="border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/50 text-slate-400 font-semibold uppercase">
                 <th className="py-3 px-4">Código</th>
-                <th className="py-3 px-4">Nomenclador</th>
                 <th className="py-3 px-4">Descripción / Práctica</th>
                 <th className="py-3 px-4">Categoría</th>
                 <th className="py-3 px-4 text-right">Arancel Vigente</th>
@@ -609,14 +555,14 @@ export default function NomencladorSettingsCard() {
             <tbody className="divide-y divide-[var(--border)]">
               {loadingPracticas ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-slate-400">
+                  <td colSpan={6} className="py-10 text-center text-slate-400">
                     <Loader2 size={20} className="animate-spin mx-auto mb-2 text-blue-600" />
                     Cargando catálogo de prácticas...
                   </td>
                 </tr>
               ) : filteredPracticas.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
+                  <td colSpan={6} className="py-12 text-center text-slate-400">
                     No se encontraron prácticas con los filtros seleccionados.
                   </td>
                 </tr>
@@ -630,11 +576,6 @@ export default function NomencladorSettingsCard() {
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition">
                       <td className="py-3 px-4 font-mono font-bold text-blue-600">{p.codigo}</td>
-                      <td className="py-3 px-4">
-                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                          {p.nomenclador_nombre}
-                        </span>
-                      </td>
                       <td className="py-3 px-4">
                         <div className="font-semibold text-slate-900 dark:text-slate-100">{p.nombre}</div>
                         {p.descripcion && <div className="text-[11px] text-slate-400">{p.descripcion}</div>}
@@ -720,73 +661,6 @@ export default function NomencladorSettingsCard() {
       </div>
 
       {/* ==================================================================== */}
-      {/* MODAL: NUEVO NOMENCLADOR */}
-      {/* ==================================================================== */}
-      {modalNomOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 animate-scale-in">
-            <h3 className="text-sm font-bold flex items-center gap-2">
-              <Layers className="text-blue-600" size={18} />
-              Crear Nuevo Nomenclador / Catálogo
-            </h3>
-
-            <form onSubmit={handleCreateNomenclador} className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-500 block mb-1">Nombre del Nomenclador</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="ej: Nomenclador Alta Complejidad"
-                  value={nomForm.nombre}
-                  onChange={(e) => setNomForm({ ...nomForm, nombre: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-500 block mb-1">Moneda Base Predeterminada</label>
-                <select
-                  value={nomForm.moneda_default}
-                  onChange={(e: any) => setNomForm({ ...nomForm, moneda_default: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="ARS">🇦🇷 Pesos Argentinos (ARS - $)</option>
-                  <option value="USD">🇺🇸 Dólares Estadounidenses (USD - U$D)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-500 block mb-1">Descripción / Observación</label>
-                <textarea
-                  rows={2}
-                  placeholder="Descripción opcional..."
-                  value={nomForm.descripcion}
-                  onChange={(e) => setNomForm({ ...nomForm, descripcion: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)]">
-                <button
-                  type="button"
-                  onClick={() => setModalNomOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
-                >
-                  Guardar Nomenclador
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ==================================================================== */}
       {/* MODAL: CREAR / EDITAR PRÁCTICA INDIVIDUAL */}
       {/* ==================================================================== */}
       {modalPracticaOpen && (
@@ -800,7 +674,7 @@ export default function NomencladorSettingsCard() {
             <form onSubmit={handleSavePractica} className="space-y-3 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-500 block mb-1">Nomenclador</label>
+                  <label className="font-bold text-slate-500 block mb-1">Moneda del Nomenclador</label>
                   <select
                     value={practicaForm.nomenclador_id}
                     onChange={(e) => setPracticaForm({ ...practicaForm, nomenclador_id: e.target.value })}
@@ -808,7 +682,7 @@ export default function NomencladorSettingsCard() {
                   >
                     {nomencladores.map((nom) => (
                       <option key={nom.id} value={nom.id}>
-                        {nom.nombre}
+                        {nom.moneda_default === 'USD' ? '🇺🇸 Dólares (USD)' : '🇦🇷 Pesos (ARS)'}
                       </option>
                     ))}
                   </select>
@@ -832,7 +706,7 @@ export default function NomencladorSettingsCard() {
                 <input
                   type="text"
                   required
-                  placeholder="ej: Consulta en Consultorio / Ecografía Ginecológica"
+                  placeholder="ej: Consulta Médica / Ecografía Tocoginecológica"
                   value={practicaForm.nombre}
                   onChange={(e) => setPracticaForm({ ...practicaForm, nombre: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
@@ -840,19 +714,7 @@ export default function NomencladorSettingsCard() {
               </div>
 
               <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="font-bold text-slate-500 block mb-1">Moneda</label>
-                  <select
-                    value={practicaForm.moneda}
-                    onChange={(e: any) => setPracticaForm({ ...practicaForm, moneda: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none"
-                  >
-                    <option value="ARS">ARS ($)</option>
-                    <option value="USD">USD (U$D)</option>
-                  </select>
-                </div>
-
-                <div className="col-span-2">
+                <div className="col-span-3">
                   <label className="font-bold text-slate-500 block mb-1">Precio / Arancel</label>
                   <input
                     type="number"
@@ -893,7 +755,7 @@ export default function NomencladorSettingsCard() {
                 <label className="font-bold text-slate-500 block mb-1">Categoría</label>
                 <input
                   type="text"
-                  placeholder="ej: Fertilidad, Consultas, Diagnóstico"
+                  placeholder="ej: Consultas, Fertilidad, Diagnóstico"
                   value={practicaForm.categoria}
                   onChange={(e) => setPracticaForm({ ...practicaForm, categoria: e.target.value })}
                   className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none"

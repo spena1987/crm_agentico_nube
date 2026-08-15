@@ -255,12 +255,11 @@ create table if not exists public.nomenclador_aranceles (
 create index if not exists idx_nomenclador_practicas_busqueda on public.nomenclador_practicas(codigo, nombre, categoria);
 create index if not exists idx_aranceles_practica_vigencia_moneda on public.nomenclador_aranceles(practica_id, vigencia_desde, vigencia_hasta, moneda);
 
--- Inserción de Nomencladores Base
+-- Inserción de Nomencladores Base por Moneda (ARS / USD)
 insert into public.nomencladores (codigo, nombre, moneda_default, descripcion)
 values 
-    ('CREO_USD', 'Nomenclador Creo (USD)', 'USD', 'Tratamientos de Fertilidad, Genética y Alta Complejidad'),
-    ('NACIONAL_ARS', 'Prestaciones Médicas (ARS)', 'ARS', 'Nomenclador Nacional de Consultas, Procedimientos y Estudios Ambulatorios'),
-    ('BIOQ_ARS', 'Bioquímicas (ARS)', 'ARS', 'Análisis Clínicos y Laboratorio')
+    ('NOM_ARS', 'Nomenclador en Pesos (ARS)', 'ARS', 'Catálogo de prestaciones y prácticas en Pesos Argentinos ($)'),
+    ('NOM_USD', 'Nomenclador en Dólares (USD)', 'USD', 'Catálogo de prestaciones y prácticas en Dólares Estadounidenses (USD)')
 on conflict (codigo) do update set
     nombre = excluded.nombre,
     moneda_default = excluded.moneda_default;
