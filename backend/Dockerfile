@@ -1,12 +1,15 @@
 FROM python:3.11-slim
 
-# Instalar dependencias del sistema requeridas para neonize y psycopg2
+# Instalar dependencias del sistema requeridas para neonize, libmagic y psycopg2
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     wget \
     ca-certificates \
     git \
+    libmagic1 \
+    libmagic-dev \
+    file \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
