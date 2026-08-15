@@ -42,6 +42,8 @@ let qrTimestamp = 0
 let connectionStatus = 'DISCONNECTED' // DISCONNECTED | INITIALIZING | PAIRING_QR_READY | PAIRING_CODE_READY | CONNECTED
 let isInitializing = false
 let reconnectTimeout = null
+const lidToPhoneMap = new Map()
+let lastContactedPhone = null
 
 let deviceInfo = {
   phone: null,
@@ -228,9 +230,6 @@ async function initBaileys(forceClean = false) {
         }
       }
     })
-
-const lidToPhoneMap = new Map()
-let lastContactedPhone = null
 
     // Manejo de mensajes entrantes (Reenvío al Webhook de FastAPI)
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
