@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
 interface GeclisaPacienteData {
   encontrado: boolean
@@ -125,27 +126,95 @@ export default function ModalBuscarGeclisa({ isOpen, onClose, onPacienteImportad
     setErrorBusqueda(null)
 
     try {
+      const telFinal = telefonoEditable.trim() || resultado.telefono || `temp_${resultado.ficha_id || resultado.dni || Date.now()}`
       const payload = {
         ...resultado,
-        telefono: telefonoEditable.trim() || resultado.telefono,
+        telefono: telFinal,
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/importar`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      })
+      let pacienteGuardado: any = null
 
-      const data = await res.json()
+      // 1. Intentar importar mediante el backend API
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/importar`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        })
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || data.mensaje || 'Error al guardar el paciente en el CRM.')
+        const data = await res.json()
+        if (res.ok && data.success && data.paciente) {
+          pacienteGuardado = data.paciente
+        } else {
+          console.warn('Backend import fallback triggered:', data)
+        }
+      } catch (backendErr) {
+        console.warn('Backend import no disponible, procediendo con Supabase directo:', backendErr)
       }
 
-      const pacienteGuardado = data.paciente
+      // 2. Fallback: Si el backend no completó la inserción (ej: variables no configuradas en servidor backend),
+      // guardar directamente desde el frontend usando el cliente Supabase
+      if (!pacienteGuardado) {
+        const fichaId = resultado.ficha_id ? Number(resultado.ficha_id) : null
+        const dniStr = resultado.dni ? String(resultado.dni) : null
+
+        // Verificar si ya existe en Supabase
+        let existingId: string | null = null
+        if (fichaId) {
+          const { data: pFicha } = await supabase.from('pacientes').select('id').eq('geclisa_ficha_id', fichaId).maybeSingle()
+          if (pFicha?.id) existingId = pFicha.id
+        }
+        if (!existingId && dniStr) {
+          const { data: pDni } = await supabase.from('pacientes').select('id').eq('dni', dniStr).maybeSingle()
+          if (pDni?.id) existingId = pDni.id
+        }
+
+        const datosLimpios: any = {
+          nombre: resultado.nombre_completo || resultado.nombre || 'Paciente Sin Nombre',
+          telefono: telFinal,
+          dni: dniStr,
+          geclisa_ficha_id: fichaId,
+          nro_hc: resultado.nro_hc || null,
+          obra_social: resultado.obra_social || null,
+          plan_cobertura: resultado.plan_cobertura || null,
+          fecha_nacimiento: resultado.fecha_nacimiento || null,
+          sexo: resultado.sexo || null,
+          direccion: resultado.direccion || null,
+          telefono_fijo: resultado.telefono_fijo || null,
+          email: resultado.email || null,
+        }
+
+        if (existingId) {
+          const { data: updData, error: updErr } = await supabase
+            .from('pacientes')
+            .update(datosLimpios as any)
+            .eq('id', existingId)
+            .select()
+
+          if (updErr) throw updErr
+          pacienteGuardado = (updData && updData[0]) ? updData[0] : { id: existingId, ...datosLimpios }
+        } else {
+          const { data: insData, error: insErr } = await supabase
+            .from('pacientes')
+            .insert({ ...datosLimpios, historial_notas: '' } as any)
+            .select()
+
+          if (insErr) throw insErr
+          pacienteGuardado = insData && insData[0] ? insData[0] : null
+          
+          if (pacienteGuardado?.id) {
+            await supabase.from('conversaciones').insert({ paciente_id: pacienteGuardado.id, bot_disabled: false })
+          }
+        }
+      }
+
+      if (!pacienteGuardado) {
+        throw new Error('No se pudo completar el guardado del paciente en el CRM.')
+      }
+
       setExitoImportacion({
         id: pacienteGuardado.id,
         nombre: pacienteGuardado.nombre,
