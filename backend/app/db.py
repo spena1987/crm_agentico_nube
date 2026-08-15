@@ -303,6 +303,34 @@ def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
         logger.error(f"Error al actualizar estado bot_disabled en conversación {conversacion_id}: {e}")
         return None
 
+def obtener_conversaciones():
+    """
+    Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados.
+    """
+    if not supabase:
+        return []
+    try:
+        response = supabase.table("conversaciones").select(
+            "id, paciente_id, bot_disabled, ultimo_mensaje, updated_at, pacientes(id, telefono, nombre, email)"
+        ).order("updated_at", desc=True).execute()
+        return response.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener conversaciones: {e}")
+        return []
+
+def obtener_mensajes_conversacion(conversacion_id: str):
+    """
+    Retorna el historial completo de mensajes para una conversación ordenada cronológicamente.
+    """
+    if not supabase:
+        return []
+    try:
+        response = supabase.table("mensajes").select("*").eq("conversacion_id", conversacion_id).order("created_at", desc=False).execute()
+        return response.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener mensajes para conversación {conversacion_id}: {e}")
+        return []
+
 # ====================================================================
 # GESTIÓN DE CONFIGURACIÓN DE NOMENCLADOR Y ARANCELES
 # ====================================================================

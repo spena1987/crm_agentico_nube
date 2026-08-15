@@ -100,25 +100,45 @@ export default function ChatInbox() {
   const fetchConversaciones = async () => {
     try {
       setCargandoConversaciones(true)
-      const { data, error } = await supabase
-        .from('conversaciones')
-        .select(`
-          id,
-          paciente_id,
-          bot_disabled,
-          ultimo_mensaje,
-          updated_at,
-          pacientes (
-            id,
-            telefono,
-            nombre,
-            email
-          )
-        `)
-        .order('updated_at', { ascending: false })
+      let convs: Conversacion[] = []
       
-      if (error) throw error
-      const convs = (data as unknown as Conversacion[]) || []
+      // 1. Intentar desde la API del backend (evade problemas de RLS de Supabase en cliente)
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/conversaciones`, { cache: 'no-store' })
+        if (res.ok) {
+          const apiData = await res.json()
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            convs = apiData
+          }
+        }
+      } catch (e) {
+        // Ignorar y usar fallback
+      }
+
+      // 2. Fallback a Supabase directo
+      if (convs.length === 0) {
+        const { data, error } = await supabase
+          .from('conversaciones')
+          .select(`
+            id,
+            paciente_id,
+            bot_disabled,
+            ultimo_mensaje,
+            updated_at,
+            pacientes (
+              id,
+              telefono,
+              nombre,
+              email
+            )
+          `)
+          .order('updated_at', { ascending: false })
+        
+        if (!error && data) {
+          convs = (data as unknown as Conversacion[]) || []
+        }
+      }
+
       setConversaciones(convs)
       
       // Auto-seleccionar conversación por pacienteId o teléfono si viene en query params
@@ -158,14 +178,35 @@ export default function ChatInbox() {
   const fetchMensajes = async (convId: string) => {
     try {
       setCargandoMensajes(true)
-      const { data, error } = await supabase
-        .from('mensajes')
-        .select('*')
-        .eq('conversacion_id', convId)
-        .order('created_at', { ascending: true })
-      
-      if (error) throw error
-      setMensajes((data as unknown as Mensaje[]) || [])
+      let msgs: Mensaje[] = []
+
+      // 1. Intentar desde la API del backend
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/conversaciones/${convId}/mensajes`, { cache: 'no-store' })
+        if (res.ok) {
+          const apiMsgs = await res.json()
+          if (Array.isArray(apiMsgs)) {
+            msgs = apiMsgs
+          }
+        }
+      } catch (e) {
+        // Fallback a Supabase
+      }
+
+      // 2. Fallback a Supabase si el backend no respondió
+      if (msgs.length === 0) {
+        const { data, error } = await supabase
+          .from('mensajes')
+          .select('*')
+          .eq('conversacion_id', convId)
+          .order('created_at', { ascending: true })
+        
+        if (!error && data) {
+          msgs = (data as unknown as Mensaje[]) || []
+        }
+      }
+
+      setMensajes(msgs)
     } catch (err) {
       console.error('Error cargando mensajes:', err)
     } finally {
@@ -177,8 +218,20 @@ export default function ChatInbox() {
     fetchConversaciones()
     fetchWAStatus()
     const intervalStatus = setInterval(fetchWAStatus, 5000)
+    
     // Refrescar lista de conversaciones cada 4s
-    const intervalConvs = setInterval(() => {
+    const intervalConvs = setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/conversaciones`, { cache: 'no-store' })
+        if (res.ok) {
+          const apiData = await res.json()
+          if (Array.isArray(apiData) && apiData.length > 0) {
+            setConversaciones(apiData)
+            return
+          }
+        }
+      } catch (e) {}
+
       supabase
         .from('conversaciones')
         .select(`
@@ -213,7 +266,18 @@ export default function ChatInbox() {
     fetchMensajes(selectedConvId)
 
     // Polling silencioso en el muro activo para asegurar sincronización en tiempo real
-    const intervalMsgs = setInterval(() => {
+    const intervalMsgs = setInterval(async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/mensajes`, { cache: 'no-store' })
+        if (res.ok) {
+          const apiMsgs = await res.json()
+          if (Array.isArray(apiMsgs)) {
+            setMensajes(apiMsgs)
+            return
+          }
+        }
+      } catch (e) {}
+
       supabase
         .from('mensajes')
         .select('*')
@@ -224,7 +288,7 @@ export default function ChatInbox() {
             setMensajes(data as unknown as Mensaje[])
           }
         })
-    }, 2500)
+    }, 2000)
 
     return () => clearInterval(intervalMsgs)
   }, [selectedConvId])

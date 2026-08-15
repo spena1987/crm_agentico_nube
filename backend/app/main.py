@@ -16,7 +16,9 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from app.db import (
     supabase, 
-    actualizar_bot_disabled, 
+    actualizar_bot_disabled,
+    obtener_conversaciones,
+    obtener_mensajes_conversacion,
     get_paciente_by_dni, 
     get_paciente_by_geclisa_id, 
     crear_o_actualizar_paciente_geclisa,
@@ -226,15 +228,18 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
     Webhook que recibe los mensajes entrantes de WhatsApp desde el microservicio Baileys
     y ejecuta el pipeline de paciente, conversación y agente IA.
     """
-    if payload.from_me:
-        return {"status": "ignored", "reason": "outgoing_message"}
-
-    clean_phone = normalize_phone_number(payload.phone)
-    texto = payload.text.strip() if payload.text else ""
-
-    logger.info(f"Mensaje entrante Baileys desde {clean_phone} [{payload.message_type}]: {texto[:50]}")
-
     try:
+        if payload.from_me:
+            return {"status": "ignored", "reason": "outgoing_message"}
+
+        clean_phone = normalize_phone_number(payload.phone) if payload.phone else ""
+        texto = payload.text.strip() if payload.text else ""
+
+        logger.info(f"Mensaje entrante Baileys desde {clean_phone} [{payload.message_type}]: {texto[:50]}")
+
+        if not clean_phone:
+            return {"status": "ignored", "reason": "empty_phone"}
+
         # 1. Obtener o crear paciente
         paciente = get_paciente_by_telefono(clean_phone)
         if not paciente:
@@ -266,14 +271,31 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         # 4. Procesar agente IA si el bot no está desactivado para esta conversación
         bot_disabled = conversacion.get("bot_disabled", False) if isinstance(conversacion, dict) else False
         if not bot_disabled and texto:
-            respuesta_agente = procesar_mensaje_agente(conversacion_id, texto)
-            if respuesta_agente:
-                whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id)
+            try:
+                respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
+                if respuesta_agente:
+                    whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id)
+            except Exception as agent_err:
+                logger.error(f"Error procesando respuesta de agente IA: {agent_err}")
 
         return {"status": "processed", "conversacion_id": conversacion_id}
     except Exception as e:
         logger.error(f"Error procesando mensaje entrante Baileys: {e}", exc_info=True)
         return {"status": "error", "detail": str(e)}
+
+@app.get("/api/conversaciones")
+def get_conversaciones_api():
+    """
+    Retorna la lista de todas las conversaciones activas con sus pacientes asociados.
+    """
+    return obtener_conversaciones()
+
+@app.get("/api/conversaciones/{conversacion_id}/mensajes")
+def get_mensajes_conversacion_api(conversacion_id: str):
+    """
+    Retorna todo el historial de mensajes de una conversación específica.
+    """
+    return obtener_mensajes_conversacion(conversacion_id)
 
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):

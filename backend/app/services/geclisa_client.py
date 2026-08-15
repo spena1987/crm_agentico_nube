@@ -38,6 +38,25 @@ class GeclisaClient:
         self._token = None
         self._token_expires_at = 0
 
+    def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
+        """
+        Ejecuta una petición HTTP contra Geclisa con fallback automático por IP si falla la resolución DNS.
+        """
+        timeout = kwargs.pop("timeout", 15)
+        headers = kwargs.pop("headers", {}) or {}
+
+        try:
+            return self.session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as err:
+            err_str = str(err)
+            if "creogeclisa.fertilidadmendoza.com.ar" in url or "Name or service not known" in err_str or "gaierror" in err_str:
+                fallback_url = url.replace("creogeclisa.fertilidadmendoza.com.ar", "190.15.197.191")
+                logger.warning(f"DNS de Geclisa no resuelto. Reintentando por IP directa: {fallback_url}")
+                headers_copy = dict(headers)
+                headers_copy["Host"] = "creogeclisa.fertilidadmendoza.com.ar"
+                return self.session.request(method, fallback_url, headers=headers_copy, timeout=timeout, **kwargs)
+            raise
+
     def _obtener_token(self) -> str:
         """
         Realiza el login contra el servidor OAuth2 y retorna el token JWT de acceso.
@@ -60,8 +79,8 @@ class GeclisaClient:
 
         logger.info(f"Solicitando nuevo Token JWT a Geclisa en: {token_url}...")
         try:
-            # Petición Form URL Encoded usando session
-            response = self.session.post(token_url, data=payload, timeout=15)
+            # Petición Form URL Encoded usando _do_request
+            response = self._do_request("POST", token_url, data=payload, timeout=15)
             response.raise_for_status()
             
             data = response.json()
@@ -104,7 +123,7 @@ class GeclisaClient:
         url = f"{self.base_url}/api/Usuarios/current"
         try:
             headers = self._get_headers()
-            response = self.session.get(url, headers=headers, timeout=10)
+            response = self._do_request("GET", url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -121,11 +140,11 @@ class GeclisaClient:
             
             # 1. Datos del paciente
             url_paciente = f"{self.base_url}/api/Pacientes/patient/{ficha_id}"
-            resp_paciente = self.session.get(url_paciente, headers=headers, timeout=10)
+            resp_paciente = self._do_request("GET", url_paciente, headers=headers, timeout=10)
             if resp_paciente.status_code == 404:
                 # Fallback a /api/Ficha
                 url_fallback = f"{self.base_url}/api/Ficha?fichaId={ficha_id}"
-                resp_paciente = self.session.get(url_fallback, headers=headers, timeout=10)
+                resp_paciente = self._do_request("GET", url_fallback, headers=headers, timeout=10)
                 
             resp_paciente.raise_for_status()
             paciente_data = resp_paciente.json()
@@ -138,7 +157,7 @@ class GeclisaClient:
             plan_nombre = None
             try:
                 url_os = f"{self.base_url}/api/Pacientes/os-plan/{ficha_id}"
-                resp_os = self.session.get(url_os, headers=headers, timeout=8)
+                resp_os = self._do_request("GET", url_os, headers=headers, timeout=8)
                 if resp_os.status_code == 200:
                     os_data = resp_os.json()
                     if isinstance(os_data, list) and len(os_data) > 0:
@@ -205,7 +224,7 @@ class GeclisaClient:
         url = f"{self.base_url}/api/Pacientes/Documento/{dni_limpio}"
         try:
             headers = self._get_headers()
-            response = self.session.get(url, headers=headers, timeout=10)
+            response = self._do_request("GET", url, headers=headers, timeout=10)
             
             if response.status_code == 404:
                 return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
@@ -284,7 +303,7 @@ class GeclisaClient:
             # 1. Intentar con SimplePorFiltro (robusto, no falla con término vacío)
             url_simple = f"{self.base_url}/api/Prestadores/SimplePorFiltro"
             params_simple = {"filtro": termino} if termino else {}
-            resp_simple = self.session.get(url_simple, headers=headers, params=params_simple, timeout=10)
+            resp_simple = self._do_request("GET", url_simple, headers=headers, params=params_simple, timeout=10)
             
             if resp_simple.status_code == 200:
                 data = resp_simple.json()
@@ -293,7 +312,7 @@ class GeclisaClient:
             # 2. Si no hubo resultados y hay término, intentar con por-matricula-nombre
             if not items and termino:
                 url_mn = f"{self.base_url}/api/Prestadores/por-matricula-nombre"
-                resp_mn = self.session.get(url_mn, headers=headers, params={"query": termino}, timeout=10)
+                resp_mn = self._do_request("GET", url_mn, headers=headers, params={"query": termino}, timeout=10)
                 if resp_mn.status_code == 200:
                     data_mn = resp_mn.json()
                     items = data_mn if isinstance(data_mn, list) else data_mn.get("data", [])
@@ -332,7 +351,7 @@ class GeclisaClient:
         url = f"{self.base_url}/api/Prestadores/por-id/{pre_id}"
         try:
             headers = self._get_headers()
-            response = self.session.get(url, headers=headers, timeout=10)
+            response = self._do_request("GET", url, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
             if not data:
@@ -361,7 +380,7 @@ class GeclisaClient:
         url = f"{self.base_url}/api/Areas/ListarAreas"
         try:
             headers = self._get_headers()
-            response = self.session.get(url, headers=headers, timeout=10)
+            response = self._do_request("GET", url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -392,7 +411,7 @@ class GeclisaClient:
         try:
             headers = self._get_headers()
             # El endpoint de turnos-disponibles espera un JSON como payload
-            response = self.session.post(url, json=payload, headers=headers, timeout=10)
+            response = self._do_request("POST", url, json=payload, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -411,7 +430,7 @@ class GeclisaClient:
         url = f"{self.base_url}/api/Nomenclador/tipos"
         try:
             headers = self._get_headers()
-            response = self.session.get(url, headers=headers, timeout=10)
+            response = self._do_request("GET", url, headers=headers, timeout=10)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -432,7 +451,7 @@ class GeclisaClient:
 
         try:
             headers = self._get_headers()
-            response = self.session.get(url, params=params, headers=headers, timeout=12)
+            response = self._do_request("GET", url, params=params, headers=headers, timeout=12)
             response.raise_for_status()
             data = response.json()
             if isinstance(data, dict):
@@ -458,7 +477,7 @@ class GeclisaClient:
         }
         try:
             headers = self._get_headers()
-            response = self.session.get(url, params=params, headers=headers, timeout=10)
+            response = self._do_request("GET", url, params=params, headers=headers, timeout=10)
             if response.status_code == 200:
                 return response.json()
             return []
@@ -492,7 +511,7 @@ class GeclisaClient:
         }
         try:
             headers = self._get_headers()
-            response = self.session.post(url, json=payload, headers=headers, timeout=10)
+            response = self._do_request("POST", url, json=payload, headers=headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 total = data.get("total") or data.get("totalUnitario") or 0.0
