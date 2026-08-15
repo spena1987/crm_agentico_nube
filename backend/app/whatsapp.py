@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 NEONIZE_IMPORT_ERROR: Optional[str] = None
 try:
-    from neonize.client import NewClient
+    from neonize.client import NewClient, DeviceProps
     from neonize.events import (
         MessageEv, QREv, ConnectedEv, DisconnectedEv, 
         LoggedOutEv, PairStatusEv, ConnectFailureEv,
@@ -23,6 +23,7 @@ except Exception as e:
     NEONIZE_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
     segno = None
     NewClient = Any
+    DeviceProps = None
     MessageEv = Any
     QREv = Any
     ConnectedEv = Any
@@ -219,8 +220,14 @@ class WhatsAppManager:
         self.add_log("INFO", f"Inicializando cliente de WhatsApp en {self.db_path}...")
 
         try:
-            self.client = NewClient(self.db_path)
-            self.add_log("INFO", "Cliente NewClient instanciado correctamente.")
+            props = None
+            if NEONIZE_AVAILABLE and DeviceProps:
+                try:
+                    props = DeviceProps(os="Windows", platformType=DeviceProps.CHROME)
+                except Exception:
+                    pass
+            self.client = NewClient(self.db_path, props=props) if props else NewClient(self.db_path)
+            self.add_log("INFO", "Cliente NewClient instanciado correctamente con DeviceProps (Windows/Chrome).")
 
             # 1. Callback de Código QR Nativo de Neonize (Whatsmeow)
             def on_qr_callback(c, data_qr: bytes):
