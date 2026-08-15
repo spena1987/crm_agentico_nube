@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import time
 import logging
@@ -17,9 +18,23 @@ try:
     from neonize.utils.jid import build_jid, Jid2String
     import segno
     NEONIZE_AVAILABLE = True
-except ImportError:
+except (ImportError, Exception):
     NEONIZE_AVAILABLE = False
     segno = None
+    NewClient = Any
+    MessageEv = Any
+    QREv = Any
+    ConnectedEv = Any
+    DisconnectedEv = Any
+    LoggedOutEv = Any
+    PairStatusEv = Any
+    ConnectFailureEv = Any
+    ReceiptEv = Any
+    CallOfferEv = Any
+    CallTerminateEv = Any
+    ChatPresenceEv = Any
+    build_jid = lambda *args, **kwargs: ""
+    Jid2String = lambda *args, **kwargs: ""
 
 from app.db import (
     get_paciente_by_telefono, crear_paciente, 
