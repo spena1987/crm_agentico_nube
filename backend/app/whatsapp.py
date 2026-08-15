@@ -193,6 +193,7 @@ class WhatsAppManager:
 
         try:
             self.client = NewClient(self.db_path)
+            self.add_log("INFO", "Cliente NewClient instanciado correctamente.")
 
             # 1. Callback de Código QR Nativo de Neonize (Whatsmeow)
             def on_qr_callback(c, data_qr: bytes):
@@ -207,6 +208,7 @@ class WhatsAppManager:
                     self.add_log("ERROR", f"Error procesando QR callback: {e}")
 
             self.client.event.qr(on_qr_callback)
+            self.add_log("INFO", "Callback de QR registrado.")
 
             # Fallback secundario de QREv
             @self.client.event(QREv)
@@ -315,6 +317,12 @@ class WhatsAppManager:
                 try:
                     time.sleep(0.5)
                     os.remove(self.db_path)
+                    for ext in ["-wal", "-shm", "-journal"]:
+                        if os.path.exists(self.db_path + ext):
+                            try:
+                                os.remove(self.db_path + ext)
+                            except Exception:
+                                pass
                     self.add_log("INFO", "Base de datos de sesión eliminada para nueva vinculación limpia.")
                 except Exception as e:
                     self.add_log("WARNING", f"No se pudo eliminar db temporal: {e}")
