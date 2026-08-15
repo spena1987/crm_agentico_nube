@@ -194,7 +194,6 @@ class WhatsAppManager:
             self.client = NewClient(self.db_path)
 
             # 1. Callback de Código QR Nativo de Neonize (Whatsmeow)
-            @self.client.qr
             def on_qr_callback(c, data_qr: bytes):
                 try:
                     self.qr_timestamp = time.time()
@@ -205,6 +204,14 @@ class WhatsAppManager:
                     self.add_log("INFO", "Código QR capturado de WhatsApp y listo para la pantalla web.")
                 except Exception as e:
                     self.add_log("ERROR", f"Error procesando QR callback: {e}")
+
+            # Vincular a todos los puntos de escucha de Neonize para garantizar captura
+            if hasattr(self.client, "event") and hasattr(self.client.event, "qr"):
+                self.client.event.qr(on_qr_callback)
+            if hasattr(self.client, "event"):
+                self.client.event._qr = on_qr_callback
+            if hasattr(self.client, "qr"):
+                self.client.qr(on_qr_callback)
 
             # Fallback secundario de QREv
             @self.client.event(QREv)
