@@ -577,13 +577,22 @@ def importar_paciente_geclisa(payload: Dict[str, Any] = Body(...)):
     """
     Importa o actualiza un paciente desde Geclisa hacia la base de datos del CRM (Supabase).
     """
+    if not payload:
+        raise HTTPException(status_code=400, detail="El payload con los datos del paciente está vacío.")
+        
     try:
         paciente = crear_o_actualizar_paciente_geclisa(payload)
+        if not paciente or not isinstance(paciente, dict):
+            raise HTTPException(status_code=500, detail="No se pudo registrar el paciente en la base de datos Supabase.")
+            
+        nombre = paciente.get("nombre", "importado")
         return {
             "success": True,
-            "mensaje": f"Paciente {paciente.get('nombre')} importado correctamente.",
+            "mensaje": f"Paciente {nombre} importado correctamente.",
             "paciente": paciente
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error al importar paciente desde Geclisa: {e}")
         raise HTTPException(status_code=500, detail=f"Error al importar paciente: {str(e)}")

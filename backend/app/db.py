@@ -9,16 +9,22 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-raw_url = os.getenv("SUPABASE_URL", "").strip().strip("'\"")
+raw_url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip().strip("'\"")
 SUPABASE_URL = raw_url if raw_url and not "tu_proyecto" in raw_url else None
 
-raw_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or "").strip().strip("'\"")
+raw_key = (
+    os.getenv("SUPABASE_SERVICE_ROLE_KEY") 
+    or os.getenv("SUPABASE_KEY") 
+    or os.getenv("SUPABASE_ANON_KEY") 
+    or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") 
+    or ""
+).strip().strip("'\"")
 SUPABASE_KEY = raw_key if raw_key and not "tu_anon" in raw_key and not "tu_service_role" in raw_key else None
 
 from app.services.phone_normalizer import normalize_phone_number
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    logger.warning("Faltan variables de entorno válidas para Supabase. Asegúrate de configurar SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.")
+    logger.warning("Faltan variables de entorno válidas para Supabase. Asegúrate de configurar SUPABASE_URL (o NEXT_PUBLIC_SUPABASE_URL) y SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
@@ -107,7 +113,7 @@ def crear_o_actualizar_paciente_geclisa(payload: dict):
     garantizando su registro y conversación asociada con teléfono normalizado.
     """
     if not supabase:
-        return None
+        raise RuntimeError("No se pudo conectar con la base de datos Supabase. Verifica SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY en las variables de entorno de producción.")
     try:
         dni = payload.get("dni")
         ficha_id = payload.get("geclisa_ficha_id") or payload.get("ficha_id")
