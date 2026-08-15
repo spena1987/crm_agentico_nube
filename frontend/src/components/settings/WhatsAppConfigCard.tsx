@@ -116,6 +116,7 @@ export default function WhatsAppConfigCard() {
       })
       if (res.ok) {
         await fetchStatus()
+        await fetchQR()
       }
     } catch (err) {
       console.error('Error conectando WhatsApp:', err)

@@ -333,19 +333,23 @@ class WhatsAppManager:
             self.device_info = {k: None for k in self.device_info}
             self.client = None
             
-            if os.path.exists(self.db_path):
-                try:
-                    time.sleep(0.5)
-                    os.remove(self.db_path)
-                    for ext in ["-wal", "-shm", "-journal"]:
-                        if os.path.exists(self.db_path + ext):
-                            try:
-                                os.remove(self.db_path + ext)
-                            except Exception:
-                                pass
-                    self.add_log("INFO", "Base de datos de sesión eliminada para nueva vinculación limpia.")
-                except Exception as e:
-                    self.add_log("WARNING", f"No se pudo eliminar db temporal: {e}")
+            time.sleep(0.3)
+            # Eliminar todos los archivos de sqlite y sus journals para garantizar nuevo QR
+            paths_to_clean = set([
+                self.db_path, 
+                "neonize.db", 
+                "/app/neonize.db", 
+                "/tmp/neonize.sqlite3"
+            ])
+            for p in paths_to_clean:
+                for ext in ["", "-wal", "-shm", "-journal"]:
+                    target = p + ext
+                    if os.path.exists(target):
+                        try:
+                            os.remove(target)
+                        except Exception:
+                            pass
+            self.add_log("INFO", "Base de datos de sesión eliminada para nueva vinculación limpia.")
 
             self.add_log("INFO", "Sesión cerrada correctamente. Listo para nueva vinculación QR.")
             return True
