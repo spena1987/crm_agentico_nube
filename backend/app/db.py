@@ -35,6 +35,14 @@ def get_paciente_by_telefono(telefono: str):
             if resp_fallback.data and len(resp_fallback.data) > 0:
                 return resp_fallback.data[0]
 
+        # Búsqueda flexible por los últimos 8 o 10 dígitos para vincular con paciente existente
+        clean_digits = "".join(filter(str.isdigit, str(telefono)))
+        if len(clean_digits) >= 8:
+            last_digits = clean_digits[-8:]
+            resp_like = supabase.table("pacientes").select("*").ilike("telefono", f"%{last_digits}%").limit(1).execute()
+            if resp_like.data and len(resp_like.data) > 0:
+                return resp_like.data[0]
+
         return None
     except Exception as e:
         logger.error(f"Error al obtener paciente por teléfono {telefono}: {e}")

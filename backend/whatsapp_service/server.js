@@ -229,6 +229,9 @@ async function initBaileys(forceClean = false) {
       }
     })
 
+const lidToPhoneMap = new Map()
+let lastContactedPhone = null
+
     // Manejo de mensajes entrantes (Reenvío al Webhook de FastAPI)
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return
@@ -244,7 +247,27 @@ async function initBaileys(forceClean = false) {
           }
 
           const fromMe = Boolean(msg.key.fromMe)
-          const senderPhone = remoteJid.split('@')[0]
+          
+          // Resolución inteligente de JID / Teléfono (incluyendo LIDs de WhatsApp)
+          let rawJid = msg.key.remoteJidAlt || msg.key.participant || remoteJid || ''
+          let senderPhone = rawJid.split('@')[0].split(':')[0]
+
+          if (rawJid.includes('@lid') || (senderPhone.length > 14 && !senderPhone.startsWith('549'))) {
+            if (msg.key.remoteJidAlt && !msg.key.remoteJidAlt.includes('@lid')) {
+              senderPhone = msg.key.remoteJidAlt.split('@')[0].split(':')[0]
+            } else if (msg.key.participant && !msg.key.participant.includes('@lid')) {
+              senderPhone = msg.key.participant.split('@')[0].split(':')[0]
+            } else if (lidToPhoneMap.has(senderPhone)) {
+              senderPhone = lidToPhoneMap.get(senderPhone)
+            } else if (lastContactedPhone) {
+              lidToPhoneMap.set(senderPhone, lastContactedPhone)
+              senderPhone = lastContactedPhone
+            }
+          } else {
+            if (remoteJid.includes('@lid')) {
+              lidToPhoneMap.set(remoteJid.split('@')[0], senderPhone)
+            }
+          }
           
           // Extraer texto
           let text = msg.message?.conversation || 
@@ -388,6 +411,8 @@ app.post('/send-message', async (req, res) => {
       return res.status(503).json({ error: 'WhatsApp no está conectado.', status: connectionStatus })
     }
 
+    const cleanNormPhone = normalizePhone(phone)
+    lastContactedPhone = cleanNormPhone
     const jid = await getValidJid(phone)
     const result = await sock.sendMessage(jid, { text })
 
@@ -396,7 +421,7 @@ app.post('/send-message', async (req, res) => {
       success: true,
       message_id: result.key.id,
       jid,
-      phone: normalizePhone(phone)
+      phone: cleanNormPhone
     })
   } catch (error) {
     addLog('ERROR', `Error enviando mensaje: ${error.message}`)

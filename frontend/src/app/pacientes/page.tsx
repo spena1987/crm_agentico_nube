@@ -172,44 +172,53 @@ export default function PacientesPage() {
     }
   }
 
-  // Guardar edición de datos en el CRM
+  // Guardar edición de datos directamente en la base de datos del CRM (Supabase)
   const handleGuardarEdicionPaciente = async (datos: Partial<Paciente>) => {
     if (!pacienteSeleccionado) return
     setGuardandoEdicion(true)
     setErrorAccion(null)
 
     try {
-      const res = await fetch(`/api/pacientes/${pacienteSeleccionado.id}`, {
-        method: 'PUT',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json' 
-        },
-        body: JSON.stringify(datos)
-      })
+      // Modificación exclusiva en la BD local de Supabase (sin afectar Geclisa)
+      const { data, error } = await supabase
+        .from('pacientes')
+        .update({
+          nombre: datos.nombre,
+          telefono: datos.telefono,
+          dni: datos.dni || null,
+          nro_hc: datos.nro_hc || null,
+          email: datos.email || null,
+          obra_social: datos.obra_social || null,
+          plan_cobertura: datos.plan_cobertura || null,
+          medico_cabecera: datos.medico_cabecera || null,
+          telefono_fijo: datos.telefono_fijo || null,
+          direccion: datos.direccion || null,
+          fecha_nacimiento: datos.fecha_nacimiento || null,
+          sexo: datos.sexo || null,
+        } as any)
+        .eq('id', pacienteSeleccionado.id)
+        .select()
 
-      const data = await res.json()
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || 'Error al modificar los datos del paciente.')
+      if (error) {
+        throw new Error(error.message || 'Error al modificar los datos del paciente en el CRM.')
       }
 
-      const pacienteActualizado: Paciente = data.paciente
+      const pacienteActualizado: Paciente = (data && data[0]) ? data[0] : { ...pacienteSeleccionado, ...datos }
       setPacientes((prev) =>
         prev.map((p) => (p.id === pacienteActualizado.id ? pacienteActualizado : p)).sort((a, b) => a.nombre.localeCompare(b.nombre))
       )
       setMostrarModalEditar(false)
-      setMensajeGuardado(`✔ Datos de ${pacienteActualizado.nombre} actualizados correctamente en el CRM.`)
+      setMensajeGuardado(`✔ Datos de ${pacienteActualizado.nombre} modificados correctamente en el CRM.`)
       setTimeout(() => setMensajeGuardado(null), 4000)
     } catch (err: any) {
-      console.error('Error guardando modificaciones:', err)
+      console.error('Error guardando modificaciones en CRM:', err)
       throw err
     } finally {
       setGuardandoEdicion(false)
     }
   }
 
-  // Eliminar paciente en cascada
+  // Eliminar paciente exclusivamente a nivel de CRM (Supabase) con borrado en cascada
   const handleEliminarPaciente = async () => {
     if (!pacienteSeleccionado) return
     setEliminandoPaciente(true)
@@ -219,18 +228,17 @@ export default function PacientesPage() {
       const idAEliminar = pacienteSeleccionado.id
       const nombreEliminado = pacienteSeleccionado.nombre
 
-      const res = await fetch(`/api/pacientes/${idAEliminar}`, {
-        method: 'DELETE',
-        headers: { 'Accept': 'application/json' }
-      })
+      // Borrado en Supabase (las claves foráneas en CASCADE eliminan conversaciones, mensajes y presupuestos)
+      const { error } = await supabase
+        .from('pacientes')
+        .delete()
+        .eq('id', idAEliminar)
 
-      const data = await res.json()
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || 'Error al eliminar el paciente.')
+      if (error) {
+        throw new Error(error.message || 'Error al eliminar el paciente del CRM.')
       }
 
-      // Remover del estado local
+      // Remover del estado local del CRM
       const listaRestante = pacientes.filter((p) => p.id !== idAEliminar)
       setPacientes(listaRestante)
       
@@ -242,10 +250,10 @@ export default function PacientesPage() {
       }
 
       setMostrarModalEliminar(false)
-      setMensajeGuardado(`✔ Expediente de ${nombreEliminado} eliminado correctamente.`)
+      setMensajeGuardado(`✔ Expediente de ${nombreEliminado} eliminado correctamente del CRM.`)
       setTimeout(() => setMensajeGuardado(null), 4000)
     } catch (err: any) {
-      console.error('Error eliminando paciente:', err)
+      console.error('Error eliminando paciente del CRM:', err)
       setErrorAccion(err.message || 'Error al eliminar el paciente.')
     } finally {
       setEliminandoPaciente(false)

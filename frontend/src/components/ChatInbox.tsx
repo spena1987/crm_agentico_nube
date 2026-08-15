@@ -176,14 +176,57 @@ export default function ChatInbox() {
   useEffect(() => {
     fetchConversaciones()
     fetchWAStatus()
-    const interval = setInterval(fetchWAStatus, 5000)
-    return () => clearInterval(interval)
+    const intervalStatus = setInterval(fetchWAStatus, 5000)
+    // Refrescar lista de conversaciones cada 4s
+    const intervalConvs = setInterval(() => {
+      supabase
+        .from('conversaciones')
+        .select(`
+          id,
+          paciente_id,
+          bot_disabled,
+          ultimo_mensaje,
+          updated_at,
+          pacientes (
+            id,
+            telefono,
+            nombre,
+            email
+          )
+        `)
+        .order('updated_at', { ascending: false })
+        .then(({ data }) => {
+          if (data) {
+            setConversaciones(data as unknown as Conversacion[])
+          }
+        })
+    }, 4000)
+
+    return () => {
+      clearInterval(intervalStatus)
+      clearInterval(intervalConvs)
+    }
   }, [])
 
   useEffect(() => {
-    if (selectedConvId) {
-      fetchMensajes(selectedConvId)
-    }
+    if (!selectedConvId) return
+    fetchMensajes(selectedConvId)
+
+    // Polling silencioso en el muro activo para asegurar sincronización en tiempo real
+    const intervalMsgs = setInterval(() => {
+      supabase
+        .from('mensajes')
+        .select('*')
+        .eq('conversacion_id', selectedConvId)
+        .order('created_at', { ascending: true })
+        .then(({ data }) => {
+          if (data && data.length > 0) {
+            setMensajes(data as unknown as Mensaje[])
+          }
+        })
+    }, 2500)
+
+    return () => clearInterval(intervalMsgs)
   }, [selectedConvId])
 
   // Scroll automático al último mensaje
