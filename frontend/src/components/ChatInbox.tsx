@@ -36,7 +36,7 @@ interface Conversacion {
   bot_disabled: boolean
   ultimo_mensaje: string | null
   updated_at: string
-  pacientes: Paciente | null
+  pacientes: Paciente | Paciente[] | null
 }
 
 interface Mensaje {
@@ -51,6 +51,14 @@ interface Mensaje {
 interface WAStatus {
   status: string
   is_logged_in: boolean
+}
+
+export const getPatient = (conv?: Conversacion | null): Paciente | null => {
+  if (!conv || !conv.pacientes) return null
+  if (Array.isArray(conv.pacientes)) {
+    return (conv.pacientes as Paciente[])[0] || null
+  }
+  return conv.pacientes as Paciente
 }
 
 export default function ChatInbox() {
@@ -115,14 +123,20 @@ export default function ChatInbox() {
       
       // Auto-seleccionar conversación por pacienteId o teléfono si viene en query params
       if (paramPacienteId && convs.length > 0) {
-        const target = convs.find((c) => c.paciente_id === paramPacienteId || c.pacientes?.id === paramPacienteId)
+        const target = convs.find((c) => {
+          const p = getPatient(c)
+          return c.paciente_id === paramPacienteId || p?.id === paramPacienteId
+        })
         if (target) {
           setSelectedConvId(target.id)
           return
         }
       }
       if (paramTelefono && convs.length > 0) {
-        const target = convs.find((c) => c.pacientes?.telefono === paramTelefono)
+        const target = convs.find((c) => {
+          const p = getPatient(c)
+          return p?.telefono === paramTelefono
+        })
         if (target) {
           setSelectedConvId(target.id)
           return
@@ -272,7 +286,8 @@ export default function ChatInbox() {
     )
 
     try {
-      const telefonoDestino = selectedConv.pacientes?.telefono || ''
+      const paciente = getPatient(selectedConv)
+      const telefonoDestino = paciente?.telefono || ''
       
       // Intentar enviar mediante el gateway de WhatsApp del backend
       let dispatchedViaBackend = false
@@ -325,11 +340,12 @@ export default function ChatInbox() {
     const file = e.target.files?.[0]
     if (!file || !selectedConvId || !selectedConv) return
 
+    const paciente = getPatient(selectedConv)
     setSubiendoArchivo(true)
     try {
       const formData = new FormData()
       formData.append('file', file)
-      formData.append('telefono', selectedConv.pacientes?.telefono || '')
+      formData.append('telefono', paciente?.telefono || '')
       formData.append('conversacion_id', selectedConvId)
       formData.append('caption', file.name)
 
@@ -379,6 +395,7 @@ export default function ChatInbox() {
   }
 
   const isWaConnected = waStatus?.is_logged_in || waStatus?.status === 'CONNECTED'
+  const currentPaciente = getPatient(selectedConv)
 
   return (
     <div className="flex h-[calc(100vh-2rem)] border border-[var(--border)] rounded-2xl overflow-hidden bg-[var(--card)] shadow-lg max-w-7xl mx-auto w-full">
@@ -461,7 +478,7 @@ export default function ChatInbox() {
           ) : (
             conversaciones.map((conv) => {
               const active = conv.id === selectedConvId
-              const paciente = conv.pacientes
+              const paciente = getPatient(conv)
               
               return (
                 <div
@@ -476,7 +493,7 @@ export default function ChatInbox() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
                       <p className="text-xs font-bold truncate">
-                        {paciente?.nombre || `Paciente (${paciente?.telefono.slice(-4)})`}
+                        {paciente?.nombre || `Paciente (${paciente?.telefono ? paciente.telefono.slice(-4) : '...' })`}
                       </p>
                       <span className={`w-2 h-2 rounded-full ${conv.bot_disabled ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                     </div>
@@ -502,10 +519,10 @@ export default function ChatInbox() {
           <div className="p-4 border-b border-[var(--border)] bg-[var(--card)] flex items-center justify-between">
             <div>
               <h3 className="font-bold text-sm">
-                {selectedConv.pacientes?.nombre}
+                {currentPaciente?.nombre || 'Paciente'}
               </h3>
               <p className="text-[11px] text-[var(--secondary)] flex items-center gap-1.5">
-                <Phone size={11} /> {selectedConv.pacientes?.telefono ? formatPhoneDisplay(selectedConv.pacientes.telefono) : 'Sin teléfono'}
+                <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
               </p>
             </div>
             

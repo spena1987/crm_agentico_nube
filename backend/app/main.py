@@ -272,9 +272,23 @@ def send_message_api(payload: SendMessageRequest):
     """
     Envía un mensaje de texto directamente al WhatsApp real del paciente y lo guarda en la BD.
     """
-    logger.info(f"Enviando mensaje saliente a {payload.telefono}")
+    telefono_final = payload.telefono
+    if (not telefono_final or not str(telefono_final).strip()) and payload.conversacion_id:
+        try:
+            if supabase:
+                conv = supabase.table("conversaciones").select("paciente_id, pacientes(telefono)").eq("id", payload.conversacion_id).execute()
+                if conv.data and len(conv.data) > 0:
+                    p_data = conv.data[0].get("pacientes")
+                    if isinstance(p_data, list) and len(p_data) > 0:
+                        telefono_final = p_data[0].get("telefono")
+                    elif isinstance(p_data, dict):
+                        telefono_final = p_data.get("telefono")
+        except Exception as e:
+            logger.warning(f"No se pudo recuperar teléfono por conversación {payload.conversacion_id}: {e}")
+
+    logger.info(f"Enviando mensaje saliente a {telefono_final} (conversacion_id: {payload.conversacion_id})")
     result = whatsapp_manager.enviar_mensaje(
-        telefono_o_jid=payload.telefono,
+        telefono_o_jid=telefono_final,
         texto=payload.mensaje,
         conversacion_id=payload.conversacion_id
     )
