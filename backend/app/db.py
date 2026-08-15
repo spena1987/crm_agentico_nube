@@ -211,7 +211,14 @@ def guardar_mensaje(
     if not supabase:
         return None
     try:
-        final_emisor = emisor or remitente or "agente"
+        raw_emisor = (emisor or remitente or "bot").lower()
+        if raw_emisor in ["paciente", "user", "client", "remitente"]:
+            final_emisor = "paciente"
+        elif raw_emisor in ["operador", "humano", "operator", "admin", "doctor"]:
+            final_emisor = "operador"
+        else:
+            final_emisor = "bot"
+
         final_contenido = contenido if contenido is not None else (texto or "")
         meta = (metadata_json or {}).copy()
         if whatsapp_message_id:
