@@ -192,21 +192,35 @@ def get_or_create_conversacion(paciente_id: str):
         logger.error(f"Error al obtener/crear conversación para paciente {paciente_id}: {e}")
         return None
 
-def guardar_mensaje(conversacion_id: str, emisor: str, contenido: str, metadata_json: dict = None):
+def guardar_mensaje(
+    conversacion_id: str, 
+    emisor: Optional[str] = None, 
+    contenido: Optional[str] = None, 
+    metadata_json: Optional[dict] = None,
+    remitente: Optional[str] = None,
+    texto: Optional[str] = None,
+    whatsapp_message_id: Optional[str] = None
+):
     if not supabase:
         return None
     try:
+        final_emisor = emisor or remitente or "agente"
+        final_contenido = contenido if contenido is not None else (texto or "")
+        meta = (metadata_json or {}).copy()
+        if whatsapp_message_id:
+            meta["whatsapp_message_id"] = whatsapp_message_id
+
         data = {
             "conversacion_id": conversacion_id,
-            "emisor": emisor,
-            "contenido": contenido,
-            "metadata_json": metadata_json or {}
+            "emisor": final_emisor,
+            "contenido": final_contenido,
+            "metadata_json": meta
         }
-        # Insertar mensaje
+        # Insertar mensaje en Supabase
         response = supabase.table("mensajes").insert(data).execute()
         
         # Actualizar el último mensaje en la conversación
-        supabase.table("conversaciones").update({"ultimo_mensaje": contenido}).eq("id", conversacion_id).execute()
+        supabase.table("conversaciones").update({"ultimo_mensaje": final_contenido}).eq("id", conversacion_id).execute()
         
         if response.data:
             return response.data[0]

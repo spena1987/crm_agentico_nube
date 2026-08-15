@@ -83,6 +83,36 @@ function phoneToJid(phone) {
   return `${clean}@s.whatsapp.net`
 }
 
+async function getValidJid(phone) {
+  const clean = normalizePhone(phone)
+  const candidateJid = `${clean}@s.whatsapp.net`
+  
+  if (!sock) return candidateJid
+
+  try {
+    const results = await sock.onWhatsApp(candidateJid)
+    if (results && results.length > 0 && results[0].exists) {
+      return results[0].jid
+    }
+  } catch (e) {
+    addLog('WARNING', `onWhatsApp check falló para ${candidateJid}: ${e.message}`)
+  }
+
+  // Para cuentas de Argentina creadas sin el 9
+  if (clean.startsWith('549')) {
+    const fallbackWithout9 = '54' + clean.slice(3) + '@s.whatsapp.net'
+    try {
+      const results = await sock.onWhatsApp(fallbackWithout9)
+      if (results && results.length > 0 && results[0].exists) {
+        addLog('INFO', `Destinatario WhatsApp resuelto como: ${results[0].jid}`)
+        return results[0].jid
+      }
+    } catch (e) {}
+  }
+
+  return candidateJid
+}
+
 async function initBaileys(forceClean = false) {
   try {
     if (forceClean) {
@@ -331,13 +361,14 @@ app.post('/send-message', async (req, res) => {
       return res.status(503).json({ error: 'WhatsApp no está conectado.', status: connectionStatus })
     }
 
-    const jid = phoneToJid(phone)
+    const jid = await getValidJid(phone)
     const result = await sock.sendMessage(jid, { text })
 
-    addLog('INFO', `Mensaje enviado a +${normalizePhone(phone)}: ${text.substring(0, 50)}...`)
+    addLog('INFO', `Mensaje enviado a ${jid}: ${text.substring(0, 50)}...`)
     res.json({
       success: true,
       message_id: result.key.id,
+      jid,
       phone: normalizePhone(phone)
     })
   } catch (error) {
@@ -358,7 +389,7 @@ app.post('/send-media', async (req, res) => {
       return res.status(503).json({ error: 'WhatsApp no está conectado.', status: connectionStatus })
     }
 
-    const jid = phoneToJid(phone)
+    const jid = await getValidJid(phone)
     let buffer = null
     let mimetype = 'application/octet-stream'
 
@@ -390,11 +421,12 @@ app.post('/send-media', async (req, res) => {
     }
 
     const result = await sock.sendMessage(jid, payload)
-    addLog('INFO', `Multimedia [${media_type || 'document'}] enviado a +${normalizePhone(phone)}`)
+    addLog('INFO', `Multimedia [${media_type || 'document'}] enviado a ${jid}`)
 
     res.json({
       success: true,
       message_id: result.key.id,
+      jid,
       phone: normalizePhone(phone)
     })
   } catch (error) {

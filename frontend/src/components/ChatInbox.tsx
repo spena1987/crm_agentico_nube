@@ -249,8 +249,27 @@ export default function ChatInbox() {
     e.preventDefault()
     if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
 
-    const mensajeAEnviar = nuevoMensaje
+    const mensajeAEnviar = nuevoMensaje.trim()
     setNuevoMensaje('')
+
+    // 1. Renderizado optimista instantáneo en la UI para feedback visual en tiempo real
+    const tempId = `temp_${Date.now()}`
+    const optimisticMsg: Mensaje = {
+      id: tempId,
+      conversacion_id: selectedConvId,
+      emisor: 'operador',
+      contenido: mensajeAEnviar,
+      metadata_json: { status: 'delivered' },
+      created_at: new Date().toISOString()
+    }
+    setMensajes((prev) => [...prev, optimisticMsg])
+    setConversaciones((prevConvs) =>
+      prevConvs.map((conv) =>
+        conv.id === selectedConvId
+          ? { ...conv, ultimo_mensaje: mensajeAEnviar, updated_at: new Date().toISOString() }
+          : conv
+      )
+    )
 
     try {
       const telefonoDestino = selectedConv.pacientes?.telefono || ''
@@ -290,6 +309,11 @@ export default function ChatInbox() {
           .update({ ultimo_mensaje: mensajeAEnviar })
           .eq('id', selectedConvId)
       }
+
+      // Sincronizar mensajes desde la base de datos
+      setTimeout(() => {
+        fetchMensajes(selectedConvId)
+      }, 500)
 
     } catch (err) {
       console.error('Error enviando mensaje:', err)
