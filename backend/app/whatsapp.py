@@ -78,7 +78,11 @@ class WhatsAppManager:
         }
         self.logs_buffer: List[Dict[str, Any]] = []
         self.max_logs: int = 100
-        self.db_path = os.getenv("NEONIZE_DB_PATH", "neonize.db")
+        raw_db = os.getenv("NEONIZE_DB_PATH", "")
+        if not raw_db or raw_db == "/app/neonize.db":
+            self.db_path = "/tmp/neonize.sqlite3" if os.name != "nt" else "neonize.db"
+        else:
+            self.db_path = raw_db
         self._lock = threading.Lock()
         
         # Redirigir telemetría interna de Neonize y Whatsmeow al buffer web
