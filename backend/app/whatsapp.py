@@ -111,7 +111,9 @@ class WhatsAppManager:
         is_client_connected = False
         if self.client and NEONIZE_AVAILABLE:
             try:
-                is_client_connected = bool(self.client.is_connected() and self.client.is_logged_in())
+                conn = self.client.is_connected() if callable(getattr(self.client, "is_connected", None)) else getattr(self.client, "is_connected", False)
+                login = self.client.is_logged_in() if callable(getattr(self.client, "is_logged_in", None)) else getattr(self.client, "is_logged_in", False)
+                is_client_connected = bool(conn and login)
             except Exception:
                 pass
 
@@ -173,7 +175,9 @@ class WhatsAppManager:
 
         if self.client and not force_restart:
             try:
-                if self.client.is_logged_in() and self.client.is_connected():
+                conn = self.client.is_connected() if callable(getattr(self.client, "is_connected", None)) else getattr(self.client, "is_connected", False)
+                login = self.client.is_logged_in() if callable(getattr(self.client, "is_logged_in", None)) else getattr(self.client, "is_logged_in", False)
+                if conn and login:
                     self.status = "CONNECTED"
                     self.add_log("INFO", "Cliente de WhatsApp ya conectado y autenticado.")
                     return
