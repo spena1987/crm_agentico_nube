@@ -18,7 +18,8 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const PORT = process.env.WHATSAPP_SERVICE_PORT || 3001
-const FASTAPI_WEBHOOK = process.env.FASTAPI_WEBHOOK_URL || 'http://127.0.0.1:8000/api/whatsapp/webhook/incoming'
+const FASTAPI_PORT = process.env.PORT || 8000
+const FASTAPI_WEBHOOK = process.env.FASTAPI_WEBHOOK_URL || `http://127.0.0.1:${FASTAPI_PORT}/api/whatsapp/webhook/incoming`
 const SESSIONS_DIR = process.env.SESSIONS_DIR || path.join(__dirname, 'sessions')
 
 if (!fs.existsSync(SESSIONS_DIR)) {
@@ -39,6 +40,9 @@ let pairingPhone = null
 let pairingTimestamp = 0
 let qrTimestamp = 0
 let connectionStatus = 'DISCONNECTED' // DISCONNECTED | INITIALIZING | PAIRING_QR_READY | PAIRING_CODE_READY | CONNECTED
+let isInitializing = false
+let reconnectTimeout = null
+
 let deviceInfo = {
   phone: null,
   push_name: null,
@@ -114,7 +118,25 @@ async function getValidJid(phone) {
 }
 
 async function initBaileys(forceClean = false) {
+  if (isInitializing) return
+  isInitializing = true
+
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout)
+    reconnectTimeout = null
+  }
+
   try {
+    if (sock) {
+      try {
+        sock.ev.removeAllListeners('connection.update')
+        sock.ev.removeAllListeners('creds.update')
+        sock.ev.removeAllListeners('messages.upsert')
+        sock.end(undefined)
+      } catch (e) {}
+      sock = null
+    }
+
     if (forceClean) {
       addLog('INFO', 'Limpiando sesión previa para nueva vinculación...')
       if (fs.existsSync(SESSIONS_DIR)) {
@@ -150,7 +172,8 @@ async function initBaileys(forceClean = false) {
       defaultQueryTimeoutMs: 60000,
       keepAliveIntervalMs: 25000,
       generateHighQualityLinkPreview: true,
-      syncFullHistory: false
+      syncFullHistory: false,
+      markOnlineOnConnect: true
     })
 
     // Guardar credenciales de sesión automáticamente
@@ -174,12 +197,12 @@ async function initBaileys(forceClean = false) {
         qrRaw = null
         pairingCode = null
         
-        const userJid = sock.user?.id || ''
+        const userJid = sock?.user?.id || ''
         const cleanPhone = userJid.split(':')[0].split('@')[0]
         deviceInfo = {
           phone: cleanPhone,
-          push_name: sock.user?.name || 'Dispositivo WhatsApp',
-          business_name: sock.user?.name || null,
+          push_name: sock?.user?.name || 'Dispositivo WhatsApp',
+          business_name: sock?.user?.name || null,
           platform: 'WhatsApp Multi-Device Baileys',
           jid: userJid,
           connected_at: new Date().toISOString().replace('T', ' ').substring(0, 19)
@@ -189,17 +212,19 @@ async function initBaileys(forceClean = false) {
 
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut
-
-        addLog('WARNING', `Conexión cerrada. Código: ${statusCode}. Reconectar: ${shouldReconnect}`)
+        addLog('WARNING', `Conexión cerrada. Código: ${statusCode}.`)
 
         if (statusCode === DisconnectReason.loggedOut) {
           connectionStatus = 'DISCONNECTED'
           addLog('INFO', 'Sesión cerrada formalmente. Reiniciando almacenamiento...')
-          await initBaileys(true)
-        } else if (shouldReconnect) {
+          initBaileys(true)
+        } else if (statusCode === 440) {
+          connectionStatus = 'DISCONNECTED'
+          addLog('WARNING', 'Conflicto de sesión (440 - connectionReplaced). Esperando 12s para estabilizar...')
+          reconnectTimeout = setTimeout(() => initBaileys(false), 12000)
+        } else {
           connectionStatus = 'INITIALIZING'
-          setTimeout(() => initBaileys(false), 3000)
+          reconnectTimeout = setTimeout(() => initBaileys(false), 4000)
         }
       }
     })
@@ -238,7 +263,7 @@ async function initBaileys(forceClean = false) {
 
           addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text.substring(0, 40)}`)
 
-          // Despachar al webhook de FastAPI en segundo plano
+          // Despachar al webhook dinámico de FastAPI
           axios.post(FASTAPI_WEBHOOK, {
             message_id: msg.key.id,
             from_me: fromMe,
@@ -250,7 +275,7 @@ async function initBaileys(forceClean = false) {
             timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
             raw_message: msg
           }).catch(err => {
-            addLog('WARNING', `Webhook FastAPI no disponible: ${err.message}`)
+            addLog('WARNING', `Webhook FastAPI no disponible (${FASTAPI_WEBHOOK}): ${err.message}`)
           })
 
         } catch (msgErr) {
@@ -262,6 +287,8 @@ async function initBaileys(forceClean = false) {
   } catch (error) {
     connectionStatus = 'ERROR'
     addLog('ERROR', `Error al inicializar Baileys: ${error.message}`)
+  } finally {
+    isInitializing = false
   }
 }
 

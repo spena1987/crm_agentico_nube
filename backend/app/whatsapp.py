@@ -70,7 +70,7 @@ class WhatsAppManager:
 
     def ensure_service_running(self):
         """
-        Verifica si el microservicio Baileys responde; si no, lo inicia en un subproceso background.
+        Verifica si el microservicio Baileys responde; si no, lo inicia en un subproceso background único.
         """
         try:
             r = httpx.get(f"{self.service_url}/status", timeout=1.5)
@@ -79,13 +79,25 @@ class WhatsAppManager:
         except Exception:
             pass
 
-        # Si no responde, buscar server.js e iniciarlo
+        # Si ya hay un subproceso vivo, esperar a que termine de levantar el puerto
+        if self.node_process and self.node_process.poll() is None:
+            for _ in range(5):
+                time.sleep(0.5)
+                try:
+                    r = httpx.get(f"{self.service_url}/status", timeout=1.0)
+                    if r.status_code == 200:
+                        return True
+                except Exception:
+                    pass
+            return True
+
+        # Si no responde y no hay proceso vivo, buscar server.js e iniciarlo
         service_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "whatsapp_service")
         server_js = os.path.join(service_dir, "server.js")
         
         if os.path.exists(server_js):
             try:
-                self.add_log("INFO", f"Iniciando subproceso Baileys desde {server_js}...")
+                self.add_log("INFO", f"Iniciando proceso único de Baileys desde {server_js}...")
                 self.node_process = subprocess.Popen(
                     ["node", "server.js"],
                     cwd=service_dir,
@@ -93,7 +105,7 @@ class WhatsAppManager:
                     stderr=subprocess.DEVNULL,
                     env=dict(os.environ, WHATSAPP_SERVICE_PORT=str(BAILEYS_PORT))
                 )
-                time.sleep(1.0)
+                time.sleep(1.2)
                 return True
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo iniciar subproceso Node.js: {e}")
