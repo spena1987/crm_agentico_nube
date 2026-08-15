@@ -137,6 +137,16 @@ def health_check():
         "whatsapp_daemon": "conectado" if NEONIZE_AVAILABLE else "simulado"
     }
 
+@app.get("/api/version")
+def version_check():
+    return {
+        "version": "2.1.0",
+        "db_path": whatsapp_manager.db_path,
+        "neonize_available": NEONIZE_AVAILABLE,
+        "status": whatsapp_manager.status,
+        "qr_ready": bool(whatsapp_manager.qr_code_data_uri)
+    }
+
 # ====================================================================
 # ENDPOINTS DE GESTIÓN DE WHATSAPP Y VINCULACIÓN QR
 # ====================================================================
