@@ -35,8 +35,7 @@ from app.db import (
 )
 from app.whatsapp import (
     iniciar_daemon_whatsapp, 
-    whatsapp_manager,
-    NEONIZE_AVAILABLE
+    whatsapp_manager
 )
 from app.services.pdf_service import PDF_DIR
 from app.services.media_service import media_service, STATIC_MEDIA_DIR
@@ -84,15 +83,15 @@ class TestMessageRequest(BaseModel):
 # Ciclo de vida de la aplicación FastAPI
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Iniciando aplicación CRM Médico + WhatsApp Gateway...")
+    logger.info("Iniciando aplicación CRM Médico + WhatsApp Baileys Gateway...")
     iniciar_daemon_whatsapp()
     yield
     logger.info("Deteniendo aplicación CRM Médico...")
 
 app = FastAPI(
-    title="CRM Médico API + Gestor de WhatsApp Neonize",
-    description="Backend completo en FastAPI para la gestión de clínica médica, sincronización QR WhatsApp y agente Gemini.",
-    version="2.0.0",
+    title="CRM Médico API + Gestor de WhatsApp Baileys",
+    description="Backend en FastAPI para gestión clínica médica, sincronización WhatsApp Baileys y agente Gemini.",
+    version="3.0.0",
     lifespan=lifespan
 )
 
@@ -114,10 +113,12 @@ app.mount("/static", StaticFiles(directory=PDF_DIR), name="static")
 
 @app.get("/")
 def read_root():
+    st = whatsapp_manager.get_status()
     return {
         "status": "online",
         "servicio": "MedCRM - Gestor de Mensajería & Clínica",
-        "whatsapp_daemon": "disponible" if NEONIZE_AVAILABLE else "no_instalado (modo simulado)",
+        "whatsapp_engine": "Baileys (Node.js)",
+        "whatsapp_status": st.get("status", "UNKNOWN"),
         "pdf_storage_dir": PDF_DIR
     }
 
@@ -131,20 +132,22 @@ def health_check():
         except Exception:
             pass
             
+    st = whatsapp_manager.get_status()
     return {
         "api": "ok",
         "supabase": "conectado" if supabase_ok else "desconectado",
-        "whatsapp_daemon": "conectado" if NEONIZE_AVAILABLE else "simulado"
+        "whatsapp_engine": "Baileys",
+        "whatsapp_status": st.get("status", "UNKNOWN")
     }
 
 @app.get("/api/version")
 def version_check():
+    st = whatsapp_manager.get_status()
     return {
-        "version": "2.1.0",
-        "db_path": whatsapp_manager.db_path,
-        "neonize_available": NEONIZE_AVAILABLE,
-        "status": whatsapp_manager.status,
-        "qr_ready": bool(whatsapp_manager.qr_code_data_uri)
+        "version": "3.0.0",
+        "engine": "Baileys",
+        "status": st.get("status", "UNKNOWN"),
+        "is_logged_in": st.get("is_logged_in", False)
     }
 
 # ====================================================================
