@@ -280,13 +280,16 @@ class WhatsAppManager:
             # Iniciar hilo de conexión
             def run_client():
                 try:
+                    self.add_log("INFO", "Iniciando loop de conexión connect() con WhatsApp...")
                     self.client.connect()
+                    self.add_log("INFO", "connect() finalizó su ejecución.")
                 except Exception as e:
                     self.status = "ERROR"
                     self.add_log("ERROR", f"Error en el socket de WhatsApp: {e}")
 
             self.thread = threading.Thread(target=run_client, daemon=True)
             self.thread.start()
+            self.add_log("INFO", "Hilo de conexión de WhatsApp iniciado en segundo plano.")
 
         except Exception as e:
             self.status = "ERROR"
