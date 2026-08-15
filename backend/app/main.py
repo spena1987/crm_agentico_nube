@@ -206,6 +206,64 @@ def request_pair_code(req: PairCodeRequest):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
+class IncomingWebhookMessage(BaseModel):
+    message_id: Optional[str] = None
+    from_me: bool = False
+    phone: str
+    jid: Optional[str] = None
+    name: Optional[str] = "Paciente"
+    text: str = ""
+    message_type: str = "text"
+    timestamp: Optional[int] = None
+    raw_message: Optional[Dict[str, Any]] = None
+
+@app.post("/api/whatsapp/webhook/incoming")
+async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
+    """
+    Webhook que recibe los mensajes entrantes de WhatsApp desde el microservicio Baileys
+    y ejecuta el pipeline de paciente, conversación y agente IA.
+    """
+    if payload.from_me:
+        return {"status": "ignored", "reason": "outgoing_message"}
+
+    clean_phone = normalize_phone_number(payload.phone)
+    texto = payload.text.strip() if payload.text else ""
+
+    logger.info(f"Mensaje entrante Baileys desde {clean_phone} [{payload.message_type}]: {texto[:50]}")
+
+    try:
+        # 1. Obtener o crear paciente
+        paciente = get_paciente_by_telefono(clean_phone)
+        if not paciente:
+            nombre = payload.name if payload.name and payload.name != "Paciente" else f"Paciente {clean_phone[-4:]}"
+            paciente = crear_paciente(nombre, clean_phone)
+        
+        paciente_id = paciente["id"] if isinstance(paciente, dict) else paciente.get("id")
+
+        # 2. Conversación
+        conversacion = get_or_create_conversacion(paciente_id)
+        conversacion_id = conversacion["id"] if isinstance(conversacion, dict) else conversacion.get("id")
+
+        # 3. Guardar mensaje entrante del paciente
+        guardar_mensaje(
+            conversacion_id=conversacion_id,
+            remitente="paciente",
+            texto=texto or f"[{payload.message_type.upper()}]",
+            whatsapp_message_id=payload.message_id
+        )
+
+        # 4. Procesar agente IA si el bot no está desactivado para esta conversación
+        bot_disabled = conversacion.get("bot_disabled", False) if isinstance(conversacion, dict) else False
+        if not bot_disabled and texto:
+            respuesta_agente = procesar_mensaje_agente(conversacion_id, texto)
+            if respuesta_agente:
+                whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id)
+
+        return {"status": "processed", "conversacion_id": conversacion_id}
+    except Exception as e:
+        logger.error(f"Error procesando mensaje entrante Baileys: {e}")
+        return {"status": "error", "detail": str(e)}
+
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):
     """

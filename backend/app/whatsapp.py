@@ -4,39 +4,10 @@ import time
 import logging
 import threading
 import datetime
+import subprocess
+import httpx
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
-
-NEONIZE_IMPORT_ERROR: Optional[str] = None
-try:
-    from neonize.client import NewClient, DeviceProps
-    from neonize.events import (
-        MessageEv, QREv, ConnectedEv, DisconnectedEv, 
-        LoggedOutEv, PairStatusEv, ConnectFailureEv,
-        ReceiptEv, CallOfferEv, CallTerminateEv, ChatPresenceEv
-    )
-    from neonize.utils.jid import build_jid, Jid2String
-    import segno
-    NEONIZE_AVAILABLE = True
-except Exception as e:
-    NEONIZE_AVAILABLE = False
-    NEONIZE_IMPORT_ERROR = f"{type(e).__name__}: {str(e)}"
-    segno = None
-    NewClient = Any
-    DeviceProps = None
-    MessageEv = Any
-    QREv = Any
-    ConnectedEv = Any
-    DisconnectedEv = Any
-    LoggedOutEv = Any
-    PairStatusEv = Any
-    ConnectFailureEv = Any
-    ReceiptEv = Any
-    CallOfferEv = Any
-    CallTerminateEv = Any
-    ChatPresenceEv = Any
-    build_jid = lambda *args, **kwargs: ""
-    Jid2String = lambda *args, **kwargs: ""
 
 from app.db import (
     get_paciente_by_telefono, crear_paciente, 
@@ -56,55 +27,26 @@ from app.services.media_service import media_service
 load_dotenv()
 logger = logging.getLogger("whatsapp_daemon")
 
+BAILEYS_PORT = int(os.getenv("WHATSAPP_SERVICE_PORT", "3001"))
+BAILEYS_URL = os.getenv("WHATSAPP_SERVICE_URL", f"http://127.0.0.1:{BAILEYS_PORT}")
+
 class WhatsAppManager:
     """
-    Gestor centralizado del ciclo de vida, eventos de conexión QR, 
-    mensajería bidireccional y pipeline multimedia con Neonize.
+    Gestor de la pasarela de WhatsApp conectada al microservicio Baileys (Node.js/TypeScript).
+    Proporciona vinculación instantánea por QR o Código numérico de 8 dígitos,
+    gestión de estado multidispositivo, y despacho de mensajes y presupuestos PDF.
     """
     def __init__(self):
-        self.client: Optional[Any] = None
-        self.thread: Optional[threading.Thread] = None
+        self.service_url = BAILEYS_URL
+        self.node_process: Optional[subprocess.Popen] = None
         self.status: str = "DISCONNECTED"
-        self.qr_code_raw: Optional[str] = None
-        self.qr_code_data_uri: Optional[str] = None
-        self.qr_timestamp: float = 0
-        self.qr_ttl_seconds: int = 30
-        self.pairing_code: Optional[str] = None
-        self.pairing_phone: Optional[str] = None
-        self.pairing_code_timestamp: float = 0
-        self.device_info: Dict[str, Any] = {
-            "phone": None,
-            "push_name": None,
-            "business_name": None,
-            "platform": None,
-            "jid": None,
-            "connected_at": None
-        }
         self.logs_buffer: List[Dict[str, Any]] = []
         self.max_logs: int = 100
-        raw_db = os.getenv("NEONIZE_DB_PATH", "")
-        if not raw_db or raw_db == "/app/neonize.db":
-            self.db_path = "/tmp/neonize.sqlite3" if os.name != "nt" else "neonize.db"
-        else:
-            self.db_path = raw_db
         self._lock = threading.Lock()
         
-        # Redirigir telemetría interna de Neonize y Whatsmeow al buffer web
-        try:
-            neonize_logger = logging.getLogger("neonize")
-            neonize_logger.setLevel(logging.INFO)
-            class NeonizeLogHandler(logging.Handler):
-                def emit(inner_self, record):
-                    try:
-                        lvl = "INFO" if record.levelno < logging.WARNING else ("WARNING" if record.levelno < logging.ERROR else "ERROR")
-                        self.add_log(lvl, f"[Neonize] {record.getMessage()}")
-                    except Exception:
-                        pass
-            neonize_logger.addHandler(NeonizeLogHandler())
-        except Exception:
-            pass
-
-        self.add_log("INFO", "WhatsAppManager inicializado con soporte multimedia y filtrado de eventos.")
+        self.add_log("INFO", f"WhatsAppManager inicializado con pasarela Baileys ({self.service_url}).")
+        # Asegurar arranque del microservicio en segundo plano si corre en local o contenedor
+        self.ensure_service_running()
 
     def add_log(self, level: str, message: str):
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -126,330 +68,106 @@ class WhatsAppManager:
         else:
             logger.info(message)
 
-    def get_status(self) -> Dict[str, Any]:
-        qr_expires_in = 30
-        if self.qr_timestamp > 0:
-            elapsed = time.time() - self.qr_timestamp
-            qr_expires_in = max(5, int(self.qr_ttl_seconds - elapsed))
+    def ensure_service_running(self):
+        """
+        Verifica si el microservicio Baileys responde; si no, lo inicia en un subproceso background.
+        """
+        try:
+            r = httpx.get(f"{self.service_url}/status", timeout=1.5)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
 
-        is_client_connected = False
-        if self.client and NEONIZE_AVAILABLE:
+        # Si no responde, buscar server.js e iniciarlo
+        service_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "whatsapp_service")
+        server_js = os.path.join(service_dir, "server.js")
+        
+        if os.path.exists(server_js):
             try:
-                conn = self.client.is_connected() if callable(getattr(self.client, "is_connected", None)) else getattr(self.client, "is_connected", False)
-                login = self.client.is_logged_in() if callable(getattr(self.client, "is_logged_in", None)) else getattr(self.client, "is_logged_in", False)
-                is_client_connected = bool(conn and login)
-            except Exception:
-                pass
+                self.add_log("INFO", f"Iniciando subproceso Baileys desde {server_js}...")
+                self.node_process = subprocess.Popen(
+                    ["node", "server.js"],
+                    cwd=service_dir,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=dict(os.environ, WHATSAPP_SERVICE_PORT=str(BAILEYS_PORT))
+                )
+                time.sleep(1.0)
+                return True
+            except Exception as e:
+                self.add_log("WARNING", f"No se pudo iniciar subproceso Node.js: {e}")
+        return False
 
-        effective_status = "CONNECTED" if is_client_connected else self.status
-        if not is_client_connected and self.qr_code_data_uri:
-            effective_status = "PAIRING_QR_READY"
-        elif not is_client_connected and self.pairing_code:
-            effective_status = "PAIRING_CODE_READY"
+    def get_status(self) -> Dict[str, Any]:
+        """
+        Consulta el estado vivo de la pasarela Baileys.
+        """
+        try:
+            r = httpx.get(f"{self.service_url}/status", timeout=3.0)
+            if r.status_code == 200:
+                data = r.json()
+                self.status = data.get("status", "DISCONNECTED")
+                return data
+        except Exception as e:
+            self.add_log("WARNING", f"Microservicio Baileys no disponible: {e}")
 
         return {
-            "available": NEONIZE_AVAILABLE,
-            "import_error": NEONIZE_IMPORT_ERROR,
-            "status": effective_status,
-            "is_logged_in": is_client_connected or (self.status == "CONNECTED"),
-            "qr_ready": bool(self.qr_code_data_uri and not is_client_connected),
-            "qr_expires_in": qr_expires_in,
-            "pairing_code": self.pairing_code if not is_client_connected else None,
-            "pairing_phone": self.pairing_phone if not is_client_connected else None,
-            "device_info": self.device_info,
-            "db_path": self.db_path
+            "available": True,
+            "engine": "Baileys",
+            "status": "INITIALIZING",
+            "is_logged_in": False,
+            "qr_ready": False,
+            "qr_expires_in": 30,
+            "pairing_code": None,
+            "pairing_phone": None,
+            "device_info": {"phone": None, "push_name": None, "business_name": None, "platform": "Baileys", "jid": None, "connected_at": None},
+            "session_dir": "sessions"
         }
 
     def get_qr_data(self) -> Dict[str, Any]:
-        status_info = self.get_status()
-        return {
-            "qr_data_uri": self.qr_code_data_uri if not status_info["is_logged_in"] else None,
-            "expires_in": status_info["qr_expires_in"],
-            "status": status_info["status"]
-        }
-
-    def get_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
-        with self._lock:
-            return list(reversed(self.logs_buffer[-limit:]))
-
-    def _extract_device_info(self):
-        if not self.client or not NEONIZE_AVAILABLE:
-            return
+        """
+        Retorna el código QR activo en base64 Data-URI.
+        """
         try:
-            me = self.client.get_me()
-            if me:
-                phone_num = me.JID.User if hasattr(me.JID, "User") else ""
-                normalized_phone = normalize_phone_number(phone_num) if phone_num else ""
-                self.device_info = {
-                    "phone": normalized_phone or phone_num,
-                    "push_name": getattr(me, "PushName", None) or getattr(me, "BussinessName", None) or "Dispositivo WhatsApp",
-                    "business_name": getattr(me, "BussinessName", None),
-                    "platform": getattr(me, "Platform", "WhatsApp Multi-Device"),
-                    "jid": f"{normalized_phone or phone_num}@s.whatsapp.net",
-                    "connected_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                self.add_log("INFO", f"Dispositivo sincronizado: {self.device_info['push_name']} ({format_phone_display(self.device_info['phone'])})")
-        except Exception as e:
-            self.add_log("WARNING", f"No se pudo extraer información completa de dispositivo: {e}")
-
-    def iniciar_daemon(self, force_restart: bool = False):
-        """
-        Arranca o reconecta el cliente Neonize en segundo plano.
-        """
-        if not NEONIZE_AVAILABLE:
-            self.status = "SIMULATED"
-            self.add_log("WARNING", "Neonize no está disponible. Modo SIMULACIÓN activo.")
-            return
-
-        if self.client and not force_restart:
-            try:
-                conn = self.client.is_connected() if callable(getattr(self.client, "is_connected", None)) else getattr(self.client, "is_connected", False)
-                login = self.client.is_logged_in() if callable(getattr(self.client, "is_logged_in", None)) else getattr(self.client, "is_logged_in", False)
-                if conn and login:
-                    self.status = "CONNECTED"
-                    self.add_log("INFO", "Cliente de WhatsApp ya conectado y autenticado.")
-                    return
-            except Exception:
-                pass
-
-        if force_restart:
-            self.add_log("INFO", "Reiniciando conexión con WhatsApp y limpiando estado previo...")
-            self.desconectar_y_logout()
-
-        self.status = "INITIALIZING"
-        self.add_log("INFO", f"Inicializando cliente de WhatsApp en {self.db_path}...")
-
-        try:
-            props = None
-            if NEONIZE_AVAILABLE and DeviceProps:
-                try:
-                    props = DeviceProps(os="Windows", platformType=DeviceProps.CHROME)
-                except Exception:
-                    pass
-            self.client = NewClient(self.db_path, props=props) if props else NewClient(self.db_path)
-            self.add_log("INFO", "Cliente NewClient instanciado correctamente con DeviceProps (Windows/Chrome).")
-
-            # 1. Callback de Código QR Nativo de Neonize (Whatsmeow)
-            def on_qr_callback(c, data_qr: bytes):
-                try:
-                    self.qr_timestamp = time.time()
-                    self.status = "PAIRING_QR_READY"
-                    self.qr_code_raw = data_qr.decode("utf-8", errors="ignore") if isinstance(data_qr, bytes) else str(data_qr)
-                    qr = segno.make(data_qr)
-                    self.qr_code_data_uri = qr.png_data_uri(scale=7)
-                    self.add_log("INFO", f"¡Código QR generado con éxito! ({len(self.qr_code_data_uri)} bytes Data-URI)")
-                except Exception as e:
-                    self.add_log("ERROR", f"Error procesando QR callback: {e}")
-
-            self.client.event.qr(on_qr_callback)
-            self.add_log("INFO", "Callback de QR registrado.")
-
-            # Fallback secundario de QREv
-            @self.client.event(QREv)
-            def on_qr_event(c, event: QREv):
-                try:
-                    if event.Codes and len(event.Codes) > 0:
-                        raw_code = event.Codes[0]
-                        self.qr_code_raw = raw_code
-                        self.qr_timestamp = time.time()
-                        self.status = "PAIRING_QR_READY"
-                        qr = segno.make(raw_code)
-                        self.qr_code_data_uri = qr.png_data_uri(scale=7)
-                        self.add_log("INFO", f"¡Código QR recibido vía QREv! ({len(self.qr_code_data_uri)} bytes)")
-                except Exception as e:
-                    self.add_log("ERROR", f"Error procesando evento QREv: {e}")
-
-            # 2. Evento de Conexión exitosa
-            @self.client.event(ConnectedEv)
-            def on_connected_event(c, event: ConnectedEv):
-                self.status = "CONNECTED"
-                self.qr_code_data_uri = None
-                self.qr_code_raw = None
-                self.add_log("INFO", "¡Conexión establecida exitosamente con los servidores de WhatsApp!")
-                self._extract_device_info()
-
-            # 3. Evento de Estado de Emparejamiento
-            @self.client.event(PairStatusEv)
-            def on_pair_status_event(c, event: PairStatusEv):
-                self.add_log("INFO", f"PairStatus: ID={event.ID}, Negocio={event.BusinessName}, Plataforma={event.Platform}, Status={event.Status}")
-                if event.ID:
-                    self.status = "CONNECTED"
-                    self._extract_device_info()
-
-            # 4. Evento de Cierre de Sesión
-            @self.client.event(LoggedOutEv)
-            def on_logged_out_event(c, event: LoggedOutEv):
-                self.status = "LOGGED_OUT"
-                self.qr_code_data_uri = None
-                self.qr_code_raw = None
-                self.device_info = {k: None for k in self.device_info}
-                self.add_log("WARNING", f"Sesión de WhatsApp cerrada: {event.Reason}")
-
-            # 5. Evento de Desconexión de Red
-            @self.client.event(DisconnectedEv)
-            def on_disconnected_event(c, event: DisconnectedEv):
-                if self.status != "PAIRING_QR_READY":
-                    self.status = "DISCONNECTED"
-                self.add_log("WARNING", "Cliente de WhatsApp desconectado temporalmente de la red.")
-
-            # 6. Evento de Mensaje Entrante (Texto, Fotos, Audios, Documentos, etc.)
-            @self.client.event(MessageEv)
-            def on_message_event(c, event: MessageEv):
-                self._handle_incoming_message(c, event)
-
-            # 7. Evento de Confirmaciones de Entrega y Lectura (Tildes)
-            @self.client.event(ReceiptEv)
-            def on_receipt_event(c, event: ReceiptEv):
-                self._handle_receipt_event(c, event)
-
-            # 8. Evento de Llamadas Entrantes (Llamada perdida)
-            @self.client.event(CallOfferEv)
-            def on_call_offer_event(c, event: CallOfferEv):
-                self._handle_call_event(c, event)
-
-            # Iniciar hilo de conexión
-            def run_client():
-                try:
-                    self.add_log("INFO", "Iniciando loop de conexión connect() con WhatsApp...")
-                    self.client.connect()
-                    self.add_log("INFO", "connect() finalizó su ejecución.")
-                except BaseException as e:
-                    self.status = "ERROR"
-                    self.add_log("ERROR", f"Error en el socket de WhatsApp: {type(e).__name__}: {e}")
-
-            self.thread = threading.Thread(target=run_client, daemon=True)
-            self.thread.start()
-            self.add_log("INFO", "Hilo de conexión de WhatsApp iniciado en segundo plano.")
-
-        except BaseException as e:
-            self.status = "ERROR"
-            self.add_log("ERROR", f"Fallo al inicializar Neonize: {type(e).__name__}: {e}")
-
-    def desconectar_y_logout(self) -> bool:
-        """
-        Cierra sesión formalmente, desvincula el dispositivo y reinicia estado.
-        """
-        self.add_log("INFO", "Solicitando cierre de sesión y desvinculación de WhatsApp...")
-        try:
-            if self.client and NEONIZE_AVAILABLE:
-                try:
-                    self.client.logout()
-                except Exception as e:
-                    self.add_log("WARNING", f"Error al ejecutar logout(): {e}")
-                try:
-                    self.client.disconnect()
-                except Exception:
-                    pass
-            
-            self.status = "DISCONNECTED"
-            self.qr_code_data_uri = None
-            self.qr_code_raw = None
-            self.pairing_code = None
-            self.pairing_phone = None
-            self.pairing_code_timestamp = 0
-            self.device_info = {k: None for k in self.device_info}
-            self.client = None
-            
-            time.sleep(0.3)
-            # Eliminar todos los archivos de sqlite y sus journals para garantizar nueva sesión limpia
-            paths_to_clean = set([
-                self.db_path, 
-                "neonize.db", 
-                "/app/neonize.db", 
-                "/tmp/neonize.sqlite3"
-            ])
-            for p in paths_to_clean:
-                for ext in ["", "-wal", "-shm", "-journal"]:
-                    target = p + ext
-                    if os.path.exists(target):
-                        try:
-                            os.remove(target)
-                        except Exception:
-                            pass
-            self.add_log("INFO", "Base de datos de sesión eliminada para nueva vinculación limpia.")
-
-            self.add_log("INFO", "Sesión cerrada correctamente. Listo para nueva vinculación QR o Código.")
-            return True
-        except Exception as e:
-            self.add_log("ERROR", f"Error cerrando sesión: {e}")
-            return False
+            r = httpx.get(f"{self.service_url}/qr", timeout=3.0)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            pass
+        return {"qr_data_uri": None, "expires_in": 30, "status": "DISCONNECTED"}
 
     def solicitar_codigo_vinculacion(self, telefono: str) -> Dict[str, Any]:
         """
         Solicita un código de vinculación numérico de 8 caracteres (XXXX-XXXX)
-        para vincular el teléfono mediante WhatsApp > Dispositivos vinculados > Vincular con número de teléfono.
+        para autorizar directamente ingresando el número en WhatsApp Móvil.
         """
-        if not NEONIZE_AVAILABLE:
-            return {"error": "Neonize no está disponible en este entorno", "simulado": True}
-
-        # Normalizar teléfono a formato internacional E.164 sin '+' ni espacios
         clean_phone = normalize_phone_number(telefono)
-        clean_digits = "".join(filter(str.isdigit, clean_phone))
-        
+        clean_digits = clean_phone_digits(clean_phone)
+
         if not clean_digits or len(clean_digits) < 8:
             return {"error": f"Número de teléfono inválido: {telefono}. Debe incluir código de país (ej: 5491112345678)"}
 
-        self.add_log("INFO", f"Iniciando solicitud de código de vinculación para +{clean_digits}...")
-
-        # Verificar si el cliente está activo y conectado al socket de WhatsApp
-        is_conn = False
-        if self.client:
-            try:
-                is_conn = bool(self.client.is_connected if not callable(getattr(self.client, "is_connected", None)) else self.client.is_connected())
-            except Exception:
-                pass
-
-        if not is_conn:
-            self.iniciar_daemon(force_restart=True)
-            # Esperar a que el socket se conecte (máximo 6 segundos)
-            for _ in range(30):
-                time.sleep(0.2)
-                try:
-                    if self.client:
-                        conn = self.client.is_connected if not callable(getattr(self.client, "is_connected", None)) else self.client.is_connected()
-                        if conn:
-                            is_conn = True
-                            break
-                except Exception:
-                    pass
+        self.add_log("INFO", f"Solicitando código de vinculación Baileys para +{clean_digits}...")
+        self.ensure_service_running()
 
         try:
-            if not self.client:
-                raise Exception("No se pudo inicializar la conexión con el servidor de WhatsApp.")
-
-            # PairPhone devuelve el código de 8 caracteres de WhatsApp Web
-            code = self.client.PairPhone(phone=clean_digits, show_push_notification=True)
-            self.pairing_code = code
-            self.pairing_phone = clean_digits
-            self.pairing_code_timestamp = time.time()
-            self.status = "PAIRING_CODE_READY"
-            
-            # Formatear el código con guion: ABCD-EFGH
-            formatted_code = f"{code[:4]}-{code[4:]}" if len(code) == 8 and "-" not in code else code
-            self.add_log("INFO", f"¡Código de vinculación generado exitosamente!: {formatted_code}")
-            
-            return {
-                "success": True,
-                "phone": clean_digits,
-                "code": formatted_code,
-                "raw_code": code,
-                "expires_in": 120,
-                "instructions": [
-                    "Abre WhatsApp en tu teléfono celular.",
-                    "Toca Menú (⋮) en Android o Ajustes (⚙️) en iPhone > Dispositivos vinculados.",
-                    "Toca 'Vincular un dispositivo'.",
-                    "En la parte inferior de la pantalla de escaneo, toca 'Vincular con el número de teléfono'.",
-                    f"Ingresa este código de 8 caracteres: {formatted_code}"
-                ]
-            }
+            r = httpx.post(f"{self.service_url}/pair-code", json={"phone": clean_digits}, timeout=15.0)
+            if r.status_code == 200:
+                res = r.json()
+                self.add_log("INFO", f"¡Código generado exitosamente!: {res.get('code')}")
+                return res
+            else:
+                err = r.json().get("error", "Error generando código")
+                self.add_log("ERROR", f"Error de Baileys al generar código: {err}")
+                return {"error": err}
         except Exception as e:
-            self.add_log("ERROR", f"Error al generar código de vinculación para {clean_digits}: {e}")
-            return {"error": f"Error de WhatsApp al generar código: {str(e)}"}
+            self.add_log("ERROR", f"Error conectando con microservicio Baileys: {e}")
+            return {"error": f"Error de conexión con la pasarela: {str(e)}"}
 
     def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None) -> Dict[str, Any]:
         """
-        Envía un mensaje de texto saliente por WhatsApp real o simulador.
-        Aplica normalización automática (549... para Argentina).
+        Envía un mensaje de texto saliente por WhatsApp.
         """
         if not texto or not texto.strip():
             return {"error": "El mensaje no puede estar vacío"}
@@ -457,351 +175,88 @@ class WhatsAppManager:
         telefono = normalize_phone_number(telefono_o_jid)
         self.add_log("INFO", f"Enviando mensaje a {format_phone_display(telefono)}: {texto[:60]}...")
 
-        # Generar ID de mensaje único para seguimiento de entrega
-        wa_msg_id = f"crm_{int(time.time()*1000)}"
-
-        msg_metadata = {
-            "tipo": "texto",
-            "whatsapp_message_id": wa_msg_id,
-            "delivery_status": "enviado"
-        }
-
-        # 1. Si existe conversacion_id, guardar en Supabase como emisor='operador'
-        msg_guardado = None
-        if conversacion_id:
-            msg_guardado = guardar_mensaje(conversacion_id, "operador", texto, msg_metadata)
-        else:
-            paciente = get_paciente_by_telefono(telefono)
-            if paciente:
-                conv = get_or_create_conversacion(paciente["id"])
-                if conv:
-                    msg_guardado = guardar_mensaje(conv["id"], "operador", texto, msg_metadata)
-
-        # 2. Despachar por Neonize al WhatsApp real
-        enviado_real = False
-        if self.client and NEONIZE_AVAILABLE:
-            try:
-                dest_jid = phone_to_whatsapp_jid(telefono)
-                resp = self.client.send_message(dest_jid, texto)
-                enviado_real = True
-                self.add_log("INFO", f"Mensaje entregado a WhatsApp Gateway para {format_phone_display(telefono)}")
-            except Exception as e:
-                self.add_log("ERROR", f"Fallo al enviar mensaje por WhatsApp a {telefono}: {e}")
-                return {"error": f"Error al enviar mensaje por WhatsApp: {str(e)}", "guardado_db": bool(msg_guardado)}
-
-        return {
-            "success": True,
-            "telefono": telefono,
-            "telefono_formateado": format_phone_display(telefono),
-            "enviado_real": enviado_real,
-            "guardado_db": bool(msg_guardado),
-            "mensaje": texto
-        }
-
-    def enviar_documento(self, telefono_o_jid: str, filepath: str, filename: str, caption: str = "", conversacion_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Envía un archivo PDF / documento al paciente vía WhatsApp con teléfono normalizado.
-        """
-        if not os.path.exists(filepath):
-            return {"error": f"El archivo {filepath} no existe."}
-
-        telefono = normalize_phone_number(telefono_o_jid)
-        self.add_log("INFO", f"Enviando documento '{filename}' a {format_phone_display(telefono)}...")
-
-        # Guardar en base de datos si aplica
-        base_api_url = os.getenv("API_BASE_URL", "http://localhost:8000")
-        rel_path = filepath.replace(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "").replace("\\", "/")
-        full_media_url = f"{base_api_url}{rel_path}"
-
-        msg_metadata = {
-            "tipo": "documento",
-            "media_url": full_media_url,
-            "file_name": filename,
-            "caption": caption,
-            "delivery_status": "enviado"
-        }
-
-        if conversacion_id:
-            guardar_mensaje(conversacion_id, "operador", caption or f"📄 {filename}", msg_metadata)
-
-        enviado_real = False
-        if self.client and NEONIZE_AVAILABLE:
-            try:
-                dest_jid = phone_to_whatsapp_jid(telefono)
-                self.client.send_document(
-                    to=dest_jid,
-                    file=filepath,
-                    filename=filename,
-                    caption=caption
-                )
-                enviado_real = True
-                self.add_log("INFO", f"Documento '{filename}' enviado con éxito a {format_phone_display(telefono)}")
-            except Exception as e:
-                self.add_log("ERROR", f"Error enviando documento a {telefono}: {e}")
-                return {"error": str(e)}
-
-        return {"success": True, "enviado_real": enviado_real, "archivo": filename, "telefono": telefono}
-
-    def _handle_incoming_message(self, c, event: MessageEv):
-        """
-        Procesador central de mensajes entrantes.
-        Filtra estados/broadcasts, descarga archivos multimedia y procesa con Gemini.
-        """
         try:
-            sender_jid = event.Info.Sender
-            sender_str = str(sender_jid)
-            chat_str = str(getattr(event.Info, "Chat", ""))
-
-            # ====================================================================
-            # 1. FILTRADO ESTRICTO: Descartar Estados / Broadcasts y Newsletters
-            # ====================================================================
-            if "status@broadcast" in sender_str or "broadcast" in sender_str or \
-               "newsletter" in sender_str or "status@broadcast" in chat_str or \
-               "lid" in sender_str and not hasattr(sender_jid, "User"):
-                logger.debug(f"Descartando evento no relevante de WhatsApp: {sender_str}")
-                return
-
-            raw_user = sender_jid.User if hasattr(sender_jid, "User") else sender_str.split("@")[0]
-            telefono = normalize_phone_number(raw_user)
-            if not telefono:
-                return
-
-            # ====================================================================
-            # 2. Extracción y Clasificación del Contenido del Mensaje
-            # ====================================================================
-            mensaje_texto = ""
-            media_metadata: Dict[str, Any] = {}
-
-            if not event.Message:
-                return
-
-            # A. Reacción a un mensaje previo (reactionMessage)
-            if event.Message.reactionMessage:
-                emoji = event.Message.reactionMessage.text
-                target_msg_id = event.Message.reactionMessage.key.ID if event.Message.reactionMessage.key else None
-                self.add_log("INFO", f"Reacción '{emoji}' recibida de {format_phone_display(telefono)} al mensaje {target_msg_id}")
-                
-                # Actualizar reacción en Supabase si el mensaje existe
-                if target_msg_id and supabase:
+            r = httpx.post(f"{self.service_url}/send-message", json={"phone": telefono, "text": texto}, timeout=10.0)
+            if r.status_code == 200:
+                res = r.json()
+                msg_id = res.get("message_id")
+                # Guardar mensaje saliente en Supabase si hay conversacion_id
+                if conversacion_id:
                     try:
-                        # Buscar mensaje previo y actualizar reacciones
-                        resp = supabase.table("mensajes").select("id, metadata_json").eq("metadata_json->>whatsapp_message_id", target_msg_id).execute()
-                        if resp.data and len(resp.data) > 0:
-                            msg_id = resp.data[0]["id"]
-                            current_meta = resp.data[0].get("metadata_json") or {}
-                            reactions = current_meta.get("reactions") or []
-                            if emoji:
-                                reactions.append({"emisor": "paciente", "emoji": emoji, "timestamp": datetime.datetime.now().isoformat()})
-                            current_meta["reactions"] = reactions
-                            supabase.table("mensajes").update({"metadata_json": current_meta}).eq("id", msg_id).execute()
-                    except Exception as e:
-                        logger.error(f"Error actualizando reacción en Supabase: {e}")
-                return
-
-            # B. Mensaje de Texto Simple o Extendido
-            if event.Message.conversation:
-                mensaje_texto = event.Message.conversation
-                media_metadata["tipo"] = "texto"
-            elif event.Message.extendedTextMessage and event.Message.extendedTextMessage.text:
-                mensaje_texto = event.Message.extendedTextMessage.text
-                media_metadata["tipo"] = "texto"
-
-            # C. Mensaje con Ubicación Geográfica
-            elif event.Message.locationMessage:
-                loc = event.Message.locationMessage
-                lat = loc.degreesLatitude
-                lng = loc.degreesLongitude
-                loc_name = loc.name or "Ubicación compartida por el paciente"
-                maps_url = f"https://maps.google.com/?q={lat},{lng}"
-                mensaje_texto = f"📍 {loc_name}: {maps_url}"
-                media_metadata = {
-                    "tipo": "ubicacion",
-                    "latitud": lat,
-                    "longitud": lng,
-                    "nombre": loc_name,
-                    "maps_url": maps_url
-                }
-
-            # D. Mensaje con Contacto (vCard)
-            elif event.Message.contactMessage:
-                ct = event.Message.contactMessage
-                display_name = ct.displayName or "Contacto"
-                mensaje_texto = f"👤 Contacto compartido: {display_name}"
-                media_metadata = {
-                    "tipo": "contacto",
-                    "nombre": display_name,
-                    "vcard": ct.vcard or ""
-                }
-
-            # E. Archivos Multimedia (Imágenes, Audios/Notas de voz, Documentos/PDFs, Stickers, Videos)
+                        guardar_mensaje(
+                            conversacion_id=conversacion_id,
+                            remitente="agente",
+                            texto=texto,
+                            whatsapp_message_id=msg_id
+                        )
+                    except Exception as db_err:
+                        self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
+                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": telefono}
             else:
-                downloaded = media_service.extract_and_download_media(c, event.Message, conversacion_id=telefono)
-                if downloaded:
-                    media_metadata = downloaded
-                    tipo = downloaded.get("tipo", "archivo")
-                    if tipo == "imagen":
-                        caption = downloaded.get("caption")
-                        mensaje_texto = f"📷 [Foto recibida]{': ' + caption if caption else ''}"
-                    elif tipo == "audio":
-                        mensaje_texto = "🎤 [Nota de voz de WhatsApp]"
-                    elif tipo == "documento":
-                        fname = downloaded.get("file_name", "estudio.pdf")
-                        mensaje_texto = f"📄 [Documento adjunto: {fname}]"
-                    elif tipo == "sticker":
-                        mensaje_texto = "✨ [Sticker]"
-                    elif tipo == "video":
-                        mensaje_texto = "🎥 [Video recibido]"
-                else:
-                    mensaje_texto = "[Mensaje multimedia no soportado]"
-
-            if not mensaje_texto and not media_metadata:
-                return
-
-            # Agregar ID de WhatsApp para seguimiento de tildes
-            msg_id_wa = getattr(event.Info, "ID", None) or f"in_{int(time.time()*1000)}"
-            media_metadata["whatsapp_message_id"] = msg_id_wa
-            media_metadata["delivery_status"] = "recibido"
-
-            self.add_log("INFO", f"Mensaje ({media_metadata.get('tipo', 'texto')}) de {format_phone_display(telefono)}: '{mensaje_texto[:60]}'")
-
-            # ====================================================================
-            # 3. Paciente y Conversación en Supabase
-            # ====================================================================
-            paciente = get_paciente_by_telefono(telefono)
-            if not paciente:
-                push_name = getattr(event.Info, "PushName", None) or f"Paciente {telefono[-4:]}"
-                paciente = crear_paciente(telefono=telefono, nombre=push_name)
-                if not paciente:
-                    self.add_log("ERROR", f"No se pudo crear paciente para {telefono}")
-                    return
-
-            paciente_id = paciente["id"]
-            conversacion = get_or_create_conversacion(paciente_id)
-            if not conversacion:
-                self.add_log("ERROR", f"No se pudo obtener conversación para paciente {paciente_id}")
-                return
-
-            conversacion_id = conversacion["id"]
-            bot_disabled = conversacion.get("bot_disabled", False)
-
-            # ====================================================================
-            # 4. Detección de Palabras Clave de Escalamiento a Operador Humano
-            # ====================================================================
-            settings = load_settings()
-            bot_cfg = settings.get("bot", {})
-            bot_global_enabled = bot_cfg.get("enabled", True)
-            escalation_keywords = bot_cfg.get("human_escalation_keywords", [])
-
-            msg_lower = mensaje_texto.lower()
-            trigger_escalation = any(k.lower() in msg_lower for k in escalation_keywords if k)
-
-            if trigger_escalation and not bot_disabled:
-                self.add_log("WARNING", f"Urgencia/Operador detectado en mensaje de {format_phone_display(telefono)}. Traspasando a humano.")
-                actualizar_bot_disabled(conversacion_id, True)
-                bot_disabled = True
-                
-                guardar_mensaje(conversacion_id, "paciente", mensaje_texto, {**media_metadata, "escalation_triggered": True})
-                
-                aviso_humano = "He transferido tu consulta a nuestro equipo médico humano. En breve un asesor te responderá directamente. 🩺"
-                guardar_mensaje(conversacion_id, "bot", aviso_humano, {"tipo": "texto"})
-                
-                dest_jid = phone_to_whatsapp_jid(telefono)
-                c.send_message(dest_jid, aviso_humano)
-                return
-
-            # ====================================================================
-            # 5. Guardar Mensaje del Paciente en Supabase
-            # ====================================================================
-            guardar_mensaje(conversacion_id, "paciente", mensaje_texto, media_metadata)
-
-            # 6. Si el bot está deshabilitado, pausar respuesta automática
-            if bot_disabled or not bot_global_enabled:
-                self.add_log("INFO", f"Bot pausado para conversación {conversacion_id}. Operador humano a cargo.")
-                return
-
-            # ====================================================================
-            # 7. Procesar con Gemini Agent (Soporte Multimodal / Presupuestador)
-            # ====================================================================
-            # Si el paciente envió un audio o documento, informamos al agente en el contexto
-            prompt_agente = mensaje_texto
-            if media_metadata.get("tipo") == "imagen" and media_metadata.get("caption"):
-                prompt_agente = f"[El paciente envió una imagen con el texto]: {media_metadata.get('caption')}"
-            elif media_metadata.get("tipo") == "audio":
-                prompt_agente = "Hola, te envié un audio solicitando consulta médica o presupuesto."
-
-            self.add_log("INFO", f"Generando respuesta inteligente de Gemini para {format_phone_display(telefono)}...")
-            respuesta_agente = procesar_mensaje_agente(
-                conversacion_id=conversacion_id,
-                paciente_id=paciente_id,
-                mensaje_texto=prompt_agente
-            )
-
-            # 8. Enviar respuesta automática generada
-            if respuesta_agente:
-                self.add_log("INFO", f"Enviando respuesta del agente a {format_phone_display(telefono)}: '{respuesta_agente[:60]}...'")
-                dest_jid = phone_to_whatsapp_jid(telefono)
-                c.send_message(dest_jid, respuesta_agente)
-
+                err = r.json().get("error", "Error al enviar mensaje")
+                self.add_log("WARNING", f"Fallo al enviar mensaje: {err}")
+                return {"error": err, "enviado_real": False}
         except Exception as e:
-            self.add_log("ERROR", f"Error procesando evento MessageEv de WhatsApp: {e}")
+            self.add_log("ERROR", f"Error de conexión al enviar mensaje: {e}")
+            return {"error": str(e), "enviado_real": False}
 
-    def _handle_receipt_event(self, c, event: ReceiptEv):
+    def enviar_multimedia(self, telefono: str, media_url: str, media_type: str = "document", caption: str = "", filename: str = "") -> Dict[str, Any]:
         """
-        Maneja tildes de confirmación de entrega y lectura de mensajes enviados.
+        Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Baileys.
+        """
+        clean_phone = normalize_phone_number(telefono)
+        try:
+            r = httpx.post(f"{self.service_url}/send-media", json={
+                "phone": clean_phone,
+                "media_url": media_url,
+                "media_type": media_type,
+                "caption": caption,
+                "filename": filename
+            }, timeout=20.0)
+            if r.status_code == 200:
+                return r.json()
+            return {"error": r.json().get("error", "Error enviando multimedia")}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def desconectar_y_logout(self) -> bool:
+        """
+        Cierra sesión formal en WhatsApp y limpia los tokens locales.
         """
         try:
-            receipt_type = getattr(event, "Type", None)
-            msg_ids = getattr(event, "MessageIDs", []) or []
-            
-            status_str = "entregado"
-            # ReceiptType.READ = 3 o string "Read"
-            if str(receipt_type).lower() in ("read", "3", "played"):
-                status_str = "leido"
-            
-            if msg_ids and supabase:
-                for wid in msg_ids:
-                    try:
-                        resp = supabase.table("mensajes").select("id, metadata_json").eq("metadata_json->>whatsapp_message_id", wid).execute()
-                        if resp.data and len(resp.data) > 0:
-                            m_id = resp.data[0]["id"]
-                            meta = resp.data[0].get("metadata_json") or {}
-                            meta["delivery_status"] = status_str
-                            supabase.table("mensajes").update({"metadata_json": meta}).eq("id", m_id).execute()
-                    except Exception:
-                        pass
+            r = httpx.post(f"{self.service_url}/logout", timeout=8.0)
+            self.status = "DISCONNECTED"
+            self.add_log("INFO", "Sesión de WhatsApp cerrada exitosamente.")
+            return r.status_code == 200
         except Exception as e:
-            logger.debug(f"Error procesando ReceiptEv: {e}")
+            self.add_log("ERROR", f"Error en logout: {e}")
+            return False
 
-    def _handle_call_event(self, c, event: CallOfferEv):
+    def iniciar_daemon(self, force_restart: bool = False):
         """
-        Registra un mensaje informativo de llamada perdida en el CRM.
+        Reinicia la conexión del microservicio Baileys.
         """
         try:
-            caller_jid = getattr(event, "CallCreator", None) or getattr(event, "Sender", None)
-            if not caller_jid:
-                return
-            raw_user = caller_jid.User if hasattr(caller_jid, "User") else str(caller_jid).split("@")[0]
-            telefono = normalize_phone_number(raw_user)
-            if not telefono:
-                return
-
-            self.add_log("WARNING", f"Llamada de WhatsApp entrante detectada de {format_phone_display(telefono)}")
-            
-            paciente = get_paciente_by_telefono(telefono)
-            if paciente:
-                conv = get_or_create_conversacion(paciente["id"])
-                if conv:
-                    now_time = datetime.datetime.now().strftime("%H:%M")
-                    guardar_mensaje(
-                        conv["id"], 
-                        "bot", 
-                        f"📞 Llamada de voz de WhatsApp no atendida a las {now_time} hs.", 
-                        {"tipo": "sistema", "evento": "llamada_perdida"}
-                    )
+            self.ensure_service_running()
+            httpx.post(f"{self.service_url}/connect?force={str(force_restart).lower()}", timeout=5.0)
         except Exception as e:
-            logger.debug(f"Error procesando llamada entrante: {e}")
+            self.add_log("WARNING", f"Error reconectando: {e}")
 
-# Instancia Singleton Global
+    def get_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        # Intentar obtener logs consolidados del microservicio Baileys
+        try:
+            r = httpx.get(f"{self.service_url}/logs", timeout=2.0)
+            if r.status_code == 200:
+                service_logs = r.json().get("logs", [])
+                combined = self.logs_buffer + service_logs
+                combined.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+                return combined[:limit]
+        except Exception:
+            pass
+        with self._lock:
+            return list(reversed(self.logs_buffer[-limit:]))
+
+# Instancia global única
 whatsapp_manager = WhatsAppManager()
 
 def iniciar_daemon_whatsapp(force_restart: bool = False):

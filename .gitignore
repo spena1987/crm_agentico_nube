@@ -39,3 +39,5 @@ yarn-error.log*
 Thumbs.db
 .agents/
 *.tsbuildinfo
+backend/whatsapp_service/sessions/
+
