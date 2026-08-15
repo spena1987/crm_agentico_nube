@@ -78,7 +78,7 @@ class WhatsAppManager:
         }
         self.logs_buffer: List[Dict[str, Any]] = []
         self.max_logs: int = 100
-        self.db_path = os.getenv("NEONIZE_DB_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "neonize.db"))
+        self.db_path = os.getenv("NEONIZE_DB_PATH", "neonize.db")
         self._lock = threading.Lock()
         
         # Redirigir telemetría interna de Neonize y Whatsmeow al buffer web
@@ -295,17 +295,17 @@ class WhatsAppManager:
                     self.add_log("INFO", "Iniciando loop de conexión connect() con WhatsApp...")
                     self.client.connect()
                     self.add_log("INFO", "connect() finalizó su ejecución.")
-                except Exception as e:
+                except BaseException as e:
                     self.status = "ERROR"
-                    self.add_log("ERROR", f"Error en el socket de WhatsApp: {e}")
+                    self.add_log("ERROR", f"Error en el socket de WhatsApp: {type(e).__name__}: {e}")
 
             self.thread = threading.Thread(target=run_client, daemon=True)
             self.thread.start()
             self.add_log("INFO", "Hilo de conexión de WhatsApp iniciado en segundo plano.")
 
-        except Exception as e:
+        except BaseException as e:
             self.status = "ERROR"
-            self.add_log("ERROR", f"Fallo al inicializar Neonize: {e}")
+            self.add_log("ERROR", f"Fallo al inicializar Neonize: {type(e).__name__}: {e}")
 
     def desconectar_y_logout(self) -> bool:
         """
