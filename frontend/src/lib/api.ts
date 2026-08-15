@@ -14,7 +14,12 @@ const formatUrl = (url: string) => {
   if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
     clean = `https://${clean}`
   }
-  return clean.replace(/\/+$/, '')
+  // Eliminar barras finales y sufijo /api accidental si el usuario lo incluyó en Vercel
+  clean = clean.replace(/\/+$/, '')
+  if (clean.endsWith('/api')) {
+    clean = clean.slice(0, -4)
+  }
+  return clean
 }
 
 export const BACKEND_URL = formatUrl(rawBackendUrl);
