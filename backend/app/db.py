@@ -9,14 +9,16 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-# Preferimos usar la service_role key en el backend para evadir RLS de forma controlada y segura
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+raw_url = os.getenv("SUPABASE_URL", "").strip().strip("'\"")
+SUPABASE_URL = raw_url if raw_url and not "tu_proyecto" in raw_url else None
+
+raw_key = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or "").strip().strip("'\"")
+SUPABASE_KEY = raw_key if raw_key and not "tu_anon" in raw_key and not "tu_service_role" in raw_key else None
 
 from app.services.phone_normalizer import normalize_phone_number
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    logger.warning("Faltan variables de entorno para Supabase. Asegúrate de configurar SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.")
+    logger.warning("Faltan variables de entorno válidas para Supabase. Asegúrate de configurar SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
@@ -164,7 +166,13 @@ def crear_o_actualizar_paciente_geclisa(payload: dict):
         return paciente
 
     except Exception as e:
-        logger.error(f"Error al crear/actualizar paciente Geclisa: {e}")
+        err_msg = str(e)
+        logger.error(f"Error al crear/actualizar paciente Geclisa: {err_msg}")
+        if "Name or service not known" in err_msg or "gaierror" in err_msg or "ConnectError" in err_msg:
+            raise RuntimeError(
+                f"Error de resolución de DNS/red al conectar con Supabase ({SUPABASE_URL}). "
+                "Verifica que la variable SUPABASE_URL esté configurada correctamente en el panel de variables de entorno de producción."
+            ) from e
         raise
 
 def asignar_medico_paciente(paciente_id: str, medico_payload: dict):

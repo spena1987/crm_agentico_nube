@@ -19,9 +19,16 @@ class GeclisaClient:
     Maneja la autenticación JWT y expone métodos seguros de consulta.
     """
     def __init__(self):
-        self.base_url = os.getenv("GECLISA_API_BASE_URL", "https://creogeclisa.fertilidadmendoza.com.ar:98")
-        self.username = os.getenv("GECLISA_USERNAME")
-        self.password = os.getenv("GECLISA_PASSWORD")
+        raw_url = os.getenv("GECLISA_API_BASE_URL", "https://creogeclisa.fertilidadmendoza.com.ar:98").strip().strip("'\"")
+        if raw_url and not raw_url.startswith("http"):
+            raw_url = f"https://{raw_url}"
+        self.base_url = raw_url.rstrip("/") if raw_url else "https://creogeclisa.fertilidadmendoza.com.ar:98"
+        
+        raw_user = os.getenv("GECLISA_USERNAME", "")
+        self.username = raw_user.strip().strip("'\"") if raw_user else None
+        
+        raw_pass = os.getenv("GECLISA_PASSWORD", "")
+        self.password = raw_pass.strip().strip("'\"") if raw_pass else None
         
         # Sesión HTTP persistente con SSL verify desactivado para compatibilidad con puerto :98
         self.session = requests.Session()
@@ -41,7 +48,7 @@ class GeclisaClient:
             return self._token
 
         if not self.username or not self.password:
-            raise ValueError("Faltan las variables de entorno GECLISA_USERNAME o GECLISA_PASSWORD.")
+            raise ValueError("Faltan las variables de entorno GECLISA_USERNAME o GECLISA_PASSWORD en el servidor.")
 
         token_url = f"{self.base_url}/connect/token"
         payload = {
@@ -65,6 +72,12 @@ class GeclisaClient:
             logger.info("✔ Token JWT de Geclisa obtenido y guardado en caché.")
             return self._token
 
+        except requests.exceptions.ConnectionError as conn_err:
+            logger.error(f"Error de conexión de red/DNS con Geclisa ({self.base_url}): {conn_err}")
+            raise RuntimeError(
+                f"No se pudo resolver o conectar al servidor de Geclisa ({self.base_url}). "
+                "Verifica que el servidor de producción tenga salida a internet y DNS configurado."
+            ) from conn_err
         except Exception as e:
             logger.error(f"Error al obtener token de Geclisa: {e}")
             raise
