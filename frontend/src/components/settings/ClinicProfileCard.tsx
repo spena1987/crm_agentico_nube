@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Building2, MapPin, Phone, Mail, Clock, MessageSquare, Save, CheckCircle2 } from 'lucide-react'
+import { BACKEND_URL } from '@/lib/api'
 
 export default function ClinicProfileCard() {
   const [loading, setLoading] = useState(true)
@@ -22,7 +23,7 @@ export default function ClinicProfileCard() {
   const fetchSettings = async () => {
     try {
       setLoading(true)
-      const res = await fetch('http://localhost:8000/api/settings')
+      const res = await fetch(`${BACKEND_URL}/api/settings`)
       if (res.ok) {
         const data = await res.json()
         const clinica = data.clinica || {}
@@ -55,7 +56,7 @@ export default function ClinicProfileCard() {
           mensaje_bienvenida: mensajeBienvenida
         }
       }
-      const res = await fetch('http://localhost:8000/api/settings', {
+      const res = await fetch(`${BACKEND_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

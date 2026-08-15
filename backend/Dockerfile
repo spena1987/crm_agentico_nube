@@ -21,5 +21,5 @@ COPY . .
 # Exponer el puerto de FastAPI
 EXPOSE 8000
 
-# Ejecutar el servidor uvicorn (el daemon de WhatsApp se puede iniciar en un thread o proceso secundario)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Ejecutar el servidor uvicorn en el puerto asignado dinámicamente por Railway ($PORT) o 8000 por defecto
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

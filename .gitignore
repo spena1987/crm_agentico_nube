@@ -17,6 +17,9 @@ venv.bak/
 *.db
 neonize.db*
 swagger_geclisa.json
+backend/app/static/*.pdf
+backend/app/static/media/*
+!backend/app/static/.gitkeep
 
 # Node & Next.js
 node_modules/

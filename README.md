@@ -2,6 +2,8 @@
 
 Este repositorio contiene una solución completa, profesional y de nivel de producción para la gestión administrativa de Clínicas y Consultorios Médicos, integrada con un agente inteligente de WhatsApp impulsado por **Google Gemini** y **Supabase**.
 
+> 📖 **¿Listo para producción?** Consultá la [Guía Completa de Despliegue en Producción (Supabase + Railway + Vercel)](./DEPLOYMENT_GUIDE.md).
+
 ---
 
 ## 🚀 Arquitectura General del Sistema

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Terminal, RefreshCw, Trash2, Copy, Check, Filter } from 'lucide-react'
+import { BACKEND_URL } from '@/lib/api'
 
 interface LogEntry {
   id: string
@@ -20,7 +21,7 @@ export default function SystemLogsCard() {
   const fetchLogs = async () => {
     try {
       setLoading(true)
-      const res = await fetch('http://localhost:8000/api/whatsapp/logs?limit=60')
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/logs?limit=60`)
       if (res.ok) {
         const data = await res.json()
         setLogs(data.logs || [])

@@ -16,6 +16,7 @@ import {
   Info
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
+import { BACKEND_URL } from '@/lib/api'
 
 interface WhatsAppStatus {
   available: boolean
@@ -49,7 +50,7 @@ export default function WhatsAppConfigCard() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/whatsapp/status')
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
       if (res.ok) {
         const data: WhatsAppStatus = await res.json()
         setStatusData(data)
@@ -70,7 +71,7 @@ export default function WhatsAppConfigCard() {
 
   const fetchQR = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/whatsapp/qr')
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/qr`)
       if (res.ok) {
         const qrInfo = await res.json()
         if (qrInfo.qr_data_uri) {
@@ -110,7 +111,7 @@ export default function WhatsAppConfigCard() {
   const handleConnect = async (force = false) => {
     try {
       setConectando(true)
-      const res = await fetch(`http://localhost:8000/api/whatsapp/connect?force=${force}`, {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/connect?force=${force}`, {
         method: 'POST'
       })
       if (res.ok) {
@@ -129,7 +130,7 @@ export default function WhatsAppConfigCard() {
     }
     try {
       setDesconectando(true)
-      const res = await fetch('http://localhost:8000/api/whatsapp/logout', {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/logout`, {
         method: 'POST'
       })
       if (res.ok) {
@@ -153,7 +154,7 @@ export default function WhatsAppConfigCard() {
     setEnviandoTest(true)
     setTestFeedback(null)
     try {
-      const res = await fetch('http://localhost:8000/api/whatsapp/send-test', {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Bot, Sparkles, Sliders, ShieldAlert, Save, CheckCircle2, Plus, X } from 'lucide-react'
+import { BACKEND_URL } from '@/lib/api'
 
 export default function BotSettingsCard() {
   const [loading, setLoading] = useState(true)
@@ -22,7 +23,7 @@ export default function BotSettingsCard() {
   const fetchSettings = async () => {
     try {
       setLoading(true)
-      const res = await fetch('http://localhost:8000/api/settings')
+      const res = await fetch(`${BACKEND_URL}/api/settings`)
       if (res.ok) {
         const data = await res.json()
         const bot = data.bot || {}
@@ -65,7 +66,7 @@ export default function BotSettingsCard() {
           system_instructions_override: systemOverride
         }
       }
-      const res = await fetch('http://localhost:8000/api/settings', {
+      const res = await fetch(`${BACKEND_URL}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

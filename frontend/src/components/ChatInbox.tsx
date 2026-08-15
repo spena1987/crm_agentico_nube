@@ -21,6 +21,7 @@ import {
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import ChatMediaViewer, { DeliveryStatusIcon } from './chat/ChatMediaViewer'
+import { BACKEND_URL } from '@/lib/api'
 
 interface Paciente {
   id: string
@@ -73,7 +74,7 @@ export default function ChatInbox() {
   // Cargar estado de WhatsApp
   const fetchWAStatus = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/whatsapp/status')
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
       if (res.ok) {
         const data = await res.json()
         setWaStatus(data)
@@ -257,7 +258,7 @@ export default function ChatInbox() {
       // Intentar enviar mediante el gateway de WhatsApp del backend
       let dispatchedViaBackend = false
       try {
-        const response = await fetch('http://localhost:8000/api/whatsapp/send-message', {
+        const response = await fetch(`${BACKEND_URL}/api/whatsapp/send-message`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -308,7 +309,7 @@ export default function ChatInbox() {
       formData.append('conversacion_id', selectedConvId)
       formData.append('caption', file.name)
 
-      const res = await fetch('http://localhost:8000/api/whatsapp/send-media', {
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-media`, {
         method: 'POST',
         body: formData
       })
@@ -334,7 +335,7 @@ export default function ChatInbox() {
 
     setSimulando(true)
     try {
-      const response = await fetch('http://localhost:8000/api/simulate-message', {
+      const response = await fetch(`${BACKEND_URL}/api/simulate-message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

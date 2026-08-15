@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { Bot, User, Loader2 } from 'lucide-react'
+import { BACKEND_URL } from '@/lib/api'
 
 interface ToggleHumanProps {
   conversacionId: string
@@ -17,9 +18,9 @@ export default function ToggleHuman({ conversacionId, botDisabled, onToggle }: T
     const nextState = !botDisabled
     
     try {
-      // Llamar al backend local para persistir el cambio
+      // Llamar al backend para persistir el cambio
       const response = await fetch(
-        `http://localhost:8000/api/conversaciones/${conversacionId}/toggle-bot`, 
+        `${BACKEND_URL}/api/conversaciones/${conversacionId}/toggle-bot`, 
         {
           method: 'POST',
           headers: {

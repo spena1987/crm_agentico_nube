@@ -14,6 +14,7 @@ import {
   Check,
   CheckCheck
 } from 'lucide-react'
+import { BACKEND_URL } from '@/lib/api'
 
 interface MediaMetadata {
   tipo?: 'imagen' | 'audio' | 'documento' | 'sticker' | 'video' | 'ubicacion' | 'contacto' | 'texto'
@@ -53,7 +54,7 @@ export default function ChatMediaViewer({ metadata, isOperator }: ChatMediaViewe
     const target = url || relUrl
     if (!target) return ''
     if (target.startsWith('http')) return target
-    return `http://localhost:8000${target.startsWith('/') ? '' : '/'}${target}`
+    return `${BACKEND_URL}${target.startsWith('/') ? '' : '/'}${target}`
   }
 
   const mediaUrl = getFullUrl(metadata.media_url, metadata.relative_url)

@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import BudgetGenerator from '@/components/BudgetGenerator'
 import { supabase } from '@/lib/supabase'
+import { BACKEND_URL } from '@/lib/api'
 import { FileText, PlusCircle, History, Download, Trash2, ArrowUpRight, CheckCircle, RefreshCw } from 'lucide-react'
 
 interface Paciente {
@@ -209,7 +210,7 @@ export default function PresupuestosPage() {
                       <td className="text-center">
                         {pres.pdf_url ? (
                           <a
-                            href={`http://localhost:8000${pres.pdf_url}`}
+                            href={`${BACKEND_URL}${pres.pdf_url}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-1.5 bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 rounded-lg inline-flex items-center justify-center transition-all"
