@@ -1,0 +1,27 @@
+{
+  "bot": {
+    "enabled": true,
+    "model_name": "gemini-2.5-flash",
+    "typing_delay_seconds": 4,
+    "human_escalation_keywords": [
+      "humano",
+      "operador",
+      "persona",
+      "asesor",
+      "urgencia",
+      "emergencia",
+      "reclamo",
+      "hablar con alguien",
+      "doctor directo"
+    ],
+    "system_instructions_override": ""
+  },
+  "clinica": {
+    "nombre": "Centro Médico Nube",
+    "direccion": "Av. Corrientes 1234, CABA, Argentina",
+    "telefono_guardia": "+54 9 11 5555-0199",
+    "email_contacto": "contacto@centromediconube.com",
+    "horarios_atencion": "Lunes a Viernes de 08:00 a 20:00 hs. Sábados de 09:00 a 13:00 hs.",
+    "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?"
+  }
+}

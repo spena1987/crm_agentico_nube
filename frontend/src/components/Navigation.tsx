@@ -3,13 +3,15 @@
 import React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useAuth } from '@/context/AuthContext'
 import { 
   LayoutDashboard, 
   MessageSquare, 
   FileText, 
   Users, 
-  Activity,
-  LogOut
+  Activity, 
+  LogOut,
+  Settings
 } from 'lucide-react'
 
 const navItems = [
@@ -17,10 +19,21 @@ const navItems = [
   { label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
   { label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { label: 'Pacientes', href: '/pacientes', icon: Users },
+  { label: 'Ajustes', href: '/ajustes', icon: Settings },
 ]
 
 export default function Navigation() {
   const pathname = usePathname()
+  const { user, signOut } = useAuth()
+
+  // Extraer iniciales y nombre a mostrar
+  const userEmail = user?.email || 'Usuario'
+  const displayName = user?.user_metadata?.full_name || userEmail.split('@')[0]
+  const initials = displayName.substring(0, 2).toUpperCase()
+
+  const handleLogout = async () => {
+    await signOut()
+  }
 
   return (
     <aside className="w-64 border-r border-[var(--border)] bg-[var(--card)] h-screen flex flex-col justify-between sticky top-0">
@@ -59,20 +72,25 @@ export default function Navigation() {
         </nav>
       </div>
 
-      {/* Footer del Sidebar */}
+      {/* Footer del Sidebar con Usuario y Logout */}
       <div className="p-4 border-t border-[var(--border)]">
-        <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs">
-              DR
+        <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs shrink-0 glow-primary">
+              {initials}
             </div>
-            <div className="truncate">
-              <p className="text-xs font-bold leading-tight">Dr. R. Malko</p>
-              <p className="text-[10px] text-[var(--secondary)]">Director Médico</p>
+            <div className="truncate min-w-0">
+              <p className="text-xs font-bold leading-tight truncate text-[var(--foreground)]" title={displayName}>
+                {displayName}
+              </p>
+              <p className="text-[10px] text-[var(--secondary)] truncate" title={userEmail}>
+                {userEmail}
+              </p>
             </div>
           </div>
           <button 
-            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors"
+            onClick={handleLogout}
+            className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors shrink-0 ml-1"
             title="Cerrar sesión"
           >
             <LogOut size={16} />

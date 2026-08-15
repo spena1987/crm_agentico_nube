@@ -1,9 +1,26 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Send, Phone, User, Bot, Sparkles, MessageCircle, RefreshCw, Smartphone } from 'lucide-react'
+import { 
+  Send, 
+  Phone, 
+  User, 
+  Bot, 
+  Sparkles, 
+  MessageCircle, 
+  RefreshCw, 
+  Smartphone, 
+  Settings, 
+  Radio,
+  Paperclip,
+  Loader2
+} from 'lucide-react'
 import ToggleHuman from './ToggleHuman'
+import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
+import ChatMediaViewer, { DeliveryStatusIcon } from './chat/ChatMediaViewer'
 
 interface Paciente {
   id: string
@@ -30,6 +47,11 @@ interface Mensaje {
   created_at: string
 }
 
+interface WAStatus {
+  status: string
+  is_logged_in: boolean
+}
+
 export default function ChatInbox() {
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([])
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null)
@@ -37,13 +59,33 @@ export default function ChatInbox() {
   const [nuevoMensaje, setNuevoMensaje] = useState('')
   const [cargandoMensajes, setCargandoMensajes] = useState(false)
   const [cargandoConversaciones, setCargandoConversaciones] = useState(true)
+  const [waStatus, setWaStatus] = useState<WAStatus | null>(null)
   
   // Para pruebas/simulación
   const [simTelefono, setSimTelefono] = useState('5491123456789')
   const [simTexto, setSimTexto] = useState('')
   const [simulando, setSimulando] = useState(false)
+  const [subiendoArchivo, setSubiendoArchivo] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Cargar estado de WhatsApp
+  const fetchWAStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/whatsapp/status')
+      if (res.ok) {
+        const data = await res.json()
+        setWaStatus(data)
+      }
+    } catch (err) {
+      // Backend offline o simulado
+    }
+  }
+
+  const searchParams = useSearchParams()
+  const paramPacienteId = searchParams ? searchParams.get('pacienteId') : null
+  const paramTelefono = searchParams ? searchParams.get('telefono') : null
 
   // Cargar conversaciones al iniciar
   const fetchConversaciones = async () => {
@@ -67,11 +109,28 @@ export default function ChatInbox() {
         .order('updated_at', { ascending: false })
       
       if (error) throw error
-      setConversaciones(data as unknown as Conversacion[])
+      const convs = (data as unknown as Conversacion[]) || []
+      setConversaciones(convs)
       
+      // Auto-seleccionar conversación por pacienteId o teléfono si viene en query params
+      if (paramPacienteId && convs.length > 0) {
+        const target = convs.find((c) => c.paciente_id === paramPacienteId || c.pacientes?.id === paramPacienteId)
+        if (target) {
+          setSelectedConvId(target.id)
+          return
+        }
+      }
+      if (paramTelefono && convs.length > 0) {
+        const target = convs.find((c) => c.pacientes?.telefono === paramTelefono)
+        if (target) {
+          setSelectedConvId(target.id)
+          return
+        }
+      }
+
       // Auto-seleccionar la primera si no hay ninguna seleccionada
-      if (data && data.length > 0 && !selectedConvId) {
-        setSelectedConvId(data[0].id)
+      if (convs.length > 0 && !selectedConvId) {
+        setSelectedConvId(convs[0].id)
       }
     } catch (err) {
       console.error('Error cargando conversaciones:', err)
@@ -91,7 +150,7 @@ export default function ChatInbox() {
         .order('created_at', { ascending: true })
       
       if (error) throw error
-      setMensajes(data || [])
+      setMensajes((data as unknown as Mensaje[]) || [])
     } catch (err) {
       console.error('Error cargando mensajes:', err)
     } finally {
@@ -101,6 +160,9 @@ export default function ChatInbox() {
 
   useEffect(() => {
     fetchConversaciones()
+    fetchWAStatus()
+    const interval = setInterval(fetchWAStatus, 5000)
+    return () => clearInterval(interval)
   }, [])
 
   useEffect(() => {
@@ -124,12 +186,13 @@ export default function ChatInbox() {
         (payload) => {
           const newMsg = payload.new as Mensaje
           
-          // Si el mensaje corresponde a la conversación activa, añadirlo al listado
           if (newMsg.conversacion_id === selectedConvId) {
-            setMensajes((prev) => [...prev, newMsg])
+            setMensajes((prev) => {
+              if (prev.some((m) => m.id === newMsg.id)) return prev
+              return [...prev, newMsg]
+            })
           }
           
-          // Actualizar último mensaje en la lista de conversaciones
           setConversaciones((prevConvs) => 
             prevConvs.map((conv) => {
               if (conv.id === newMsg.conversacion_id) {
@@ -139,7 +202,7 @@ export default function ChatInbox() {
                   updated_at: newMsg.created_at
                 }
               }
-              return conv;
+              return conv
             }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
           )
         }
@@ -159,7 +222,7 @@ export default function ChatInbox() {
                   updated_at: updatedConv.updated_at
                 }
               }
-              return conv;
+              return conv
             })
           )
         }
@@ -168,7 +231,6 @@ export default function ChatInbox() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'conversaciones' },
         () => {
-          // Refrescar conversaciones si se añade una nueva conversación
           fetchConversaciones()
         }
       )
@@ -181,39 +243,91 @@ export default function ChatInbox() {
 
   const selectedConv = conversaciones.find((c) => c.id === selectedConvId)
 
-  // Enviar mensaje manual del operador/clínica
+  // Enviar mensaje del operador directamente a WhatsApp y Supabase
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!nuevoMensaje.trim() || !selectedConvId) return
+    if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
 
     const mensajeAEnviar = nuevoMensaje
     setNuevoMensaje('')
 
     try {
-      // 1. Insertar el mensaje en Supabase
-      const { error } = await supabase
-        .from('mensajes')
-        .insert({
-          conversacion_id: selectedConvId,
-          emisor: 'operador',
-          contenido: mensajeAEnviar,
-          metadata_json: {}
+      const telefonoDestino = selectedConv.pacientes?.telefono || ''
+      
+      // Intentar enviar mediante el gateway de WhatsApp del backend
+      let dispatchedViaBackend = false
+      try {
+        const response = await fetch('http://localhost:8000/api/whatsapp/send-message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            telefono: telefonoDestino,
+            mensaje: mensajeAEnviar,
+            conversacion_id: selectedConvId
+          })
         })
+        if (response.ok) {
+          dispatchedViaBackend = true
+        }
+      } catch (backendErr) {
+        console.warn('Backend WhatsApp no disponible, guardando directo en Supabase:', backendErr)
+      }
 
-      if (error) throw error
+      // Si el backend no guardó en Supabase, lo guardamos directamente
+      if (!dispatchedViaBackend) {
+        await supabase
+          .from('mensajes')
+          .insert({
+            conversacion_id: selectedConvId,
+            emisor: 'operador',
+            contenido: mensajeAEnviar,
+            metadata_json: {}
+          })
 
-      // 2. Actualizar el último mensaje en la conversación localmente/remotamente
-      await supabase
-        .from('conversaciones')
-        .update({ ultimo_mensaje: mensajeAEnviar })
-        .eq('id', selectedConvId)
+        await supabase
+          .from('conversaciones')
+          .update({ ultimo_mensaje: mensajeAEnviar })
+          .eq('id', selectedConvId)
+      }
 
     } catch (err) {
       console.error('Error enviando mensaje:', err)
     }
   }
 
-  // Simular un mensaje entrante de un paciente (para testing de Gemini)
+  // Enviar archivo multimedia del operador al paciente
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !selectedConvId || !selectedConv) return
+
+    setSubiendoArchivo(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('telefono', selectedConv.pacientes?.telefono || '')
+      formData.append('conversacion_id', selectedConvId)
+      formData.append('caption', file.name)
+
+      const res = await fetch('http://localhost:8000/api/whatsapp/send-media', {
+        method: 'POST',
+        body: formData
+      })
+
+      if (!res.ok) {
+        throw new Error('Error al enviar archivo por WhatsApp')
+      }
+    } catch (err) {
+      console.error('Error subiendo archivo:', err)
+      alert('Hubo un inconveniente al enviar el archivo adjunto.')
+    } finally {
+      setSubiendoArchivo(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  // Simular mensaje entrante
   const handleSimulateIncoming = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!simTexto.trim()) return
@@ -222,9 +336,7 @@ export default function ChatInbox() {
     try {
       const response = await fetch('http://localhost:8000/api/simulate-message', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           telefono: simTelefono,
           mensaje: simTexto
@@ -233,19 +345,15 @@ export default function ChatInbox() {
 
       if (response.ok) {
         setSimTexto('')
-        // Recargar conversaciones tras simulación por si se creó un paciente
-        setTimeout(() => {
-          fetchConversaciones()
-        }, 1500)
-      } else {
-        console.error('Error enviando simulación.')
       }
     } catch (error) {
-      console.error('Error al conectar con la API de simulación del backend:', error)
+      console.error('Error enviando simulación:', error)
     } finally {
       setSimulando(false)
     }
   }
+
+  const isWaConnected = waStatus?.is_logged_in || waStatus?.status === 'CONNECTED'
 
   return (
     <div className="flex h-[calc(100vh-2rem)] border border-[var(--border)] rounded-2xl overflow-hidden bg-[var(--card)] shadow-lg max-w-7xl mx-auto w-full">
@@ -253,10 +361,25 @@ export default function ChatInbox() {
       {/* 1. Panel de Conversaciones (Izquierda) */}
       <div className="w-80 border-r border-[var(--border)] flex flex-col bg-slate-50/50 dark:bg-slate-900/10">
         <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
-          <h2 className="font-bold flex items-center gap-2 text-md">
-            <MessageCircle size={18} className="text-blue-600" />
-            Chats Recientes
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-bold flex items-center gap-2 text-md">
+              <MessageCircle size={18} className="text-blue-600" />
+              Chats
+            </h2>
+            {/* Status pill de WhatsApp */}
+            <Link 
+              href="/ajustes" 
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all ${
+                isWaConnected 
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300' 
+                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 hover:bg-amber-200'
+              }`}
+              title="Click para ir a Ajustes de WhatsApp"
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isWaConnected ? 'bg-emerald-500' : 'bg-amber-500 animate-ping'}`} />
+              <span>{isWaConnected ? 'WhatsApp Online' : 'Vincular QR'}</span>
+            </Link>
+          </div>
           <button 
             onClick={fetchConversaciones}
             className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition-colors"
@@ -266,18 +389,23 @@ export default function ChatInbox() {
           </button>
         </div>
 
-        {/* Simulador para testing fácil sin WhatsApp físico */}
+        {/* Simulador para testing rápido */}
         <div className="p-3 bg-blue-50/40 dark:bg-blue-950/10 border-b border-[var(--border)]">
           <form onSubmit={handleSimulateIncoming} className="flex flex-col gap-1.5">
-            <div className="flex items-center gap-1 text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
-              <Smartphone size={12} />
-              Simular Cliente (WhatsApp)
+            <div className="flex items-center justify-between text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+              <span className="flex items-center gap-1">
+                <Smartphone size={12} />
+                Simulador de Paciente
+              </span>
+              <Link href="/ajustes" className="hover:underline flex items-center gap-1 text-[10px]">
+                <Settings size={10} /> QR Real
+              </Link>
             </div>
             <input 
               type="text"
               value={simTelefono}
               onChange={(e) => setSimTelefono(e.target.value)}
-              placeholder="Teléfono"
+              placeholder="Teléfono (ej: 5491123456789)"
               className="px-2 py-1 text-xs border border-[var(--border)] rounded bg-white dark:bg-slate-800 focus:outline-none"
             />
             <div className="flex gap-1.5">
@@ -285,7 +413,7 @@ export default function ChatInbox() {
                 type="text"
                 value={simTexto}
                 onChange={(e) => setSimTexto(e.target.value)}
-                placeholder="Enviar mensaje..."
+                placeholder="Mensaje del paciente..."
                 className="flex-1 px-2 py-1 text-xs border border-[var(--border)] rounded bg-white dark:bg-slate-800 focus:outline-none"
               />
               <button 
@@ -293,7 +421,7 @@ export default function ChatInbox() {
                 disabled={simulando}
                 className="px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-bold transition-all flex items-center justify-center min-w-[50px]"
               >
-                {simulando ? '...' : 'Sim.'}
+                {simulando ? '...' : 'Enviar'}
               </button>
             </div>
           </form>
@@ -309,7 +437,6 @@ export default function ChatInbox() {
             conversaciones.map((conv) => {
               const active = conv.id === selectedConvId
               const paciente = conv.pacientes
-              const colorMode = conv.bot_disabled ? 'border-amber-400' : 'border-emerald-400'
               
               return (
                 <div
@@ -329,7 +456,7 @@ export default function ChatInbox() {
                       <span className={`w-2 h-2 rounded-full ${conv.bot_disabled ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                     </div>
                     <p className="text-[11px] text-[var(--secondary)] truncate mt-0.5">
-                      {paciente?.telefono}
+                      {paciente?.telefono ? formatPhoneDisplay(paciente.telefono) : 'Sin teléfono'}
                     </p>
                     <p className="text-xs text-slate-500 truncate mt-1">
                       {conv.ultimo_mensaje || 'Sin mensajes aún'}
@@ -353,7 +480,7 @@ export default function ChatInbox() {
                 {selectedConv.pacientes?.nombre}
               </h3>
               <p className="text-[11px] text-[var(--secondary)] flex items-center gap-1.5">
-                <Phone size={11} /> {selectedConv.pacientes?.telefono}
+                <Phone size={11} /> {selectedConv.pacientes?.telefono ? formatPhoneDisplay(selectedConv.pacientes.telefono) : 'Sin teléfono'}
               </p>
             </div>
             
@@ -409,7 +536,7 @@ export default function ChatInbox() {
                       <div className="flex items-center gap-1 text-[9px] font-bold opacity-80 mb-1.5 uppercase tracking-wider">
                         {isOperator ? (
                           <>
-                            <User size={10} /> Operador
+                            <User size={10} /> Operador Humano (CRM)
                           </>
                         ) : isBot ? (
                           <>
@@ -423,12 +550,21 @@ export default function ChatInbox() {
                           </>
                         )}
                       </div>
-                      <p className="whitespace-pre-line leading-relaxed">{msg.contenido}</p>
+                      {/* Contenido textual */}
+                      {msg.contenido && (
+                        <p className="whitespace-pre-line leading-relaxed">{msg.contenido}</p>
+                      )}
                       
-                      {/* Hora */}
-                      <span className="block text-[8px] text-right mt-1.5 opacity-60">
-                        {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                      {/* Visualizador Multimedia (Fotos, Audios, PDFs, Reacciones) */}
+                      <ChatMediaViewer metadata={msg.metadata_json} isOperator={isOperator} />
+                      
+                      {/* Pie con Hora y Tildes de lectura */}
+                      <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-75">
+                        <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        {isOperator && (
+                          <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                        )}
+                      </div>
                     </div>
                   </div>
                 )
@@ -437,15 +573,38 @@ export default function ChatInbox() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Formulario de Envío de Mensaje */}
-          <form onSubmit={handleSend} className="p-4 border-t border-[var(--border)] bg-[var(--card)] flex gap-2">
+          {/* Formulario de Envío de Mensaje con Soporte de Adjuntos */}
+          <form onSubmit={handleSend} className="p-4 border-t border-[var(--border)] bg-[var(--card)] flex items-center gap-2">
+            {/* Input oculto para adjuntar fotos o PDFs */}
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileUpload} 
+              className="hidden" 
+              accept="image/*,application/pdf,.doc,.docx" 
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={subiendoArchivo}
+              className="p-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[var(--secondary)] hover:text-blue-600 rounded-xl transition-all disabled:opacity-50"
+              title="Adjuntar foto de estudio, receta o PDF"
+            >
+              {subiendoArchivo ? (
+                <Loader2 size={16} className="animate-spin text-blue-600" />
+              ) : (
+                <Paperclip size={16} />
+              )}
+            </button>
+
             <input
               type="text"
               value={nuevoMensaje}
               onChange={(e) => setNuevoMensaje(e.target.value)}
               placeholder={
                 selectedConv.bot_disabled 
-                  ? "Escribe un mensaje como operador..." 
+                  ? "Escribe un mensaje como operador (saldrá por WhatsApp real)..." 
                   : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."
               }
               className="flex-1 px-4 py-3 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white dark:focus:bg-slate-900 transition-all"

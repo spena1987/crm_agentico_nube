@@ -37,14 +37,20 @@ def buscar_disponibilidad_turnos(fecha_iso: str) -> dict:
         "mensaje": f"Hay {len(turnos_disponibles)} turnos disponibles para el {fecha_iso}."
     }
 
-def crear_borrador_presupuesto(paciente_id: str, items: list) -> dict:
+from pydantic import BaseModel, Field
+
+class ItemPresupuesto(BaseModel):
+    codigo_servicio: str = Field(description="Código de la prestación médica a presupuestar (ej: CON-001, RX-T-101)")
+    cantidad: int = Field(default=1, description="Cantidad a presupuestar de esta prestación")
+
+def crear_borrador_presupuesto(paciente_id: str, items: list[ItemPresupuesto]) -> dict:
     """
     Crea un borrador de presupuesto para un paciente en Supabase con los ítems especificados 
     y genera el correspondiente PDF estético del presupuesto.
     
     Args:
         paciente_id: El UUID del paciente.
-        items: Lista de diccionarios, donde cada ítem tiene 'codigo_servicio' (ej: 'CON-001') y 'cantidad' (ej: 1).
+        items: Lista de ítems a presupuestar, conteniendo el código de servicio y la cantidad.
         
     Returns:
         Un diccionario con la información del presupuesto creado y la URL de su PDF.
@@ -75,16 +81,40 @@ def crear_borrador_presupuesto(paciente_id: str, items: list) -> dict:
         # 3. Consultar servicios e insertar ítems
         items_creados = []
         for item in items:
-            codigo = item.get("codigo_servicio")
-            cantidad = item.get("cantidad", 1)
+            # Compatibilidad con dict o Pydantic
+            if hasattr(item, "codigo_servicio"):
+                codigo = item.codigo_servicio
+                cantidad = item.cantidad
+            else:
+                codigo = item.get("codigo_servicio")
+                cantidad = item.get("cantidad", 1)
             
-            # Buscar el servicio en el catálogo
+            # Buscar el servicio en el catálogo o en practicas_crm
             servicio_resp = supabase.table("servicios_precios").select("*").eq("codigo", codigo.upper()).execute()
-            if not servicio_resp.data:
-                return {"error": f"Servicio con código {codigo} no existe en el catálogo."}
-            
-            servicio = servicio_resp.data[0]
-            precio_unitario = float(servicio["precio"])
+            if servicio_resp.data:
+                servicio = servicio_resp.data[0]
+                # Si el payload envió un precio unitario específico, lo respetamos; de lo contrario el del catálogo
+                precio_unitario = float(item.get("precio_unitario") if isinstance(item, dict) and "precio_unitario" in item else servicio["precio"])
+            else:
+                # Buscar en practicas_crm
+                crm_resp = supabase.table("practicas_crm").select("*").eq("codigo", codigo.upper()).execute()
+                if crm_resp.data:
+                    p_crm = crm_resp.data[0]
+                    nombre_pres = p_crm["nombre"]
+                    precio_unitario = float(item.get("precio_unitario") if isinstance(item, dict) and "precio_unitario" in item else p_crm["precio"])
+                else:
+                    nombre_pres = item.get("nombre_prestacion") if isinstance(item, dict) else f"Práctica {codigo}"
+                    precio_unitario = float(item.get("precio_unitario") if isinstance(item, dict) and "precio_unitario" in item else 0.0)
+
+                # Registrar en servicios_precios para satisfacer la FK
+                ins_serv = supabase.table("servicios_precios").insert({
+                    "nombre_prestacion": nombre_pres or f"Práctica {codigo}",
+                    "codigo": codigo.upper(),
+                    "precio": precio_unitario,
+                    "activo": True
+                }).execute()
+                servicio = ins_serv.data[0] if ins_serv.data else {"id": None, "nombre_prestacion": nombre_pres, "codigo": codigo.upper()}
+
             subtotal = precio_unitario * cantidad
             
             item_data = {
@@ -98,8 +128,8 @@ def crear_borrador_presupuesto(paciente_id: str, items: list) -> dict:
             if item_resp.data:
                 # Adjuntamos el nombre y código para generar el PDF
                 item_info = item_resp.data[0]
-                item_info["nombre_prestacion"] = servicio["nombre_prestacion"]
-                item_info["codigo"] = servicio["codigo"]
+                item_info["nombre_prestacion"] = servicio.get("nombre_prestacion") or (item.get("nombre_prestacion") if isinstance(item, dict) else codigo)
+                item_info["codigo"] = codigo.upper()
                 items_creados.append(item_info)
 
         # 4. Obtener el presupuesto actualizado (con el total recalculado por el trigger)
