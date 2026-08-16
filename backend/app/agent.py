@@ -89,41 +89,83 @@ def procesar_mensaje_agente(
             except Exception as he:
                 logger.warning(f"Error recuperando historial para {conversacion_id}: {he}")
 
-        # 4. Formatear historial para Gemini
-        contents = []
+        # 4. Formatear y consolidar historial para Gemini (evitar roles duplicados consecutivos)
+        raw_turns = []
         for h in historial_data:
-            role = "user" if h["emisor"] == "paciente" else "model"
             if h.get("metadata_json", {}).get("sistema"):
                 continue
+            contenido = (h.get("contenido") or "").strip()
+            if not contenido:
+                continue
+            role = "user" if h.get("emisor") == "paciente" else "model"
+            raw_turns.append({"role": role, "text": contenido})
+        
+        # Agregar el nuevo mensaje del usuario
+        if final_texto and final_texto.strip():
+            raw_turns.append({"role": "user", "text": final_texto.strip()})
+
+        # Consolidar turnos consecutivos con el mismo rol (Gemini exige alternancia user/model)
+        consolidated_turns = []
+        for turn in raw_turns:
+            if consolidated_turns and consolidated_turns[-1]["role"] == turn["role"]:
+                consolidated_turns[-1]["text"] += f"\n{turn['text']}"
+            else:
+                consolidated_turns.append({"role": turn["role"], "text": turn["text"]})
+
+        # Asegurar que el primer turno sea 'user' si hay historial
+        while consolidated_turns and consolidated_turns[0]["role"] != "user":
+            consolidated_turns.pop(0)
+
+        contents = []
+        for turn in consolidated_turns:
             contents.append(
                 types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=h["contenido"])]
+                    role=turn["role"],
+                    parts=[types.Part.from_text(text=turn["text"])]
                 )
             )
 
-        # 5. Adjuntar el nuevo mensaje del usuario
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=final_texto)]
-            )
-        )
+        if not contents:
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=final_texto or "Hola")]
+                )
+            ]
 
-        # 6. Configurar generación con Directivas Dinámicas y Tools del agente
+        # 5. Configurar generación con Directivas Dinámicas, Tools y thinking_budget=0
+        thinking_conf = types.ThinkingConfig(thinking_budget=0) if hasattr(types, "ThinkingConfig") else None
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=agent_tools,
             temperature=agent_temp,
+            thinking_config=thinking_conf
         )
 
-        # 7. Ejecutar consulta inicial
+        # 6. Ejecutar consulta inicial (con fallback ante fallas de historial o thought signature)
         model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=config
-        )
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config
+            )
+        except Exception as api_err:
+            if "thought signature" in str(api_err).lower() or "invalid_argument" in str(api_err).lower():
+                logger.warning(f"Reintentando consulta sin historial previo debido a thought signature error: {api_err}")
+                contents_single = [
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=final_texto or "Hola")]
+                    )
+                ]
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents_single,
+                    config=config
+                )
+            else:
+                raise api_err
 
         # 8. Loop de Function Calling
         intentos = 0
@@ -146,6 +188,8 @@ def procesar_mensaje_agente(
                     try:
                         if func_name == "crear_borrador_presupuesto" and paciente_id:
                             func_args["paciente_id"] = paciente_id
+                        if func_name == "escalar_a_operador_humano" and conversacion_id:
+                            func_args["conversacion_id"] = conversacion_id
                         
                         resultado = AVAILABLE_TOOLS_MAP[func_name](**func_args)
                     except Exception as err:

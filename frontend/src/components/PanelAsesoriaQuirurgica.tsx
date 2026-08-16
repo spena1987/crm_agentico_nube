@@ -241,23 +241,64 @@ export default function PanelAsesoriaQuirurgica({
     }
   }
 
-  // Buscar Prácticas en el Nomenclador
-  const buscarPracticas = async (query: string) => {
-    if (!query || query.length < 2) return
+  // Cargar catálogo de prácticas del nomenclador al inicio o al buscar
+  const buscarPracticas = async (query: string = '') => {
     try {
       setBuscandoPractica(true)
-      const res = await fetch(`/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(query)}`)
+      const qClean = (query || '').trim()
+      const res = await fetch(`/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
       const data = await res.json()
+
+      let lista: PracticaNomenclador[] = []
       if (res.ok && data.success) {
-        setPracticasNomenclador(data.prestaciones || [])
-        setMostrarDropdownPractica(true)
+        lista = data.resultados || data.prestaciones || []
       }
+
+      // Si vino vacío o falló, consultar directamente a Supabase
+      if (lista.length === 0) {
+        let sbQuery = supabase
+          .from('nomenclador_practicas')
+          .select('id, codigo, nombre, categoria')
+          .eq('activo', true)
+
+        if (qClean) {
+          sbQuery = sbQuery.or(`codigo.ilike.%${qClean}%,nombre.ilike.%${qClean}%,categoria.ilike.%${qClean}%`)
+        }
+
+        const { data: sbData } = await sbQuery.order('nombre').limit(50)
+        if (sbData) {
+          lista = sbData as PracticaNomenclador[]
+        }
+      }
+
+      setPracticasNomenclador(lista)
+      setMostrarDropdownPractica(true)
     } catch (err) {
-      console.error('Error buscando prácticas:', err)
+      console.error('Error buscando prácticas en nomenclador:', err)
+      // Fallback directo Supabase
+      try {
+        const { data: sbData } = await supabase
+          .from('nomenclador_practicas')
+          .select('id, codigo, nombre, categoria')
+          .eq('activo', true)
+          .order('nombre')
+          .limit(50)
+        if (sbData) {
+          setPracticasNomenclador(sbData as PracticaNomenclador[])
+          setMostrarDropdownPractica(true)
+        }
+      } catch (sbErr) {
+        console.error('Error en fallback Supabase nomenclador:', sbErr)
+      }
     } finally {
       setBuscandoPractica(false)
     }
   }
+
+  useEffect(() => {
+    // Precargar catálogo de prácticas para autocompletado instantáneo
+    buscarPracticas('')
+  }, [])
 
   // Guardar o Actualizar Caso Quirúrgico
   const handleGuardar = async (e?: React.FormEvent) => {
@@ -633,7 +674,7 @@ export default function PanelAsesoriaQuirurgica({
             <input
               type="text"
               required
-              placeholder="Buscar práctica (ej: FIV-ICSI, Laparoscopía, Histero)..."
+              placeholder="Buscar práctica (ej: FIV, Laparo, Consulta, Ecografía)..."
               value={busquedaPractica}
               onChange={(e) => {
                 setBusquedaPractica(e.target.value)
@@ -641,46 +682,71 @@ export default function PanelAsesoriaQuirurgica({
                 buscarPracticas(e.target.value)
               }}
               onFocus={() => {
-                if (practicasNomenclador.length > 0) setMostrarDropdownPractica(true)
+                buscarPracticas(busquedaPractica.startsWith('[') ? '' : busquedaPractica)
+                setMostrarDropdownPractica(true)
               }}
-              className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none font-medium"
+              className="w-full pl-3 pr-8 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none font-medium"
             />
-            {buscandoPractica && (
-              <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
-            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (!mostrarDropdownPractica) {
+                  buscarPracticas('')
+                }
+                setMostrarDropdownPractica(!mostrarDropdownPractica)
+              }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-1"
+            >
+              {buscandoPractica ? (
+                <Loader2 size={13} className="animate-spin text-indigo-400" />
+              ) : (
+                <Search size={13} />
+              )}
+            </button>
 
             {/* Dropdown Nomenclador */}
-            {mostrarDropdownPractica && practicasNomenclador.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-indigo-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                {practicasNomenclador.map((p, i) => (
-                  <button
-                    key={`${p.codigo}-${i}`}
-                    type="button"
-                    onClick={() => {
-                      setPracticaCodigo(p.codigo)
-                      setPracticaNombre(p.nombre)
-                      setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
-                      if (p.precio && Number(p.precio) > 0) {
-                        setMontoExtra(p.precio)
-                        setMonedaExtra(p.moneda || 'ARS')
-                      }
-                      setMostrarDropdownPractica(false)
-                    }}
-                    className="w-full text-left p-2.5 hover:bg-indigo-600/10 text-xs transition-colors"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-white">{p.nombre}</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-indigo-300">
-                        {p.codigo}
-                      </span>
-                    </div>
-                    {p.precio && (
-                      <div className="text-[11px] text-emerald-400 font-mono mt-0.5">
-                        Arancel Base: ${p.precio.toLocaleString()} {p.moneda || 'ARS'}
+            {mostrarDropdownPractica && (
+              <div className="absolute top-full left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-neutral-900 border border-indigo-500/40 rounded-xl shadow-2xl z-40 divide-y divide-[var(--border)]">
+                {practicasNomenclador.length === 0 ? (
+                  <div className="p-3 text-center text-xs text-gray-500">
+                    No se encontraron prácticas con ese criterio.
+                  </div>
+                ) : (
+                  practicasNomenclador.map((p, i) => (
+                    <button
+                      key={`${p.codigo}-${i}`}
+                      type="button"
+                      onClick={() => {
+                        setPracticaCodigo(p.codigo)
+                        setPracticaNombre(p.nombre)
+                        setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
+                        if (p.precio && Number(p.precio) > 0) {
+                          setMontoExtra(p.precio)
+                          setMonedaExtra(p.moneda || 'ARS')
+                        }
+                        setMostrarDropdownPractica(false)
+                      }}
+                      className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-white group-hover:text-indigo-300 transition-colors">
+                          {p.nombre}
+                        </span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-indigo-300 border border-indigo-500/20 shrink-0">
+                          {p.codigo}
+                        </span>
                       </div>
-                    )}
-                  </button>
-                ))}
+                      <div className="flex items-center justify-between text-[10px] text-gray-400 mt-1">
+                        <span>Categoría: <strong className="text-gray-300">{p.categoria || 'General'}</strong></span>
+                        {p.precio ? (
+                          <span className="text-emerald-400 font-mono font-bold">
+                            Arancel: ${p.precio.toLocaleString()} {p.moneda || 'ARS'}
+                          </span>
+                        ) : null}
+                      </div>
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>
