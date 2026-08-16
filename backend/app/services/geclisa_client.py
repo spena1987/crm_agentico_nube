@@ -181,22 +181,53 @@ class GeclisaClient:
             if not paciente_data:
                 return {"encontrado": False, "mensaje": f"Ficha {ficha_id} no encontrada."}
 
-            # 2. Obra Social / Plan
+            # 2. Obra Social / Plan (Consulta exhaustiva con múltiples endpoints de Geclisa)
             obra_social_nombre = None
             plan_nombre = None
+
+            # Intento A: Endpoint específico /api/Pacientes/os-plan/{fichaId}
             try:
                 url_os = f"{self.base_url}/api/Pacientes/os-plan/{ficha_id}"
                 resp_os = self._do_request("GET", url_os, headers=headers, timeout=8)
                 if resp_os.status_code == 200:
                     os_data = resp_os.json()
                     if isinstance(os_data, list) and len(os_data) > 0:
-                        obra_social_nombre = os_data[0].get("osNombre") or os_data[0].get("obraSocial")
-                        plan_nombre = os_data[0].get("planNombre") or os_data[0].get("plan")
+                        item_os = os_data[0]
+                        obra_social_nombre = item_os.get("osNombre") or item_os.get("obraSocial") or item_os.get("osDescrip") or item_os.get("osNombreCorto")
+                        plan_nombre = item_os.get("planNombre") or item_os.get("plan") or item_os.get("planDescrip")
                     elif isinstance(os_data, dict):
-                        obra_social_nombre = os_data.get("osNombre") or os_data.get("obraSocial")
-                        plan_nombre = os_data.get("planNombre") or os_data.get("plan")
+                        obra_social_nombre = os_data.get("osNombre") or os_data.get("obraSocial") or os_data.get("osDescrip")
+                        plan_nombre = os_data.get("planNombre") or os_data.get("plan") or os_data.get("planDescrip")
             except Exception as os_err:
-                logger.warning(f"No se pudo consultar obra social para ficha {ficha_id}: {os_err}")
+                logger.warning(f"No se pudo consultar /api/Pacientes/os-plan para ficha {ficha_id}: {os_err}")
+
+            # Intento B: Si no se obtuvo de os-plan, buscar en los datos del paciente (patient DTO)
+            if not obra_social_nombre and isinstance(paciente_data, dict):
+                obra_social_nombre = (
+                    paciente_data.get("osNombre") 
+                    or paciente_data.get("obraSocial") 
+                    or paciente_data.get("ficObrasoc") 
+                    or paciente_data.get("osDescrip")
+                )
+                plan_nombre = plan_nombre or paciente_data.get("planNombre") or paciente_data.get("ficPlan") or paciente_data.get("plan")
+
+            # Intento C: Fallback a /api/Ficha si aún no se tiene la obra social
+            if not obra_social_nombre:
+                try:
+                    url_ficha_extra = f"{self.base_url}/api/Ficha?fichaId={ficha_id}"
+                    resp_fe = self._do_request("GET", url_ficha_extra, headers=headers, timeout=8)
+                    if resp_fe.status_code == 200:
+                        fe_data = resp_fe.json()
+                        if isinstance(fe_data, dict):
+                            obra_social_nombre = fe_data.get("osNombre") or fe_data.get("obraSocial") or fe_data.get("ficObrasoc") or fe_data.get("osDescrip")
+                            plan_nombre = plan_nombre or fe_data.get("planNombre") or fe_data.get("ficPlan")
+                except Exception as fe_err:
+                    logger.debug(f"Fallback /api/Ficha sin datos de OS para {ficha_id}: {fe_err}")
+
+            if obra_social_nombre:
+                obra_social_nombre = str(obra_social_nombre).strip()
+            if plan_nombre:
+                plan_nombre = str(plan_nombre).strip()
 
             # 3. Formatear y normalizar
             nombre = (paciente_data.get("ficNombre") or paciente_data.get("nombre") or "").strip()

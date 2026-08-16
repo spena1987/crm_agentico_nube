@@ -60,10 +60,8 @@ export default function PacientesPage() {
   const [loading, setLoading] = useState(true)
 
   // Estado editable para el paciente seleccionado
-  const [medicoCabeceraTemp, setMedicoCabeceraTemp] = useState('')
   const [notasTemp, setNotasTemp] = useState('')
   const [guardandoNotas, setGuardandoNotas] = useState(false)
-  const [guardandoMedico, setGuardandoMedico] = useState(false)
   const [mensajeGuardado, setMensajeGuardado] = useState<string | null>(null)
   const [errorAccion, setErrorAccion] = useState<string | null>(null)
 
@@ -85,7 +83,6 @@ export default function PacientesPage() {
   const [nuevoDni, setNuevoDni] = useState('')
   const [nuevoEmail, setNuevoEmail] = useState('')
   const [nuevaObraSocial, setNuevaObraSocial] = useState('')
-  const [nuevoMedico, setNuevoMedico] = useState('')
   const [errorModal, setErrorModal] = useState('')
 
   const fetchPacientes = async (autoSelectId?: string) => {
@@ -124,7 +121,6 @@ export default function PacientesPage() {
   useEffect(() => {
     if (pacienteSeleccionado) {
       setNotasTemp(pacienteSeleccionado.historial_notas || '')
-      setMedicoCabeceraTemp(pacienteSeleccionado.medico_cabecera || '')
       setMensajeGuardado(null)
       setErrorAccion(null)
     }
@@ -287,30 +283,6 @@ export default function PacientesPage() {
     }
   }
 
-  // Guardar médico de cabecera
-  const handleSaveMedico = async () => {
-    if (!selectedPacienteId) return
-    try {
-      setGuardandoMedico(true)
-      const { error } = await supabase
-        .from('pacientes')
-        .update({ medico_cabecera: medicoCabeceraTemp.trim() || null })
-        .eq('id', selectedPacienteId)
-
-      if (error) throw error
-
-      setPacientes((prev) =>
-        prev.map((p) => (p.id === selectedPacienteId ? { ...p, medico_cabecera: medicoCabeceraTemp.trim() || null } : p))
-      )
-      setMensajeGuardado('Médico de cabecera actualizado.')
-      setTimeout(() => setMensajeGuardado(null), 3000)
-    } catch (err) {
-      console.error('Error guardando médico de cabecera:', err)
-    } finally {
-      setGuardandoMedico(false)
-    }
-  }
-
   // Crear paciente manualmente
   const handleCrearPacienteManual = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -326,7 +298,6 @@ export default function PacientesPage() {
           dni: nuevoDni || null,
           email: nuevoEmail || null,
           obra_social: nuevaObraSocial || null,
-          medico_cabecera: nuevoMedico || null,
           historial_notas: ''
         } as any)
         .select()
@@ -356,7 +327,6 @@ export default function PacientesPage() {
       setNuevoDni('')
       setNuevoEmail('')
       setNuevaObraSocial('')
-      setNuevoMedico('')
       setErrorModal('')
       setMostrarModalManual(false)
     } catch (error: any) {
@@ -668,56 +638,36 @@ export default function PacientesPage() {
               )}
 
               {/* Grilla de Información Médica, Demográfica y Contacto */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 
-                {/* 1. Médico de Cabecera (Editable) */}
-                <div className="p-4 rounded-xl bg-neutral-900/50 border border-[var(--border)] space-y-2">
-                  <label className="text-xs font-bold text-indigo-300 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <Stethoscope size={14} className="text-indigo-400" />
-                      Médico de Cabecera / Tratante
-                    </span>
-                    {medicoCabeceraTemp !== (pacienteSeleccionado.medico_cabecera || '') && (
-                      <span className="text-[10px] text-amber-400 font-semibold">• Cambios sin guardar</span>
+                {/* 1. Cobertura Médica / Obra Social (Consultada desde Geclisa) */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-blue-500/20 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                      <ShieldCheck size={15} />
+                      Obra Social & Cobertura
+                    </div>
+                    {pacienteSeleccionado.geclisa_ficha_id && (
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-800/40">
+                        Geclisa API
+                      </span>
                     )}
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="Ej: Dr. Carlos Martínez (Ginecología / Fertilidad)"
-                      value={medicoCabeceraTemp}
-                      onChange={(e) => setMedicoCabeceraTemp(e.target.value)}
-                      className="flex-1 px-3 py-2 bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-lg text-xs text-white placeholder-gray-500 focus:outline-none font-medium"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleSaveMedico}
-                      disabled={guardandoMedico}
-                      className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shrink-0"
-                    >
-                      {guardandoMedico ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-                      Guardar
-                    </button>
                   </div>
-                </div>
-
-                {/* 2. Cobertura Médica / Obra Social */}
-                <div className="p-4 rounded-xl bg-neutral-900/50 border border-[var(--border)] space-y-1.5">
-                  <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                    <ShieldCheck size={14} className="text-blue-400" />
-                    Obra Social & Plan
-                  </div>
-                  <div className="text-xs font-semibold text-white">
+                  <div className="text-sm font-bold text-white tracking-tight">
                     {pacienteSeleccionado.obra_social || 'Particular / Sin cobertura registrada'}
                   </div>
-                  {pacienteSeleccionado.plan_cobertura && (
-                    <div className="text-[11px] text-gray-400">
-                      Plan: <span className="font-semibold text-gray-300">{pacienteSeleccionado.plan_cobertura}</span>
+                  {pacienteSeleccionado.plan_cobertura ? (
+                    <div className="text-xs text-gray-300">
+                      Plan: <span className="font-semibold text-blue-300">{pacienteSeleccionado.plan_cobertura}</span>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-gray-500">
+                      Plan no especificado
                     </div>
                   )}
                 </div>
 
-                {/* 3. Datos de Contacto */}
+                {/* 2. Canales de Contacto */}
                 <div className="p-4 rounded-xl bg-neutral-900/50 border border-[var(--border)] space-y-2">
                   <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                     <Phone size={14} className="text-emerald-400" />
@@ -743,11 +693,11 @@ export default function PacientesPage() {
                   </div>
                 </div>
 
-                {/* 4. Fecha de Nacimiento y Ubicación */}
+                {/* 3. Datos Demográficos & Domicilio */}
                 <div className="p-4 rounded-xl bg-neutral-900/50 border border-[var(--border)] space-y-2">
                   <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                     <Calendar size={14} className="text-amber-400" />
-                    Datos Demográficos & Domicilio
+                    Demografía & Domicilio
                   </div>
                   <div className="space-y-1 text-xs text-gray-300">
                     {pacienteSeleccionado.fecha_nacimiento && (
@@ -763,10 +713,16 @@ export default function PacientesPage() {
                         </span>
                       </div>
                     )}
+                    {pacienteSeleccionado.sexo && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-500 font-medium">Sexo:</span>
+                        <span>{pacienteSeleccionado.sexo}</span>
+                      </div>
+                    )}
                     {pacienteSeleccionado.direccion && (
-                      <div className="flex items-start gap-2">
+                      <div className="flex items-start gap-1.5 pt-0.5">
                         <MapPin size={13} className="text-red-400 shrink-0 mt-0.5" />
-                        <span className="text-gray-300">{pacienteSeleccionado.direccion}</span>
+                        <span className="text-gray-300 truncate">{pacienteSeleccionado.direccion}</span>
                       </div>
                     )}
                   </div>
@@ -941,17 +897,6 @@ export default function PacientesPage() {
                     className="px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                   />
                 </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-gray-400 uppercase">Médico de Cabecera (Opcional)</label>
-                <input
-                  type="text"
-                  placeholder="Ej: Dr. Carlos Martínez"
-                  value={nuevoMedico}
-                  onChange={(e) => setNuevoMedico(e.target.value)}
-                  className="px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 text-white focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                />
               </div>
 
               <div className="flex flex-col gap-1">
