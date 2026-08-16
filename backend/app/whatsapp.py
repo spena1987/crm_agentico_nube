@@ -23,6 +23,7 @@ from app.services.phone_normalizer import (
     clean_phone_digits
 )
 from app.services.media_service import media_service
+from app.services.logger_service import log_event
 
 load_dotenv()
 logger = logging.getLogger("whatsapp_daemon")
@@ -48,7 +49,7 @@ class WhatsAppManager:
         # Asegurar arranque del microservicio en segundo plano si corre en local o contenedor
         self.ensure_service_running()
 
-    def add_log(self, level: str, message: str):
+    def add_log(self, level: str, message: str, accion: str = "EVENTO_WHATSAPP", detalles: Optional[Dict[str, Any]] = None):
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         entry = {
             "id": f"{time.time()}_{len(self.logs_buffer)}",
@@ -60,6 +61,15 @@ class WhatsAppManager:
             self.logs_buffer.append(entry)
             if len(self.logs_buffer) > self.max_logs:
                 self.logs_buffer.pop(0)
+        
+        # Persistir también en Supabase system_logs
+        log_event(
+            nivel=level,
+            modulo="WHATSAPP",
+            accion=accion,
+            mensaje=message,
+            detalles=detalles
+        )
         
         if level == "ERROR":
             logger.error(message)

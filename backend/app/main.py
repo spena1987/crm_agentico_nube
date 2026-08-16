@@ -59,6 +59,7 @@ from app.services.media_cleaner import purgar_archivos_antiguos, obtener_estadis
 from app.services.tools import crear_borrador_presupuesto
 from app.services.config_service import load_settings, save_settings
 from app.services.geclisa_client import GeclisaClient
+from app.services.logger_service import log_event, get_logs, get_logs_stats
 
 geclisa_client = GeclisaClient()
 
@@ -1518,3 +1519,84 @@ def exportar_nomenclador_excel(nomenclador_id: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ====================================================================
+# ENDPOINTS REST: SISTEMA DE LOGS Y AUDITORÍA EN TIEMPO REAL
+# ====================================================================
+
+@app.get("/api/logs")
+def consultar_logs_sistema(
+    limit: int = 50,
+    offset: int = 0,
+    nivel: Optional[str] = None,
+    modulo: Optional[str] = None,
+    search: Optional[str] = None,
+    paciente_id: Optional[str] = None,
+    desde: Optional[str] = None,
+    hasta: Optional[str] = None
+):
+    """
+    Retorna la lista paginada de logs y auditoría del sistema con filtros avanzados.
+    """
+    try:
+        resultado = get_logs(
+            limit=limit,
+            offset=offset,
+            nivel=nivel,
+            modulo=modulo,
+            search=search,
+            paciente_id=paciente_id,
+            desde=desde,
+            hasta=hasta
+        )
+        return {
+            "success": True,
+            "logs": resultado.get("logs", []),
+            "total": resultado.get("total", 0)
+        }
+    except Exception as e:
+        logger.error(f"Error al consultar logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/logs/stats")
+def obtener_estadisticas_logs():
+    """
+    Retorna métricas consolidadas de salud y volumen de eventos de las últimas 24 horas.
+    """
+    try:
+        stats = get_logs_stats()
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        logger.error(f"Error al calcular estadísticas de logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/logs/client")
+def registrar_log_desde_cliente(payload: Dict[str, Any] = Body(...)):
+    """
+    Permite al frontend registrar eventos o errores ocurridos en el navegador del usuario.
+    """
+    try:
+        nivel = payload.get("nivel", "ERROR")
+        modulo = payload.get("modulo", "FRONTEND")
+        accion = payload.get("accion", "ERROR_CLIENTE")
+        mensaje = payload.get("mensaje", "Error reportado desde la interfaz web")
+        detalles = payload.get("detalles", {})
+        duracion_ms = payload.get("duracion_ms")
+        http_status = payload.get("http_status")
+        trace = payload.get("trace")
+
+        log_entry = log_event(
+            nivel=nivel,
+            modulo=modulo,
+            accion=accion,
+            mensaje=mensaje,
+            detalles=detalles,
+            duracion_ms=duracion_ms,
+            http_status=http_status,
+            trace=trace
+        )
+        return {"success": True, "log": log_entry}
+    except Exception as e:
+        logger.error(f"Error registrando log de cliente: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

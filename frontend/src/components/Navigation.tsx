@@ -12,7 +12,8 @@ import {
   Users, 
   Activity, 
   LogOut,
-  Settings
+  Settings,
+  ScrollText
 } from 'lucide-react'
 
 interface NavItem {
@@ -27,6 +28,7 @@ const allNavItems: NavItem[] = [
   { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
+  { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },
   { code: 'ajustes', label: 'Ajustes', href: '/ajustes', icon: Settings },
 ]
 

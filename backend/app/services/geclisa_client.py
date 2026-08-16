@@ -11,6 +11,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Cargar variables de entorno
 load_dotenv()
 
+from app.services.logger_service import log_event
+
 logger = logging.getLogger(__name__)
 
 class GeclisaClient:
@@ -78,9 +80,11 @@ class GeclisaClient:
         }
 
         logger.info(f"Solicitando nuevo Token JWT a Geclisa en: {token_url}...")
+        t_start = time.time()
         try:
             # Petición Form URL Encoded usando _do_request
             response = self._do_request("POST", token_url, data=payload, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
             response.raise_for_status()
             
             data = response.json()
@@ -88,17 +92,42 @@ class GeclisaClient:
             expires_in = data.get("expires_in", 3600)
             self._token_expires_at = ahora + expires_in
             
-            logger.info("✔ Token JWT de Geclisa obtenido y guardado en caché.")
+            log_event(
+                nivel="INFO",
+                modulo="GECLISA",
+                accion="AUTENTICACION_TOKEN",
+                mensaje=f"Token JWT obtenido exitosamente de Geclisa para usuario '{self.username}'",
+                detalles={"endpoint": token_url, "expires_in": expires_in},
+                duracion_ms=duracion,
+                http_status=response.status_code
+            )
             return self._token
 
         except requests.exceptions.ConnectionError as conn_err:
-            logger.error(f"Error de conexión de red/DNS con Geclisa ({self.base_url}): {conn_err}")
+            duracion = int((time.time() - t_start) * 1000)
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="ERROR_CONEXION_TOKEN",
+                mensaje=f"Fallo de conexión o resolución DNS al autenticar con Geclisa ({self.base_url})",
+                detalles={"endpoint": token_url, "error": str(conn_err)},
+                duracion_ms=duracion,
+                http_status=0
+            )
             raise RuntimeError(
                 f"No se pudo resolver o conectar al servidor de Geclisa ({self.base_url}). "
                 "Verifica que el servidor de producción tenga salida a internet y DNS configurado."
             ) from conn_err
         except Exception as e:
-            logger.error(f"Error al obtener token de Geclisa: {e}")
+            duracion = int((time.time() - t_start) * 1000)
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="ERROR_AUTENTICACION_TOKEN",
+                mensaje=f"Error inesperado al solicitar Token JWT de Geclisa: {str(e)}",
+                detalles={"endpoint": token_url, "error": str(e)},
+                duracion_ms=duracion
+            )
             raise
 
     def _get_headers(self) -> dict:
@@ -222,11 +251,22 @@ class GeclisaClient:
             return {"encontrado": False, "mensaje": "Número de DNI no válido."}
 
         url = f"{self.base_url}/api/Pacientes/Documento/{dni_limpio}"
+        t_start = time.time()
         try:
             headers = self._get_headers()
             response = self._do_request("GET", url, headers=headers, timeout=10)
+            duracion = int((time.time() - t_start) * 1000)
             
             if response.status_code == 404:
+                log_event(
+                    nivel="WARNING",
+                    modulo="GECLISA",
+                    accion="PACIENTE_NO_ENCONTRADO_DNI",
+                    mensaje=f"DNI {dni_limpio} no encontrado en padrón de Geclisa",
+                    detalles={"dni": dni_limpio, "endpoint": url},
+                    duracion_ms=duracion,
+                    http_status=404
+                )
                 return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
                 
             response.raise_for_status()
@@ -235,10 +275,28 @@ class GeclisaClient:
             # Si el endpoint devuelve una lista o un objeto paginado { data: [...] }
             if isinstance(data, list):
                 if len(data) == 0:
+                    log_event(
+                        nivel="WARNING",
+                        modulo="GECLISA",
+                        accion="PACIENTE_NO_ENCONTRADO_DNI",
+                        mensaje=f"DNI {dni_limpio} devolvió lista vacía en Geclisa",
+                        detalles={"dni": dni_limpio},
+                        duracion_ms=duracion,
+                        http_status=200
+                    )
                     return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
                 paciente_item = data[0]
             elif isinstance(data, dict) and "data" in data and isinstance(data["data"], list):
                 if len(data["data"]) == 0:
+                    log_event(
+                        nivel="WARNING",
+                        modulo="GECLISA",
+                        accion="PACIENTE_NO_ENCONTRADO_DNI",
+                        mensaje=f"DNI {dni_limpio} devolvió data[] vacío en Geclisa",
+                        detalles={"dni": dni_limpio},
+                        duracion_ms=duracion,
+                        http_status=200
+                    )
                     return {"encontrado": False, "mensaje": f"No se encontró paciente con DNI {dni_limpio} en Geclisa."}
                 paciente_item = data["data"][0]
             else:
@@ -249,9 +307,17 @@ class GeclisaClient:
             if ficha_id:
                 ficha_completa = self.obtener_ficha_completa(int(ficha_id))
                 if ficha_completa.get("encontrado"):
-                    # Si faltaba algo en obtener_ficha_completa pero vino en el listado, completarlo
                     if not ficha_completa.get("dni"):
                         ficha_completa["dni"] = str(paciente_item.get("ficNrodoc") or dni_limpio)
+                    log_event(
+                        nivel="INFO",
+                        modulo="GECLISA",
+                        accion="PACIENTE_ENCONTRADO_DNI",
+                        mensaje=f"Paciente '{ficha_completa.get('nombre_completo')}' (DNI {dni_limpio}) encontrado en Geclisa (Ficha #{ficha_id})",
+                        detalles={"dni": dni_limpio, "ficha_id": ficha_id, "nombre": ficha_completa.get("nombre_completo"), "obra_social": ficha_completa.get("obra_social")},
+                        duracion_ms=duracion,
+                        http_status=200
+                    )
                     return ficha_completa
             
             # Si no vino fichaId o falló la ficha detallada, normalizar el paciente_item directamente
@@ -259,7 +325,7 @@ class GeclisaClient:
             apellido = paciente_item.get("ficApellido") or paciente_item.get("ficApe") or paciente_item.get("apellido") or ""
             nombre_completo = paciente_item.get("ficNombreApe") or f"{apellido}, {nombre}".strip(" ,")
 
-            return {
+            res_paciente = {
                 "encontrado": True,
                 "ficha_id": ficha_id,
                 "nombre": nombre,
@@ -278,7 +344,26 @@ class GeclisaClient:
                 "direccion": f"{paciente_item.get('ficCalle', '')} {paciente_item.get('ficNro', '')} {paciente_item.get('locNombre', '')}".strip(),
                 "raw": paciente_item
             }
+            log_event(
+                nivel="INFO",
+                modulo="GECLISA",
+                accion="PACIENTE_ENCONTRADO_DNI",
+                mensaje=f"Paciente '{nombre_completo}' (DNI {dni_limpio}) encontrado en Geclisa",
+                detalles={"dni": dni_limpio, "ficha_id": ficha_id, "nombre": nombre_completo},
+                duracion_ms=duracion,
+                http_status=200
+            )
+            return res_paciente
         except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="ERROR_BUSQUEDA_DNI",
+                mensaje=f"Error consultando DNI {dni_limpio} en Geclisa: {str(e)}",
+                detalles={"dni": dni_limpio, "endpoint": url, "error": str(e)},
+                duracion_ms=duracion
+            )
             logger.error(f"Error al buscar paciente por DNI {dni_limpio}: {e}")
             return {"encontrado": False, "error": str(e)}
 

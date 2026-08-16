@@ -314,15 +314,37 @@ alter table public.rol_permisos enable row level security;
 alter table public.usuarios_perfil enable row level security;
 
 -- ====================================================================
+-- 7. Tabla de Logs de Auditoría y Eventos del Sistema (system_logs)
+-- ====================================================================
+create table if not exists public.system_logs (
+    id uuid default gen_random_uuid() primary key,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    nivel varchar(20) not null check (nivel in ('INFO', 'WARNING', 'ERROR', 'CRITICAL')),
+    modulo varchar(50) not null check (modulo in ('IA_GEMINI', 'GECLISA', 'WHATSAPP', 'PRESUPUESTOS', 'PACIENTES', 'SISTEMA', 'FRONTEND', 'DATABASE')),
+    accion varchar(100) not null,
+    mensaje text not null,
+    detalles jsonb default '{}'::jsonb not null,
+    duracion_ms integer,
+    http_status integer,
+    paciente_id uuid references public.pacientes(id) on delete set null,
+    trace text
+);
+
+create index if not exists idx_system_logs_created_at on public.system_logs(created_at desc);
+create index if not exists idx_system_logs_nivel on public.system_logs(nivel);
+create index if not exists idx_system_logs_modulo on public.system_logs(modulo);
+create index if not exists idx_system_logs_paciente_id on public.system_logs(paciente_id);
+
+comment on table public.system_logs is 'Auditoría y registro estructurado de eventos del sistema, llamadas a APIs externas e incidencias.';
+
+-- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ====================================================================
--- Habilitar replicación en tiempo real para mensajería en el CRM
+-- Habilitar replicación en tiempo real para mensajería y logs en el CRM
 begin;
   alter publication supabase_realtime add table public.conversaciones;
   alter publication supabase_realtime add table public.mensajes;
+  alter publication supabase_realtime add table public.system_logs;
 exception when others then
   -- Ignorar errores si la publicación o la relación ya existe
 end;
-
-
-

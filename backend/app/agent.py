@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import logging
 from typing import Optional, List, Dict, Any
 from google import genai
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 
 from app.db import supabase, guardar_mensaje
 from app.services.tools import buscar_disponibilidad_turnos, crear_borrador_presupuesto, escalar_a_operador_humano
+from app.services.logger_service import log_event
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -67,6 +69,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
             except Exception:
                 pass
 
+    t_start = time.time()
     try:
         # 1. Recuperar historial de mensajes recientes (últimos 10 mensajes)
         historial_data = []
@@ -116,6 +119,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
         # 6. Loop de Function Calling (Soporta múltiples ejecuciones secuenciales en caso de que Gemini lo pida)
         intentos = 0
         max_intentos = 5
+        funciones_ejecutadas = []
         
         while response.function_calls and intentos < max_intentos:
             intentos += 1
@@ -126,6 +130,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
                 func_name = call.name
                 func_args = call.args
                 call_id = call.id
+                funciones_ejecutadas.append(func_name)
                 
                 logger.info(f"Gemini solicita ejecutar la función: {func_name} con argumentos: {func_args}")
                 
@@ -173,9 +178,35 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
         if guardar_en_db:
             guardar_mensaje(conversacion_id=conversacion_id, emisor="bot", contenido=respuesta_final)
         
+        duracion = int((time.time() - t_start) * 1000)
+        log_event(
+            nivel="INFO",
+            modulo="IA_GEMINI",
+            accion="GENERAR_RESPUESTA",
+            mensaje=f"Respuesta generada por Gemini ({model_name}) en {duracion}ms",
+            detalles={
+                "model": model_name,
+                "mensaje_usuario": final_texto[:150] if final_texto else "",
+                "respuesta_bot": respuesta_final[:200] if respuesta_final else "",
+                "funciones_llamadas": funciones_ejecutadas,
+                "conversacion_id": conversacion_id
+            },
+            duracion_ms=duracion,
+            paciente_id=paciente_id
+        )
         return respuesta_final
 
     except Exception as e:
+        duracion = int((time.time() - t_start) * 1000)
+        log_event(
+            nivel="ERROR",
+            modulo="IA_GEMINI",
+            accion="ERROR_INFERENCIA_IA",
+            mensaje=f"Error en inferencia de Gemini: {str(e)}",
+            detalles={"conversacion_id": conversacion_id, "error": str(e), "mensaje_usuario": final_texto[:150] if final_texto else ""},
+            duracion_ms=duracion,
+            paciente_id=paciente_id
+        )
         logger.error(f"Error procesando mensaje en agente: {e}", exc_info=True)
         return "Disculpas, he tenido un inconveniente procesando tu mensaje. Por favor intenta de nuevo."
 
