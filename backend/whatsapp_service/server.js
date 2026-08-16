@@ -6,6 +6,7 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import pino from 'pino'
+import dotenv from 'dotenv'
 import {
   makeWASocket,
   DisconnectReason,
@@ -17,6 +18,10 @@ import {
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+dotenv.config()
+dotenv.config({ path: path.join(__dirname, '../.env') })
+dotenv.config({ path: path.join(__dirname, '../../.env') })
 
 const PORT = process.env.WHATSAPP_SERVICE_PORT || 3001
 const FASTAPI_PORT = process.env.PORT || 8000
@@ -47,6 +52,99 @@ const lidToPhoneMap = new Map()
 let lastContactedPhone = null
 
 const LID_MAP_FILE = path.join(SESSIONS_DIR, 'lid_mappings.json')
+
+const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://ppbgmkxxpeuiutvuynaw.supabase.co').replace(/\/$/, '')
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY
+
+// 1. Restaurar todos los archivos de sesión desde Supabase PostgreSQL
+async function restoreSessionsFromSupabase() {
+  if (!SUPABASE_KEY) {
+    addLog('WARNING', 'SUPABASE_KEY no configurado para persistencia remota de sesiones.')
+    return false
+  }
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/whatsapp_sessions?select=key,value`
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`
+    }
+    const response = await axios.get(url, { headers, timeout: 8000 })
+    if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+      if (!fs.existsSync(SESSIONS_DIR)) {
+        fs.mkdirSync(SESSIONS_DIR, { recursive: true })
+      }
+      let restoredCount = 0
+      for (const item of response.data) {
+        if (item.key && item.value) {
+          const filePath = path.join(SESSIONS_DIR, item.key)
+          fs.writeFileSync(filePath, JSON.stringify(item.value, null, 2), 'utf-8')
+          restoredCount++
+        }
+      }
+      addLog('INFO', `✔ Sesión persistente restaurada desde Supabase (${restoredCount} archivos). Vinculación preservada.`)
+      loadLidMappings()
+      return true
+    }
+  } catch (e) {
+    addLog('WARNING', `No se pudo restaurar sesión desde Supabase: ${e.message}`)
+  }
+  return false
+}
+
+// 2. Sincronizar directorio local de sesiones hacia Supabase PostgreSQL
+let isSyncingToSupabase = false
+async function syncSessionsToSupabase() {
+  if (!SUPABASE_KEY || !fs.existsSync(SESSIONS_DIR) || isSyncingToSupabase) return
+  try {
+    isSyncingToSupabase = true
+    const files = fs.readdirSync(SESSIONS_DIR)
+    const items = []
+    
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue
+      try {
+        const rawContent = fs.readFileSync(path.join(SESSIONS_DIR, file), 'utf-8')
+        const content = JSON.parse(rawContent)
+        items.push({
+          key: file,
+          value: content,
+          updated_at: new Date().toISOString()
+        })
+      } catch (err) {}
+    }
+
+    if (items.length > 0) {
+      const url = `${SUPABASE_URL}/rest/v1/whatsapp_sessions`
+      const headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates'
+      }
+      await axios.post(url, items, { headers, timeout: 10000 })
+    }
+  } catch (e) {
+    addLog('WARNING', `Error sincronizando sesión a Supabase: ${e.message}`)
+  } finally {
+    isSyncingToSupabase = false
+  }
+}
+
+// 3. Eliminar sesión de Supabase al hacer logout
+async function clearSessionsFromSupabase() {
+  if (!SUPABASE_KEY) return
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/whatsapp_sessions?key=neq.`
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`
+    }
+    await axios.delete(url, { headers, timeout: 8000 })
+    addLog('INFO', 'Credenciales de sesión eliminadas de Supabase.')
+  } catch (e) {
+    addLog('WARNING', `Error eliminando sesión de Supabase: ${e.message}`)
+  }
+}
 
 function loadLidMappings() {
   try {
@@ -81,6 +179,7 @@ function saveLidMapping(lid, phone) {
     }
     fs.writeFileSync(LID_MAP_FILE, JSON.stringify(obj, null, 2), 'utf-8')
     addLog('INFO', `LID ${cleanLid} vinculado exitosamente a teléfono +${cleanPhone}`)
+    syncSessionsToSupabase()
   } catch (e) {
     addLog('WARNING', `Error guardando mapeo de LID en disco: ${e.message}`)
   }
@@ -184,6 +283,7 @@ async function initBaileys(forceClean = false) {
 
     if (forceClean) {
       addLog('INFO', 'Limpiando sesión previa para nueva vinculación...')
+      await clearSessionsFromSupabase()
       if (fs.existsSync(SESSIONS_DIR)) {
         try {
           fs.rmSync(SESSIONS_DIR, { recursive: true, force: true })
@@ -197,6 +297,11 @@ async function initBaileys(forceClean = false) {
       pairingCode = null
       pairingPhone = null
       deviceInfo = { phone: null, push_name: null, business_name: null, platform: 'WhatsApp Web Baileys', jid: null, connected_at: null }
+    } else {
+      // Restaurar credenciales desde Supabase si la carpeta local no tiene creds.json (ej: nuevo deploy)
+      if (!fs.existsSync(path.join(SESSIONS_DIR, 'creds.json'))) {
+        await restoreSessionsFromSupabase()
+      }
     }
 
     connectionStatus = 'INITIALIZING'
@@ -221,8 +326,15 @@ async function initBaileys(forceClean = false) {
       markOnlineOnConnect: true
     })
 
-    // Guardar credenciales de sesión automáticamente
-    sock.ev.on('creds.update', saveCreds)
+    // Guardar credenciales de sesión automáticamente en disco y respaldar en Supabase
+    sock.ev.on('creds.update', async () => {
+      try {
+        await saveCreds()
+        syncSessionsToSupabase()
+      } catch (err) {
+        addLog('WARNING', `Error guardando credenciales: ${err.message}`)
+      }
+    })
 
     // Manejo de actualizaciones de conexión
     sock.ev.on('connection.update', async (update) => {
@@ -253,6 +365,7 @@ async function initBaileys(forceClean = false) {
           connected_at: new Date().toISOString().replace('T', ' ').substring(0, 19)
         }
         addLog('INFO', `¡Conexión abierta y autenticada con WhatsApp! Teléfono: +${cleanPhone}`)
+        syncSessionsToSupabase()
       }
 
       if (connection === 'close') {
