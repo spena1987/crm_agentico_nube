@@ -53,7 +53,10 @@ from app.db import (
     eliminar_asesoria_quirurgica,
     get_presupuestos_by_paciente,
     cambiar_estado_presupuesto,
-    crear_presupuesto_rapido
+    crear_presupuesto_rapido,
+    get_evoluciones_by_asesoria,
+    crear_evolucion_asesoria,
+    eliminar_evolucion_asesoria
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.phone_normalizer import normalize_phone_number
@@ -2073,3 +2076,52 @@ def obtener_pdf_presupuesto(presupuesto_id: str):
         filename=filename,
         headers={"Content-Disposition": f"inline; filename={filename}"}
     )
+
+# ====================================================================
+# ENDPOINTS: BITÁCORA Y EVOLUCIONES DE ASESORAMIENTO QUIRÚRGICO
+# ====================================================================
+
+@app.get("/api/asesorias-quirurgicas/{asesoria_id}/evoluciones")
+def listar_evoluciones_asesoria(asesoria_id: str):
+    """
+    Retorna el historial cronológico de notas de evolución de un caso quirúrgico.
+    """
+    try:
+        evoluciones = get_evoluciones_by_asesoria(asesoria_id)
+        return {"success": True, "evoluciones": evoluciones}
+    except Exception as e:
+        logger.error(f"Error al listar evoluciones de asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/evoluciones")
+def registrar_evolucion_asesoria(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Registra una nueva evolución en la bitácora del asesoramiento quirúrgico.
+    """
+    if not payload.get("paciente_id"):
+        raise HTTPException(status_code=400, detail="El ID del paciente es obligatorio.")
+    if not payload.get("contenido") or not str(payload["contenido"]).strip():
+        raise HTTPException(status_code=400, detail="El contenido de la evolución no puede estar vacío.")
+    try:
+        payload["asesoria_id"] = asesoria_id
+        evolucion = crear_evolucion_asesoria(payload)
+        return {
+            "success": True,
+            "mensaje": "Nota de evolución registrada correctamente.",
+            "evolucion": evolucion
+        }
+    except Exception as e:
+        logger.error(f"Error al registrar evolución de asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/asesorias-quirurgicas/evoluciones/{evolucion_id}")
+def borrar_evolucion_asesoria(evolucion_id: str):
+    """
+    Elimina una nota de evolución por su ID.
+    """
+    try:
+        ok = eliminar_evolucion_asesoria(evolucion_id)
+        return {"success": ok, "mensaje": "Evolución eliminada."}
+    except Exception as e:
+        logger.error(f"Error al eliminar evolución {evolucion_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -9,6 +9,57 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      asesoria_evoluciones: {
+        Row: {
+          id: string
+          asesoria_id: string
+          paciente_id: string
+          usuario_id: string | null
+          usuario_nombre: string
+          tipo_contacto: 'llamada' | 'whatsapp' | 'presencial' | 'email' | 'interno'
+          contenido: string
+          fecha_contacto: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          asesoria_id: string
+          paciente_id: string
+          usuario_id?: string | null
+          usuario_nombre?: string
+          tipo_contacto?: 'llamada' | 'whatsapp' | 'presencial' | 'email' | 'interno'
+          contenido: string
+          fecha_contacto?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          asesoria_id?: string
+          paciente_id?: string
+          usuario_id?: string | null
+          usuario_nombre?: string
+          tipo_contacto?: 'llamada' | 'whatsapp' | 'presencial' | 'email' | 'interno'
+          contenido?: string
+          fecha_contacto?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asesoria_evoluciones_asesoria_id_fkey"
+            columns: ["asesoria_id"]
+            isOneToOne: false
+            referencedRelation: "asesorias_quirurgicas"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "asesoria_evoluciones_paciente_id_fkey"
+            columns: ["paciente_id"]
+            isOneToOne: false
+            referencedRelation: "pacientes"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       asesorias_quirurgicas: {
         Row: {
           id: string

@@ -420,6 +420,33 @@ create index if not exists idx_asesorias_estado on public.asesorias_quirurgicas(
 create index if not exists idx_asesorias_presupuesto on public.asesorias_quirurgicas(presupuesto_id);
 
 -- ====================================================================
+-- 12. TABLA DE EVOLUCIONES & BITÁCORA DE ASESORAMIENTO QUIRÚRGICO
+-- ====================================================================
+create table public.asesoria_evoluciones (
+    id uuid default gen_random_uuid() primary key,
+    asesoria_id uuid references public.asesorias_quirurgicas(id) on delete cascade not null,
+    paciente_id uuid references public.pacientes(id) on delete cascade not null,
+    
+    -- Autoría y Canal de Contacto
+    usuario_id uuid,
+    usuario_nombre varchar not null default 'Asesora Quirúrgica',
+    tipo_contacto varchar not null default 'llamada' check (
+        tipo_contacto in ('llamada', 'whatsapp', 'presencial', 'email', 'interno')
+    ),
+    
+    -- Contenido y Timestamp
+    contenido text not null check (length(trim(contenido)) > 0),
+    fecha_contacto timestamp with time zone default timezone('utc'::text, now()) not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_evoluciones_asesoria on public.asesoria_evoluciones(asesoria_id);
+create index if not exists idx_evoluciones_paciente on public.asesoria_evoluciones(paciente_id);
+create index if not exists idx_evoluciones_fecha on public.asesoria_evoluciones(fecha_contacto desc);
+
+comment on table public.asesoria_evoluciones is 'Registro cronológico e inmutable de cada contacto y asesoramiento quirúrgico.';
+
+-- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ====================================================================
 -- Habilitar replicación en tiempo real para mensajería y logs en el CRM
@@ -430,6 +457,7 @@ begin;
   alter publication supabase_realtime add table public.agentes_directivas_globales;
   alter publication supabase_realtime add table public.agentes_situacionales;
   alter publication supabase_realtime add table public.asesorias_quirurgicas;
+  alter publication supabase_realtime add table public.asesoria_evoluciones;
 exception when others then
   -- Ignorar errores si la publicación o la relación ya existe
 end;

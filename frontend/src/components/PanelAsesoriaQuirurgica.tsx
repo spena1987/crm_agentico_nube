@@ -31,6 +31,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
+import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 
 export interface PresupuestoPaciente {
   id: string
@@ -1121,32 +1122,13 @@ export default function PanelAsesoriaQuirurgica({
       </div>
 
       {/* ==================================================================== */}
-      {/* 3. SITUACIÓN DEL PACIENTE & PROPUESTA OFRECIDA */}
+      {/* 3. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
       {/* ==================================================================== */}
-      <div className="space-y-2">
-        <label className="text-xs font-bold text-gray-300 flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            <ClipboardList size={14} className="text-blue-400" />
-            Situación del Paciente, Propuesta Ofrecida & Evolución del Asesoramiento
-          </span>
-          {asesoriaActivaId && (
-            <button
-              type="button"
-              onClick={handleEliminarAsesoria}
-              className="text-[11px] text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors"
-            >
-              <Trash2 size={12} />
-              Eliminar Caso
-            </button>
-          )}
-        </label>
-
-        <textarea
-          value={situacionPaciente}
-          onChange={(e) => setSituacionPaciente(e.target.value)}
-          rows={4}
-          placeholder="Registra aquí: lo que se le ofreció, dudas planteadas por el paciente, requisitos prequirúrgicos acordados, autorizaciones pendientes y motivos de seguimiento..."
-          className="w-full p-3.5 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none transition-all text-white placeholder-gray-500 leading-relaxed"
+      <div className="pt-2 border-t border-[var(--border)]/70">
+        <TimelineEvolucionesAsesoria
+          asesoriaId={asesoriaActivaId}
+          pacienteId={pacienteId}
+          pacienteNombre={pacienteNombre}
         />
       </div>
 

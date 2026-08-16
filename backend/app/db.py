@@ -1263,4 +1263,71 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         logger.error(f"Error al crear presupuesto rápido: {e}")
         raise
 
+# ====================================================================
+# BITÁCORA Y EVOLUCIONES DE ASESORAMIENTO QUIRÚRGICO
+# ====================================================================
+
+def get_evoluciones_by_asesoria(asesoria_id: str) -> List[Dict[str, Any]]:
+    """
+    Retorna la lista cronológica de evoluciones de un caso quirúrgico.
+    """
+    if not supabase or not asesoria_id:
+        return []
+    try:
+        resp = supabase.table("asesoria_evoluciones") \
+            .select("*") \
+            .eq("asesoria_id", asesoria_id) \
+            .order("fecha_contacto", desc=True) \
+            .execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener evoluciones de asesoría {asesoria_id}: {e}")
+        return []
+
+def crear_evolucion_asesoria(payload: dict) -> Dict[str, Any]:
+    """
+    Registra una nueva evolución en la bitácora del asesoramiento quirúrgico.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        contenido = (payload.get("contenido") or "").strip()
+        if not contenido:
+            raise ValueError("El contenido de la evolución no puede estar vacío.")
+            
+        data_ins = {
+            "asesoria_id": payload["asesoria_id"],
+            "paciente_id": payload["paciente_id"],
+            "usuario_id": payload.get("usuario_id"),
+            "usuario_nombre": payload.get("usuario_nombre") or "Asesora Quirúrgica",
+            "tipo_contacto": payload.get("tipo_contacto", "llamada"),
+            "contenido": contenido,
+            "fecha_contacto": payload.get("fecha_contacto") or "now()"
+        }
+        
+        resp = supabase.table("asesoria_evoluciones").insert(data_ins).select().execute()
+        if not resp.data:
+            raise Exception("No se pudo insertar el registro de evolución.")
+            
+        # Actualizar updated_at en el caso quirúrgico
+        supabase.table("asesorias_quirurgicas").update({"updated_at": "now()"}).eq("id", payload["asesoria_id"]).execute()
+        
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al crear evolución de asesoría: {e}")
+        raise
+
+def eliminar_evolucion_asesoria(evolucion_id: str) -> bool:
+    """
+    Elimina una entrada de evolución por su ID.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("asesoria_evoluciones").delete().eq("id", evolucion_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar evolución {evolucion_id}: {e}")
+        raise
+
 
