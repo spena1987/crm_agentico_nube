@@ -92,6 +92,8 @@ interface PracticaNomenclador {
 interface PanelAsesoriaQuirurgicaProps {
   pacienteId: string
   pacienteNombre: string
+  pacienteDni?: string | null
+  pacienteTelefono?: string | null
   obraSocialDefault?: string | null
 }
 
@@ -106,6 +108,8 @@ const ETAPAS: { id: AsesoriaQuirurgica['estado']; label: string; color: string; 
 export default function PanelAsesoriaQuirurgica({
   pacienteId,
   pacienteNombre,
+  pacienteDni,
+  pacienteTelefono,
   obraSocialDefault
 }: PanelAsesoriaQuirurgicaProps) {
   const [asesorias, setAsesorias] = useState<AsesoriaQuirurgica[]>([])
@@ -177,32 +181,62 @@ export default function PanelAsesoriaQuirurgica({
     }
   }
 
-  // Cambiar estado del presupuesto (Confirmar / Desistir)
+  // Cambiar estado del presupuesto (Confirmar / Desistir) con actualización inmediata
   const handleCambiarEstadoPresupuesto = async (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado' | 'enviado') => {
     try {
       setActualizandoEstadoPresupuestoId(presupuestoId)
-      const res = await fetch(`/api/presupuestos/${presupuestoId}/estado`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          estado: nuevoEstado,
-          asesoria_id: asesoriaActivaId || null
-        })
-      })
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setPresupuestos((prev) =>
-          prev.map((p) => (p.id === presupuestoId ? { ...p, estado: nuevoEstado } : p))
-        )
-        if (nuevoEstado === 'aprobado') {
-          setEstado('confirmado')
-          setMensajeExito('✔ Presupuesto aprobado. Etapa de cirugía avanzada a Confirmada.')
-        } else if (nuevoEstado === 'rechazado') {
-          setMensajeExito('✖ Presupuesto marcado como desistido / rechazado.')
+      setError(null)
+
+      // 1. Actualización inmediata en el estado de React (UI)
+      setPresupuestos((prev) =>
+        prev.map((p) => (p.id === presupuestoId ? { ...p, estado: nuevoEstado } : p))
+      )
+
+      if (nuevoEstado === 'aprobado') {
+        setEstado('confirmado')
+        if (!fechaDefinitiva && fechaProbable) {
+          setFechaDefinitiva(fechaProbable)
         }
-        setTimeout(() => setMensajeExito(null), 3500)
-        fetchAsesorias()
+        setMensajeExito('✔ Presupuesto aprobado. Etapa de cirugía actualizada a 4. Cirugía Confirmada.')
+      } else if (nuevoEstado === 'rechazado') {
+        setMensajeExito('✖ Presupuesto marcado como desistido / rechazado.')
       }
+
+      // 2. Persistir en Backend y Supabase
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${presupuestoId}/estado`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            estado: nuevoEstado,
+            asesoria_id: asesoriaActivaId || null
+          })
+        })
+        const data = await res.json()
+        if (!res.ok) {
+          throw new Error(data.detail || 'Error en API')
+        }
+      } catch (apiErr) {
+        console.warn('Fallback a Supabase directo:', apiErr)
+        // Fallback Supabase
+        await supabase.from('presupuestos').update({ estado: nuevoEstado }).eq('id', presupuestoId)
+        if (asesoriaActivaId) {
+          if (nuevoEstado === 'aprobado') {
+            await supabase.from('asesorias_quirurgicas').update({
+              estado: 'confirmado',
+              presupuesto_id: presupuestoId,
+              updated_at: new Date().toISOString()
+            }).eq('id', asesoriaActivaId)
+          } else if (nuevoEstado === 'rechazado') {
+            await supabase.from('asesorias_quirurgicas').update({
+              motivo_cancelacion: 'Presupuesto desistido por el paciente',
+              updated_at: new Date().toISOString()
+            }).eq('id', asesoriaActivaId)
+          }
+        }
+      }
+
+      setTimeout(() => setMensajeExito(null), 3500)
     } catch (err: any) {
       console.error('Error actualizando presupuesto:', err)
       setError(err.message || 'Error al actualizar el estado del presupuesto.')
@@ -1124,6 +1158,8 @@ export default function PanelAsesoriaQuirurgica({
         onClose={() => setMostrarModalPresupuesto(false)}
         pacienteId={pacienteId}
         pacienteNombre={pacienteNombre}
+        pacienteDni={pacienteDni}
+        pacienteTelefono={pacienteTelefono}
         obraSocial={obraSocialDefault}
         asesoriaId={asesoriaActivaId}
         practicaInicial={{

@@ -55,26 +55,50 @@ export default function PresupuestosPage() {
   }
 
   useEffect(() => {
-    if (activeTab === 'list') {
-      fetchPresupuestos()
+    fetchPresupuestos()
+
+    // Suscripción Realtime a la tabla presupuestos para sincronización instantánea
+    const channel = supabase
+      .channel('presupuestos-live-channel')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'presupuestos' },
+        () => {
+          fetchPresupuestos()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
     }
   }, [activeTab])
 
-  // Cambiar estado del presupuesto
+  // Cambiar estado del presupuesto con sincronización bidireccional
   const updateEstado = async (id: string, nuevoEstado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado') => {
     try {
-      const { error } = await supabase
-        .from('presupuestos')
-        .update({ estado: nuevoEstado })
-        .eq('id', id)
-      
-      if (error) throw error
-      
+      // 1. Actualización optimista en la UI
       setPresupuestos((prev) => 
         prev.map((p) => p.id === id ? { ...p, estado: nuevoEstado } : p)
       )
+
+      // 2. Notificar al backend para que sincronice la etapa en asesorías quirúrgicas
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${id}/estado`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ estado: nuevoEstado })
+        })
+        if (!res.ok) {
+          throw new Error('Error en API')
+        }
+      } catch (apiErr) {
+        // Fallback Supabase
+        await supabase.from('presupuestos').update({ estado: nuevoEstado }).eq('id', id)
+      }
     } catch (error) {
       console.error('Error actualizando estado presupuesto:', error)
+      fetchPresupuestos()
     }
   }
 

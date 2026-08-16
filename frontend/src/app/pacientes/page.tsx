@@ -710,6 +710,8 @@ export default function PacientesPage() {
               <PanelAsesoriaQuirurgica
                 pacienteId={pacienteSeleccionado.id}
                 pacienteNombre={pacienteSeleccionado.nombre}
+                pacienteDni={pacienteSeleccionado.dni}
+                pacienteTelefono={pacienteSeleccionado.telefono}
                 obraSocialDefault={pacienteSeleccionado.obra_social}
               />
 
