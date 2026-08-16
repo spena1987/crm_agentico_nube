@@ -882,38 +882,66 @@ def sincronizar_paciente_geclisa(paciente_id: str):
 @app.get("/api/geclisa/pacientes/{paciente_id}/historia-clinica")
 def obtener_historia_clinica_paciente(paciente_id: str):
     """
-    Consulta en vivo las evoluciones de la historia clínica en Geclisa para el paciente indicado.
+    Consulta en vivo las evoluciones de la historia clínica en Geclisa.
+    Soporta paciente_id como UUID del CRM, DNI o Ficha ID directamente.
     Si el paciente no tiene 'geclisa_ficha_id' pero tiene 'dni', busca en Geclisa por DNI,
     asocia la ficha encontrada en Supabase y consulta la historia clínica.
     No persiste la historia clínica en Supabase (operación 100% de lectura on-demand).
     """
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
-        
     try:
-        # 1. Obtener paciente de CRM
-        res_paciente = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
-        if not res_paciente.data or len(res_paciente.data) == 0:
-            raise HTTPException(status_code=404, detail="Paciente no encontrado en el CRM.")
-            
-        paciente = res_paciente.data[0]
-        ficha_id = paciente.get("geclisa_ficha_id")
-        dni = paciente.get("dni")
-        
-        # 2. Si no tiene ficha_id pero tiene DNI, intentar resolver por DNI en Geclisa
+        ficha_id = None
+        dni = None
+        paciente_nombre = None
+        paciente_crm_id = None
+
+        # 1. Intentar buscar en Supabase (por UUID, DNI o ficha_id)
+        if supabase:
+            try:
+                # Búsqueda por ID principal
+                res_paciente = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+                if not res_paciente.data or len(res_paciente.data) == 0:
+                    # Búsqueda fallback por DNI
+                    res_paciente = supabase.table("pacientes").select("*").ilike("dni", f"%{paciente_id}%").execute()
+                if not res_paciente.data or len(res_paciente.data) == 0:
+                    # Búsqueda fallback por geclisa_ficha_id si es numérico
+                    if str(paciente_id).isdigit():
+                        res_paciente = supabase.table("pacientes").select("*").eq("geclisa_ficha_id", int(paciente_id)).execute()
+
+                if res_paciente.data and len(res_paciente.data) > 0:
+                    paciente = res_paciente.data[0]
+                    paciente_crm_id = paciente.get("id")
+                    ficha_id = paciente.get("geclisa_ficha_id")
+                    dni = paciente.get("dni")
+                    paciente_nombre = paciente.get("nombre")
+            except Exception as db_err:
+                logger.warning(f"Aviso al consultar paciente en Supabase: {db_err}")
+
+        # Si no se encontró en Supabase pero paciente_id parece ser un DNI o Ficha directa
+        if not dni and not ficha_id:
+            if str(paciente_id).isdigit():
+                if len(str(paciente_id)) >= 7:
+                    dni = str(paciente_id)
+                else:
+                    ficha_id = int(paciente_id)
+
+        # 2. Si no tiene ficha_id pero tiene DNI, resolver por DNI contra Geclisa
         if not ficha_id and dni:
             dni_limpio = "".join(filter(str.isdigit, str(dni)))
             if dni_limpio:
                 datos_dni = geclisa_client.buscar_paciente_por_dni(dni_limpio)
                 if datos_dni.get("encontrado") and datos_dni.get("ficha_id"):
                     ficha_id = int(datos_dni["ficha_id"])
-                    # Guardar ficha_id en Supabase para futuras consultas
-                    try:
-                        supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente_id).execute()
-                        logger.info(f"Ficha #{ficha_id} auto-vinculada por DNI para paciente {paciente_id}")
-                    except Exception as err_upd:
-                        logger.warning(f"No se pudo auto-vincular ficha #{ficha_id} en Supabase: {err_upd}")
-                        
+                    if not paciente_nombre:
+                        paciente_nombre = datos_dni.get("nombre_completo")
+                    # Guardar ficha_id en Supabase si tenemos el ID del paciente en CRM
+                    if paciente_crm_id and supabase:
+                        try:
+                            supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente_crm_id).execute()
+                            logger.info(f"Ficha #{ficha_id} auto-vinculada por DNI para paciente {paciente_crm_id}")
+                        except Exception as err_upd:
+                            logger.warning(f"No se pudo auto-vincular ficha #{ficha_id} en Supabase: {err_upd}")
+
+        # 3. Si aún no tenemos ficha_id, retornar aviso amigable (encontrado: False con HTTP 200)
         if not ficha_id:
             if not dni:
                 return {
@@ -928,7 +956,7 @@ def obtener_historia_clinica_paciente(paciente_id: str):
                     "mensaje": f"No se encontró ninguna historia clínica ni ficha activa en Geclisa para el DNI {dni}."
                 }
 
-        # 3. Consultar Historia Clínica Resumen en Geclisa
+        # 4. Consultar Historia Clínica Resumen en Geclisa
         resultado_hc = geclisa_client.obtener_historia_clinica_resumen(int(ficha_id))
         if not resultado_hc.get("encontrado"):
             return {
@@ -940,20 +968,22 @@ def obtener_historia_clinica_paciente(paciente_id: str):
 
         return {
             "encontrado": True,
-            "paciente_id": paciente_id,
+            "paciente_id": paciente_crm_id or paciente_id,
             "ficha_id": ficha_id,
-            "paciente_nombre": paciente.get("nombre"),
+            "paciente_nombre": paciente_nombre,
             "paciente_dni": dni,
             "fecha_generacion": resultado_hc.get("fecha_generacion"),
             "evoluciones_recientes": resultado_hc.get("evoluciones_recientes", []),
             "total_evoluciones": resultado_hc.get("total_evoluciones", 0)
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error al obtener historia clínica para paciente {paciente_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error al consultar historia clínica: {str(e)}")
+        return {
+            "encontrado": False,
+            "motivo": "error_servidor",
+            "mensaje": f"Error al consultar historia clínica en Geclisa: {str(e)}"
+        }
 
 @app.put("/api/pacientes/{paciente_id}")
 def actualizar_paciente_crm(paciente_id: str, payload: Dict[str, Any] = Body(...)):

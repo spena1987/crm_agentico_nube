@@ -89,16 +89,20 @@ export default function ModalHistoriaClinica({
   }, [isOpen, onClose])
 
   const cargarHistoriaClinica = async () => {
-    if (!paciente?.id) return
+    const queryId = paciente?.id || paciente?.dni || paciente?.geclisa_ficha_id
+    if (!queryId) {
+      setErrorLocal('El paciente no cuenta con ID ni DNI para consultar en Geclisa.')
+      return
+    }
 
     setCargando(true)
     setErrorLocal('')
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${paciente.id}/historia-clinica`)
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/historia-clinica`)
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.detail || `Error al consultar Geclisa (HTTP ${res.status})`)
+        throw new Error(errorData.detail || errorData.mensaje || `Error al consultar Geclisa (HTTP ${res.status})`)
       }
       const data: HistoriaClinicaResponse = await res.json()
       setDataHc(data)
