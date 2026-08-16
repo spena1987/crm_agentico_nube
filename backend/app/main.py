@@ -17,6 +17,8 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from app.db import (
     supabase, 
     actualizar_bot_disabled,
+    archivar_conversacion,
+    obtener_metricas_conversaciones,
     obtener_conversaciones,
     obtener_mensajes_conversacion,
     is_lid_number,
@@ -316,11 +318,34 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         return {"status": "error", "detail": str(e)}
 
 @app.get("/api/conversaciones")
-def get_conversaciones_api():
+def get_conversaciones_api(incluir_archivadas: bool = True):
     """
     Retorna la lista de todas las conversaciones activas con sus pacientes asociados.
     """
-    return obtener_conversaciones()
+    return obtener_conversaciones(incluir_archivadas=incluir_archivadas)
+
+@app.get("/api/conversaciones/metricas")
+def get_conversaciones_metricas_api():
+    """
+    Retorna los contadores en tiempo real para las pestañas de la bandeja de entrada:
+    - Derivados a Humano
+    - En Gestión por IA (Bot Activo)
+    - Total Activos
+    - Resueltos / Archivados
+    """
+    return obtener_metricas_conversaciones()
+
+@app.post("/api/conversaciones/{conversacion_id}/archivar")
+def archivar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Marca una conversación como archivada / resuelta o la restaura a activa.
+    """
+    archivada = payload.get("archivada", True)
+    logger.info(f"Cambiando estado archivada en conversación {conversacion_id} a {archivada}")
+    res = archivar_conversacion(conversacion_id, archivada)
+    if not res:
+        raise HTTPException(status_code=404, detail="No se pudo actualizar el estado de la conversación.")
+    return {"success": True, "conversacion": res}
 
 @app.get("/api/conversaciones/{conversacion_id}/mensajes")
 def get_mensajes_conversacion_api(conversacion_id: str):

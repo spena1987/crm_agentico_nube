@@ -376,20 +376,62 @@ def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
         logger.error(f"Error al actualizar estado bot_disabled en conversación {conversacion_id}: {e}")
         return None
 
-def obtener_conversaciones():
+def archivar_conversacion(conversacion_id: str, archivada: bool = True):
+    if not supabase:
+        return None
+    try:
+        response = supabase.table("conversaciones").update({"archivada": archivada}).eq("id", conversacion_id).execute()
+        if response.data:
+            return response.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error al cambiar estado archivada en conversación {conversacion_id}: {e}")
+        return None
+
+def obtener_conversaciones(incluir_archivadas: bool = True):
     """
     Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados.
     """
     if not supabase:
         return []
     try:
-        response = supabase.table("conversaciones").select(
-            "id, paciente_id, bot_disabled, ultimo_mensaje, updated_at, pacientes(id, telefono, nombre, email)"
-        ).order("updated_at", desc=True).execute()
+        query = supabase.table("conversaciones").select(
+            "id, paciente_id, bot_disabled, archivada, ultimo_mensaje, updated_at, pacientes(id, telefono, nombre, email)"
+        )
+        if not incluir_archivadas:
+            query = query.eq("archivada", False)
+        response = query.order("updated_at", desc=True).execute()
         return response.data or []
     except Exception as e:
         logger.error(f"Error al obtener conversaciones: {e}")
         return []
+
+def obtener_metricas_conversaciones():
+    """
+    Calcula en tiempo real los contadores para las pestañas de la bandeja de entrada:
+    - total_activas
+    - derivados_humano (bot_disabled == true and not archivada)
+    - bot_activos (bot_disabled == false and not archivada)
+    - archivados (archivada == true)
+    """
+    if not supabase:
+        return {"total_activas": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
+    try:
+        res = supabase.table("conversaciones").select("id, bot_disabled, archivada").execute()
+        convs = res.data or []
+        derivados = sum(1 for c in convs if c.get("bot_disabled") and not c.get("archivada"))
+        bot_activos = sum(1 for c in convs if not c.get("bot_disabled") and not c.get("archivada"))
+        archivados = sum(1 for c in convs if c.get("archivada"))
+        total_activas = len(convs) - archivados
+        return {
+            "total_activas": total_activas,
+            "derivados_humano": derivados,
+            "bot_activos": bot_activos,
+            "archivados": archivados
+        }
+    except Exception as e:
+        logger.error(f"Error al calcular métricas de conversaciones: {e}")
+        return {"total_activas": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
 
 def obtener_mensajes_conversacion(conversacion_id: str):
     """
