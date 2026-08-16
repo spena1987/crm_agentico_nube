@@ -181,7 +181,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
 
 def transcribir_audio_con_gemini(audio_url: str) -> str:
     """
-    Descarga el audio desde la URL de Supabase Storage y lo transcribe usando Gemini 2.0 Flash.
+    Descarga el audio desde la URL de Supabase Storage y lo transcribe usando Gemini Flash.
     """
     if not client:
         raise ValueError("Cliente Gemini no configurado. Verifique GEMINI_API_KEY.")
@@ -195,7 +195,7 @@ def transcribir_audio_con_gemini(audio_url: str) -> str:
         
         # Determinar MIME type
         mime_type = res.headers.get("content-type", "audio/ogg")
-        if "ogg" in audio_url.lower() or "opus" in mime_type.lower():
+        if "ogg" in audio_url.lower() or "opus" in str(mime_type).lower():
             mime_type = "audio/ogg"
         elif "mp3" in audio_url.lower():
             mime_type = "audio/mp3"
@@ -210,20 +210,34 @@ def transcribir_audio_con_gemini(audio_url: str) -> str:
             "únicamente devuelve el texto exacto que dijo la persona."
         )
 
-        response_gemini = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=[
-                types.Part.from_bytes(
-                    data=audio_bytes,
-                    mime_type=mime_type
-                ),
-                prompt
-            ]
-        )
+        candidate_models = [
+            os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-flash-latest"),
+            "gemini-3.5-flash",
+            "gemini-flash-lite-latest"
+        ]
 
-        texto_transcrito = (response_gemini.text or "").strip()
-        logger.info(f"Transcripción generada con éxito ({len(texto_transcrito)} caracteres): {texto_transcrito[:60]}...")
-        return texto_transcrito
+        last_err = None
+        for model_name in candidate_models:
+            try:
+                response_gemini = client.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        types.Part.from_bytes(
+                            data=audio_bytes,
+                            mime_type=mime_type
+                        ),
+                        prompt
+                    ]
+                )
+                texto_transcrito = (response_gemini.text or "").strip()
+                logger.info(f"Transcripción generada con éxito ({len(texto_transcrito)} caracteres) usando {model_name}: {texto_transcrito[:60]}...")
+                return texto_transcrito
+            except Exception as model_err:
+                logger.warning(f"Error con modelo {model_name} al transcribir audio: {model_err}")
+                last_err = model_err
+
+        if last_err:
+            raise last_err
 
     except Exception as e:
         logger.error(f"Error durante la transcripción de audio con Gemini: {e}", exc_info=True)
