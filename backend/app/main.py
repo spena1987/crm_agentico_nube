@@ -54,6 +54,7 @@ from app.whatsapp import (
 )
 from app.services.pdf_service import PDF_DIR
 from app.services.media_service import media_service, STATIC_MEDIA_DIR
+from app.services.media_cleaner import purgar_archivos_antiguos, obtener_estadisticas_storage
 from app.services.tools import crear_borrador_presupuesto
 from app.services.config_service import load_settings, save_settings
 from app.services.geclisa_client import GeclisaClient
@@ -66,6 +67,21 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+async def cron_limpieza_diaria_media():
+    """
+    Tarea en segundo plano que ejecuta la purga de archivos multimedia > 30 días una vez cada 24 horas.
+    """
+    while True:
+        try:
+            await asyncio.sleep(60) # Esperar 1 minuto tras arranque del backend
+            logger.info("Ejecutando rutina periódica de retención y limpieza de multimedia (> 30 días)...")
+            purgar_archivos_antiguos(dias_retencion=30, dry_run=False)
+        except Exception as e:
+            logger.error(f"Error en rutina periódica de limpieza de multimedia: {e}")
+        
+        # Esperar 24 horas para la siguiente ejecución
+        await asyncio.sleep(24 * 3600)
 
 # Modelos de validación Pydantic
 class SimuladorMensaje(BaseModel):
@@ -100,6 +116,7 @@ class TestMessageRequest(BaseModel):
 async def lifespan(app: FastAPI):
     logger.info("Iniciando aplicación CRM Médico + WhatsApp Baileys Gateway...")
     iniciar_daemon_whatsapp()
+    asyncio.create_task(cron_limpieza_diaria_media())
     yield
     logger.info("Deteniendo aplicación CRM Médico...")
 
@@ -410,6 +427,22 @@ def transcribir_mensaje_api(mensaje_id: str):
     except Exception as e:
         logger.error(f"Error procesando transcripción de audio: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error al transcribir el audio con Gemini: {str(e)}")
+
+@app.post("/api/mantenimiento/purgar-media")
+def purgar_media_api(dias: int = 30, dry_run: bool = False):
+    """
+    Ejecuta la purga de archivos multimedia antiguos (> 30 días) en Supabase Storage
+    auto-transcribiendo los audios previos con Gemini para preservar su contenido textual.
+    """
+    logger.info(f"Endpoint de mantenimiento invocado: purga con retención de {dias} días (dry_run={dry_run})")
+    return purgar_archivos_antiguos(dias_retencion=dias, dry_run=dry_run)
+
+@app.get("/api/mantenimiento/estadisticas-storage")
+def estadisticas_storage_api():
+    """
+    Retorna métricas de archivos almacenados, espacio utilizado y conteo de audios transcriptos.
+    """
+    return obtener_estadisticas_storage()
 
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):
@@ -845,6 +878,82 @@ def sincronizar_paciente_geclisa(paciente_id: str):
         logger.error(f"Error al sincronizar paciente con Geclisa: {e}")
         raise HTTPException(status_code=500, detail=f"Error al sincronizar paciente: {str(e)}")
 
+@app.get("/api/geclisa/pacientes/{paciente_id}/historia-clinica")
+def obtener_historia_clinica_paciente(paciente_id: str):
+    """
+    Consulta en vivo las evoluciones de la historia clínica en Geclisa para el paciente indicado.
+    Si el paciente no tiene 'geclisa_ficha_id' pero tiene 'dni', busca en Geclisa por DNI,
+    asocia la ficha encontrada en Supabase y consulta la historia clínica.
+    No persiste la historia clínica en Supabase (operación 100% de lectura on-demand).
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+        
+    try:
+        # 1. Obtener paciente de CRM
+        res_paciente = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+        if not res_paciente.data or len(res_paciente.data) == 0:
+            raise HTTPException(status_code=404, detail="Paciente no encontrado en el CRM.")
+            
+        paciente = res_paciente.data[0]
+        ficha_id = paciente.get("geclisa_ficha_id")
+        dni = paciente.get("dni")
+        
+        # 2. Si no tiene ficha_id pero tiene DNI, intentar resolver por DNI en Geclisa
+        if not ficha_id and dni:
+            dni_limpio = "".join(filter(str.isdigit, str(dni)))
+            if dni_limpio:
+                datos_dni = geclisa_client.buscar_paciente_por_dni(dni_limpio)
+                if datos_dni.get("encontrado") and datos_dni.get("ficha_id"):
+                    ficha_id = int(datos_dni["ficha_id"])
+                    # Guardar ficha_id en Supabase para futuras consultas
+                    try:
+                        supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente_id).execute()
+                        logger.info(f"Ficha #{ficha_id} auto-vinculada por DNI para paciente {paciente_id}")
+                    except Exception as err_upd:
+                        logger.warning(f"No se pudo auto-vincular ficha #{ficha_id} en Supabase: {err_upd}")
+                        
+        if not ficha_id:
+            if not dni:
+                return {
+                    "encontrado": False,
+                    "motivo": "sin_dni",
+                    "mensaje": "El paciente no posee número de DNI ni Ficha Geclisa registrada en el CRM."
+                }
+            else:
+                return {
+                    "encontrado": False,
+                    "motivo": "sin_ficha_geclisa",
+                    "mensaje": f"No se encontró ninguna historia clínica ni ficha activa en Geclisa para el DNI {dni}."
+                }
+
+        # 3. Consultar Historia Clínica Resumen en Geclisa
+        resultado_hc = geclisa_client.obtener_historia_clinica_resumen(int(ficha_id))
+        if not resultado_hc.get("encontrado"):
+            return {
+                "encontrado": False,
+                "motivo": "no_encontrado_geclisa",
+                "ficha_id": ficha_id,
+                "mensaje": resultado_hc.get("mensaje") or "No se encontraron evoluciones en Geclisa."
+            }
+
+        return {
+            "encontrado": True,
+            "paciente_id": paciente_id,
+            "ficha_id": ficha_id,
+            "paciente_nombre": paciente.get("nombre"),
+            "paciente_dni": dni,
+            "fecha_generacion": resultado_hc.get("fecha_generacion"),
+            "evoluciones_recientes": resultado_hc.get("evoluciones_recientes", []),
+            "total_evoluciones": resultado_hc.get("total_evoluciones", 0)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al obtener historia clínica para paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al consultar historia clínica: {str(e)}")
+
 @app.put("/api/pacientes/{paciente_id}")
 def actualizar_paciente_crm(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """
@@ -861,6 +970,8 @@ def actualizar_paciente_crm(paciente_id: str, payload: Dict[str, Any] = Body(...
             datos_actualizar["nombre"] = str(payload["nombre"]).strip()
         if "dni" in payload:
             datos_actualizar["dni"] = str(payload["dni"]).strip() if payload["dni"] else None
+        if "geclisa_ficha_id" in payload:
+            datos_actualizar["geclisa_ficha_id"] = int(payload["geclisa_ficha_id"]) if payload["geclisa_ficha_id"] else None
         if "nro_hc" in payload:
             datos_actualizar["nro_hc"] = str(payload["nro_hc"]).strip() if payload["nro_hc"] else None
         if "telefono" in payload and payload["telefono"]:

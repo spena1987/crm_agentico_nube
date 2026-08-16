@@ -542,6 +542,65 @@ class GeclisaClient:
             }
 
     # ====================================================================
+    # HISTORIA CLÍNICA (LECTURA ON-DEMAND)
+    # ====================================================================
+
+    def obtener_historia_clinica_resumen(self, ficha_id: int) -> dict:
+        """
+        Consulta en vivo el resumen de Historia Clínica de un paciente en Geclisa.
+        Ruta: GET /api/HistoriaClinicaResumen/{pacienteId}
+        """
+        if not ficha_id:
+            return {"encontrado": False, "mensaje": "Ficha ID no proporcionada."}
+
+        url = f"{self.base_url}/api/HistoriaClinicaResumen/{ficha_id}"
+        try:
+            headers = self._get_headers()
+            response = self._do_request("GET", url, headers=headers, timeout=12)
+            
+            if response.status_code == 404:
+                return {
+                    "encontrado": False,
+                    "mensaje": f"No se encontró historia clínica para la Ficha #{ficha_id} en Geclisa."
+                }
+                
+            response.raise_for_status()
+            data = response.json()
+            
+            # Normalizar evoluciones recientes
+            raw_evoluciones = data.get("evolucionesRecientes") or []
+            evoluciones_normalizadas = []
+            for ev in raw_evoluciones:
+                evoluciones_normalizadas.append({
+                    "hc_id": ev.get("hcId"),
+                    "fecha": ev.get("fecha") or "",
+                    "fecha_hora": ev.get("fechaDateTime") or "",
+                    "hora": ev.get("hora") or "",
+                    "prestador": (ev.get("prestador") or "").strip(),
+                    "especialidad": (ev.get("especialidad") or "").strip(),
+                    "area": ev.get("area") or "",
+                    "texto": (ev.get("texto") or "").strip(),
+                    "nombre_plantilla": (ev.get("nombrePlantilla") or "").strip()
+                })
+
+            return {
+                "encontrado": True,
+                "ficha_id": ficha_id,
+                "fecha_generacion": data.get("fechaGeneracion"),
+                "evoluciones_recientes": evoluciones_normalizadas,
+                "total_evoluciones": len(evoluciones_normalizadas),
+                "raw": data
+            }
+
+        except Exception as e:
+            logger.error(f"Error al consultar HistoriaClinicaResumen para ficha {ficha_id}: {e}")
+            return {
+                "encontrado": False,
+                "error": str(e),
+                "mensaje": f"No se pudo consultar la historia clínica en Geclisa: {str(e)}"
+            }
+
+    # ====================================================================
     # SCRIPT DE DIAGNÓSTICO E INICIALIZACIÓN
     # ====================================================================
     def test_read_connection(self) -> bool:

@@ -26,11 +26,13 @@ import {
   User,
   Trash2,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  FileHeart
 } from 'lucide-react'
 import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
 import ModalEditarPaciente from '@/components/ModalEditarPaciente'
 import ModalConfirmarEliminar from '@/components/ModalConfirmarEliminar'
+import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
 
 interface Paciente {
   id: string
@@ -72,9 +74,10 @@ export default function PacientesPage() {
   const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false)
   const [eliminandoPaciente, setEliminandoPaciente] = useState(false)
 
-  // Modales de alta
+  // Modales de alta e Historia Clínica
   const [mostrarModalGeclisa, setMostrarModalGeclisa] = useState(false)
   const [mostrarModalManual, setMostrarModalManual] = useState(false)
+  const [mostrarModalHC, setMostrarModalHC] = useState(false)
 
   // Formulario manual
   const [nuevoNombre, setNuevoNombre] = useState('')
@@ -583,6 +586,17 @@ export default function PacientesPage() {
                     WhatsApp
                   </Link>
 
+                  {/* Historia Clínica (Geclisa On-Demand) */}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalHC(true)}
+                    className="px-3.5 py-2 bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/30 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm"
+                    title="Consultar evoluciones médicas recientes en Geclisa"
+                  >
+                    <FileHeart size={14} className="text-rose-400" />
+                    Historia Clínica
+                  </button>
+
                   {/* Presupuesto */}
                   <Link
                     href="/presupuestos"
@@ -848,6 +862,13 @@ export default function PacientesPage() {
         eliminando={eliminandoPaciente}
         onClose={() => setMostrarModalEliminar(false)}
         onConfirm={handleEliminarPaciente}
+      />
+
+      {/* Modal Historia Clínica On-Demand (Evoluciones Recientes Geclisa) */}
+      <ModalHistoriaClinica
+        isOpen={mostrarModalHC}
+        onClose={() => setMostrarModalHC(false)}
+        paciente={pacienteSeleccionado}
       />
 
       {/* Modal para Crear Paciente Manual */}

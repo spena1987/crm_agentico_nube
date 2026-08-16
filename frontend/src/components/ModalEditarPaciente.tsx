@@ -39,6 +39,7 @@ export default function ModalEditarPaciente({
   const [telefono, setTelefono] = useState('')
   const [dni, setDni] = useState('')
   const [nroHc, setNroHc] = useState('')
+  const [geclisaFichaId, setGeclisaFichaId] = useState<string>('')
   const [email, setEmail] = useState('')
   const [obraSocial, setObraSocial] = useState('')
   const [planCobertura, setPlanCobertura] = useState('')
@@ -55,6 +56,7 @@ export default function ModalEditarPaciente({
       setTelefono(paciente.telefono || '')
       setDni(paciente.dni || '')
       setNroHc(paciente.nro_hc || '')
+      setGeclisaFichaId(paciente.geclisa_ficha_id ? String(paciente.geclisa_ficha_id) : '')
       setEmail(paciente.email || '')
       setObraSocial(paciente.obra_social || '')
       setPlanCobertura(paciente.plan_cobertura || '')
@@ -78,11 +80,13 @@ export default function ModalEditarPaciente({
 
     try {
       setError('')
+      const fichaNum = geclisaFichaId.trim() ? parseInt(geclisaFichaId.trim(), 10) : null
       await onSave({
         nombre: nombre.trim(),
         telefono: telefono.trim(),
         dni: dni.trim() || null,
         nro_hc: nroHc.trim() || null,
+        geclisa_ficha_id: isNaN(fichaNum as number) ? null : fichaNum,
         email: email.trim() || null,
         obra_social: obraSocial.trim() || null,
         plan_cobertura: planCobertura.trim() || null,
@@ -139,8 +143,8 @@ export default function ModalEditarPaciente({
               Identificación y Filiación
             </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="sm:col-span-2 flex flex-col gap-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-3 flex flex-col gap-1">
                 <label className="text-[11px] font-bold text-gray-300">Nombre Completo *</label>
                 <input
                   type="text"
@@ -164,7 +168,18 @@ export default function ModalEditarPaciente({
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-gray-300">Nro. Historia Clínica (HC)</label>
+                <label className="text-[11px] font-bold text-gray-300">Ficha Geclisa (ID)</label>
+                <input
+                  type="text"
+                  value={geclisaFichaId}
+                  onChange={(e) => setGeclisaFichaId(e.target.value)}
+                  placeholder="Ej: 100"
+                  className="px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-gray-300">Nro. HC Interno</label>
                 <input
                   type="text"
                   value={nroHc}
