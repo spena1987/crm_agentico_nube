@@ -23,6 +23,10 @@ from app.db import (
     get_paciente_by_lid,
     get_paciente_by_nombre_aproximado,
     get_ultimo_paciente_activo,
+    get_paciente_by_telefono,
+    crear_paciente,
+    get_or_create_conversacion,
+    guardar_mensaje,
     get_paciente_by_dni, 
     get_paciente_by_geclisa_id, 
     crear_o_actualizar_paciente_geclisa,
@@ -39,6 +43,8 @@ from app.db import (
     buscar_practicas_presupuesto,
     bulk_import_practicas_aranceles
 )
+from app.agent import procesar_mensaje_agente
+from app.services.phone_normalizer import normalize_phone_number
 from app.whatsapp import (
     iniciar_daemon_whatsapp, 
     whatsapp_manager
