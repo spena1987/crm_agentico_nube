@@ -685,6 +685,118 @@ class GeclisaClient:
                 "mensaje": f"No se pudo consultar la historia clínica en Geclisa: {str(e)}"
             }
 
+    def obtener_indicaciones_medicas(self, ficha_id: int) -> dict:
+        """
+        Consulta en vivo todas las indicaciones médicas, protocolos de medicación y recetas
+        asociadas a la ficha del paciente en Geclisa.
+        Operación 100% de lectura (no escribe nada en Geclisa).
+        """
+        if not ficha_id:
+            return {"encontrado": False, "mensaje": "Ficha ID no proporcionada."}
+
+        indicaciones_unificadas = []
+        headers = self._get_headers()
+
+        # 1. Consultar Indicaciones Médicas directas por Ficha
+        try:
+            url_ind = f"{self.base_url}/api/IndicacionesMedicas/ficha"
+            resp_ind = self._do_request("POST", url_ind, headers=headers, json={"id": ficha_id}, timeout=10)
+            if resp_ind.status_code == 200:
+                raw_ind = resp_ind.json()
+                items_ind = raw_ind if isinstance(raw_ind, list) else []
+                for item in items_ind:
+                    indicaciones_unificadas.append({
+                        "id": item.get("imId") or item.get("id"),
+                        "tipo": "INDICACION",
+                        "tipo_label": "Indicación Médica",
+                        "fecha": item.get("fecha") or item.get("imFecha") or "",
+                        "hora": item.get("hora") or "",
+                        "prestador": (item.get("prestador") or item.get("preNom") or "").strip(),
+                        "especialidad": (item.get("especialidad") or item.get("profNombre") or "").strip(),
+                        "titulo": item.get("imTitulo") or item.get("titulo") or "Indicación Clínica",
+                        "texto": (item.get("imTexto") or item.get("texto") or "").strip(),
+                        "plantilla": item.get("pimNombre") or ""
+                    })
+        except Exception as e_ind:
+            logger.warning(f"Aviso al consultar IndicacionesMedicas/ficha para {ficha_id}: {e_ind}")
+
+        # 2. Consultar Protocolos / Plantillas de Medicación desde HistoriaClinicaResumen
+        try:
+            url_hc = f"{self.base_url}/api/HistoriaClinicaResumen/{ficha_id}"
+            resp_hc = self._do_request("GET", url_hc, headers=headers, timeout=10)
+            if resp_hc.status_code == 200:
+                data_hc = resp_hc.json()
+                
+                # Protocolos de medicación y esquemas
+                protocolos = data_hc.get("protocolosQuirurgicosAnestesicos") or []
+                for prot in protocolos:
+                    titulo = prot.get("nombrePlantilla") or "Protocolo de Medicación"
+                    indicaciones_unificadas.append({
+                        "id": prot.get("hcId"),
+                        "tipo": "MEDICACION_PROTOCOLO",
+                        "tipo_label": "Protocolo / Medicación",
+                        "fecha": prot.get("fecha") or "",
+                        "hora": prot.get("hora") or "",
+                        "prestador": (prot.get("prestador") or "").strip(),
+                        "especialidad": (prot.get("especialidad") or "").strip(),
+                        "titulo": titulo,
+                        "texto": (prot.get("texto") or "").strip(),
+                        "plantilla": prot.get("nombrePlantilla") or ""
+                    })
+
+                # Medicación activa declarada
+                med_activa = data_hc.get("medicacionActiva") or []
+                for med in med_activa:
+                    indicaciones_unificadas.append({
+                        "id": med.get("id"),
+                        "tipo": "MEDICACION_ACTIVA",
+                        "tipo_label": "Medicación Activa",
+                        "fecha": med.get("fecha") or "",
+                        "hora": "",
+                        "prestador": (med.get("prestador") or "").strip(),
+                        "especialidad": "",
+                        "titulo": med.get("medicamento") or med.get("droga") or "Fármaco Activo",
+                        "texto": f"Dosis: {med.get('dosis', '')} - Frecuencia: {med.get('frecuencia', '')}".strip(" -"),
+                        "plantilla": ""
+                    })
+        except Exception as e_hc:
+            logger.warning(f"Aviso al consultar protocolos de medicación para {ficha_id}: {e_hc}")
+
+        # 3. Consultar Recetas
+        try:
+            url_rec = f"{self.base_url}/api/Recetas/filtrar"
+            payload_rec = {
+                "fichaId": ficha_id,
+                "fechaInicio": "2020-01-01T00:00:00.000Z",
+                "fechaFin": "2030-12-31T23:59:59.000Z"
+            }
+            resp_rec = self._do_request("POST", url_rec, headers=headers, json=payload_rec, timeout=10)
+            if resp_rec.status_code == 200:
+                raw_rec = resp_rec.json()
+                items_rec = raw_rec if isinstance(raw_rec, list) else []
+                for rec in items_rec:
+                    indicaciones_unificadas.append({
+                        "id": rec.get("recEncaId") or rec.get("id"),
+                        "tipo": "RECETA",
+                        "tipo_label": "Receta Médica",
+                        "fecha": rec.get("recFecha") or rec.get("fecha") or "",
+                        "hora": "",
+                        "prestador": (rec.get("preNom") or rec.get("prestador") or "").strip(),
+                        "especialidad": "",
+                        "titulo": f"Receta #{rec.get('recNumero') or rec.get('recEncaId', '')}".strip(),
+                        "texto": (rec.get("recObservaciones") or rec.get("diagnostico") or "Prescripción de medicamentos").strip(),
+                        "plantilla": ""
+                    })
+        except Exception as e_rec:
+            logger.warning(f"Aviso al consultar recetas para {ficha_id}: {e_rec}")
+
+        return {
+            "encontrado": True,
+            "ficha_id": ficha_id,
+            "indicaciones": indicaciones_unificadas,
+            "total_indicaciones": len(indicaciones_unificadas)
+        }
+
     # ====================================================================
     # SCRIPT DE DIAGNÓSTICO E INICIALIZACIÓN
     # ====================================================================

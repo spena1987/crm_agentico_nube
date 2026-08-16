@@ -898,17 +898,21 @@ def obtener_historia_clinica_paciente(paciente_id: str):
         # 1. Intentar buscar en Supabase (por UUID, DNI o ficha_id)
         if supabase:
             try:
-                # Búsqueda por ID principal
-                res_paciente = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
-                if not res_paciente.data or len(res_paciente.data) == 0:
-                    # Búsqueda fallback por DNI
+                res_paciente = None
+                # Búsqueda por UUID solo si tiene formato UUID
+                if len(str(paciente_id)) == 36 and '-' in str(paciente_id):
+                    res_paciente = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+
+                if not res_paciente or not res_paciente.data:
+                    # Búsqueda por DNI
                     res_paciente = supabase.table("pacientes").select("*").ilike("dni", f"%{paciente_id}%").execute()
-                if not res_paciente.data or len(res_paciente.data) == 0:
-                    # Búsqueda fallback por geclisa_ficha_id si es numérico
+
+                if not res_paciente or not res_paciente.data:
+                    # Búsqueda por geclisa_ficha_id si es numérico
                     if str(paciente_id).isdigit():
                         res_paciente = supabase.table("pacientes").select("*").eq("geclisa_ficha_id", int(paciente_id)).execute()
 
-                if res_paciente.data and len(res_paciente.data) > 0:
+                if res_paciente and res_paciente.data and len(res_paciente.data) > 0:
                     paciente = res_paciente.data[0]
                     paciente_crm_id = paciente.get("id")
                     ficha_id = paciente.get("geclisa_ficha_id")
@@ -984,6 +988,98 @@ def obtener_historia_clinica_paciente(paciente_id: str):
             "encontrado": False,
             "motivo": "error_servidor",
             "mensaje": f"Error al consultar historia clínica en Geclisa: {str(e)}"
+        }
+
+@app.get("/api/geclisa/pacientes/{paciente_id}/indicaciones")
+def obtener_indicaciones_paciente(paciente_id: str):
+    """
+    Consulta en vivo las indicaciones médicas, protocolos de medicación y recetas
+    en Geclisa para el paciente indicado. Operación 100% de lectura on-demand.
+    """
+    try:
+        ficha_id = None
+        dni = None
+        paciente_nombre = None
+        paciente_crm_id = None
+
+        # 1. Intentar buscar en Supabase (por UUID, DNI o ficha_id)
+        if supabase:
+            try:
+                res_paciente = None
+                if len(str(paciente_id)) == 36 and '-' in str(paciente_id):
+                    res_paciente = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+
+                if not res_paciente or not res_paciente.data:
+                    res_paciente = supabase.table("pacientes").select("*").ilike("dni", f"%{paciente_id}%").execute()
+
+                if not res_paciente or not res_paciente.data:
+                    if str(paciente_id).isdigit():
+                        res_paciente = supabase.table("pacientes").select("*").eq("geclisa_ficha_id", int(paciente_id)).execute()
+
+                if res_paciente and res_paciente.data and len(res_paciente.data) > 0:
+                    paciente = res_paciente.data[0]
+                    paciente_crm_id = paciente.get("id")
+                    ficha_id = paciente.get("geclisa_ficha_id")
+                    dni = paciente.get("dni")
+                    paciente_nombre = paciente.get("nombre")
+            except Exception as db_err:
+                logger.warning(f"Aviso al consultar paciente en Supabase: {db_err}")
+
+        # Fallback si paciente_id es directamente DNI o Ficha
+        if not dni and not ficha_id:
+            if str(paciente_id).isdigit():
+                if len(str(paciente_id)) >= 7:
+                    dni = str(paciente_id)
+                else:
+                    ficha_id = int(paciente_id)
+
+        # 2. Si no tiene ficha_id pero tiene DNI, resolver por DNI contra Geclisa
+        if not ficha_id and dni:
+            dni_limpio = "".join(filter(str.isdigit, str(dni)))
+            if dni_limpio:
+                datos_dni = geclisa_client.buscar_paciente_por_dni(dni_limpio)
+                if datos_dni.get("encontrado") and datos_dni.get("ficha_id"):
+                    ficha_id = int(datos_dni["ficha_id"])
+                    if not paciente_nombre:
+                        paciente_nombre = datos_dni.get("nombre_completo")
+                    if paciente_crm_id and supabase:
+                        try:
+                            supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente_crm_id).execute()
+                        except Exception as err_upd:
+                            logger.warning(f"No se pudo auto-vincular ficha #{ficha_id} en Supabase: {err_upd}")
+
+        if not ficha_id:
+            if not dni:
+                return {
+                    "encontrado": False,
+                    "motivo": "sin_dni",
+                    "mensaje": "El paciente no posee número de DNI ni Ficha Geclisa registrada en el CRM."
+                }
+            else:
+                return {
+                    "encontrado": False,
+                    "motivo": "sin_ficha_geclisa",
+                    "mensaje": f"No se encontró ninguna ficha activa en Geclisa para el DNI {dni}."
+                }
+
+        # 3. Consultar Indicaciones Médicas en Geclisa
+        resultado_ind = geclisa_client.obtener_indicaciones_medicas(int(ficha_id))
+        return {
+            "encontrado": True,
+            "paciente_id": paciente_crm_id or paciente_id,
+            "ficha_id": ficha_id,
+            "paciente_nombre": paciente_nombre,
+            "paciente_dni": dni,
+            "indicaciones": resultado_ind.get("indicaciones", []),
+            "total_indicaciones": resultado_ind.get("total_indicaciones", 0)
+        }
+
+    except Exception as e:
+        logger.error(f"Error al obtener indicaciones para paciente {paciente_id}: {e}")
+        return {
+            "encontrado": False,
+            "motivo": "error_servidor",
+            "mensaje": f"Error al consultar indicaciones en Geclisa: {str(e)}"
         }
 
 @app.put("/api/pacientes/{paciente_id}")
