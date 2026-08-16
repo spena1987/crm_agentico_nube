@@ -20,9 +20,34 @@ import {
   X,
   Sparkles,
   FileCheck2,
-  Trash2
+  Trash2,
+  Receipt,
+  FileText,
+  Download,
+  Check,
+  XCircle,
+  ExternalLink
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
+
+export interface PresupuestoPaciente {
+  id: string
+  paciente_id: string
+  asesoria_id?: string | null
+  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
+  total: number
+  pdf_url: string | null
+  created_at: string
+  items_presupuesto?: Array<{
+    id: string
+    servicio_id?: string
+    cantidad: number
+    precio_unitario: number
+    subtotal: number
+    nombre?: string
+  }>
+}
 
 export interface AsesoriaQuirurgica {
   id: string
@@ -38,6 +63,7 @@ export interface AsesoriaQuirurgica {
   cobertura_obra_social?: string | null
   monto_extra: number
   moneda_extra: string
+  presupuesto_id?: string | null
   fecha_probable_cirugia?: string | null
   fecha_definitiva_cirugia?: string | null
   estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
@@ -118,6 +144,82 @@ export default function PanelAsesoriaQuirurgica({
   const [buscandoPractica, setBuscandoPractica] = useState(false)
   const [mostrarDropdownPractica, setMostrarDropdownPractica] = useState(false)
 
+  // Presupuestos vinculados al paciente
+  const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
+  const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
+  const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
+  const [actualizandoEstadoPresupuestoId, setActualizandoEstadoPresupuestoId] = useState<string | null>(null)
+
+  // Cargar presupuestos emitidos al paciente
+  const fetchPresupuestos = async () => {
+    try {
+      setCargandoPresupuestos(true)
+      const res = await fetch(`/api/presupuestos/paciente/${pacienteId}`)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPresupuestos(data.presupuestos || [])
+      } else {
+        // Fallback Supabase
+        const { data: sbPres, error: sbErr } = await supabase
+          .from('presupuestos')
+          .select('*, items_presupuesto(*)')
+          .eq('paciente_id', pacienteId)
+          .order('created_at', { ascending: false })
+        if (!sbErr && sbPres) {
+          setPresupuestos(sbPres as unknown as PresupuestoPaciente[])
+        }
+      }
+    } catch (err) {
+      console.error('Error cargando presupuestos del paciente:', err)
+    } finally {
+      setCargandoPresupuestos(false)
+    }
+  }
+
+  // Cambiar estado del presupuesto (Confirmar / Desistir)
+  const handleCambiarEstadoPresupuesto = async (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado' | 'enviado') => {
+    try {
+      setActualizandoEstadoPresupuestoId(presupuestoId)
+      const res = await fetch(`/api/presupuestos/${presupuestoId}/estado`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          estado: nuevoEstado,
+          asesoria_id: asesoriaActivaId || null
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPresupuestos((prev) =>
+          prev.map((p) => (p.id === presupuestoId ? { ...p, estado: nuevoEstado } : p))
+        )
+        if (nuevoEstado === 'aprobado') {
+          setEstado('confirmado')
+          setMensajeExito('✔ Presupuesto aprobado. Etapa de cirugía avanzada a Confirmada.')
+        } else if (nuevoEstado === 'rechazado') {
+          setMensajeExito('✖ Presupuesto marcado como desistido / rechazado.')
+        }
+        setTimeout(() => setMensajeExito(null), 3500)
+        fetchAsesorias()
+      }
+    } catch (err: any) {
+      console.error('Error actualizando presupuesto:', err)
+      setError(err.message || 'Error al actualizar el estado del presupuesto.')
+    } finally {
+      setActualizandoEstadoPresupuestoId(null)
+    }
+  }
+
+  // Callback cuando se crea un presupuesto desde el modal
+  const handlePresupuestoCreado = (nuevo: PresupuestoPaciente) => {
+    setPresupuestos((prev) => [nuevo, ...prev])
+    setMontoExtra(nuevo.total)
+    setMensajeExito('✔ Presupuesto médico emitido y PDF generado correctamente.')
+    setTimeout(() => setMensajeExito(null), 4000)
+    fetchAsesorias()
+    fetchPresupuestos()
+  }
+
   // Cargar asesorías del paciente
   const fetchAsesorias = async () => {
     try {
@@ -166,6 +268,7 @@ export default function PanelAsesoriaQuirurgica({
   useEffect(() => {
     if (pacienteId) {
       fetchAsesorias()
+      fetchPresupuestos()
     }
   }, [pacienteId])
 
@@ -757,42 +860,171 @@ export default function PanelAsesoriaQuirurgica({
           )}
         </div>
 
-        {/* D. Aspectos Económicos: Extras a Abonar */}
-        <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2">
-          <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-            <DollarSign size={14} className="text-amber-400" />
-            Condiciones Económicas & Extras / Copagos
-          </label>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] text-gray-400 font-semibold">Monto Extra a Pagar</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={montoExtra}
-                onChange={(e) => setMontoExtra(e.target.value)}
-                placeholder="0.00"
-                className="px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-xl text-white font-mono focus:outline-none"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <span className="text-[10px] text-gray-400 font-semibold">Moneda</span>
-              <select
-                value={monedaExtra}
-                onChange={(e) => setMonedaExtra(e.target.value)}
-                className="px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-xl text-white font-mono focus:outline-none"
-              >
-                <option value="ARS">ARS ($ Pesos)</option>
-                <option value="USD">USD (U$S Dólares)</option>
-              </select>
-            </div>
+        {/* D. Aspectos Económicos: Presupuesto & Extras / Copagos */}
+        <div className="p-4 rounded-xl bg-neutral-900/60 border border-amber-500/20 space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+              <Receipt size={14} className="text-amber-400" />
+              Condiciones Económicas & Presupuesto
+            </label>
+            <button
+              type="button"
+              onClick={() => setMostrarModalPresupuesto(true)}
+              className="text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1"
+            >
+              <Plus size={12} />
+              + Armar Presupuesto
+            </button>
           </div>
 
-          <div className="text-[11px] text-gray-400">
-            Cobertura: <span className="text-white font-semibold">{obraSocialDefault || 'Particular'}</span>
+          {cargandoPresupuestos ? (
+            <div className="p-4 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
+              <Loader2 size={13} className="animate-spin text-amber-400" />
+              Cargando presupuestos...
+            </div>
+          ) : presupuestos.length > 0 ? (
+            /* Tarjeta de Presupuesto Emitido */
+            <div className="space-y-3">
+              {(() => {
+                const pActivo = presupuestos[0]
+                const isAprobado = pActivo.estado === 'aprobado'
+                const isRechazado = pActivo.estado === 'rechazado'
+                const isCargandoAccion = actualizandoEstadoPresupuestoId === pActivo.id
+
+                return (
+                  <div className="p-3 rounded-xl bg-neutral-950/70 border border-[var(--border)] space-y-2.5">
+                    {/* Header del Presupuesto */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <FileText size={13} className="text-blue-400 shrink-0" />
+                        <span className="text-xs font-mono font-bold text-gray-200">
+                          #{pActivo.id.slice(0, 8).toUpperCase()}
+                        </span>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          ({new Date(pActivo.created_at).toLocaleDateString()})
+                        </span>
+                      </div>
+
+                      {/* Badge de Estado */}
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                        isAprobado 
+                          ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                          : isRechazado
+                          ? 'bg-red-950 text-red-300 border-red-500/40'
+                          : 'bg-blue-950 text-blue-300 border-blue-500/40'
+                      }`}>
+                        {isAprobado ? 'Confirmado / Aprobado' : isRechazado ? 'Desistido / Rechazado' : 'En Análisis'}
+                      </span>
+                    </div>
+
+                    {/* Total y Cobertura */}
+                    <div className="flex items-baseline justify-between pt-1 border-t border-[var(--border)]/50">
+                      <div>
+                        <div className="text-[10px] text-gray-400 uppercase font-semibold">Total Cotizado:</div>
+                        <div className="text-base font-black font-mono text-white tracking-tight">
+                          $ {Number(pActivo.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] text-gray-400">Obra Social:</div>
+                        <div className="text-xs font-semibold text-blue-300 truncate max-w-[120px]">
+                          {obraSocialDefault || 'Particular'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Acciones de Presupuesto: Ver PDF, Confirmar, Desistir */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[var(--border)]/50">
+                      {pActivo.pdf_url && (
+                        <a
+                          href={pActivo.pdf_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                          title="Descargar presupuesto membretado oficial"
+                        >
+                          <Download size={12} className="text-blue-400" />
+                          PDF Oficial
+                        </a>
+                      )}
+
+                      {!isAprobado && (
+                        <button
+                          type="button"
+                          disabled={isCargandoAccion}
+                          onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'aprobado')}
+                          className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+                          title="Confirmar presupuesto y pasar etapa a Cirugía Confirmada"
+                        >
+                          {isCargandoAccion ? <Loader2 size={11} className="animate-spin" /> : <Check size={12} />}
+                          Confirmar
+                        </button>
+                      )}
+
+                      {!isRechazado && (
+                        <button
+                          type="button"
+                          disabled={isCargandoAccion}
+                          onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'rechazado')}
+                          className="px-2.5 py-1 bg-red-600/15 hover:bg-red-600/25 text-red-400 border border-red-500/30 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+                          title="Desistir cotización"
+                        >
+                          <XCircle size={12} />
+                          Desistir
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setMostrarModalPresupuesto(true)}
+                        className="ml-auto text-[10px] text-gray-400 hover:text-white underline font-medium"
+                      >
+                        + Nueva versión
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          ) : (
+            /* Estado Inicial: Sin Presupuesto Emitido */
+            <div className="p-3.5 rounded-xl bg-neutral-950/60 border border-[var(--border)] text-center space-y-2">
+              <p className="text-[11px] text-gray-400">
+                Aún no se ha generado una cotización formal para este paciente.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalPresupuesto(true)}
+                  className="w-full py-2 bg-gradient-to-r from-amber-600/20 to-amber-500/20 hover:from-amber-600/30 hover:to-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Receipt size={13} />
+                  + Armar Presupuesto con Nomenclador
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Copago o Monto Extra Rápido */}
+          <div className="pt-2 border-t border-[var(--border)]/40 flex items-center gap-2">
+            <span className="text-[10px] text-gray-400 font-semibold shrink-0">Copago / Extra Directo:</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={montoExtra}
+              onChange={(e) => setMontoExtra(e.target.value)}
+              placeholder="0.00"
+              className="flex-1 px-2.5 py-1 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-lg text-white font-mono focus:outline-none"
+            />
+            <select
+              value={monedaExtra}
+              onChange={(e) => setMonedaExtra(e.target.value)}
+              className="px-2 py-1 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono focus:outline-none"
+            >
+              <option value="ARS">ARS</option>
+              <option value="USD">USD</option>
+            </select>
           </div>
         </div>
 
@@ -867,6 +1099,25 @@ export default function PanelAsesoriaQuirurgica({
           className="w-full p-3.5 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none transition-all text-white placeholder-gray-500 leading-relaxed"
         />
       </div>
+
+      {/* ==================================================================== */}
+      {/* 4. MODAL PARA EMITIR PRESUPUESTO CON NOMENCLADOR & PDF */}
+      {/* ==================================================================== */}
+      <ModalCrearPresupuestoPaciente
+        isOpen={mostrarModalPresupuesto}
+        onClose={() => setMostrarModalPresupuesto(false)}
+        pacienteId={pacienteId}
+        pacienteNombre={pacienteNombre}
+        obraSocial={obraSocialDefault}
+        asesoriaId={asesoriaActivaId}
+        practicaInicial={{
+          codigo: practicaCodigo,
+          nombre: practicaNombre,
+          precio: typeof montoExtra === 'number' ? montoExtra : parseFloat(montoExtra) || 0,
+          moneda: monedaExtra
+        }}
+        onPresupuestoCreado={handlePresupuestoCreado}
+      />
 
     </div>
   )

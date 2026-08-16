@@ -76,6 +76,7 @@ comment on table public.servicios_precios is 'Catálogo de servicios, tratamient
 create table public.presupuestos (
     id uuid default gen_random_uuid() primary key,
     paciente_id uuid references public.pacientes(id) on delete cascade not null,
+    asesoria_id uuid references public.asesorias_quirurgicas(id) on delete set null,
     estado varchar default 'borrador' not null check (estado in ('borrador', 'enviado', 'aprobado', 'rechazado')),
     total numeric(10, 2) default 0.00 not null check (total >= 0),
     pdf_url varchar,
@@ -395,6 +396,7 @@ create table if not exists public.asesorias_quirurgicas (
     cobertura_obra_social varchar,
     monto_extra numeric(10, 2) default 0.00,
     moneda_extra varchar default 'ARS' check (moneda_extra in ('ARS', 'USD')),
+    presupuesto_id uuid references public.presupuestos(id) on delete set null,
     
     -- Planificación Temporal
     fecha_probable_cirugia date,
@@ -415,6 +417,7 @@ create table if not exists public.asesorias_quirurgicas (
 
 create index if not exists idx_asesorias_paciente on public.asesorias_quirurgicas(paciente_id);
 create index if not exists idx_asesorias_estado on public.asesorias_quirurgicas(estado);
+create index if not exists idx_asesorias_presupuesto on public.asesorias_quirurgicas(presupuesto_id);
 
 -- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION

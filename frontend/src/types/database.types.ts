@@ -24,6 +24,7 @@ export type Database = {
           cobertura_obra_social: string | null
           monto_extra: number
           moneda_extra: string
+          presupuesto_id: string | null
           fecha_probable_cirugia: string | null
           fecha_definitiva_cirugia: string | null
           estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
@@ -46,6 +47,7 @@ export type Database = {
           cobertura_obra_social?: string | null
           monto_extra?: number
           moneda_extra?: string
+          presupuesto_id?: string | null
           fecha_probable_cirugia?: string | null
           fecha_definitiva_cirugia?: string | null
           estado?: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
@@ -68,6 +70,7 @@ export type Database = {
           cobertura_obra_social?: string | null
           monto_extra?: number
           moneda_extra?: string
+          presupuesto_id?: string | null
           fecha_probable_cirugia?: string | null
           fecha_definitiva_cirugia?: string | null
           estado?: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
@@ -504,6 +507,7 @@ export type Database = {
       }
       presupuestos: {
         Row: {
+          asesoria_id: string | null
           created_at: string
           estado: string
           id: string
@@ -512,6 +516,7 @@ export type Database = {
           total: number
         }
         Insert: {
+          asesoria_id?: string | null
           created_at?: string
           estado?: string
           id?: string
@@ -520,6 +525,7 @@ export type Database = {
           total?: number
         }
         Update: {
+          asesoria_id?: string | null
           created_at?: string
           estado?: string
           id?: string

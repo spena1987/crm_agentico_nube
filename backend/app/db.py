@@ -1063,4 +1063,203 @@ def eliminar_asesoria_quirurgica(asesoria_id: str) -> bool:
         logger.error(f"Error al eliminar asesoría quirúrgica {asesoria_id}: {e}")
         raise
 
+# ====================================================================
+# GESTIÓN INTEGRADA DE PRESUPUESTOS (NATIVO CRM)
+# ====================================================================
+
+def get_presupuestos_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
+    """
+    Retorna el historial de presupuestos emitidos a un paciente con sus ítems detallados.
+    """
+    if not supabase or not paciente_id:
+        return []
+    try:
+        resp = supabase.table("presupuestos") \
+            .select("""
+                id,
+                paciente_id,
+                asesoria_id,
+                estado,
+                total,
+                pdf_url,
+                created_at,
+                items_presupuesto (
+                    id,
+                    servicio_id,
+                    cantidad,
+                    precio_unitario,
+                    subtotal
+                )
+            """) \
+            .eq("paciente_id", paciente_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener presupuestos del paciente {paciente_id}: {e}")
+        return []
+
+def cambiar_estado_presupuesto(presupuesto_id: str, nuevo_estado: str, asesoria_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Actualiza el estado de un presupuesto ('borrador', 'enviado', 'aprobado', 'rechazado').
+    Si el nuevo estado es 'aprobado' y está vinculado a una asesoría, sincroniza la etapa a 'confirmado'.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        resp = supabase.table("presupuestos") \
+            .update({"estado": nuevo_estado}) \
+            .eq("id", presupuesto_id) \
+            .select() \
+            .execute()
+            
+        if not resp.data:
+            raise Exception(f"No se encontró el presupuesto {presupuesto_id}.")
+            
+        presupuesto = resp.data[0]
+        
+        # Si se aprueba o rechaza, y está vinculado a una asesoría, sincronizar
+        target_asesoria_id = asesoria_id or presupuesto.get("asesoria_id")
+        if target_asesoria_id:
+            if nuevo_estado == "aprobado":
+                supabase.table("asesorias_quirurgicas") \
+                    .update({
+                        "estado": "confirmado",
+                        "presupuesto_id": presupuesto_id,
+                        "monto_extra": float(presupuesto.get("total") or 0.0),
+                        "updated_at": "now()"
+                    }) \
+                    .eq("id", target_asesoria_id) \
+                    .execute()
+            elif nuevo_estado == "rechazado":
+                supabase.table("asesorias_quirurgicas") \
+                    .update({
+                        "motivo_cancelacion": "Presupuesto desistido / rechazado por el paciente",
+                        "updated_at": "now()"
+                    }) \
+                    .eq("id", target_asesoria_id) \
+                    .execute()
+                    
+        return presupuesto
+    except Exception as e:
+        logger.error(f"Error al cambiar estado del presupuesto {presupuesto_id}: {e}")
+        raise
+
+def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
+    """
+    Crea un presupuesto con ítems, calcula el total, genera el PDF membretado oficial y vincula al paciente/asesoría.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    from app.services.pdf_service import generar_pdf_presupuesto
+    import uuid
+    
+    try:
+        paciente_id = payload["paciente_id"]
+        asesoria_id = payload.get("asesoria_id")
+        items_in = payload.get("items", [])
+        moneda = payload.get("moneda", "ARS").upper()
+        
+        if not items_in:
+            raise ValueError("El presupuesto debe contener al menos una prestación o ítem.")
+            
+        # 1. Obtener datos del paciente
+        p_resp = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+        if not p_resp.data:
+            raise Exception("Paciente no encontrado.")
+        paciente = p_resp.data[0]
+        
+        # 2. Obtener o asegurar un servicio base para los items
+        servicios_resp = supabase.table("servicios_precios").select("id, nombre").limit(1).execute()
+        default_servicio_id = servicios_resp.data[0]["id"] if servicios_resp.data else None
+        
+        # 3. Calcular total e ítems normalizados
+        total_acumulado = 0.0
+        items_db = []
+        items_para_pdf = []
+        
+        for item in items_in:
+            cant = int(item.get("cantidad", 1))
+            pu = float(item.get("precio_unitario", 0.0))
+            sub = cant * pu
+            total_acumulado += sub
+            
+            srv_id = item.get("servicio_id") or default_servicio_id
+            nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
+            
+            items_db.append({
+                "servicio_id": srv_id,
+                "cantidad": cant,
+                "precio_unitario": pu,
+                "subtotal": sub
+            })
+            
+            items_para_pdf.append({
+                "nombre": nombre_item,
+                "cantidad": cant,
+                "precio_unitario": pu,
+                "subtotal": sub,
+                "moneda": moneda
+            })
+            
+        presupuesto_id = str(uuid.uuid4())
+        
+        # 4. Generar PDF membretado oficial del CRM
+        pdf_dict = {
+            "id": presupuesto_id,
+            "total": total_acumulado,
+            "moneda": moneda,
+            "created_at": "now()"
+        }
+        pdf_filename = generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
+        pdf_url = f"/static/{pdf_filename}"
+        
+        # 5. Insertar cabecera de presupuesto en Supabase
+        pres_data = {
+            "id": presupuesto_id,
+            "paciente_id": paciente_id,
+            "asesoria_id": asesoria_id or None,
+            "estado": payload.get("estado", "enviado"),
+            "total": total_acumulado,
+            "pdf_url": pdf_url
+        }
+        p_ins = supabase.table("presupuestos").insert(pres_data).execute()
+        if not p_ins.data:
+            raise Exception("No se pudo crear la cabecera del presupuesto.")
+            
+        # 6. Insertar ítems
+        for it in items_db:
+            it["presupuesto_id"] = presupuesto_id
+            if it["servicio_id"]:
+                try:
+                    supabase.table("items_presupuesto").insert(it).execute()
+                except Exception as it_err:
+                    logger.warning(f"No se pudo registrar item {it}: {it_err}")
+                    
+        # 7. Si hay asesoría vinculada, actualizar presupuesto_id y monto_extra
+        if asesoria_id:
+            supabase.table("asesorias_quirurgicas") \
+                .update({
+                    "presupuesto_id": presupuesto_id,
+                    "monto_extra": total_acumulado,
+                    "moneda_extra": moneda,
+                    "updated_at": "now()"
+                }) \
+                .eq("id", asesoria_id) \
+                .execute()
+                
+        return {
+            "id": presupuesto_id,
+            "paciente_id": paciente_id,
+            "asesoria_id": asesoria_id,
+            "estado": pres_data["estado"],
+            "total": total_acumulado,
+            "moneda": moneda,
+            "pdf_url": pdf_url,
+            "items": items_para_pdf
+        }
+    except Exception as e:
+        logger.error(f"Error al crear presupuesto rápido: {e}")
+        raise
+
 

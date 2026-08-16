@@ -50,7 +50,10 @@ from app.db import (
     get_asesorias_by_paciente,
     crear_asesoria_quirurgica,
     actualizar_asesoria_quirurgica,
-    eliminar_asesoria_quirurgica
+    eliminar_asesoria_quirurgica,
+    get_presupuestos_by_paciente,
+    cambiar_estado_presupuesto,
+    crear_presupuesto_rapido
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.phone_normalizer import normalize_phone_number
@@ -1970,4 +1973,62 @@ def eliminar_asesoria(asesoria_id: str):
         return {"success": ok, "mensaje": "Caso quirúrgico eliminado."}
     except Exception as e:
         logger.error(f"Error al eliminar asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: PRESUPUESTOS INTEGRADOS CON EXPEDIENTE DE PACIENTE
+# ====================================================================
+
+@app.get("/api/presupuestos/paciente/{paciente_id}")
+def obtener_presupuestos_paciente(paciente_id: str):
+    """
+    Retorna el listado histórico de presupuestos emitidos a un paciente con sus ítems detallados.
+    """
+    try:
+        presupuestos = get_presupuestos_by_paciente(paciente_id)
+        return {"success": True, "presupuestos": presupuestos}
+    except Exception as e:
+        logger.error(f"Error al obtener presupuestos del paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/presupuestos/{presupuesto_id}/estado")
+def actualizar_estado_presupuesto(presupuesto_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Actualiza el estado de un presupuesto ('borrador', 'enviado', 'aprobado', 'rechazado')
+    y sincroniza automáticamente el caso quirúrgico vinculado.
+    """
+    nuevo_estado = payload.get("estado")
+    asesoria_id = payload.get("asesoria_id")
+    if not nuevo_estado:
+        raise HTTPException(status_code=400, detail="El nuevo estado es obligatorio.")
+    try:
+        presupuesto = cambiar_estado_presupuesto(presupuesto_id, nuevo_estado, asesoria_id)
+        return {
+            "success": True, 
+            "mensaje": f"Presupuesto marcado como {nuevo_estado}.",
+            "presupuesto": presupuesto
+        }
+    except Exception as e:
+        logger.error(f"Error al actualizar estado del presupuesto {presupuesto_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/presupuestos/crear-rapido")
+def emitir_presupuesto_rapido(payload: Dict[str, Any] = Body(...)):
+    """
+    Crea un presupuesto con ítems, calcula el total, genera el PDF membretado oficial del CRM
+    y vincula el resultado al paciente y su caso quirúrgico.
+    """
+    if not payload.get("paciente_id"):
+        raise HTTPException(status_code=400, detail="El ID del paciente es obligatorio.")
+    if not payload.get("items") or len(payload["items"]) == 0:
+        raise HTTPException(status_code=400, detail="Debe incluir al menos un ítem o prestación.")
+    try:
+        presupuesto = crear_presupuesto_rapido(payload)
+        return {
+            "success": True,
+            "mensaje": "Presupuesto médico emitido y PDF generado correctamente.",
+            "presupuesto": presupuesto
+        }
+    except Exception as e:
+        logger.error(f"Error al emitir presupuesto rápido: {e}")
         raise HTTPException(status_code=500, detail=str(e))
