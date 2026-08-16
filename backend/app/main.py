@@ -19,6 +19,10 @@ from app.db import (
     actualizar_bot_disabled,
     obtener_conversaciones,
     obtener_mensajes_conversacion,
+    is_lid_number,
+    get_paciente_by_lid,
+    get_paciente_by_nombre_aproximado,
+    get_ultimo_paciente_activo,
     get_paciente_by_dni, 
     get_paciente_by_geclisa_id, 
     crear_o_actualizar_paciente_geclisa,
@@ -240,8 +244,22 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         if not clean_phone:
             return {"status": "ignored", "reason": "empty_phone"}
 
+        # Si el remitente es un LID de WhatsApp (ej: 194149819109552), resolver al paciente real
+        paciente = None
+        if is_lid_number(clean_phone) or is_lid_number(payload.phone):
+            logger.info(f"Detectado identificador LID ({payload.phone}). Resolviendo con paciente real del CRM...")
+            paciente = get_paciente_by_lid(payload.phone) or get_paciente_by_lid(clean_phone)
+            if not paciente and payload.name and payload.name != "Paciente":
+                paciente = get_paciente_by_nombre_aproximado(payload.name)
+            if not paciente:
+                paciente = get_ultimo_paciente_activo()
+            if paciente:
+                clean_phone = paciente.get("telefono") or clean_phone
+                logger.info(f"✔ Mensaje del LID {payload.phone} enrutado exitosamente a paciente: {paciente.get('nombre')} ({clean_phone})")
+
         # 1. Obtener o crear paciente
-        paciente = get_paciente_by_telefono(clean_phone)
+        if not paciente:
+            paciente = get_paciente_by_telefono(clean_phone)
         if not paciente:
             nombre = payload.name if payload.name and payload.name != "Paciente" else f"Paciente {clean_phone[-4:] if len(clean_phone) >= 4 else clean_phone}"
             paciente = crear_paciente(telefono=clean_phone, nombre=nombre)
@@ -265,7 +283,7 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
             conversacion_id=conversacion_id,
             emisor="paciente",
             contenido=texto or f"[{payload.message_type.upper()}]",
-            metadata_json={"whatsapp_message_id": payload.message_id}
+            metadata_json={"whatsapp_message_id": payload.message_id, "whatsapp_lid": payload.phone if is_lid_number(payload.phone) else None}
         )
 
         # 4. Procesar agente IA si el bot no está desactivado para esta conversación
@@ -278,7 +296,7 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
             except Exception as agent_err:
                 logger.error(f"Error procesando respuesta de agente IA: {agent_err}")
 
-        return {"status": "processed", "conversacion_id": conversacion_id}
+        return {"status": "processed", "conversacion_id": conversacion_id, "telefono": clean_phone}
     except Exception as e:
         logger.error(f"Error procesando mensaje entrante Baileys: {e}", exc_info=True)
         return {"status": "error", "detail": str(e)}

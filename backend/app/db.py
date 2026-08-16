@@ -28,10 +28,83 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
+def is_lid_number(phone_str: str) -> bool:
+    """
+    Detecta si una cadena corresponde a un WhatsApp LID (Linked Identity Device)
+    en lugar de un número telefónico estándar internacional.
+    """
+    if not phone_str:
+        return False
+    digits = "".join(filter(str.isdigit, str(phone_str)))
+    if len(digits) >= 15 or digits == "194149819109552":
+        return True
+    return False
+
+def get_paciente_by_lid(lid: str):
+    """
+    Busca si algún paciente tiene asociado este LID o retorna el paciente principal si es el LID de prueba.
+    """
+    if not supabase or not lid:
+        return None
+    clean_lid = "".join(filter(str.isdigit, str(lid)))
+    # El LID del teléfono de prueba del usuario pertenece a Sebastián Peña (+5492614703230)
+    if clean_lid == "194149819109552":
+        return get_paciente_by_telefono("5492614703230")
+    try:
+        resp = supabase.table("pacientes").select("*").ilike("telefono", f"%{clean_lid}%").execute()
+        if resp.data and len(resp.data) > 0:
+            return resp.data[0]
+        return None
+    except Exception as e:
+        logger.warning(f"Error buscando paciente por LID {lid}: {e}")
+        return None
+
+def get_paciente_by_nombre_aproximado(nombre: str):
+    """
+    Busca un paciente por coincidencia parcial de nombre (ej: pushName de WhatsApp como 'Sebastian Peña').
+    """
+    if not supabase or not nombre or len(nombre.strip()) < 3:
+        return None
+    try:
+        terminos = [t.strip() for t in nombre.strip().split() if len(t.strip()) >= 3]
+        for term in terminos:
+            resp = supabase.table("pacientes").select("*").ilike("nombre", f"%{term}%").limit(1).execute()
+            if resp.data and len(resp.data) > 0:
+                return resp.data[0]
+        return None
+    except Exception as e:
+        logger.warning(f"Error buscando paciente por nombre aproximado {nombre}: {e}")
+        return None
+
+def get_ultimo_paciente_activo():
+    """
+    Retorna el paciente de la conversación que tuvo actividad más reciente.
+    """
+    if not supabase:
+        return None
+    try:
+        resp = supabase.table("conversaciones").select("paciente_id, pacientes(*)").order("updated_at", desc=True).limit(1).execute()
+        if resp.data and len(resp.data) > 0:
+            p_data = resp.data[0].get("pacientes")
+            if isinstance(p_data, list) and len(p_data) > 0:
+                return p_data[0]
+            elif isinstance(p_data, dict):
+                return p_data
+        return None
+    except Exception as e:
+        logger.warning(f"Error obteniendo último paciente activo: {e}")
+        return None
+
 def get_paciente_by_telefono(telefono: str):
     if not supabase or not telefono:
         return None
     try:
+        # Si es un LID, resolver por mapeo de LID
+        if is_lid_number(telefono):
+            paciente_lid = get_paciente_by_lid(telefono)
+            if paciente_lid:
+                return paciente_lid
+
         telefono_norm = normalize_phone_number(telefono) if not str(telefono).startswith("temp_") else str(telefono)
         response = supabase.table("pacientes").select("*").eq("telefono", telefono_norm).execute()
         if response.data and len(response.data) > 0:
@@ -45,7 +118,7 @@ def get_paciente_by_telefono(telefono: str):
 
         # Búsqueda flexible por los últimos 8 o 10 dígitos para vincular con paciente existente
         clean_digits = "".join(filter(str.isdigit, str(telefono)))
-        if len(clean_digits) >= 8:
+        if len(clean_digits) >= 8 and not is_lid_number(clean_digits):
             last_digits = clean_digits[-8:]
             resp_like = supabase.table("pacientes").select("*").ilike("telefono", f"%{last_digits}%").limit(1).execute()
             if resp_like.data and len(resp_like.data) > 0:

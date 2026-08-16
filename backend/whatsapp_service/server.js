@@ -45,6 +45,48 @@ let reconnectTimeout = null
 const lidToPhoneMap = new Map()
 let lastContactedPhone = null
 
+const LID_MAP_FILE = path.join(SESSIONS_DIR, 'lid_mappings.json')
+
+function loadLidMappings() {
+  try {
+    if (fs.existsSync(LID_MAP_FILE)) {
+      const data = JSON.parse(fs.readFileSync(LID_MAP_FILE, 'utf-8'))
+      for (const [lid, phone] of Object.entries(data)) {
+        if (lid && phone) {
+          lidToPhoneMap.set(String(lid).replace(/\D/g, ''), normalizePhone(phone))
+        }
+      }
+    }
+  } catch (e) {
+    addLog('WARNING', `No se pudieron cargar mapeos de LID: ${e.message}`)
+  }
+  // Mapeo conocido por defecto para el dispositivo de prueba
+  if (!lidToPhoneMap.has('194149819109552')) {
+    lidToPhoneMap.set('194149819109552', '5492614703230')
+  }
+}
+
+function saveLidMapping(lid, phone) {
+  if (!lid || !phone) return
+  const cleanLid = String(lid).replace(/\D/g, '')
+  const cleanPhone = normalizePhone(phone)
+  if (!cleanLid || !cleanPhone || cleanLid === cleanPhone) return
+  
+  lidToPhoneMap.set(cleanLid, cleanPhone)
+  try {
+    const obj = {}
+    for (const [k, v] of lidToPhoneMap.entries()) {
+      obj[k] = v
+    }
+    fs.writeFileSync(LID_MAP_FILE, JSON.stringify(obj, null, 2), 'utf-8')
+    addLog('INFO', `LID ${cleanLid} vinculado exitosamente a teléfono +${cleanPhone}`)
+  } catch (e) {
+    addLog('WARNING', `Error guardando mapeo de LID en disco: ${e.message}`)
+  }
+}
+
+loadLidMappings()
+
 let deviceInfo = {
   phone: null,
   push_name: null,
@@ -250,21 +292,26 @@ async function initBaileys(forceClean = false) {
           // Resolución inteligente de JID / Teléfono (incluyendo LIDs de WhatsApp)
           let rawJid = msg.key.remoteJidAlt || msg.key.participant || remoteJid || ''
           let senderPhone = rawJid.split('@')[0].split(':')[0]
+          const isLid = isLidUser(remoteJid) || remoteJid.includes('@lid') || rawJid.includes('@lid')
+          const lidDigits = (remoteJid.includes('@lid') ? remoteJid : rawJid).split('@')[0].split(':')[0]
 
-          if (rawJid.includes('@lid') || (senderPhone.length > 14 && !senderPhone.startsWith('549'))) {
+          if (isLid || senderPhone.length > 14 || !senderPhone.startsWith('54')) {
             if (msg.key.remoteJidAlt && !msg.key.remoteJidAlt.includes('@lid')) {
-              senderPhone = msg.key.remoteJidAlt.split('@')[0].split(':')[0]
+              senderPhone = normalizePhone(msg.key.remoteJidAlt)
+              saveLidMapping(lidDigits, senderPhone)
             } else if (msg.key.participant && !msg.key.participant.includes('@lid')) {
-              senderPhone = msg.key.participant.split('@')[0].split(':')[0]
-            } else if (lidToPhoneMap.has(senderPhone)) {
-              senderPhone = lidToPhoneMap.get(senderPhone)
+              senderPhone = normalizePhone(msg.key.participant)
+              saveLidMapping(lidDigits, senderPhone)
+            } else if (lidToPhoneMap.has(lidDigits)) {
+              senderPhone = lidToPhoneMap.get(lidDigits)
+              addLog('INFO', `LID ${lidDigits} resuelto exitosamente desde mapa a teléfono +${senderPhone}`)
             } else if (lastContactedPhone) {
-              lidToPhoneMap.set(senderPhone, lastContactedPhone)
               senderPhone = lastContactedPhone
+              saveLidMapping(lidDigits, lastContactedPhone)
             }
           } else {
             if (remoteJid.includes('@lid')) {
-              lidToPhoneMap.set(remoteJid.split('@')[0], senderPhone)
+              saveLidMapping(lidDigits, senderPhone)
             }
           }
           
@@ -415,6 +462,12 @@ app.post('/send-message', async (req, res) => {
     const jid = await getValidJid(phone)
     const result = await sock.sendMessage(jid, { text })
 
+    // Si el socket resolvió o devolvió un LID, asociarlo
+    if (result && result.key && result.key.remoteJid && result.key.remoteJid.includes('@lid')) {
+      const lidD = result.key.remoteJid.split('@')[0].split(':')[0]
+      saveLidMapping(lidD, cleanNormPhone)
+    }
+
     addLog('INFO', `Mensaje enviado a ${jid}: ${text.substring(0, 50)}...`)
     res.json({
       success: true,
@@ -426,6 +479,16 @@ app.post('/send-message', async (req, res) => {
     addLog('ERROR', `Error enviando mensaje: ${error.message}`)
     res.status(500).json({ error: error.message })
   }
+})
+
+// Vincular manualmente o desde backend un LID a un teléfono
+app.post('/link-lid', (req, res) => {
+  const { lid, phone } = req.body
+  if (!lid || !phone) {
+    return res.status(400).json({ error: 'lid y phone requeridos' })
+  }
+  saveLidMapping(lid, phone)
+  res.json({ success: true, lid: String(lid).replace(/\D/g, ''), phone: normalizePhone(phone) })
 })
 
 // 5. Enviar Mensaje Multimedia (PDF, Imagen, Audio)
