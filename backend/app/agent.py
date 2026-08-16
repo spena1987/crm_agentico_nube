@@ -41,7 +41,7 @@ TOOLS_MAP = {
     "escalar_a_operador_humano": escalar_a_operador_humano
 }
 
-def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: str, mensaje_texto: Optional[str] = None) -> str:
+def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: str, mensaje_texto: Optional[str] = None, guardar_en_db: bool = False) -> str:
     """
     Orquesta el flujo de interacción del paciente con el Agente de Gemini,
     incluyendo la recuperación de historial, llamada a herramientas (Function Calling)
@@ -168,8 +168,10 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
         if not respuesta_final:
             respuesta_final = "He procesado tu solicitud de manera interna, ¿en qué más puedo ayudarte?"
 
-        # Guardar respuesta del bot en la base de datos
-        guardar_mensaje(conversacion_id=conversacion_id, emisor="bot", contenido=respuesta_final)
+        # El guardado en base de datos lo realiza whatsapp_manager.enviar_mensaje(...)
+        # con su respectivo whatsapp_message_id y emisor="bot" para evitar duplicaciones.
+        if guardar_en_db:
+            guardar_mensaje(conversacion_id=conversacion_id, emisor="bot", contenido=respuesta_final)
         
         return respuesta_final
 
