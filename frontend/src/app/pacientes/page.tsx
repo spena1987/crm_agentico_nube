@@ -33,6 +33,7 @@ import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
 import ModalEditarPaciente from '@/components/ModalEditarPaciente'
 import ModalConfirmarEliminar from '@/components/ModalConfirmarEliminar'
 import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
+import PanelAsesoriaQuirurgica from '@/components/PanelAsesoriaQuirurgica'
 
 interface Paciente {
   id: string
@@ -59,9 +60,7 @@ export default function PacientesPage() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
 
-  // Estado editable para el paciente seleccionado
-  const [notasTemp, setNotasTemp] = useState('')
-  const [guardandoNotas, setGuardandoNotas] = useState(false)
+  // Mensajes de acción
   const [mensajeGuardado, setMensajeGuardado] = useState<string | null>(null)
   const [errorAccion, setErrorAccion] = useState<string | null>(null)
 
@@ -120,7 +119,6 @@ export default function PacientesPage() {
   // Sincronizar estados locales cuando cambia el paciente seleccionado
   useEffect(() => {
     if (pacienteSeleccionado) {
-      setNotasTemp(pacienteSeleccionado.historial_notas || '')
       setMensajeGuardado(null)
       setErrorAccion(null)
     }
@@ -256,30 +254,6 @@ export default function PacientesPage() {
       setErrorAccion(err.message || 'Error al eliminar el paciente.')
     } finally {
       setEliminandoPaciente(false)
-    }
-  }
-
-  // Guardar notas médicas
-  const handleSaveNotas = async () => {
-    if (!selectedPacienteId) return
-    try {
-      setGuardandoNotas(true)
-      const { error } = await supabase
-        .from('pacientes')
-        .update({ historial_notas: notasTemp })
-        .eq('id', selectedPacienteId)
-
-      if (error) throw error
-
-      setPacientes((prev) =>
-        prev.map((p) => (p.id === selectedPacienteId ? { ...p, historial_notas: notasTemp } : p))
-      )
-      setMensajeGuardado('Observaciones guardadas con éxito.')
-      setTimeout(() => setMensajeGuardado(null), 3000)
-    } catch (err) {
-      console.error('Error guardando observaciones:', err)
-    } finally {
-      setGuardandoNotas(false)
     }
   }
 
@@ -730,44 +704,14 @@ export default function PacientesPage() {
 
               </div>
 
-              {/* Sección de Observaciones & Notas Clínicas */}
-              <div className="p-5 rounded-2xl bg-neutral-900/40 border border-[var(--border)] space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ClipboardList size={16} className="text-blue-500" />
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                      Observaciones Médicas, Diagnósticos & Seguimiento
-                    </h3>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={handleSaveNotas}
-                    disabled={guardandoNotas}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
-                  >
-                    {guardandoNotas ? (
-                      <>
-                        <Loader2 size={13} className="animate-spin" />
-                        Guardando...
-                      </>
-                    ) : (
-                      <>
-                        <Save size={13} />
-                        Guardar Observaciones
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <textarea
-                  value={notasTemp}
-                  onChange={(e) => setNotasTemp(e.target.value)}
-                  rows={6}
-                  placeholder="Registra antecedentes clínicos, indicaciones médicas, alergias, motivos de consulta y seguimiento del paciente..."
-                  className="w-full p-4 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 focus:outline-none focus:ring-1 focus:ring-blue-500 resize-none transition-all text-white placeholder-gray-500 leading-relaxed"
-                />
-              </div>
+              {/* ==================================================================== */}
+              {/* SECTOR DE ASESORAMIENTO QUIRÚRGICO & PIPELINE DE CIRUGÍAS */}
+              {/* ==================================================================== */}
+              <PanelAsesoriaQuirurgica
+                pacienteId={pacienteSeleccionado.id}
+                pacienteNombre={pacienteSeleccionado.nombre}
+                obraSocialDefault={pacienteSeleccionado.obra_social}
+              />
 
             </div>
           ) : (
