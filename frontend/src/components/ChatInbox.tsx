@@ -42,6 +42,7 @@ interface Conversacion {
   paciente_id: string
   bot_disabled: boolean
   archivada?: boolean
+  agente_asignado_codigo?: string
   ultimo_mensaje: string | null
   updated_at: string
   pacientes: Paciente | Paciente[] | null
@@ -898,6 +899,38 @@ export default function ChatInbox() {
                   </>
                 )}
               </button>
+
+              {/* Selector de Agente Situacional */}
+              <div className="flex items-center gap-1 bg-[#131d35] border border-slate-700/60 rounded-xl px-2 py-1 text-xs text-slate-300">
+                <Bot size={13} className="text-blue-400 shrink-0" />
+                <select
+                  value={selectedConv.agente_asignado_codigo || 'AUTO'}
+                  onChange={async (e) => {
+                    const newAgent = e.target.value
+                    setConversaciones((prev) =>
+                      prev.map((c) => (c.id === selectedConv.id ? { ...c, agente_asignado_codigo: newAgent } : c))
+                    )
+                    try {
+                      await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConv.id}/agente`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ agente_codigo: newAgent })
+                      })
+                    } catch (err) {
+                      console.error('Error asignando agente a conversación:', err)
+                    }
+                  }}
+                  className="bg-transparent border-none text-[11px] font-semibold text-slate-200 focus:outline-none cursor-pointer pr-1"
+                  title="Perfil de agente asignado a este chat"
+                >
+                  <option value="AUTO" className="bg-[#131d35] text-slate-200">🤖 Auto (Router IA)</option>
+                  <option value="TURNOS_CONCRETOS" className="bg-[#131d35] text-slate-200">📅 Turnos Ágiles</option>
+                  <option value="QUIRURGICO_EMPATICO" className="bg-[#131d35] text-slate-200">❤️ Quirúrgico (Empático)</option>
+                  <option value="PRESUPUESTOS_COMERCIAL" className="bg-[#131d35] text-slate-200">💰 Presupuestos</option>
+                  <option value="POST_OPERATORIO" className="bg-[#131d35] text-slate-200">🩺 Post-Operatorio</option>
+                  <option value="GENERAL" className="bg-[#131d35] text-slate-200">🏛️ General</option>
+                </select>
+              </div>
 
               {/* Switch de Atención Humano / Bot */}
               <ToggleHuman

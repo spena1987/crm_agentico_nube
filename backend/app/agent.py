@@ -8,7 +8,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 from app.db import supabase, guardar_mensaje
-from app.services.tools import buscar_disponibilidad_turnos, crear_borrador_presupuesto, escalar_a_operador_humano
+from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP
 from app.services.logger_service import log_event
 
 load_dotenv()
@@ -21,36 +21,17 @@ if not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# Prompt de Sistema para el rol administrativo
-SYSTEM_PROMPT = """
-Eres el Asistente Virtual Inteligente de la 'Clínica Médica Nube'.
-Tu rol es puramente administrativo y de soporte al paciente:
-1. Gestión y coordinación de turnos médicos (puedes buscar disponibilidad usando tus herramientas).
-2. Cotización y creación de presupuestos médicos para prestaciones o consultas.
-3. Ayuda general con horarios de atención, dirección y especialidades de la clínica.
-
-NORMAS CRÍTICAS DE COMPORTAMIENTO:
-- NO des bajo ninguna circunstancia diagnósticos médicos, interpretaciones de síntomas o prescripciones farmacológicas. Si el paciente realiza consultas clínicas o de salud, dile amablemente que no estás capacitado y que lo transferirás con un profesional de la salud. A continuación, utiliza la herramienta `escalar_a_operador_humano` indicando el motivo.
-- Si el paciente requiere hablar con un ser humano o expresa frustración o enojo, invoca de inmediato `escalar_a_operador_humano` con el motivo respectivo.
-- Para crear un presupuesto, necesitas obligatoriamente el código del servicio o prestación (ej. 'CON-001'). Pide esta información o consúltala.
-- Sé cordial, profesional y conciso en tus respuestas.
-"""
-
-# Mapeo de herramientas ejecutables
-TOOLS_MAP = {
-    "buscar_disponibilidad_turnos": buscar_disponibilidad_turnos,
-    "crear_borrador_presupuesto": crear_borrador_presupuesto,
-    "escalar_a_operador_humano": escalar_a_operador_humano
-}
-
-def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: str, mensaje_texto: Optional[str] = None, guardar_en_db: bool = False) -> str:
+def procesar_mensaje_agente(
+    conversacion_id: str, 
+    mensaje_texto_o_paciente_id: str, 
+    mensaje_texto: Optional[str] = None, 
+    guardar_en_db: bool = False,
+    agente_override_codigo: Optional[str] = None
+) -> str:
     """
-    Orquesta el flujo de interacción del paciente con el Agente de Gemini,
-    incluyendo la recuperación de historial, llamada a herramientas (Function Calling)
-    y persistencia de las respuestas del modelo.
-    Soporta:
-      - procesar_mensaje_agente(conversacion_id, texto)
-      - procesar_mensaje_agente(conversacion_id, paciente_id, texto)
+    Orquesta el flujo de interacción del paciente con el Agente Multi-Perfil de Gemini,
+    incluyendo la recuperación de historial, selección dinámica de agente (Prompt Layering),
+    llamada a herramientas (Function Calling) y persistencia de las respuestas.
     """
     if not client:
         return "El servicio del agente inteligente no está disponible en este momento."
@@ -71,19 +52,47 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
 
     t_start = time.time()
     try:
-        # 1. Recuperar historial de mensajes recientes (últimos 10 mensajes)
-        historial_data = []
-        if supabase:
-            resp = supabase.table("mensajes").select("*").eq("conversacion_id", conversacion_id).order("created_at", desc=True).limit(10).execute()
-            if resp.data:
-                # Reversar para orden cronológico
-                historial_data = list(reversed(resp.data))
+        # 1. Recuperar contexto del paciente si está disponible
+        paciente_info = None
+        if supabase and paciente_id:
+            try:
+                p_resp = supabase.table("pacientes").select("id, nombre, apellido, dni, etapa_clinica, medico_cabecera").eq("id", paciente_id).execute()
+                if p_resp.data and len(p_resp.data) > 0:
+                    paciente_info = p_resp.data[0]
+            except Exception as pe:
+                logger.warning(f"No se pudo cargar ficha del paciente {paciente_id}: {pe}")
 
-        # 2. Formatear historial para Gemini (SDK google-genai espera una lista de types.Content)
+        # 2. Determinar el Agente Situacional activo (o usar override)
+        if agente_override_codigo:
+            active_agent = orchestrator.get_agent_by_code(agente_override_codigo)
+        else:
+            active_agent = orchestrator.determine_active_agent(
+                conversacion_id=conversacion_id, 
+                paciente_id=paciente_id, 
+                mensaje_texto=final_texto
+            )
+
+        agent_code = active_agent.get("codigo", "GENERAL")
+        agent_temp = float(active_agent.get("temperatura") or 0.2)
+        system_instruction = orchestrator.compile_system_prompt(active_agent, paciente_info=paciente_info)
+        agent_tools = orchestrator.get_agent_tools(active_agent)
+
+        logger.info(f"Procesando mensaje con Agente: '{active_agent.get('nombre')}' ({agent_code}) | Temp: {agent_temp}")
+
+        # 3. Recuperar historial de mensajes recientes (últimos 10 mensajes)
+        historial_data = []
+        if supabase and conversacion_id:
+            try:
+                resp = supabase.table("mensajes").select("*").eq("conversacion_id", conversacion_id).order("created_at", desc=True).limit(10).execute()
+                if resp.data:
+                    historial_data = list(reversed(resp.data))
+            except Exception as he:
+                logger.warning(f"Error recuperando historial para {conversacion_id}: {he}")
+
+        # 4. Formatear historial para Gemini
         contents = []
         for h in historial_data:
             role = "user" if h["emisor"] == "paciente" else "model"
-            # Ignorar mensajes internos de sistema
             if h.get("metadata_json", {}).get("sistema"):
                 continue
             contents.append(
@@ -93,7 +102,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
                 )
             )
 
-        # 3. Adjuntar el nuevo mensaje del usuario
+        # 5. Adjuntar el nuevo mensaje del usuario
         contents.append(
             types.Content(
                 role="user",
@@ -101,14 +110,14 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
             )
         )
 
-        # 4. Configurar herramientas y prompt de sistema
+        # 6. Configurar generación con Directivas Dinámicas y Tools del agente
         config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            tools=[buscar_disponibilidad_turnos, crear_borrador_presupuesto, escalar_a_operador_humano],
-            temperature=0.2, # Baja temperatura para mayor precisión y consistencia en el rol
+            system_instruction=system_instruction,
+            tools=agent_tools,
+            temperature=agent_temp,
         )
 
-        # 5. Ejecutar consulta inicial
+        # 7. Ejecutar consulta inicial
         model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         response = client.models.generate_content(
             model=model_name,
@@ -116,7 +125,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
             config=config
         )
 
-        # 6. Loop de Function Calling (Soporta múltiples ejecuciones secuenciales en caso de que Gemini lo pida)
+        # 8. Loop de Function Calling
         intentos = 0
         max_intentos = 5
         funciones_ejecutadas = []
@@ -125,32 +134,28 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
             intentos += 1
             tool_responses = []
             
-            # Procesar cada llamada pedida por Gemini
             for call in response.function_calls:
                 func_name = call.name
                 func_args = call.args
                 call_id = call.id
                 funciones_ejecutadas.append(func_name)
                 
-                logger.info(f"Gemini solicita ejecutar la función: {func_name} con argumentos: {func_args}")
+                logger.info(f"[{agent_code}] Gemini solicita función: {func_name} con args: {func_args}")
                 
-                # Ejecutar la función localmente
-                if func_name in TOOLS_MAP:
+                if func_name in AVAILABLE_TOOLS_MAP:
                     try:
-                        # Si es presupuesto, inyectamos el paciente_id directamente por seguridad
                         if func_name == "crear_borrador_presupuesto" and paciente_id:
                             func_args["paciente_id"] = paciente_id
                         
-                        resultado = TOOLS_MAP[func_name](**func_args)
+                        resultado = AVAILABLE_TOOLS_MAP[func_name](**func_args)
                     except Exception as err:
-                        logger.error(f"Error ejecutando la función {func_name}: {err}")
+                        logger.error(f"Error ejecutando función {func_name}: {err}")
                         resultado = {"error": f"Falla de ejecución: {str(err)}"}
                 else:
-                    resultado = {"error": f"Función '{func_name}' no soportada."}
+                    resultado = {"error": f"Función '{func_name}' no autorizada para el perfil {agent_code}."}
 
-                logger.info(f"Resultado de la función {func_name}: {resultado}")
+                logger.info(f"Resultado de función {func_name}: {resultado}")
                 
-                # Formatear la respuesta de la función para el SDK
                 tool_responses.append(
                     types.Part.from_function_response(
                         name=func_name,
@@ -158,7 +163,6 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
                     )
                 )
             
-            # Enviar el resultado de las herramientas de vuelta a Gemini para continuar el razonamiento
             contents.append(response.candidates[0].content)
             contents.append(types.Content(role="tool", parts=tool_responses))
             
@@ -168,22 +172,19 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
                 config=config
             )
 
-        # 7. Obtener la respuesta final
+        # 9. Obtener la respuesta final
         respuesta_final = response.text
         if not respuesta_final:
-            respuesta_final = "He procesado tu solicitud de manera interna, ¿en qué más puedo ayudarte?"
+            respuesta_final = "He procesado tu consulta de manera interna, ¿en qué más puedo ayudarte?"
 
-        # El guardado en base de datos lo realiza whatsapp_manager.enviar_mensaje(...)
-        # con su respectivo whatsapp_message_id y emisor="bot" para evitar duplicaciones.
-        if guardar_en_db:
+        if guardar_en_db and conversacion_id:
             guardar_mensaje(conversacion_id=conversacion_id, emisor="bot", contenido=respuesta_final)
-        
         duracion = int((time.time() - t_start) * 1000)
         log_event(
             nivel="INFO",
             modulo="IA_GEMINI",
             accion="GENERAR_RESPUESTA",
-            mensaje=f"Respuesta generada por Gemini ({model_name}) en {duracion}ms",
+            mensaje=f"Respuesta generada por Gemini ({model_name} / {agent_code}) en {duracion}ms",
             detalles={
                 "model": model_name,
                 "mensaje_usuario": final_texto[:150] if final_texto else "",

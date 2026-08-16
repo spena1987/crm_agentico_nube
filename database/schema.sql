@@ -338,6 +338,40 @@ create index if not exists idx_system_logs_paciente_id on public.system_logs(pac
 comment on table public.system_logs is 'Auditoría y registro estructurado de eventos del sistema, llamadas a APIs externas e incidencias.';
 
 -- ====================================================================
+-- 8. Tablas del Sistema Multi-Agente con Directivas Globales y Situacionales
+-- ====================================================================
+CREATE TABLE IF NOT EXISTS public.agentes_directivas_globales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre_clinica TEXT NOT NULL DEFAULT 'Clínica Médica Nube',
+    tono_general TEXT NOT NULL DEFAULT 'Profesional, empático, claro y resolutivo en todo momento.',
+    guardrails_medicos TEXT NOT NULL DEFAULT 'PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. Si el paciente consulta sobre síntomas o requiere atención médica urgente, explícale que lo derivarás con un profesional de la salud y utiliza la herramienta de escalamiento.',
+    politica_escalamiento TEXT NOT NULL DEFAULT 'Si el paciente solicita hablar con un humano, presenta dudas clínicas complejas o expresa enojo/frustración, invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo.',
+    politica_turnos TEXT DEFAULT 'Para turnos, ofrece un máximo de 2 opciones claras de fecha/horario y confirma nombre y DNI del paciente.',
+    politica_presupuestos TEXT DEFAULT 'Para cotizaciones, informa los valores con claridad, formas de pago disponibles y aclara la vigencia del presupuesto.',
+    agente_defecto_codigo TEXT NOT NULL DEFAULT 'GENERAL',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.agentes_situacionales (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    codigo TEXT UNIQUE NOT NULL,
+    nombre TEXT NOT NULL,
+    descripcion TEXT,
+    activo BOOLEAN DEFAULT TRUE,
+    temperatura NUMERIC DEFAULT 0.2,
+    directiva_particular TEXT NOT NULL,
+    herramientas_habilitadas JSONB DEFAULT '["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "escalar_a_operador_humano"]'::jsonb,
+    criterios_activacion JSONB DEFAULT '[]'::jsonb,
+    orden INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.conversaciones ADD COLUMN IF NOT EXISTS agente_asignado_codigo TEXT DEFAULT 'AUTO';
+ALTER TABLE public.pacientes ADD COLUMN IF NOT EXISTS etapa_clinica TEXT DEFAULT 'CONSULTA_GENERAL';
+
+-- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ====================================================================
 -- Habilitar replicación en tiempo real para mensajería y logs en el CRM
@@ -345,6 +379,9 @@ begin;
   alter publication supabase_realtime add table public.conversaciones;
   alter publication supabase_realtime add table public.mensajes;
   alter publication supabase_realtime add table public.system_logs;
+  alter publication supabase_realtime add table public.agentes_directivas_globales;
+  alter publication supabase_realtime add table public.agentes_situacionales;
 exception when others then
   -- Ignorar errores si la publicación o la relación ya existe
 end;
+

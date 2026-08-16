@@ -1,4 +1,5 @@
 import os
+import time
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -58,6 +59,7 @@ from app.services.media_service import media_service, STATIC_MEDIA_DIR
 from app.services.media_cleaner import purgar_archivos_antiguos, obtener_estadisticas_storage
 from app.services.tools import crear_borrador_presupuesto
 from app.services.config_service import load_settings, save_settings
+from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP
 from app.services.geclisa_client import GeclisaClient
 from app.services.logger_service import log_event, get_logs, get_logs_stats
 
@@ -601,6 +603,221 @@ def update_system_settings(payload: Dict[str, Any] = Body(...)):
         return {"success": True, "settings": updated}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error actualizando configuraciones: {str(e)}")
+
+# ====================================================================
+# ENDPOINTS DEL SISTEMA MULTI-AGENTE (PROMPT LAYERING & PERSONAS)
+# ====================================================================
+
+class GlobalDirectivesUpdate(BaseModel):
+    nombre_clinica: Optional[str] = None
+    tono_general: Optional[str] = None
+    guardrails_medicos: Optional[str] = None
+    politica_escalamiento: Optional[str] = None
+    politica_turnos: Optional[str] = None
+    politica_presupuestos: Optional[str] = None
+    agente_defecto_codigo: Optional[str] = None
+
+class SituationalAgentCreateUpdate(BaseModel):
+    codigo: str
+    nombre: str
+    descripcion: Optional[str] = ""
+    activo: Optional[bool] = True
+    temperatura: Optional[float] = 0.2
+    directiva_particular: str
+    herramientas_habilitadas: Optional[List[str]] = ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "escalar_a_operador_humano"]
+    criterios_activacion: Optional[Any] = []
+    orden: Optional[int] = 0
+
+class AgentSimulatorRequest(BaseModel):
+    mensaje: str
+    agente_codigo: Optional[str] = "AUTO"
+    paciente_nombre: Optional[str] = None
+    paciente_etapa: Optional[str] = "CONSULTA_GENERAL"
+    medico_asignado: Optional[str] = None
+
+class AssignAgentConversationRequest(BaseModel):
+    agente_codigo: str
+
+@app.get("/api/agentes/config")
+def get_multiagent_config():
+    """
+    Retorna la configuración completa del sistema multi-agente:
+    directivas globales de la clínica, lista de agentes situacionales y herramientas disponibles.
+    """
+    try:
+        globales = orchestrator.get_global_directives()
+        agentes = list(orchestrator.get_all_agents().values())
+        tools_list = list(AVAILABLE_TOOLS_MAP.keys())
+        return {
+            "success": True,
+            "globales": globales,
+            "agentes": agentes,
+            "available_tools": tools_list
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo configuración multi-agente: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/agentes/globales")
+def update_global_directives(payload: GlobalDirectivesUpdate):
+    """
+    Actualiza las directivas globales y guardrails médicos de la clínica en Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        data_to_update = {k: v for k, v in payload.dict().items() if v is not None}
+        data_to_update["updated_at"] = "now()"
+        
+        # Verificar si existe el registro singleton
+        check = supabase.table("agentes_directivas_globales").select("id").limit(1).execute()
+        if check.data and len(check.data) > 0:
+            rec_id = check.data[0]["id"]
+            resp = supabase.table("agentes_directivas_globales").update(data_to_update).eq("id", rec_id).execute()
+        else:
+            resp = supabase.table("agentes_directivas_globales").insert(data_to_update).execute()
+        
+        orchestrator.invalidate_cache()
+        log_event(
+            nivel="INFO",
+            modulo="SISTEMA",
+            accion="CONFIGURACION_AGENTES",
+            mensaje="Directivas globales de la clínica actualizadas.",
+            detalles=data_to_update
+        )
+        return {"success": True, "globales": orchestrator.get_global_directives()}
+    except Exception as e:
+        logger.error(f"Error actualizando directivas globales: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/agentes/situacionales")
+def create_situational_agent(payload: SituationalAgentCreateUpdate):
+    """
+    Crea un nuevo agente situacional en Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        clean_code = payload.codigo.strip().upper().replace(" ", "_")
+        agent_data = payload.dict()
+        agent_data["codigo"] = clean_code
+        agent_data["updated_at"] = "now()"
+        
+        resp = supabase.table("agentes_situacionales").insert(agent_data).execute()
+        orchestrator.invalidate_cache()
+        
+        log_event(
+            nivel="INFO",
+            modulo="SISTEMA",
+            accion="CREAR_AGENTE_SITUACIONAL",
+            mensaje=f"Agente situacional creado: {payload.nombre} ({clean_code})",
+            detalles=agent_data
+        )
+        return {"success": True, "agente": resp.data[0] if resp.data else agent_data}
+    except Exception as e:
+        logger.error(f"Error creando agente situacional: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/agentes/situacionales/{agente_id}")
+def update_situational_agent(agente_id: str, payload: SituationalAgentCreateUpdate):
+    """
+    Actualiza las pautas, herramientas o estado de un agente situacional existente.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        agent_data = {k: v for k, v in payload.dict().items() if v is not None}
+        if "codigo" in agent_data:
+            agent_data["codigo"] = agent_data["codigo"].strip().upper().replace(" ", "_")
+        agent_data["updated_at"] = "now()"
+
+        resp = supabase.table("agentes_situacionales").update(agent_data).eq("id", agente_id).execute()
+        orchestrator.invalidate_cache()
+        
+        log_event(
+            nivel="INFO",
+            modulo="SISTEMA",
+            accion="ACTUALIZAR_AGENTE_SITUACIONAL",
+            mensaje=f"Agente situacional actualizado: {payload.nombre}",
+            detalles=agent_data
+        )
+        return {"success": True, "agente": resp.data[0] if resp.data else agent_data}
+    except Exception as e:
+        logger.error(f"Error actualizando agente situacional: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/agentes/situacionales/{agente_id}")
+def delete_situational_agent(agente_id: str):
+    """
+    Elimina un agente situacional de Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        resp = supabase.table("agentes_situacionales").delete().eq("id", agente_id).execute()
+        orchestrator.invalidate_cache()
+        return {"success": True, "deleted_id": agente_id}
+    except Exception as e:
+        logger.error(f"Error eliminando agente situacional: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/agentes/simulador")
+def simulate_agent_prompt(payload: AgentSimulatorRequest):
+    """
+    Ejecuta una prueba en vivo con un perfil y mensaje dado sin persistir mensajes ni modificar WhatsApp.
+    Permite verificar cómo responde cada agente situacional en tiempo real.
+    """
+    t_start = time.time()
+    try:
+        import uuid
+        temp_conv_id = str(uuid.uuid4())
+        override_code = None if payload.agente_codigo in ["AUTO", "", None] else payload.agente_codigo
+        
+        # Inyectar mock de paciente si fue provisto
+        mock_paciente_id = None
+        
+        respuesta = procesar_mensaje_agente(
+            conversacion_id=temp_conv_id,
+            mensaje_texto_o_paciente_id=payload.mensaje,
+            guardar_en_db=False,
+            agente_override_codigo=override_code
+        )
+        
+        duracion = int((time.time() - t_start) * 1000)
+        
+        # Determinar qué agente resolvió la consulta
+        if override_code:
+            ag_usado = orchestrator.get_agent_by_code(override_code)
+        else:
+            ag_usado = orchestrator.determine_active_agent(mensaje_texto=payload.mensaje)
+
+        return {
+            "success": True,
+            "respuesta": respuesta,
+            "agente_utilizado": {
+                "codigo": ag_usado.get("codigo"),
+                "nombre": ag_usado.get("nombre"),
+                "temperatura": ag_usado.get("temperatura")
+            },
+            "duracion_ms": duracion
+        }
+    except Exception as e:
+        logger.error(f"Error en simulador agéntico: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/conversaciones/{conversacion_id}/agente")
+def assign_agent_to_conversation(conversacion_id: str, payload: AssignAgentConversationRequest):
+    """
+    Asigna manualmente un agente situacional a una conversación específica (o 'AUTO' para enrutamiento inteligente).
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        resp = supabase.table("conversaciones").update({"agente_asignado_codigo": payload.agente_codigo}).eq("id", conversacion_id).execute()
+        return {"success": True, "agente_asignado_codigo": payload.agente_codigo}
+    except Exception as e:
+        logger.error(f"Error asignando agente a conversación {conversacion_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================
 # ENDPOINTS DE CONVERSACIONES, PRESUPUESTOS Y SIMULADOR
