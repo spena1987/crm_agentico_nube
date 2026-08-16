@@ -106,7 +106,7 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
         )
 
         # 5. Ejecutar consulta inicial
-        model_name = "gemini-flash-latest"
+        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         response = client.models.generate_content(
             model=model_name,
             contents=contents,
