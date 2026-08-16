@@ -11,7 +11,8 @@ import {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
-  Browsers
+  Browsers,
+  isLidUser
 } from '@whiskeysockets/baileys'
 
 const __filename = fileURLToPath(import.meta.url)
