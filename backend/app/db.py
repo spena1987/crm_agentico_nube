@@ -1170,7 +1170,7 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         paciente = p_resp.data[0]
         
         # 2. Obtener o asegurar un servicio base para los items
-        servicios_resp = supabase.table("servicios_precios").select("id, nombre").limit(1).execute()
+        servicios_resp = supabase.table("servicios_precios").select("id, nombre_prestacion").limit(1).execute()
         default_servicio_id = servicios_resp.data[0]["id"] if servicios_resp.data else None
         
         # 3. Calcular total e ítems normalizados
@@ -1184,7 +1184,8 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             sub = cant * pu
             total_acumulado += sub
             
-            srv_id = item.get("servicio_id") or default_servicio_id
+            # Usar default_servicio_id para evitar violación de foreign key si el ID viene de nomenclador_practicas
+            srv_id = default_servicio_id
             nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
             
             items_db.append({
