@@ -1,14 +1,66 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { useState } from 'react'
+import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck } from 'lucide-react'
+import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
+import BotSettingsCard from '@/components/settings/BotSettingsCard'
+import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
+import SystemLogsCard from '@/components/settings/SystemLogsCard'
+import NomencladorSettingsCard from '@/components/settings/NomencladorSettingsCard'
+import BudgetTemplateDesignerCard from '@/components/settings/BudgetTemplateDesignerCard'
+
+type TabType = 'whatsapp' | 'bot' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'logs'
 
 export default function AjustesPage() {
-  const router = useRouter()
+  const [activeTab, setActiveTab] = useState<TabType>('whatsapp')
 
-  useEffect(() => {
-    router.replace('/ajustes/usuarios')
-  }, [router])
+  const tabs = [
+    { id: 'whatsapp' as TabType, label: 'WhatsApp & QR', icon: QrCode, description: 'Sincronización multidispositivo' },
+    { id: 'bot' as TabType, label: 'Agente IA', icon: Bot, description: 'Directivas y escalamiento' },
+    { id: 'clinica' as TabType, label: 'Perfil Clínica', icon: Building2, description: 'Datos del consultorio' },
+    { id: 'nomenclador' as TabType, label: 'Nomencladores', icon: BookOpen, description: 'Aranceles y catálogo' },
+    { id: 'plantilla_presupuesto' as TabType, label: 'Diseñador PDF', icon: FileCheck, description: 'Plantilla de presupuestos' },
+    { id: 'logs' as TabType, label: 'Monitor Logs', icon: Terminal, description: 'Consola técnica en vivo' },
+  ]
 
-  return null
+  return (
+    <div className="space-y-6 animate-fade-in">
+      {/* Selector de Sub-Pestañas de Configuración */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-[var(--border)]">
+        {tabs.map((t) => {
+          const Icon = t.icon
+          const isActive = activeTab === t.id
+          return (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`flex flex-col items-center sm:items-start p-3 rounded-xl transition-all duration-200 text-left ${
+                isActive 
+                  ? 'bg-[var(--card)] text-blue-600 shadow-md shadow-slate-200/50 dark:shadow-none border border-[var(--border)]' 
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)] hover:bg-white/50 dark:hover:bg-slate-800/80'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Icon size={16} className={isActive ? 'text-blue-600' : 'text-slate-400'} />
+                <span className="text-xs font-bold truncate">{t.label}</span>
+              </div>
+              <span className="text-[10px] text-[var(--secondary)] hidden sm:block mt-1 truncate w-full">
+                {t.description}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Contenido de la Tarjeta Seleccionada */}
+      <div className="transition-all duration-300">
+        {activeTab === 'whatsapp' && <WhatsAppConfigCard />}
+        {activeTab === 'bot' && <BotSettingsCard />}
+        {activeTab === 'clinica' && <ClinicProfileCard />}
+        {activeTab === 'nomenclador' && <NomencladorSettingsCard />}
+        {activeTab === 'plantilla_presupuesto' && <BudgetTemplateDesignerCard />}
+        {activeTab === 'logs' && <SystemLogsCard />}
+      </div>
+    </div>
+  )
 }

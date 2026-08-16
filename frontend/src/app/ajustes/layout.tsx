@@ -14,6 +14,12 @@ export default function AjustesLayout({
 
   const tabs = [
     {
+      label: 'Configuración General',
+      href: '/ajustes',
+      icon: Settings,
+      description: 'WhatsApp, IA, Perfil Clínica, Nomencladores y PDFs',
+    },
+    {
       label: 'Usuarios & Accesos',
       href: '/ajustes/usuarios',
       icon: Users,
@@ -49,7 +55,9 @@ export default function AjustesLayout({
       <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2 overflow-x-auto">
         {tabs.map((tab) => {
           const Icon = tab.icon
-          const isActive = pathname === tab.href || pathname.startsWith(tab.href + '/')
+          const isActive = tab.href === '/ajustes'
+            ? pathname === '/ajustes'
+            : pathname === tab.href || pathname.startsWith(tab.href + '/')
           return (
             <Link
               key={tab.href}
