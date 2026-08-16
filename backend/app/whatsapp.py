@@ -177,7 +177,7 @@ class WhatsAppManager:
             self.add_log("ERROR", f"Error conectando con microservicio Baileys: {e}")
             return {"error": f"Error de conexión con la pasarela: {str(e)}"}
 
-    def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None) -> Dict[str, Any]:
+    def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None, emisor: str = "operador") -> Dict[str, Any]:
         """
         Envía un mensaje de texto saliente por WhatsApp.
         """
@@ -185,20 +185,20 @@ class WhatsAppManager:
             return {"error": "El mensaje no puede estar vacío"}
 
         telefono = normalize_phone_number(telefono_o_jid)
-        self.add_log("INFO", f"Enviando mensaje a {format_phone_display(telefono)}: {texto[:60]}...")
+        self.add_log("INFO", f"Enviando mensaje a {format_phone_display(telefono)} [{emisor}]: {texto[:60]}...")
 
         try:
             r = httpx.post(f"{self.service_url}/send-message", json={"phone": telefono, "text": texto}, timeout=10.0)
             if r.status_code == 200:
                 res = r.json()
                 msg_id = res.get("message_id")
-                # Guardar mensaje saliente en Supabase si hay conversacion_id
+                # Guardar mensaje saliente en Supabase con el rol de emisor correspondiente (operador o bot)
                 if conversacion_id:
                     try:
                         guardar_mensaje(
                             conversacion_id=conversacion_id,
-                            remitente="agente",
-                            texto=texto,
+                            emisor=emisor,
+                            contenido=texto,
                             whatsapp_message_id=msg_id
                         )
                     except Exception as db_err:

@@ -284,7 +284,16 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
 
         conversacion_id = conversacion["id"] if isinstance(conversacion, dict) else conversacion.get("id")
 
-        # 3. Guardar mensaje entrante del paciente
+        # 3. Guardar mensaje entrante del paciente (con deduplicación por whatsapp_message_id)
+        if payload.message_id and supabase:
+            try:
+                existente = supabase.table("mensajes").select("id").eq("conversacion_id", conversacion_id).contains("metadata_json", {"whatsapp_message_id": payload.message_id}).execute()
+                if existente.data and len(existente.data) > 0:
+                    logger.info(f"Mensaje {payload.message_id} ya registrado previamente en conversacion {conversacion_id}. Omitiendo duplicado.")
+                    return {"status": "ignored", "reason": "duplicate_message_id"}
+            except Exception as dedup_err:
+                logger.warning(f"Error verificando duplicado: {dedup_err}")
+
         guardar_mensaje(
             conversacion_id=conversacion_id,
             emisor="paciente",
@@ -298,7 +307,7 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
             try:
                 respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
                 if respuesta_agente:
-                    whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id)
+                    whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot")
             except Exception as agent_err:
                 logger.error(f"Error procesando respuesta de agente IA: {agent_err}")
 
@@ -324,7 +333,7 @@ def get_mensajes_conversacion_api(conversacion_id: str):
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):
     """
-    Envía un mensaje de texto directamente al WhatsApp real del paciente y lo guarda en la BD.
+    Envía un mensaje de texto directamente al WhatsApp real del paciente y lo guarda en la BD como OPERADOR HUMANO.
     """
     telefono_final = payload.telefono
     if (not telefono_final or not str(telefono_final).strip()) and payload.conversacion_id:
@@ -340,11 +349,12 @@ def send_message_api(payload: SendMessageRequest):
         except Exception as e:
             logger.warning(f"No se pudo recuperar teléfono por conversación {payload.conversacion_id}: {e}")
 
-    logger.info(f"Enviando mensaje saliente a {telefono_final} (conversacion_id: {payload.conversacion_id})")
+    logger.info(f"Enviando mensaje saliente a {telefono_final} [operador] (conversacion_id: {payload.conversacion_id})")
     result = whatsapp_manager.enviar_mensaje(
         telefono_o_jid=telefono_final,
         texto=payload.mensaje,
-        conversacion_id=payload.conversacion_id
+        conversacion_id=payload.conversacion_id,
+        emisor="operador"
     )
     if "error" in result and not result.get("guardado_db"):
         raise HTTPException(status_code=400, detail=result["error"])

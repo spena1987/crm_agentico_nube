@@ -206,7 +206,12 @@ export default function ChatInbox() {
         }
       }
 
-      setMensajes(msgs)
+      // Deduplicar mensajes por ID
+      const uniqueMap = new Map<string, Mensaje>()
+      for (const m of msgs) {
+        uniqueMap.set(m.id, m)
+      }
+      setMensajes(Array.from(uniqueMap.values()))
     } catch (err) {
       console.error('Error cargando mensajes:', err)
     } finally {
@@ -272,7 +277,11 @@ export default function ChatInbox() {
         if (res.ok) {
           const apiMsgs = await res.json()
           if (Array.isArray(apiMsgs)) {
-            setMensajes(apiMsgs)
+            const uniqueMap = new Map<string, Mensaje>()
+            for (const m of apiMsgs) {
+              uniqueMap.set(m.id, m)
+            }
+            setMensajes(Array.from(uniqueMap.values()))
             return
           }
         }
@@ -285,7 +294,11 @@ export default function ChatInbox() {
         .order('created_at', { ascending: true })
         .then(({ data }) => {
           if (data && data.length > 0) {
-            setMensajes(data as unknown as Mensaje[])
+            const uniqueMap = new Map<string, Mensaje>()
+            for (const m of (data as unknown as Mensaje[])) {
+              uniqueMap.set(m.id, m)
+            }
+            setMensajes(Array.from(uniqueMap.values()))
           }
         })
     }, 2000)

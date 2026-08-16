@@ -387,13 +387,27 @@ async function initBaileys(forceClean = false) {
       }
     })
 
-    // Manejo de mensajes entrantes (Reenvío al Webhook de FastAPI)
+    // Manejo de mensajes entrantes (Reenvío al Webhook de FastAPI con deduplicación)
+    const processedMessageIds = new Set()
+
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return
 
       for (const msg of messages) {
         try {
           if (!msg.message) continue
+          const messageId = msg.key?.id
+          if (messageId) {
+            if (processedMessageIds.has(messageId)) {
+              continue
+            }
+            processedMessageIds.add(messageId)
+            if (processedMessageIds.size > 2000) {
+              const first = processedMessageIds.values().next().value
+              processedMessageIds.delete(first)
+            }
+          }
+
           const remoteJid = msg.key.remoteJid || ''
           
           // Ignorar estados y listas de difusión
