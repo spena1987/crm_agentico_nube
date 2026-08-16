@@ -46,7 +46,11 @@ from app.db import (
     upsert_arancel_practica,
     buscar_practicas_presupuesto,
     bulk_import_practicas_aranceles,
-    guardar_transcripcion_mensaje
+    guardar_transcripcion_mensaje,
+    get_asesorias_by_paciente,
+    crear_asesoria_quirurgica,
+    actualizar_asesoria_quirurgica,
+    eliminar_asesoria_quirurgica
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.phone_normalizer import normalize_phone_number
@@ -1912,4 +1916,58 @@ def registrar_log_desde_cliente(payload: Dict[str, Any] = Body(...)):
         return {"success": True, "log": log_entry}
     except Exception as e:
         logger.error(f"Error registrando log de cliente: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: MÓDULO DE ASESORÍAS QUIRÚRGICAS (PIPELINE)
+# ====================================================================
+
+@app.get("/api/asesorias-quirurgicas/paciente/{paciente_id}")
+def obtener_asesorias_paciente(paciente_id: str):
+    """
+    Retorna el listado de asesorías quirúrgicas de un paciente.
+    """
+    try:
+        asesorias = get_asesorias_by_paciente(paciente_id)
+        return {"success": True, "asesorias": asesorias}
+    except Exception as e:
+        logger.error(f"Error al obtener asesorías del paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas")
+def crear_nueva_asesoria(payload: Dict[str, Any] = Body(...)):
+    """
+    Crea un nuevo caso de asesoramiento quirúrgico para un paciente.
+    """
+    if not payload.get("paciente_id"):
+        raise HTTPException(status_code=400, detail="El ID del paciente es obligatorio.")
+    try:
+        asesoria = crear_asesoria_quirurgica(payload)
+        return {"success": True, "mensaje": "Caso de asesoría quirúrgica registrado.", "asesoria": asesoria}
+    except Exception as e:
+        logger.error(f"Error al crear asesoría quirúrgica: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/asesorias-quirurgicas/{asesoria_id}")
+def actualizar_asesoria(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Actualiza estado, fechas, condiciones o notas de un caso quirúrgico.
+    """
+    try:
+        asesoria = actualizar_asesoria_quirurgica(asesoria_id, payload)
+        return {"success": True, "mensaje": "Caso quirúrgico actualizado.", "asesoria": asesoria}
+    except Exception as e:
+        logger.error(f"Error al actualizar asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/asesorias-quirurgicas/{asesoria_id}")
+def eliminar_asesoria(asesoria_id: str):
+    """
+    Elimina un caso de asesoría quirúrgica.
+    """
+    try:
+        ok = eliminar_asesoria_quirurgica(asesoria_id)
+        return {"success": ok, "mensaje": "Caso quirúrgico eliminado."}
+    except Exception as e:
+        logger.error(f"Error al eliminar asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

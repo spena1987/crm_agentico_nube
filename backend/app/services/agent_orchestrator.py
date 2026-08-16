@@ -1,10 +1,36 @@
 import time
+import re
 import logging
 from typing import Optional, Dict, List, Any
 from app.db import supabase
 from app.services.tools import buscar_disponibilidad_turnos, crear_borrador_presupuesto, escalar_a_operador_humano
 
 logger = logging.getLogger(__name__)
+
+def formatear_texto_whatsapp(texto: str) -> str:
+    """
+    Normaliza y limpia el formato del texto generado por Gemini para adaptarlo a WhatsApp:
+    - Convierte **negrita** o ***negrita*** a *negrita* (un solo asterisco).
+    - Convierte encabezados Markdown (# Titulo) a *Titulo*.
+    - Corrige espacios alrededor de asteriscos.
+    - Elimina bloques de formato incompatibles con WhatsApp.
+    """
+    if not texto:
+        return ""
+    
+    # 1. Convertir encabezados Markdown (# Titulo, ## Titulo) en negrita de WhatsApp (*Titulo*)
+    texto = re.sub(r'^(#{1,6})\s*(.+)$', r'*\2*', texto, flags=re.MULTILINE)
+    
+    # 2. Convertir triple asterisco (***texto***) a negrita de WhatsApp (*texto*)
+    texto = re.sub(r'\*{3}(.+?)\*{3}', r'*\1*', texto)
+    
+    # 3. Convertir doble asterisco (**texto**) a negrita de WhatsApp (*texto*)
+    texto = re.sub(r'\*{2}(.+?)\*{2}', r'*\1*', texto)
+    
+    # 4. Limpiar asteriscos aislados accidentales o cuádruples
+    texto = re.sub(r'\*{4,}', '*', texto)
+    
+    return texto.strip()
 
 # Mapa global de herramientas ejecutables por el SDK
 AVAILABLE_TOOLS_MAP = {
@@ -244,6 +270,14 @@ class AgentOrchestrator:
             "",
             "=== DIRECTIVA PARTICULAR Y PAUTA DE COMPORTAMIENTO PARA ESTA SITUACIÓN ===",
             directiva_particular,
+            "",
+            "=== REGLAS ESTRICTAS DE FORMATO PARA WHATSAPP ===",
+            "- Para resaltar texto en NEGRITA, utiliza SIEMPRE un único asterisco a cada lado: *palabra* (ej: *Clínica Médica Nube*, *DNI*, *Turno*).",
+            "- NUNCA utilices doble asterisco (**palabra**) porque WhatsApp no lo interpreta y muestra los asteriscos literales al paciente.",
+            "- Para cursiva utiliza un único guión bajo: _texto_.",
+            "- No uses encabezados Markdown con numerales (# o ##). Usa saltos de línea y texto en negrita: *Título*.",
+            "- Para listas usa guiones '-' o viñetas '•'.",
+            "- Mantén párrafos cortos y amables, fáciles de leer en dispositivos móviles.",
         ]
 
         if paciente_info:
@@ -260,7 +294,7 @@ class AgentOrchestrator:
                 f"- Médico asignado: {p_med}" if p_med else ""
             ])
 
-        prompt_parts.append("\nResponde siempre de manera concisa, respetando tu rol asignado y utilizando las herramientas cuando sea oportuno.")
+        prompt_parts.append("\nResponde siempre respetando el formato de WhatsApp (*negrita* con 1 solo asterisco), conciso y utilizando las herramientas cuando sea oportuno.")
         return "\n".join([p for p in prompt_parts if p.strip()])
 
     def get_agent_tools(self, agent: Dict[str, Any]) -> List[Any]:

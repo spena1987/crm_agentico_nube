@@ -8,7 +8,7 @@ from google.genai import types
 from dotenv import load_dotenv
 
 from app.db import supabase, guardar_mensaje
-from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP
+from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP, formatear_texto_whatsapp
 from app.services.logger_service import log_event
 
 load_dotenv()
@@ -172,8 +172,9 @@ def procesar_mensaje_agente(
                 config=config
             )
 
-        # 9. Obtener la respuesta final
-        respuesta_final = response.text
+        # 9. Obtener la respuesta final normalizada para WhatsApp
+        raw_text = response.text or ""
+        respuesta_final = formatear_texto_whatsapp(raw_text)
         if not respuesta_final:
             respuesta_final = "He procesado tu consulta de manera interna, ¿en qué más puedo ayudarte?"
 

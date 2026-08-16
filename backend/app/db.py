@@ -952,4 +952,115 @@ def bulk_import_practicas_aranceles(
         "errores": errores
     }
 
+# ====================================================================
+# MÓDULO DE ASESORÍAS QUIRÚRGICAS (PIPELINE DE CIRUGÍAS)
+# ====================================================================
+
+def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
+    """
+    Retorna el historial de asesorías quirúrgicas de un paciente ordenadas por fecha reciente.
+    """
+    if not supabase or not paciente_id:
+        return []
+    try:
+        resp = supabase.table("asesorias_quirurgicas") \
+            .select("*") \
+            .eq("paciente_id", paciente_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener asesorías quirúrgicas del paciente {paciente_id}: {e}")
+        return []
+
+def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
+    """
+    Crea un nuevo caso de asesoramiento quirúrgico para un paciente.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        datos = {
+            "paciente_id": payload["paciente_id"],
+            "medico_derivador_id": int(payload["medico_derivador_id"]) if payload.get("medico_derivador_id") else None,
+            "medico_derivador_nombre": payload.get("medico_derivador_nombre") or None,
+            "medico_derivador_matricula": str(payload["medico_derivador_matricula"]) if payload.get("medico_derivador_matricula") else None,
+            
+            "medico_cirujano_id": int(payload["medico_cirujano_id"]) if payload.get("medico_cirujano_id") else None,
+            "medico_cirujano_nombre": payload.get("medico_cirujano_nombre") or None,
+            "medico_cirujano_matricula": str(payload["medico_cirujano_matricula"]) if payload.get("medico_cirujano_matricula") else None,
+            
+            "practica_codigo": payload.get("practica_codigo") or None,
+            "practica_nombre": payload.get("practica_nombre") or "Práctica Quirúrgica a Determinar",
+            
+            "cobertura_obra_social": payload.get("cobertura_obra_social") or None,
+            "monto_extra": float(payload.get("monto_extra", 0.0)) if payload.get("monto_extra") is not None else 0.0,
+            "moneda_extra": payload.get("moneda_extra", "ARS").upper(),
+            
+            "fecha_probable_cirugia": payload.get("fecha_probable_cirugia") or None,
+            "fecha_definitiva_cirugia": payload.get("fecha_definitiva_cirugia") or None,
+            
+            "estado": payload.get("estado", "en_asesoramiento"),
+            "situacion_paciente": payload.get("situacion_paciente") or "",
+            "motivo_cancelacion": payload.get("motivo_cancelacion") or None
+        }
+        
+        resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
+        if not resp.data:
+            raise Exception("No se pudo registrar la asesoría quirúrgica.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al crear asesoría quirúrgica: {e}")
+        raise
+
+def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str, Any]:
+    """
+    Actualiza el estado, fechas, condiciones o notas de un caso quirúrgico.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        datos = {}
+        campos_permitidos = [
+            "medico_derivador_id", "medico_derivador_nombre", "medico_derivador_matricula",
+            "medico_cirujano_id", "medico_cirujano_nombre", "medico_cirujano_matricula",
+            "practica_codigo", "practica_nombre", "cobertura_obra_social",
+            "monto_extra", "moneda_extra", "fecha_probable_cirugia",
+            "fecha_definitiva_cirugia", "estado", "situacion_paciente", "motivo_cancelacion"
+        ]
+        
+        for k in campos_permitidos:
+            if k in payload:
+                if k in ["medico_derivador_id", "medico_cirujano_id"]:
+                    datos[k] = int(payload[k]) if payload[k] else None
+                elif k == "monto_extra":
+                    datos[k] = float(payload[k]) if payload[k] is not None else 0.0
+                elif k == "moneda_extra":
+                    datos[k] = str(payload[k]).upper()
+                else:
+                    datos[k] = payload[k]
+                    
+        datos["updated_at"] = "now()"
+        
+        resp = supabase.table("asesorias_quirurgicas").update(datos).eq("id", asesoria_id).execute()
+        if not resp.data:
+            raise Exception(f"No se encontró la asesoría {asesoria_id} para actualizar.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al actualizar asesoría quirúrgica {asesoria_id}: {e}")
+        raise
+
+def eliminar_asesoria_quirurgica(asesoria_id: str) -> bool:
+    """
+    Elimina un caso de asesoría quirúrgica.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("asesorias_quirurgicas").delete().eq("id", asesoria_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar asesoría quirúrgica {asesoria_id}: {e}")
+        raise
+
 

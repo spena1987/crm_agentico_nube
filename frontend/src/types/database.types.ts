@@ -9,6 +9,83 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      asesorias_quirurgicas: {
+        Row: {
+          id: string
+          paciente_id: string
+          medico_derivador_id: number | null
+          medico_derivador_nombre: string | null
+          medico_derivador_matricula: string | null
+          medico_cirujano_id: number | null
+          medico_cirujano_nombre: string | null
+          medico_cirujano_matricula: string | null
+          practica_codigo: string | null
+          practica_nombre: string
+          cobertura_obra_social: string | null
+          monto_extra: number
+          moneda_extra: string
+          fecha_probable_cirugia: string | null
+          fecha_definitiva_cirugia: string | null
+          estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
+          situacion_paciente: string | null
+          motivo_cancelacion: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          paciente_id: string
+          medico_derivador_id?: number | null
+          medico_derivador_nombre?: string | null
+          medico_derivador_matricula?: string | null
+          medico_cirujano_id?: number | null
+          medico_cirujano_nombre?: string | null
+          medico_cirujano_matricula?: string | null
+          practica_codigo?: string | null
+          practica_nombre: string
+          cobertura_obra_social?: string | null
+          monto_extra?: number
+          moneda_extra?: string
+          fecha_probable_cirugia?: string | null
+          fecha_definitiva_cirugia?: string | null
+          estado?: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
+          situacion_paciente?: string | null
+          motivo_cancelacion?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          paciente_id?: string
+          medico_derivador_id?: number | null
+          medico_derivador_nombre?: string | null
+          medico_derivador_matricula?: string | null
+          medico_cirujano_id?: number | null
+          medico_cirujano_nombre?: string | null
+          medico_cirujano_matricula?: string | null
+          practica_codigo?: string | null
+          practica_nombre?: string
+          cobertura_obra_social?: string | null
+          monto_extra?: number
+          moneda_extra?: string
+          fecha_probable_cirugia?: string | null
+          fecha_definitiva_cirugia?: string | null
+          estado?: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
+          situacion_paciente?: string | null
+          motivo_cancelacion?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "asesorias_quirurgicas_paciente_id_fkey"
+            columns: ["paciente_id"]
+            isOneToOne: false
+            referencedRelation: "pacientes"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       configuracion_nomenclador: {
         Row: {
           geclisa_area_default: string

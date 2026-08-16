@@ -372,6 +372,51 @@ ALTER TABLE public.conversaciones ADD COLUMN IF NOT EXISTS agente_asignado_codig
 ALTER TABLE public.pacientes ADD COLUMN IF NOT EXISTS etapa_clinica TEXT DEFAULT 'CONSULTA_GENERAL';
 
 -- ====================================================================
+-- 11. Módulo de Asesorías Quirúrgicas y Pipeline de Seguimiento
+-- ====================================================================
+create table if not exists public.asesorias_quirurgicas (
+    id uuid default gen_random_uuid() primary key,
+    paciente_id uuid references public.pacientes(id) on delete cascade not null,
+    
+    -- Profesionales (Geclisa)
+    medico_derivador_id integer,
+    medico_derivador_nombre varchar,
+    medico_derivador_matricula varchar,
+    
+    medico_cirujano_id integer,
+    medico_cirujano_nombre varchar,
+    medico_cirujano_matricula varchar,
+    
+    -- Práctica Médica (Nomenclador)
+    practica_codigo varchar,
+    practica_nombre varchar not null,
+    
+    -- Aspectos Económicos
+    cobertura_obra_social varchar,
+    monto_extra numeric(10, 2) default 0.00,
+    moneda_extra varchar default 'ARS' check (moneda_extra in ('ARS', 'USD')),
+    
+    -- Planificación Temporal
+    fecha_probable_cirugia date,
+    fecha_definitiva_cirugia date,
+    
+    -- Estado del Pipeline
+    estado varchar default 'en_asesoramiento' not null check (
+        estado in ('derivado', 'en_asesoramiento', 'en_analisis', 'confirmado', 'operado', 'cancelado')
+    ),
+    
+    -- Propuesta y Situación
+    situacion_paciente text,
+    motivo_cancelacion text,
+    
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_asesorias_paciente on public.asesorias_quirurgicas(paciente_id);
+create index if not exists idx_asesorias_estado on public.asesorias_quirurgicas(estado);
+
+-- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ====================================================================
 -- Habilitar replicación en tiempo real para mensajería y logs en el CRM
@@ -381,6 +426,7 @@ begin;
   alter publication supabase_realtime add table public.system_logs;
   alter publication supabase_realtime add table public.agentes_directivas_globales;
   alter publication supabase_realtime add table public.agentes_situacionales;
+  alter publication supabase_realtime add table public.asesorias_quirurgicas;
 exception when others then
   -- Ignorar errores si la publicación o la relación ya existe
 end;
