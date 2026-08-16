@@ -207,20 +207,6 @@ def logout_whatsapp():
         raise HTTPException(status_code=500, detail="Error al cerrar sesión de WhatsApp.")
     return {"success": True, "message": "Sesión cerrada correctamente. Dispositivo desvinculado."}
 
-class PairCodeRequest(BaseModel):
-    telefono: str
-
-@app.post("/api/whatsapp/pair-code")
-def request_pair_code(req: PairCodeRequest):
-    """
-    Genera un código de 8 caracteres (XXXX-XXXX) para vincular ingresando el número de teléfono.
-    """
-    logger.info(f"Petición de código de vinculación para teléfono: {req.telefono}")
-    result = whatsapp_manager.solicitar_codigo_vinculacion(req.telefono)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
-
 class IncomingWebhookMessage(BaseModel):
     message_id: Optional[str] = None
     from_me: bool = False
@@ -229,6 +215,7 @@ class IncomingWebhookMessage(BaseModel):
     name: Optional[str] = "Paciente"
     text: str = ""
     message_type: str = "text"
+    media: Optional[Dict[str, Any]] = None
     timestamp: Optional[int] = None
     raw_message: Optional[Dict[str, Any]] = None
 
@@ -294,11 +281,23 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
             except Exception as dedup_err:
                 logger.warning(f"Error verificando duplicado: {dedup_err}")
 
+        # Construir metadata_json enriquecido con datos multimedia
+        meta = {
+            "whatsapp_message_id": payload.message_id,
+            "whatsapp_lid": payload.phone if is_lid_number(payload.phone) else None
+        }
+        if payload.media and isinstance(payload.media, dict):
+            meta.update(payload.media)
+
+        caption_texto = payload.media.get("caption") if (payload.media and isinstance(payload.media, dict)) else None
+        tipo_label = payload.media.get("tipo", payload.message_type) if (payload.media and isinstance(payload.media, dict)) else payload.message_type
+        contenido_final = texto or caption_texto or f"[{tipo_label.upper()}]"
+
         guardar_mensaje(
             conversacion_id=conversacion_id,
             emisor="paciente",
-            contenido=texto or f"[{payload.message_type.upper()}]",
-            metadata_json={"whatsapp_message_id": payload.message_id, "whatsapp_lid": payload.phone if is_lid_number(payload.phone) else None}
+            contenido=contenido_final,
+            metadata_json=meta
         )
 
         # 4. Procesar agente IA si el bot no está desactivado para esta conversación
@@ -385,13 +384,17 @@ async def send_media_api(
     Envía un archivo multimedia (imagen, PDF, estudio médico) al WhatsApp del paciente
     y lo almacena con metadatos estructurados en Supabase.
     """
-    logger.info(f"API: Enviando archivo {file.filename} a {telefono}")
+    logger.info(f"API: Enviando archivo {file.filename} a {telefono} (conversacion_id: {conversacion_id})")
     try:
         content = await file.read()
         mime_type = file.content_type or "application/octet-stream"
         original_name = file.filename or "archivo"
         
         subfolder = "images" if "image" in mime_type else "documents"
+        tipo = "imagen" if "image" in mime_type else "audio" if "audio" in mime_type else "documento"
+        media_type_baileys = "image" if "image" in mime_type else "audio" if "audio" in mime_type else "document"
+
+        # Guardar en almacenamiento estático
         saved = media_service.save_media_bytes(
             data=content,
             subfolder=subfolder,
@@ -400,18 +403,60 @@ async def send_media_api(
             prefix="crm_out"
         )
         
-        # Enviar vía WhatsApp
-        result = whatsapp_manager.enviar_documento(
-            telefono_o_jid=telefono,
-            filepath=saved["file_path"],
-            filename=original_name,
+        media_url_final = saved["media_url"]
+
+        # Intentar subir a Supabase Storage Bucket whatsapp-media
+        if supabase:
+            try:
+                storage_path = f"media/{int(time.time())}_{original_name}"
+                res = supabase.storage.from_("whatsapp-media").upload(
+                    file=content,
+                    path=storage_path,
+                    file_options={"content-type": mime_type, "upsert": "true"}
+                )
+                public_res = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
+                if public_res:
+                    media_url_final = public_res
+            except Exception as sup_err:
+                logger.warning(f"No se pudo subir a Supabase Storage, usando URL local: {sup_err}")
+
+        # Enviar vía WhatsApp Baileys
+        result = whatsapp_manager.enviar_multimedia(
+            telefono=telefono,
+            media_url=media_url_final,
+            media_type=media_type_baileys,
             caption=caption or "",
-            conversacion_id=conversacion_id
+            filename=original_name
         )
         
+        # Guardar mensaje saliente del operador en Supabase
+        if conversacion_id:
+            try:
+                guardar_mensaje(
+                    conversacion_id=conversacion_id,
+                    emisor="operador",
+                    contenido=caption or original_name,
+                    metadata_json={
+                        "tipo": tipo,
+                        "media_url": media_url_final,
+                        "relative_url": saved.get("relative_url"),
+                        "file_name": original_name,
+                        "mime_type": mime_type,
+                        "file_size_bytes": len(content),
+                        "caption": caption or "",
+                        "delivery_status": "enviado"
+                    }
+                )
+            except Exception as db_save_err:
+                logger.error(f"Error guardando mensaje multimedia en BD: {db_save_err}")
+
         return {
             "success": True,
-            "media": saved,
+            "media": {
+                **saved,
+                "media_url": media_url_final,
+                "tipo": tipo
+            },
             "whatsapp_result": result
         }
     except Exception as e:

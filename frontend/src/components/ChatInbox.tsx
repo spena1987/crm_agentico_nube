@@ -477,6 +477,10 @@ export default function ChatInbox() {
       if (!res.ok) {
         throw new Error('Error al enviar archivo por WhatsApp')
       }
+
+      setTimeout(() => {
+        fetchMensajes(selectedConvId)
+      }, 600)
     } catch (err) {
       console.error('Error subiendo archivo:', err)
       alert('Hubo un inconveniente al enviar el archivo adjunto.')
@@ -712,12 +716,12 @@ export default function ChatInbox() {
                           </>
                         )}
                       </div>
-                      {/* Contenido textual */}
-                      {msg.contenido && (
+                      {/* Contenido textual (si no es un placeholder genérico de media) */}
+                      {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
                         <p className="whitespace-pre-line leading-relaxed">{msg.contenido}</p>
                       )}
                       
-                      {/* Visualizador Multimedia (Fotos, Audios, PDFs, Reacciones) */}
+                      {/* Visualizador Multimedia (Fotos con Lightbox, Audios, PDFs, Documentos) */}
                       <ChatMediaViewer metadata={msg.metadata_json} isOperator={isOperator} />
                       
                       {/* Pie con Hora y Tildes de lectura */}

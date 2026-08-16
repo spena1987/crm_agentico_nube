@@ -13,7 +13,8 @@ import {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   Browsers,
-  isLidUser
+  isLidUser,
+  downloadMediaMessage
 } from '@whiskeysockets/baileys'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -144,6 +145,34 @@ async function clearSessionsFromSupabase() {
   } catch (e) {
     addLog('WARNING', `Error eliminando sesión de Supabase: ${e.message}`)
   }
+}
+
+// 4. Subir archivo multimedia desencriptado a Supabase Storage (Bucket: whatsapp-media)
+async function uploadMediaToSupabaseStorage(buffer, filename, mimetype) {
+  if (!SUPABASE_KEY || !buffer || buffer.length === 0) return null
+  try {
+    const cleanName = String(filename).replace(/[^a-zA-Z0-9._-]/g, '_')
+    const storagePath = `media/${Date.now()}_${cleanName}`
+    const url = `${SUPABASE_URL}/storage/v1/object/whatsapp-media/${storagePath}`
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': mimetype || 'application/octet-stream',
+      'x-upsert': 'true'
+    }
+    const resp = await axios.post(url, buffer, {
+      headers,
+      timeout: 25000,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    })
+    if (resp.status === 200 || resp.status === 201) {
+      return `${SUPABASE_URL}/storage/v1/object/public/whatsapp-media/${storagePath}`
+    }
+  } catch (e) {
+    addLog('WARNING', `Error subiendo multimedia a Supabase Storage: ${e.message}`)
+  }
+  return null
 }
 
 function loadLidMappings() {
@@ -450,17 +479,88 @@ async function initBaileys(forceClean = false) {
                      msg.message?.documentMessage?.caption || 
                      msg.message?.videoMessage?.caption || ''
 
-          // Determinar tipo de mensaje
+          // Determinar tipo de mensaje y procesar multimedia
           let messageType = 'text'
-          if (msg.message.imageMessage) messageType = 'image'
-          else if (msg.message.audioMessage) messageType = 'audio'
-          else if (msg.message.documentMessage) messageType = 'document'
-          else if (msg.message.videoMessage) messageType = 'video'
-          else if (msg.message.stickerMessage) messageType = 'sticker'
+          let mediaInfo = null
 
-          addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text.substring(0, 40)}`)
+          const isMedia = Boolean(
+            msg.message.imageMessage || 
+            msg.message.documentMessage || 
+            msg.message.documentWithCaptionMessage || 
+            msg.message.audioMessage || 
+            msg.message.videoMessage || 
+            msg.message.stickerMessage
+          )
 
-          // Despachar al webhook dinámico de FastAPI
+          if (isMedia) {
+            try {
+              let mediaBuffer = null
+              try {
+                mediaBuffer = await downloadMediaMessage(
+                  msg,
+                  'buffer',
+                  {},
+                  { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+                )
+              } catch (dlErr) {
+                addLog('WARNING', `Error descargando buffer de media: ${dlErr.message}`)
+              }
+
+              let mimeType = 'application/octet-stream'
+              let fileName = 'archivo.bin'
+              let tipo = 'documento'
+
+              if (msg.message.imageMessage) {
+                messageType = 'image'
+                tipo = 'imagen'
+                mimeType = msg.message.imageMessage.mimetype || 'image/jpeg'
+                fileName = `imagen_${Date.now()}.jpg`
+              } else if (msg.message.audioMessage) {
+                messageType = 'audio'
+                tipo = 'audio'
+                mimeType = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus'
+                fileName = `audio_${Date.now()}.ogg`
+              } else if (msg.message.documentMessage || msg.message.documentWithCaptionMessage) {
+                messageType = 'document'
+                tipo = 'documento'
+                const doc = msg.message.documentMessage || msg.message.documentWithCaptionMessage?.message?.documentMessage
+                mimeType = doc?.mimetype || 'application/pdf'
+                fileName = doc?.fileName || doc?.title || `documento_${Date.now()}.pdf`
+              } else if (msg.message.videoMessage) {
+                messageType = 'video'
+                tipo = 'video'
+                mimeType = msg.message.videoMessage.mimetype || 'video/mp4'
+                fileName = `video_${Date.now()}.mp4`
+              } else if (msg.message.stickerMessage) {
+                messageType = 'sticker'
+                tipo = 'sticker'
+                mimeType = msg.message.stickerMessage.mimetype || 'image/webp'
+                fileName = `sticker_${Date.now()}.webp`
+              }
+
+              let mediaUrl = null
+              if (mediaBuffer && mediaBuffer.length > 0) {
+                mediaUrl = await uploadMediaToSupabaseStorage(mediaBuffer, fileName, mimeType)
+                addLog('INFO', `Archivo [${tipo}] subido exitosamente a Supabase Storage: ${fileName}`)
+              }
+
+              mediaInfo = {
+                tipo,
+                media_url: mediaUrl,
+                file_name: fileName,
+                mime_type: mimeType,
+                file_size_bytes: mediaBuffer ? mediaBuffer.length : 0,
+                caption: text,
+                is_voice_note: Boolean(msg.message.audioMessage?.ptt)
+              }
+            } catch (mediaErr) {
+              addLog('WARNING', `Error procesando media adjunto: ${mediaErr.message}`)
+            }
+          }
+
+          addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`)
+
+          // Despachar al webhook dinámico de FastAPI con metadatos multimedia
           axios.post(FASTAPI_WEBHOOK, {
             message_id: msg.key.id,
             from_me: fromMe,
@@ -469,6 +569,7 @@ async function initBaileys(forceClean = false) {
             name: msg.pushName || 'Paciente',
             text: text,
             message_type: messageType,
+            media: mediaInfo,
             timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
             raw_message: msg
           }).catch(err => {
