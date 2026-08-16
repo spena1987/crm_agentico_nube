@@ -7,11 +7,14 @@ const nextConfig = {
     if (!backendUrl.startsWith('http://') && !backendUrl.startsWith('https://')) {
       backendUrl = `https://${backendUrl}`
     }
-    backendUrl = backendUrl.replace(/\/+$/, '')
     return [
       {
         source: '/api/:path*',
         destination: `${backendUrl}/api/:path*`,
+      },
+      {
+        source: '/static/:path*',
+        destination: `${backendUrl}/static/:path*`,
       },
     ]
   },

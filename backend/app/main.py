@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse
 import io
 import csv
 import openpyxl
@@ -2032,3 +2032,44 @@ def emitir_presupuesto_rapido(payload: Dict[str, Any] = Body(...)):
     except Exception as e:
         logger.error(f"Error al emitir presupuesto rápido: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/presupuestos/{presupuesto_id}/pdf")
+def obtener_pdf_presupuesto(presupuesto_id: str):
+    """
+    Sirve el archivo PDF membretado oficial de un presupuesto directamente como stream / descarga.
+    """
+    filename = f"presupuesto_{presupuesto_id}.pdf"
+    file_path = os.path.join(PDF_DIR, filename)
+    if not os.path.exists(file_path):
+        # Si no existe en disco local, intentar regenerarlo al vuelo
+        try:
+            if supabase:
+                pres_resp = supabase.table("presupuestos").select("*, pacientes(*), items_presupuesto(*)").eq("id", presupuesto_id).execute()
+                if pres_resp.data:
+                    p_data = pres_resp.data[0]
+                    paciente = p_data.get("pacientes") or {}
+                    items_db = p_data.get("items_presupuesto") or []
+                    items_pdf = [
+                        {
+                            "nombre": it.get("nombre") or "Prestación Médica",
+                            "cantidad": it.get("cantidad", 1),
+                            "precio_unitario": float(it.get("precio_unitario", 0.0)),
+                            "subtotal": float(it.get("subtotal", 0.0)),
+                            "moneda": "ARS"
+                        }
+                        for it in items_db
+                    ]
+                    from app.services.pdf_service import generar_pdf_presupuesto
+                    generar_pdf_presupuesto(p_data, paciente, items_pdf)
+        except Exception as e:
+            logger.error(f"Error intentando regenerar PDF de presupuesto {presupuesto_id}: {e}")
+            
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="El archivo PDF del presupuesto no fue encontrado.")
+        
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=filename,
+        headers={"Content-Disposition": f"inline; filename={filename}"}
+    )

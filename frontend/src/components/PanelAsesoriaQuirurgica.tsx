@@ -29,6 +29,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { BACKEND_URL } from '@/lib/api'
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
 
 export interface PresupuestoPaciente {
@@ -935,13 +936,28 @@ export default function PanelAsesoriaQuirurgica({
 
                     {/* Acciones de Presupuesto: Ver PDF, Confirmar, Desistir */}
                     <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[var(--border)]/50">
-                      {pActivo.pdf_url && (
+                      {pActivo.pdf_url ? (
                         <a
-                          href={pActivo.pdf_url}
+                          href={
+                            pActivo.pdf_url.startsWith('http')
+                              ? pActivo.pdf_url
+                              : `${BACKEND_URL}${pActivo.pdf_url.startsWith('/') ? '' : '/'}${pActivo.pdf_url}`
+                          }
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors shadow-sm"
                           title="Descargar presupuesto membretado oficial"
+                        >
+                          <Download size={12} className="text-blue-400" />
+                          PDF Oficial
+                        </a>
+                      ) : (
+                        <a
+                          href={`${BACKEND_URL}/api/presupuestos/${pActivo.id}/pdf`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors shadow-sm"
+                          title="Generar y descargar PDF membretado"
                         >
                           <Download size={12} className="text-blue-400" />
                           PDF Oficial
