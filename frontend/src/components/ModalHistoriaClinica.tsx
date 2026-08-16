@@ -16,6 +16,8 @@ import {
   Sparkles
 } from 'lucide-react'
 
+import { BACKEND_URL } from '@/lib/api'
+
 interface EvolucionClinica {
   hc_id: number
   fecha: string
@@ -53,8 +55,6 @@ interface ModalHistoriaClinicaProps {
     telefono?: string
   } | null
 }
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
 
 export default function ModalHistoriaClinica({
   isOpen,

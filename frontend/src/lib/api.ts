@@ -6,11 +6,11 @@
 const rawBackendUrl = 
   process.env.NEXT_PUBLIC_BACKEND_URL || 
   process.env.NEXT_PUBLIC_API_URL || 
-  'http://localhost:8000';
+  '';
 
 const formatUrl = (url: string) => {
   let clean = (url || '').trim()
-  if (!clean) return 'http://localhost:8000'
+  if (!clean) return '' // Permite que el cliente use rutas relativas /api/... manejadas por el proxy rewrites de Next.js
   if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
     clean = `https://${clean}`
   }
