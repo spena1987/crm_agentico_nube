@@ -551,103 +551,209 @@ export default function ChatInbox() {
   const currentPaciente = getPatient(selectedConv)
 
   return (
-    <div className="flex h-[calc(100vh-2rem)] border border-[var(--border)] rounded-2xl overflow-hidden bg-[var(--card)] shadow-lg max-w-7xl mx-auto w-full">
+    <div className="flex h-[calc(100vh-2rem)] border border-slate-800 rounded-2xl overflow-hidden bg-[#0a101d] shadow-2xl max-w-7xl mx-auto w-full text-slate-100">
       
-      <div className="w-88 border-r border-[var(--border)] flex flex-col bg-slate-50/50 dark:bg-slate-900/10 min-w-[320px] max-w-[360px]">
+      {/* 1. Panel de Conversaciones (Izquierda) */}
+      <div className="w-88 border-r border-slate-800 flex flex-col bg-[#0d1527] min-w-[320px] max-w-[360px]">
         
-        <div className="p-3.5 border-b border-[var(--border)] flex items-center justify-between bg-white dark:bg-slate-900">
+        {/* Cabecera de Chats y Estado de WhatsApp */}
+        <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-[#101b33]">
           <div className="flex items-center gap-2">
-            <h2 className="font-bold flex items-center gap-1.5 text-sm">
-              <MessageCircle size={17} className="text-blue-600 shrink-0" />
+            <h2 className="font-bold flex items-center gap-1.5 text-sm text-slate-100">
+              <MessageCircle size={17} className="text-blue-400 shrink-0" />
               Inbox Pacientes
             </h2>
             <Link 
               href="/ajustes" 
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all ${
-                isWaConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all border ${
+                isWaConnected 
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60 hover:bg-emerald-900/60' 
+                  : 'bg-amber-950/80 text-amber-300 border-amber-800/60 hover:bg-amber-900/60'
               }`}
+              title="Click para ir a Ajustes de WhatsApp"
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${isWaConnected ? 'bg-emerald-500' : 'bg-amber-500 animate-ping'}`} />
-              <span>{isWaConnected ? 'WhatsApp Online' : 'Vincular'}</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${isWaConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`} />
+              <span>{isWaConnected ? 'WhatsApp Online' : 'Vincular QR'}</span>
             </Link>
           </div>
           
           <div className="flex items-center gap-1">
             <button 
               onClick={() => setShowSimulator(!showSimulator)}
-              className={`p-1.5 rounded-lg text-xs transition-colors ${showSimulator ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-100'}`}
+              className={`p-1.5 rounded-lg text-xs transition-colors border ${
+                showSimulator 
+                  ? 'bg-blue-900/60 text-blue-300 border-blue-700/60' 
+                  : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-slate-800/60'
+              }`}
+              title="Abrir Simulador de pruebas"
             >
               <Smartphone size={15} />
             </button>
             <button 
               onClick={fetchConversaciones}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-500 transition-colors"
+              className="p-1.5 hover:bg-slate-800/60 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
+              title="Refrescar chats"
             >
               <RefreshCw size={15} />
             </button>
           </div>
         </div>
 
-        <div className="p-2.5 border-b border-[var(--border)] bg-white dark:bg-slate-900">
+        {/* Barra de Búsqueda Rápida en Vivo (Tema Oscuro) */}
+        <div className="p-2.5 border-b border-slate-800 bg-[#0d1527]">
           <div className="relative flex items-center">
-            <Search size={14} className="absolute left-2.5 text-slate-400" />
+            <Search size={14} className="absolute left-2.5 text-slate-400 pointer-events-none" />
             <input 
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar..."
-              className="w-full pl-8 pr-7 py-1.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              placeholder="Buscar paciente, teléfono o texto..."
+              className="w-full pl-8 pr-7 py-2 text-xs border border-slate-700/80 rounded-xl bg-[#14203d] text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all shadow-inner"
             />
             {searchQuery && (
-              <button onClick={() => setSearchQuery('')} className="absolute right-2 text-slate-400"><X size={13} /></button>
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 text-slate-400 hover:text-slate-200 p-0.5"
+                title="Limpiar búsqueda"
+              >
+                <X size={13} />
+              </button>
             )}
           </div>
         </div>
 
-        <div className="p-1.5 grid grid-cols-4 gap-1 border-b border-[var(--border)] bg-slate-100/60 text-[11px] font-semibold">
-          <button onClick={() => setActiveTab('derivados')} className={`py-1.5 rounded-lg ${activeTab === 'derivados' ? 'bg-white text-rose-600' : 'text-slate-600'}`}>
-            🔴 Humano ({derivadosCount})
+        {/* Pestañas de Estado con Contadores Dinámicos (Tema Oscuro Coherente) */}
+        <div className="p-1.5 grid grid-cols-4 gap-1 border-b border-slate-800 bg-[#0a101d] text-[11px] font-semibold">
+          
+          {/* 1. DERIVADOS / ATENCIÓN HUMANA */}
+          <button
+            onClick={() => setActiveTab('derivados')}
+            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+              activeTab === 'derivados'
+                ? 'bg-[#2a1722] text-rose-300 border-rose-500/50 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
+            }`}
+          >
+            <span className="truncate flex items-center gap-1">
+              🔴 Humano
+            </span>
+            <span className={`text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold border ${
+              derivadosCount > 0 
+                ? 'bg-rose-500/30 text-rose-300 border-rose-500/50 animate-pulse' 
+                : 'bg-slate-800/80 text-slate-400 border-slate-700/50'
+            }`}>
+              {derivadosCount}
+            </span>
           </button>
-          <button onClick={() => setActiveTab('bot')} className={`py-1.5 rounded-lg ${activeTab === 'bot' ? 'bg-white text-emerald-600' : 'text-slate-600'}`}>
-            🤖 Bot ({botCount})
+
+          {/* 2. BOT GEMINI ACTIVO */}
+          <button
+            onClick={() => setActiveTab('bot')}
+            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+              activeTab === 'bot'
+                ? 'bg-[#122822] text-emerald-300 border-emerald-500/50 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
+            }`}
+          >
+            <span className="truncate flex items-center gap-1">
+              🤖 Con Bot
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/50">
+              {botCount}
+            </span>
           </button>
-          <button onClick={() => setActiveTab('todos')} className={`py-1.5 rounded-lg ${activeTab === 'todos' ? 'bg-white text-blue-600' : 'text-slate-600'}`}>
-            💬 Todos ({todosCount})
+
+          {/* 3. TODOS LOS CHATS ACTIVOS */}
+          <button
+            onClick={() => setActiveTab('todos')}
+            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+              activeTab === 'todos'
+                ? 'bg-[#162547] text-blue-300 border-blue-500/50 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
+            }`}
+          >
+            <span className="truncate">
+              💬 Todos
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/60">
+              {todosCount}
+            </span>
           </button>
-          <button onClick={() => setActiveTab('archivados')} className={`py-1.5 rounded-lg ${activeTab === 'archivados' ? 'bg-white text-slate-900' : 'text-slate-600'}`}>
-            ✅ Cerrados ({archivadosCount})
+
+          {/* 4. CERRADOS / ARCHIVADOS */}
+          <button
+            onClick={() => setActiveTab('archivados')}
+            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+              activeTab === 'archivados'
+                ? 'bg-[#1e293b] text-slate-200 border-slate-600 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
+            }`}
+          >
+            <span className="truncate">
+              ✅ Cerrados
+            </span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-400 border border-slate-700/60">
+              {archivadosCount}
+            </span>
           </button>
         </div>
 
+        {/* Simulador colapsable para testing */}
         {showSimulator && (
-          <div className="p-3 bg-blue-50/70 border-b border-[var(--border)]">
+          <div className="p-3 bg-[#111a30] border-b border-slate-800 transition-all">
             <form onSubmit={handleSimulateIncoming} className="flex flex-col gap-1.5">
-              <input type="text" value={simTelefono} onChange={(e) => setSimTelefono(e.target.value)} className="px-2 py-1 text-xs border rounded" />
+              <div className="flex items-center justify-between text-[10px] font-bold text-blue-400 uppercase tracking-wider">
+                <span className="flex items-center gap-1">
+                  <Smartphone size={12} /> Simulador Paciente
+                </span>
+                <Link href="/ajustes" className="hover:underline flex items-center gap-1 text-[10px]">
+                  <Settings size={10} /> QR Real
+                </Link>
+              </div>
+              <input 
+                type="text"
+                value={simTelefono}
+                onChange={(e) => setSimTelefono(e.target.value)}
+                placeholder="Teléfono (ej: 5491123456789)"
+                className="px-2.5 py-1.5 text-xs border border-slate-700 rounded-lg bg-[#182442] text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
               <div className="flex gap-1.5">
-                <input type="text" value={simTexto} onChange={(e) => setSimTexto(e.target.value)} className="flex-1 px-2 py-1 text-xs border rounded" />
-                <button type="submit" className="px-2.5 py-1 text-xs bg-blue-600 text-white rounded">Enviar</button>
+                <input 
+                  type="text"
+                  value={simTexto}
+                  onChange={(e) => setSimTexto(e.target.value)}
+                  placeholder="Mensaje del paciente..."
+                  className="flex-1 px-2.5 py-1.5 text-xs border border-slate-700 rounded-lg bg-[#182442] text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+                <button 
+                  type="submit" 
+                  disabled={simulando}
+                  className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold transition-all flex items-center justify-center min-w-[55px]"
+                >
+                  {simulando ? '...' : 'Enviar'}
+                </button>
               </div>
             </form>
           </div>
         )}
 
-        {/* Listado de Tarjetas de Conversación Filtradas */}
-        <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)]">
+        {/* Listado de Tarjetas de Conversación Filtradas (Tema Oscuro) */}
+        <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60">
           {cargandoConversaciones ? (
-            <div className="p-6 text-center text-xs text-[var(--secondary)] flex flex-col items-center gap-2">
-              <Loader2 size={18} className="animate-spin text-blue-600" />
+            <div className="p-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
+              <Loader2 size={20} className="animate-spin text-blue-400" />
               <span>Cargando conversaciones...</span>
             </div>
           ) : filteredConversaciones.length === 0 ? (
-            <div className="p-8 text-center text-xs text-[var(--secondary)] flex flex-col items-center justify-center gap-2">
-              <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full">
-                <MessageCircle size={20} className="text-slate-400" />
+            <div className="p-8 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-2.5">
+              <div className="p-3 bg-[#14203d] border border-slate-700/60 rounded-full text-slate-400 shadow-inner">
+                <MessageCircle size={22} />
               </div>
-              <span className="font-semibold text-slate-700 dark:text-slate-300">
+              <span className="font-semibold text-slate-200 text-sm">
                 {searchQuery ? 'No hay resultados para tu búsqueda' : 'No hay conversaciones en esta pestaña'}
               </span>
-              <p className="text-[11px] text-slate-500">
-                {searchQuery ? 'Prueba buscando con otro término o número' : 'Los nuevos mensajes aparecerán aquí automáticamente'}
+              <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+                {searchQuery ? 'Prueba buscando con otro término o número de teléfono' : 'Los nuevos mensajes de WhatsApp aparecerán aquí en vivo'}
               </p>
             </div>
           ) : (
@@ -664,27 +770,27 @@ export default function ChatInbox() {
                 <div
                   key={conv.id}
                   onClick={() => setSelectedConvId(conv.id)}
-                  className={`p-3 cursor-pointer transition-all flex items-start gap-2.5 relative border-l-4 ${
+                  className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 ${
                     active 
-                      ? 'bg-blue-50/70 dark:bg-blue-950/30 border-l-blue-600' 
-                      : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30 border-l-transparent'
+                      ? 'bg-[#162547] border-l-blue-500 shadow-xs' 
+                      : 'bg-transparent hover:bg-[#111c33] border-l-transparent'
                   }`}
                 >
                   {/* Avatar con Iniciales y Estado */}
                   <div className="relative shrink-0 mt-0.5">
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shadow-xs ${
+                    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shadow-sm border ${
                       isDerivado 
-                        ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300' 
-                        : 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                        ? 'bg-rose-950 text-rose-300 border-rose-700/60' 
+                        : 'bg-blue-950 text-blue-300 border-blue-700/60'
                     }`}>
                       {initials}
                     </div>
                     {/* Dot de Atención */}
-                    <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${
+                    <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0d1527] ${
                       isArchivada
-                        ? 'bg-slate-400'
+                        ? 'bg-slate-500'
                         : isDerivado
-                        ? 'bg-rose-500 ring-2 ring-rose-300 dark:ring-rose-900 animate-pulse'
+                        ? 'bg-rose-500 ring-2 ring-rose-900 animate-pulse'
                         : 'bg-emerald-500'
                     }`} />
                   </div>
@@ -692,7 +798,7 @@ export default function ChatInbox() {
                   {/* Datos del Paciente y Preview de Mensaje */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
-                      <p className={`text-xs truncate ${active ? 'font-bold text-blue-900 dark:text-blue-200' : 'font-semibold text-slate-800 dark:text-slate-200'}`}>
+                      <p className={`text-xs truncate ${active ? 'font-bold text-blue-200' : 'font-semibold text-slate-100'}`}>
                         {paciente?.nombre || `Paciente (${paciente?.telefono ? paciente.telefono.slice(-4) : '...' })`}
                       </p>
                       <span className="text-[10px] text-slate-400 shrink-0 font-medium">
@@ -702,28 +808,28 @@ export default function ChatInbox() {
 
                     {/* Fila de Teléfono e Insignia */}
                     <div className="flex items-center justify-between gap-1 mt-0.5">
-                      <span className="text-[10.5px] text-[var(--secondary)] truncate">
+                      <span className="text-[10.5px] text-slate-400 truncate">
                         {paciente?.telefono ? formatPhoneDisplay(paciente.telefono) : 'Sin teléfono'}
                       </span>
 
                       {/* Badge de Triage */}
                       {isArchivada ? (
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/60">
                           Resuelto
                         </span>
                       ) : isDerivado ? (
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 flex items-center gap-0.5">
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-950/80 text-rose-300 border border-rose-800/60 flex items-center gap-0.5">
                           <User size={9} /> Humano
                         </span>
                       ) : (
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center gap-0.5">
+                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 flex items-center gap-0.5">
                           <Bot size={9} /> Gemini
                         </span>
                       )}
                     </div>
 
                     {/* Último Mensaje Snippet */}
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-1 leading-tight">
+                    <p className="text-[11px] text-slate-400 truncate mt-1 leading-tight">
                       {snippet}
                     </p>
                   </div>
@@ -736,32 +842,32 @@ export default function ChatInbox() {
 
       {/* 2. Área de Mensajes del Chat (Derecha) */}
       {selectedConv ? (
-        <div className="flex-1 flex flex-col bg-slate-50/50 dark:bg-slate-900/10">
+        <div className="flex-1 flex flex-col bg-[#090e1a]">
           
           {/* Header del Chat Activo */}
-          <div className="p-3.5 border-b border-[var(--border)] bg-white dark:bg-slate-900 flex items-center justify-between gap-3 shadow-xs">
+          <div className="p-3.5 border-b border-slate-800 bg-[#101b33] flex items-center justify-between gap-3 shadow-xs">
             
             {/* Info del Paciente y Enlace a Ficha Médica */}
             <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 font-bold flex items-center justify-center text-sm shrink-0">
+              <div className="w-10 h-10 rounded-full bg-blue-950 text-blue-300 border border-blue-700/60 font-bold flex items-center justify-center text-sm shrink-0 shadow-sm">
                 {getInitials(currentPaciente?.nombre)}
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-sm truncate text-slate-900 dark:text-slate-100">
+                  <h3 className="font-bold text-sm truncate text-slate-100">
                     {currentPaciente?.nombre || 'Paciente'}
                   </h3>
                   {currentPaciente?.id && (
                     <Link 
                       href={`/pacientes?pacienteId=${currentPaciente.id}`}
-                      className="text-[10px] font-semibold text-blue-600 hover:text-blue-700 flex items-center gap-0.5 hover:underline"
+                      className="text-[10px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-0.5 hover:underline"
                       title="Ver Ficha Médica Completa"
                     >
                       <span>Ficha</span> <ExternalLink size={10} />
                     </Link>
                   )}
                 </div>
-                <p className="text-[11px] text-[var(--secondary)] flex items-center gap-1.5">
+                <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
                   <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
                 </p>
               </div>
@@ -775,19 +881,19 @@ export default function ChatInbox() {
                 onClick={() => handleToggleArchivar(selectedConv.id, selectedConv.archivada)}
                 className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
                   selectedConv.archivada
-                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-[var(--border)] hover:bg-slate-200'
-                    : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800/60 hover:bg-emerald-100'
+                    ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                    : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70 hover:bg-emerald-900/60'
                 }`}
                 title={selectedConv.archivada ? 'Reabrir conversación' : 'Marcar conversación como resuelta / archivar'}
               >
                 {selectedConv.archivada ? (
                   <>
-                    <ArchiveRestore size={14} className="text-slate-500" />
+                    <ArchiveRestore size={14} className="text-slate-400" />
                     <span>Reabrir Chat</span>
                   </>
                 ) : (
                   <>
-                    <CheckCircle2 size={14} className="text-emerald-600" />
+                    <CheckCircle2 size={14} className="text-emerald-400" />
                     <span>Marcar Resuelto</span>
                   </>
                 )}
@@ -807,19 +913,19 @@ export default function ChatInbox() {
           </div>
 
           {/* Historial de Mensajes */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#090e1a]">
             {cargandoMensajes ? (
-              <div className="text-center text-xs text-[var(--secondary)] py-8 flex flex-col items-center gap-2">
-                <Loader2 size={18} className="animate-spin text-blue-600" />
+              <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
+                <Loader2 size={20} className="animate-spin text-blue-400" />
                 <span>Cargando historial de mensajes...</span>
               </div>
             ) : mensajes.length === 0 ? (
-              <div className="text-center text-xs text-[var(--secondary)] py-12 flex flex-col items-center justify-center gap-2">
-                <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-full">
-                  <MessageCircle size={22} className="text-slate-400" />
+              <div className="text-center text-xs text-slate-400 py-12 flex flex-col items-center justify-center gap-2.5">
+                <div className="p-3 bg-[#131d35] border border-slate-700/60 rounded-full">
+                  <MessageCircle size={24} className="text-slate-400" />
                 </div>
-                <span className="font-semibold">No hay mensajes en esta conversación</span>
-                <p className="text-[11px]">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
+                <span className="font-semibold text-slate-200 text-sm">No hay mensajes en esta conversación</span>
+                <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
               </div>
             ) : (
               mensajes.map((msg) => {
@@ -830,7 +936,7 @@ export default function ChatInbox() {
                 if (isSystem) {
                   return (
                     <div key={msg.id} className="flex justify-center my-2">
-                      <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-200 dark:border-amber-900/40">
+                      <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs">
                         {msg.contenido}
                       </div>
                     </div>
@@ -845,27 +951,27 @@ export default function ChatInbox() {
                     <div
                       className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
                         isOperator
-                          ? 'bg-blue-600 text-white rounded-tr-none'
+                          ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
                           : isBot
-                          ? 'bg-emerald-50 dark:bg-emerald-950/20 text-slate-800 dark:text-emerald-300 border border-emerald-100 dark:border-emerald-900/40 rounded-tl-none'
-                          : 'bg-white dark:bg-slate-800 border border-[var(--border)] rounded-tl-none text-slate-800 dark:text-slate-100'
+                          ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
+                          : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
                       }`}
                     >
                       {/* Badge del emisor */}
-                      <div className="flex items-center gap-1 text-[9px] font-bold opacity-80 mb-1.5 uppercase tracking-wider">
+                      <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider">
                         {isOperator ? (
                           <>
-                            <User size={10} /> Operador Humano (CRM)
+                            <User size={10} className="text-blue-200" /> Operador Humano (CRM)
                           </>
                         ) : isBot ? (
                           <>
-                            <Bot size={10} className="text-emerald-500" />
-                            <Sparkles size={8} className="text-emerald-400 animate-pulse" />
+                            <Bot size={10} className="text-emerald-400" />
+                            <Sparkles size={8} className="text-emerald-300 animate-pulse" />
                             Bot Gemini
                           </>
                         ) : (
                           <>
-                            <User size={10} /> Paciente
+                            <User size={10} className="text-slate-300" /> Paciente
                           </>
                         )}
                       </div>
@@ -879,7 +985,7 @@ export default function ChatInbox() {
                       <ChatMediaViewer metadata={msg.metadata_json} isOperator={isOperator} />
                       
                       {/* Pie con Hora y Tildes de lectura */}
-                      <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-75">
+                      <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
                         <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         {isOperator && (
                           <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
@@ -893,8 +999,8 @@ export default function ChatInbox() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Caja de Entrada de Mensajes del Operador */}
-          <div className="p-3 border-t border-[var(--border)] bg-white dark:bg-slate-900">
+          {/* Caja de Entrada de Mensajes del Operador (Tema Oscuro) */}
+          <div className="p-3 border-t border-slate-800 bg-[#101b33]">
             <form onSubmit={handleSend} className="flex items-center gap-2">
               <input 
                 type="file" 
@@ -907,10 +1013,10 @@ export default function ChatInbox() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={subiendoArchivo}
-                className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl text-slate-500 transition-colors shrink-0 disabled:opacity-50"
+                className="p-2.5 bg-[#14203d] hover:bg-[#1c2c54] border border-slate-700/60 rounded-xl text-slate-300 transition-colors shrink-0 disabled:opacity-50"
                 title="Adjuntar archivo o imagen (PDF, JPG, PNG, Audio)"
               >
-                {subiendoArchivo ? <Loader2 size={18} className="animate-spin text-blue-600" /> : <Paperclip size={18} />}
+                {subiendoArchivo ? <Loader2 size={18} className="animate-spin text-blue-400" /> : <Paperclip size={18} />}
               </button>
 
               <input 
@@ -918,12 +1024,12 @@ export default function ChatInbox() {
                 value={nuevoMensaje}
                 onChange={(e) => setNuevoMensaje(e.target.value)}
                 placeholder={selectedConv.bot_disabled ? "Escribe un mensaje como operador (saldrá por WhatsApp real)..." : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."}
-                className="flex-1 px-4 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="flex-1 px-4 py-2.5 text-xs border border-slate-700/80 rounded-xl bg-[#14203d] text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
               />
               <button 
                 type="submit"
                 disabled={!nuevoMensaje.trim()}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shrink-0"
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shrink-0"
               >
                 <Send size={13} />
                 <span>Enviar</span>
@@ -932,12 +1038,12 @@ export default function ChatInbox() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-[var(--secondary)] bg-slate-50/50 dark:bg-slate-900/10">
-          <div className="p-4 bg-slate-100 dark:bg-slate-800 rounded-full mb-3 shadow-xs">
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 bg-[#090e1a]">
+          <div className="p-4 bg-[#101b33] border border-slate-800 rounded-full mb-3 shadow-inner">
             <MessageCircle size={32} className="text-slate-400" />
           </div>
-          <h3 className="font-bold text-sm text-slate-800 dark:text-slate-200">Ningún chat seleccionado</h3>
-          <p className="text-xs text-slate-500 max-w-sm mt-1">
+          <h3 className="font-bold text-sm text-slate-200">Ningún chat seleccionado</h3>
+          <p className="text-xs text-slate-400 max-w-sm mt-1">
             Selecciona una conversación de la izquierda para ver el historial y responder.
           </p>
         </div>

@@ -47,27 +47,27 @@ export default function ToggleHuman({ conversacionId, botDisabled, onToggle }: T
   }
 
   return (
-    <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/40 p-2 rounded-2xl border border-[var(--border)] max-w-sm transition-all duration-200">
-      <div className={`p-2 rounded-xl flex items-center justify-center transition-all ${
+    <div className="flex items-center gap-2.5 bg-[#14203d] p-1.5 px-2.5 rounded-xl border border-slate-700/60 max-w-sm transition-all duration-200 shadow-inner">
+      <div className={`p-1.5 rounded-lg flex items-center justify-center transition-all ${
         botDisabled 
-          ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/30 dark:text-amber-400' 
-          : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400'
+          ? 'bg-rose-950/80 text-rose-300 border border-rose-800/60' 
+          : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60'
       }`}>
         {loading ? (
-          <Loader2 size={18} className="animate-spin" />
+          <Loader2 size={16} className="animate-spin" />
         ) : botDisabled ? (
-          <User size={18} />
+          <User size={16} />
         ) : (
-          <Bot size={18} />
+          <Bot size={16} />
         )}
       </div>
 
-      <div className="flex-1 min-w-[140px]">
-        <p className="text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider leading-none">
-          Modo de Atención
+      <div className="min-w-[120px]">
+        <p className="text-[9.5px] font-bold text-slate-400 uppercase tracking-wider leading-none">
+          Modo
         </p>
-        <p className="text-xs font-bold leading-normal">
-          {botDisabled ? 'Atención Humana' : 'Bot Activo (Gemini)'}
+        <p className="text-xs font-bold leading-tight text-slate-100">
+          {botDisabled ? 'Humano' : 'Bot Gemini'}
         </p>
       </div>
 
@@ -75,13 +75,13 @@ export default function ToggleHuman({ conversacionId, botDisabled, onToggle }: T
       <button
         onClick={handleToggle}
         disabled={loading}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-          botDisabled ? 'bg-amber-500' : 'bg-emerald-500'
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+          botDisabled ? 'bg-rose-600' : 'bg-emerald-600'
         }`}
       >
         <span
-          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-            botDisabled ? 'translate-x-6' : 'translate-x-1'
+          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+            botDisabled ? 'translate-x-4' : 'translate-x-1'
           }`}
         />
       </button>
