@@ -4,6 +4,7 @@ import React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
+import { usePermissions } from '@/hooks/usePermissions'
 import { 
   LayoutDashboard, 
   MessageSquare, 
@@ -14,26 +15,41 @@ import {
   Settings
 } from 'lucide-react'
 
-const navItems = [
-  { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
-  { label: 'Presupuestos', href: '/presupuestos', icon: FileText },
-  { label: 'Pacientes', href: '/pacientes', icon: Users },
-  { label: 'Ajustes', href: '/ajustes', icon: Settings },
+interface NavItem {
+  code: string
+  label: string
+  href: string
+  icon: any
+}
+
+const allNavItems: NavItem[] = [
+  { code: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
+  { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
+  { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
+  { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
+  { code: 'ajustes', label: 'Ajustes', href: '/ajustes', icon: Settings },
 ]
 
 export default function Navigation() {
   const pathname = usePathname()
   const { user, signOut } = useAuth()
+  const { profile, canAccess, isAdmin } = usePermissions()
 
   // Extraer iniciales y nombre a mostrar
   const userEmail = user?.email || 'Usuario'
-  const displayName = user?.user_metadata?.full_name || userEmail.split('@')[0]
+  const displayName = profile?.nombre_completo || user?.user_metadata?.full_name || userEmail.split('@')[0]
+  const roleName = profile?.roles?.nombre || (isAdmin ? 'Administrador' : 'Personal')
   const initials = displayName.substring(0, 2).toUpperCase()
 
   const handleLogout = async () => {
     await signOut()
   }
+
+  // Filtrar ítems de navegación según los permisos del usuario
+  const visibleNavItems = allNavItems.filter((item) => {
+    if (isAdmin) return true
+    return canAccess(item.code)
+  })
 
   return (
     <aside className="w-64 border-r border-[var(--border)] bg-[var(--card)] h-screen flex flex-col justify-between sticky top-0">
@@ -49,11 +65,14 @@ export default function Navigation() {
           </div>
         </div>
 
-        {/* Links de Navegación */}
+        {/* Links de Navegación Dinámicos por Permiso */}
         <nav className="p-4 flex flex-col gap-1.5 mt-4">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const Icon = item.icon
-            const isActive = pathname === item.href
+            const isActive = item.href === '/' 
+              ? pathname === '/' 
+              : pathname === item.href || pathname.startsWith(item.href + '/')
+
             return (
               <Link
                 key={item.href}
@@ -72,7 +91,7 @@ export default function Navigation() {
         </nav>
       </div>
 
-      {/* Footer del Sidebar con Usuario y Logout */}
+      {/* Footer del Sidebar con Usuario, Rol y Logout */}
       <div className="p-4 border-t border-[var(--border)]">
         <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -83,8 +102,8 @@ export default function Navigation() {
               <p className="text-xs font-bold leading-tight truncate text-[var(--foreground)]" title={displayName}>
                 {displayName}
               </p>
-              <p className="text-[10px] text-[var(--secondary)] truncate" title={userEmail}>
-                {userEmail}
+              <p className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold truncate" title={roleName}>
+                {roleName}
               </p>
             </div>
           </div>

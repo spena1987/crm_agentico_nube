@@ -265,6 +265,55 @@ on conflict (codigo) do update set
     moneda_default = excluded.moneda_default;
 
 -- ====================================================================
+-- 10. Sistema de Roles, Permisos Granulares y Perfiles RBAC
+-- ====================================================================
+create table if not exists public.modulos (
+    codigo varchar primary key,
+    nombre varchar not null,
+    descripcion text,
+    icono varchar default 'Layout',
+    orden integer default 0,
+    activo boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.roles (
+    id uuid default gen_random_uuid() primary key,
+    codigo varchar not null unique,
+    nombre varchar not null,
+    descripcion text,
+    es_sistema boolean default false not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.rol_permisos (
+    id uuid default gen_random_uuid() primary key,
+    rol_id uuid references public.roles(id) on delete cascade not null,
+    modulo_codigo varchar references public.modulos(codigo) on delete cascade not null,
+    accion varchar not null,
+    permitido boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    constraint uq_rol_modulo_accion unique (rol_id, modulo_codigo, accion)
+);
+
+create table if not exists public.usuarios_perfil (
+    id uuid primary key references auth.users(id) on delete cascade,
+    email varchar not null,
+    nombre_completo varchar not null,
+    rol_id uuid references public.roles(id) on delete set null,
+    activo boolean default true not null,
+    avatar_url varchar,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.modulos enable row level security;
+alter table public.roles enable row level security;
+alter table public.rol_permisos enable row level security;
+alter table public.usuarios_perfil enable row level security;
+
+-- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ====================================================================
 -- Habilitar replicación en tiempo real para mensajería en el CRM
@@ -274,5 +323,6 @@ begin;
 exception when others then
   -- Ignorar errores si la publicación o la relación ya existe
 end;
+
 
 
