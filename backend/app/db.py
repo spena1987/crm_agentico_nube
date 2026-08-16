@@ -433,6 +433,31 @@ def obtener_metricas_conversaciones():
         logger.error(f"Error al calcular métricas de conversaciones: {e}")
         return {"total_activas": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
 
+def guardar_transcripcion_mensaje(mensaje_id: str, transcripcion: str):
+    """
+    Actualiza el metadata_json del mensaje agregando el campo transcripcion.
+    """
+    if not supabase:
+        return None
+    try:
+        res = supabase.table("mensajes").select("id, metadata_json").eq("id", mensaje_id).execute()
+        if not res.data:
+            return None
+        msg = res.data[0]
+        meta = msg.get("metadata_json") or {}
+        if isinstance(meta, str):
+            import json
+            meta = json.loads(meta)
+        meta["transcripcion"] = transcripcion
+        
+        update_res = supabase.table("mensajes").update({"metadata_json": meta}).eq("id", mensaje_id).execute()
+        if update_res.data:
+            return update_res.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error guardando transcripción del mensaje {mensaje_id}: {e}")
+        return None
+
 def obtener_mensajes_conversacion(conversacion_id: str):
     """
     Retorna el historial completo de mensajes para una conversación ordenada cronológicamente.

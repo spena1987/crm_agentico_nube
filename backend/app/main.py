@@ -43,9 +43,10 @@ from app.db import (
     delete_practica,
     upsert_arancel_practica,
     buscar_practicas_presupuesto,
-    bulk_import_practicas_aranceles
+    bulk_import_practicas_aranceles,
+    guardar_transcripcion_mensaje
 )
-from app.agent import procesar_mensaje_agente
+from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.phone_normalizer import normalize_phone_number
 from app.whatsapp import (
     iniciar_daemon_whatsapp, 
@@ -353,6 +354,62 @@ def get_mensajes_conversacion_api(conversacion_id: str):
     Retorna todo el historial de mensajes de una conversación específica.
     """
     return obtener_mensajes_conversacion(conversacion_id)
+
+@app.post("/api/mensajes/{mensaje_id}/transcribir")
+def transcribir_mensaje_api(mensaje_id: str):
+    """
+    Transcribe un mensaje de audio bajo demanda utilizando Google Gemini Multimodal.
+    Retorna el texto transcripto y lo almacena en metadata_json.transcripcion del mensaje.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no configurada.")
+    
+    try:
+        res = supabase.table("mensajes").select("*").eq("id", mensaje_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Mensaje no encontrado.")
+        
+        msg = res.data[0]
+        meta = msg.get("metadata_json") or {}
+        if isinstance(meta, str):
+            import json
+            meta = json.loads(meta)
+
+        # Si ya está transcripto, retornar directamente
+        if meta.get("transcripcion") and str(meta.get("transcripcion")).strip():
+            return {
+                "success": True,
+                "transcripcion": meta.get("transcripcion"),
+                "mensaje_id": mensaje_id,
+                "cached": True
+            }
+
+        audio_url = meta.get("media_url") or meta.get("relative_url")
+        if not audio_url:
+            raise HTTPException(status_code=400, detail="El mensaje no contiene una URL de audio válida.")
+
+        # Si la URL es relativa y apunta a static
+        if not audio_url.startswith("http"):
+            audio_url = f"http://localhost:8000/{audio_url.lstrip('/')}"
+
+        logger.info(f"Iniciando transcripción de audio para mensaje {mensaje_id}...")
+        texto_transcrito = transcribir_audio_con_gemini(audio_url)
+        
+        # Persistir en la base de datos
+        guardar_transcripcion_mensaje(mensaje_id, texto_transcrito)
+
+        return {
+            "success": True,
+            "transcripcion": texto_transcrito,
+            "mensaje_id": mensaje_id,
+            "cached": False
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error procesando transcripción de audio: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al transcribir el audio con Gemini: {str(e)}")
 
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):

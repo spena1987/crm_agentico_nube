@@ -12,7 +12,10 @@ import {
   MapPin, 
   ExternalLink,
   Check,
-  CheckCheck
+  CheckCheck,
+  Sparkles,
+  Copy,
+  Loader2
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -26,6 +29,7 @@ interface MediaMetadata {
   caption?: string
   duration_seconds?: number
   is_voice_note?: boolean
+  transcripcion?: string
   latitud?: number
   longitud?: number
   nombre?: string
@@ -39,11 +43,15 @@ interface MediaMetadata {
 interface ChatMediaViewerProps {
   metadata?: MediaMetadata
   isOperator?: boolean
+  mensajeId?: string
+  onTranscribeSuccess?: (mensajeId: string, transcripcion: string) => void
 }
 
-export default function ChatMediaViewer({ metadata, isOperator }: ChatMediaViewerProps) {
+export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTranscribeSuccess }: ChatMediaViewerProps) {
   const [modalOpen, setModalOpen] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
+  const [transcribiendo, setTranscribiendo] = useState(false)
+  const [transcripcionLocal, setTranscripcionLocal] = useState<string | null>(null)
+  const [copiado, setCopiado] = useState(false)
 
   if (!metadata || !metadata.tipo || metadata.tipo === 'texto') {
     return null
@@ -58,11 +66,45 @@ export default function ChatMediaViewer({ metadata, isOperator }: ChatMediaViewe
   }
 
   const mediaUrl = getFullUrl(metadata.media_url, metadata.relative_url)
+  const textoTranscrito = metadata.transcripcion || transcripcionLocal
+
   const formatFileSize = (bytes?: number) => {
     if (!bytes) return ''
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  const handleTranscribir = async () => {
+    if (!mensajeId || transcribiendo) return
+    setTranscribiendo(true)
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/mensajes/${mensajeId}/transcribir`, {
+        method: 'POST'
+      })
+      if (!res.ok) {
+        throw new Error('Error en el servidor al transcribir audio')
+      }
+      const data = await res.json()
+      if (data.transcripcion) {
+        setTranscripcionLocal(data.transcripcion)
+        if (onTranscribeSuccess) {
+          onTranscribeSuccess(mensajeId, data.transcripcion)
+        }
+      }
+    } catch (err) {
+      console.error('Error transcribiendo audio:', err)
+      alert('No se pudo transcribir el audio en este momento.')
+    } finally {
+      setTranscribiendo(false)
+    }
+  }
+
+  const handleCopyTranscript = () => {
+    if (!textoTranscrito) return
+    navigator.clipboard.writeText(textoTranscrito)
+    setCopiado(true)
+    setTimeout(() => setCopiado(false), 2000)
   }
 
   return (
@@ -72,7 +114,7 @@ export default function ChatMediaViewer({ metadata, isOperator }: ChatMediaViewe
         <div>
           <div 
             onClick={() => setModalOpen(true)}
-            className="relative rounded-xl overflow-hidden cursor-pointer group border border-black/10 shadow-sm max-w-xs"
+            className="relative rounded-xl overflow-hidden cursor-pointer group border border-slate-700/60 shadow-sm max-w-xs"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img 
@@ -93,7 +135,7 @@ export default function ChatMediaViewer({ metadata, isOperator }: ChatMediaViewe
               onClick={() => setModalOpen(false)}
             >
               <div 
-                className="relative max-w-4xl max-h-[90vh] bg-slate-900 rounded-2xl overflow-hidden p-2 flex flex-col items-center"
+                className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden p-2 flex flex-col items-center shadow-2xl"
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="w-full flex items-center justify-between p-2 text-white border-b border-slate-800 mb-2">
@@ -131,28 +173,70 @@ export default function ChatMediaViewer({ metadata, isOperator }: ChatMediaViewe
         </div>
       )}
 
-      {/* 2. AUDIO / NOTA DE VOZ */}
+      {/* 2. AUDIO / NOTA DE VOZ CON TRANSCRIPCIÓN IA */}
       {metadata.tipo === 'audio' && mediaUrl && (
-        <div className={`p-2.5 rounded-xl border flex flex-col gap-1.5 min-w-[240px] ${
+        <div className={`p-3 rounded-2xl border flex flex-col gap-2 min-w-[260px] max-w-sm ${
           isOperator 
-            ? 'bg-blue-700/50 border-blue-500/40 text-white' 
-            : 'bg-slate-100 dark:bg-slate-800/80 border-[var(--border)] text-[var(--foreground)]'
+            ? 'bg-blue-700/40 border-blue-500/40 text-white' 
+            : 'bg-[#121c33] border-slate-700/80 text-slate-100'
         }`}>
           <div className="flex items-center justify-between gap-2 text-[11px] font-semibold opacity-90">
-            <div className="flex items-center gap-1.5">
-              <Volume2 size={14} />
+            <div className="flex items-center gap-1.5 text-blue-300">
+              <Volume2 size={15} />
               <span>{metadata.is_voice_note ? 'Nota de voz' : 'Audio'}</span>
             </div>
             {metadata.duration_seconds ? (
-              <span>{Math.floor(metadata.duration_seconds / 60)}:{String(metadata.duration_seconds % 60).padStart(2, '0')}</span>
+              <span className="text-slate-400">{Math.floor(metadata.duration_seconds / 60)}:{String(metadata.duration_seconds % 60).padStart(2, '0')}</span>
             ) : null}
           </div>
+          
           <audio 
             controls 
             src={mediaUrl} 
-            className="w-full h-8 rounded mt-1"
+            className="w-full h-8 rounded-lg mt-0.5"
             preload="metadata"
           />
+
+          {/* Bloque de Transcripción / Botón Transcribir */}
+          {textoTranscrito ? (
+            <div className="mt-1 p-2.5 rounded-xl bg-[#0b1326] border border-blue-500/30 text-slate-100 text-xs shadow-inner">
+              <div className="flex items-center justify-between gap-1 mb-1.5 text-[10px] font-bold text-blue-300">
+                <span className="flex items-center gap-1">
+                  <Sparkles size={11} className="text-amber-400" /> Transcripción IA (Gemini)
+                </span>
+                <button 
+                  onClick={handleCopyTranscript}
+                  className="text-slate-400 hover:text-slate-200 flex items-center gap-1 px-1 py-0.5 rounded hover:bg-slate-800 transition-colors"
+                  title="Copiar texto"
+                >
+                  {copiado ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+                  <span>{copiado ? 'Copiado' : 'Copiar'}</span>
+                </button>
+              </div>
+              <p className="text-slate-200 leading-relaxed font-sans select-text">
+                "{textoTranscrito}"
+              </p>
+            </div>
+          ) : (
+            <button
+              onClick={handleTranscribir}
+              disabled={transcribiendo || !mensajeId}
+              className="mt-1 w-full py-1.5 px-3 rounded-xl bg-[#182647] hover:bg-[#20335e] border border-blue-500/40 text-blue-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
+              title="Transcribir este audio automáticamente con Google Gemini"
+            >
+              {transcribiendo ? (
+                <>
+                  <Loader2 size={13} className="animate-spin text-blue-400" />
+                  <span>Transcribiendo con IA...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={13} className="text-amber-400" />
+                  <span>Transcribir Audio (IA)</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       )}
 

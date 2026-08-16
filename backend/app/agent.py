@@ -178,3 +178,54 @@ def procesar_mensaje_agente(conversacion_id: str, mensaje_texto_o_paciente_id: s
     except Exception as e:
         logger.error(f"Error procesando mensaje en agente: {e}", exc_info=True)
         return "Disculpas, he tenido un inconveniente procesando tu mensaje. Por favor intenta de nuevo."
+
+def transcribir_audio_con_gemini(audio_url: str) -> str:
+    """
+    Descarga el audio desde la URL de Supabase Storage y lo transcribe usando Gemini 2.0 Flash.
+    """
+    if not client:
+        raise ValueError("Cliente Gemini no configurado. Verifique GEMINI_API_KEY.")
+    
+    import httpx
+    try:
+        logger.info(f"Descargando audio para transcripción desde: {audio_url}")
+        res = httpx.get(audio_url, timeout=35.0, follow_redirects=True)
+        res.raise_for_status()
+        audio_bytes = res.content
+        
+        # Determinar MIME type
+        mime_type = res.headers.get("content-type", "audio/ogg")
+        if "ogg" in audio_url.lower() or "opus" in mime_type.lower():
+            mime_type = "audio/ogg"
+        elif "mp3" in audio_url.lower():
+            mime_type = "audio/mp3"
+        elif "wav" in audio_url.lower():
+            mime_type = "audio/wav"
+        elif "m4a" in audio_url.lower() or "aac" in audio_url.lower():
+            mime_type = "audio/mp4"
+
+        prompt = (
+            "Transcribe este mensaje de voz de un paciente exactamente palabra por palabra en español. "
+            "No agregues comentarios, no inventes palabras, no interpretes síntomas, "
+            "únicamente devuelve el texto exacto que dijo la persona."
+        )
+
+        response_gemini = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                types.Part.from_bytes(
+                    data=audio_bytes,
+                    mime_type=mime_type
+                ),
+                prompt
+            ]
+        )
+
+        texto_transcrito = (response_gemini.text or "").strip()
+        logger.info(f"Transcripción generada con éxito ({len(texto_transcrito)} caracteres): {texto_transcrito[:60]}...")
+        return texto_transcrito
+
+    except Exception as e:
+        logger.error(f"Error durante la transcripción de audio con Gemini: {e}", exc_info=True)
+        raise e
+

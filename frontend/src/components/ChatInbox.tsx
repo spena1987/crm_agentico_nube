@@ -981,8 +981,21 @@ export default function ChatInbox() {
                         <p className="whitespace-pre-line leading-relaxed">{msg.contenido}</p>
                       )}
                       
-                      {/* Visualizador Multimedia (Fotos con Lightbox, Audios, PDFs, Documentos) */}
-                      <ChatMediaViewer metadata={msg.metadata_json} isOperator={isOperator} />
+                      {/* Visualizador Multimedia (Fotos con Lightbox, Audios con Transcripción IA, PDFs) */}
+                      <ChatMediaViewer 
+                        metadata={msg.metadata_json} 
+                        isOperator={isOperator} 
+                        mensajeId={msg.id}
+                        onTranscribeSuccess={(mId, transcript) => {
+                          setMensajes((prev) =>
+                            prev.map((m) =>
+                              m.id === mId
+                                ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
+                                : m
+                            )
+                          )
+                        }}
+                      />
                       
                       {/* Pie con Hora y Tildes de lectura */}
                       <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
