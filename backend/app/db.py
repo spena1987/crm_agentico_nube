@@ -1521,14 +1521,33 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
                     
             etapas_map[est].append(c)
             
+        casos_operados_count = len(etapas_map.get("operado", []))
+        casos_cancelados_count = len(etapas_map.get("cancelado", []))
+        casos_cerrados_totales = casos_operados_count + casos_cancelados_count
+        tasa_conversion = round((casos_operados_count / casos_cerrados_totales * 100), 1) if casos_cerrados_totales > 0 else 0.0
+
+        total_operado_ars = 0.0
+        total_operado_usd = 0.0
+        for c in etapas_map.get("operado", []):
+            m = float(c.get("monto_extra") or 0.0)
+            if (c.get("moneda_extra") or "ARS").upper() == "USD":
+                total_operado_usd += m
+            else:
+                total_operado_ars += m
+
         return {
             "etapas": etapas_map,
             "metricas": {
                 "total_casos": len(casos),
                 "casos_activos": casos_activos_count,
                 "casos_en_alerta": casos_en_alerta_count,
+                "casos_operados": casos_operados_count,
+                "casos_cancelados": casos_cancelados_count,
+                "tasa_conversion": tasa_conversion,
                 "total_monto_ars": total_monto_ars,
                 "total_monto_usd": total_monto_usd,
+                "total_operado_ars": total_operado_ars,
+                "total_operado_usd": total_operado_usd,
                 "sla_dias_alerta": sla_alerta,
                 "sla_dias_critico": sla_critico
             }
