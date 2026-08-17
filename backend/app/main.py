@@ -173,8 +173,59 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Servir archivos estáticos (PDFs de presupuestos)
-app.mount("/static", StaticFiles(directory=PDF_DIR), name="static")
+# ====================================================================
+# SERVIDOR INTELIGENTE DE ESTÁTICOS Y PDFs ON-DEMAND (CON AUTO-REGENERACIÓN)
+# ====================================================================
+
+@app.get("/static/{filename}")
+def servir_archivo_estatico(filename: str):
+    """
+    Sirve archivos estáticos y PDFs de presupuestos.
+    Si el archivo no existe en el disco local (ej: reinicio o nuevo despliegue de contenedor en Railway),
+    lo reconstruye y regenera dinámicamente desde la base de datos de Supabase on-the-fly.
+    """
+    # 1. Protección contra Path Traversal
+    safe_filename = os.path.basename(filename)
+    if ".." in filename or "/" in filename or "\\" in filename or safe_filename != filename:
+        raise HTTPException(status_code=400, detail="Nombre de archivo no válido.")
+        
+    file_path = os.path.join(PDF_DIR, safe_filename)
+    
+    # 2. Si no existe en disco, verificar si es un presupuesto y regenerar
+    if not os.path.exists(file_path):
+        if safe_filename.startswith("presupuesto_") and safe_filename.endswith(".pdf"):
+            presupuesto_id = safe_filename.replace("presupuesto_", "").replace(".pdf", "")
+            try:
+                if supabase:
+                    pres_resp = supabase.table("presupuestos") \
+                        .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*)), asesorias_quirurgicas!presupuestos_asesoria_id_fkey(*)") \
+                        .eq("id", presupuesto_id) \
+                        .execute()
+                        
+                    if pres_resp.data:
+                        p_data = pres_resp.data[0]
+                        paciente = p_data.get("pacientes") or {}
+                        items_db = p_data.get("items_presupuesto") or []
+                        
+                        from app.services.pdf_service import generar_pdf_presupuesto
+                        generar_pdf_presupuesto(p_data, paciente, items_db)
+            except Exception as e:
+                logger.error(f"Error regenerando PDF de presupuesto on-demand ({safe_filename}): {e}")
+
+    # 3. Si aún no existe, devolver 404
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="El archivo solicitado no fue encontrado en el servidor.")
+        
+    media_type = "application/pdf" if safe_filename.endswith(".pdf") else "application/octet-stream"
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=safe_filename,
+        headers={
+            "Content-Disposition": f"inline; filename={safe_filename}",
+            "X-Content-Type-Options": "nosniff"
+        }
+    )
 
 # ====================================================================
 # ENDPOINTS GENERALES Y HEALTH
@@ -2133,41 +2184,7 @@ def obtener_pdf_presupuesto(presupuesto_id: str):
     """
     Sirve el archivo PDF membretado oficial de un presupuesto directamente como stream / descarga.
     """
-    filename = f"presupuesto_{presupuesto_id}.pdf"
-    file_path = os.path.join(PDF_DIR, filename)
-    if not os.path.exists(file_path):
-        # Si no existe en disco local, intentar regenerarlo al vuelo
-        try:
-            if supabase:
-                pres_resp = supabase.table("presupuestos").select("*, pacientes(*), items_presupuesto(*)").eq("id", presupuesto_id).execute()
-                if pres_resp.data:
-                    p_data = pres_resp.data[0]
-                    paciente = p_data.get("pacientes") or {}
-                    items_db = p_data.get("items_presupuesto") or []
-                    items_pdf = [
-                        {
-                            "nombre": it.get("nombre") or "Prestación Médica",
-                            "cantidad": it.get("cantidad", 1),
-                            "precio_unitario": float(it.get("precio_unitario", 0.0)),
-                            "subtotal": float(it.get("subtotal", 0.0)),
-                            "moneda": "ARS"
-                        }
-                        for it in items_db
-                    ]
-                    from app.services.pdf_service import generar_pdf_presupuesto
-                    generar_pdf_presupuesto(p_data, paciente, items_pdf)
-        except Exception as e:
-            logger.error(f"Error intentando regenerar PDF de presupuesto {presupuesto_id}: {e}")
-            
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="El archivo PDF del presupuesto no fue encontrado.")
-        
-    return FileResponse(
-        path=file_path,
-        media_type="application/pdf",
-        filename=filename,
-        headers={"Content-Disposition": f"inline; filename={filename}"}
-    )
+    return servir_archivo_estatico(f"presupuesto_{presupuesto_id}.pdf")
 
 # ====================================================================
 # ENDPOINTS: BITÁCORA Y EVOLUCIONES DE ASESORAMIENTO QUIRÚRGICO
