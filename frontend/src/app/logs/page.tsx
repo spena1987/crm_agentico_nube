@@ -328,18 +328,18 @@ ${selectedLog.trace ? `#### 🛑 Stack Trace de Error:\n\`\`\`text\n${selectedLo
   }
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-6 space-y-6">
+    <div className="flex flex-col flex-1 h-full min-h-0 w-full bg-[var(--background)] text-[var(--foreground)] p-3 sm:p-4 md:p-5 gap-3.5 overflow-hidden min-w-0">
       
       {/* Cabecera Principal */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[var(--border)] pb-3 shrink-0">
         <div>
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 border border-blue-500/20">
-              <ScrollText size={24} />
+            <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 border border-blue-500/20 shrink-0">
+              <ScrollText size={20} />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Logs & Auditoría del Sistema</h1>
-              <p className="text-sm text-[var(--muted)]">
+              <h1 className="text-xl font-bold tracking-tight">Logs & Auditoría del Sistema</h1>
+              <p className="text-xs text-[var(--muted)]">
                 Monitoreo en tiempo real de eventos, llamadas a Geclisa, inferencias de Gemini y diagnósticos.
               </p>
             </div>
@@ -379,92 +379,92 @@ ${selectedLog.trace ? `#### 🛑 Stack Trace de Error:\n\`\`\`text\n${selectedLo
       </div>
 
       {/* Tarjetas de Métricas (24 Horas) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
         
         {/* Total Eventos */}
-        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex items-center justify-between shadow-xs">
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-[var(--muted)]">Eventos (Últimas 24h)</span>
-            <div className="text-2xl font-bold tracking-tight">{stats.total_24h}</div>
+        <div className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] flex items-center justify-between shadow-xs">
+          <div className="space-y-0.5">
+            <span className="text-[11px] font-medium text-[var(--muted)]">Eventos (Últimas 24h)</span>
+            <div className="text-xl font-bold tracking-tight">{stats.total_24h}</div>
           </div>
-          <div className="p-3 rounded-lg bg-blue-500/10 text-blue-600">
-            <Activity size={20} />
+          <div className="p-2.5 rounded-lg bg-blue-500/10 text-blue-600">
+            <Activity size={18} />
           </div>
         </div>
 
         {/* Errores */}
-        <div className="p-4 rounded-xl border border-red-500/20 bg-[var(--card)] flex items-center justify-between shadow-xs">
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-red-500">Errores Críticos / Fallas</span>
-            <div className="text-2xl font-bold tracking-tight text-red-600 dark:text-red-400">
+        <div className="p-3.5 rounded-xl border border-red-500/20 bg-[var(--card)] flex items-center justify-between shadow-xs">
+          <div className="space-y-0.5">
+            <span className="text-[11px] font-medium text-red-500">Errores Críticos / Fallas</span>
+            <div className="text-xl font-bold tracking-tight text-red-600 dark:text-red-400">
               {stats.errores_24h}
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-red-500/10 text-red-600">
-            <AlertCircle size={20} />
+          <div className="p-2.5 rounded-lg bg-red-500/10 text-red-600">
+            <AlertCircle size={18} />
           </div>
         </div>
 
         {/* Advertencias */}
-        <div className="p-4 rounded-xl border border-amber-500/20 bg-[var(--card)] flex items-center justify-between shadow-xs">
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-amber-500">Advertencias (Warnings)</span>
-            <div className="text-2xl font-bold tracking-tight text-amber-600 dark:text-amber-400">
+        <div className="p-3.5 rounded-xl border border-amber-500/20 bg-[var(--card)] flex items-center justify-between shadow-xs">
+          <div className="space-y-0.5">
+            <span className="text-[11px] font-medium text-amber-500">Advertencias (Warnings)</span>
+            <div className="text-xl font-bold tracking-tight text-amber-600 dark:text-amber-400">
               {stats.warnings_24h}
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-amber-500/10 text-amber-600">
-            <AlertTriangle size={20} />
+          <div className="p-2.5 rounded-lg bg-amber-500/10 text-amber-600">
+            <AlertTriangle size={18} />
           </div>
         </div>
 
         {/* Módulo más activo */}
-        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex items-center justify-between shadow-xs">
-          <div className="space-y-1">
-            <span className="text-xs font-medium text-[var(--muted)]">Módulo con Mayor Tráfico</span>
-            <div className="text-sm font-semibold tracking-tight truncate max-w-[180px]">
+        <div className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--card)] flex items-center justify-between shadow-xs">
+          <div className="space-y-0.5">
+            <span className="text-[11px] font-medium text-[var(--muted)]">Módulo Mayor Tráfico</span>
+            <div className="text-xs font-semibold tracking-tight truncate max-w-[160px]">
               {moduloMasActivo}
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-purple-500/10 text-purple-600">
-            <Cpu size={20} />
+          <div className="p-2.5 rounded-lg bg-purple-500/10 text-purple-600">
+            <Cpu size={18} />
           </div>
         </div>
       </div>
 
       {/* Barra de Filtros y Búsqueda */}
-      <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="p-3 rounded-xl border border-[var(--border)] bg-[var(--card)] flex flex-col md:flex-row items-center justify-between gap-3 shrink-0">
         
         {/* Buscador */}
-        <div className="relative w-full md:w-96">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+        <div className="relative w-full md:w-80">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Buscar por acción, mensaje o detalle..."
-            className="w-full pl-9 pr-4 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all"
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition-all font-mono"
           />
           {search && (
             <button
               onClick={() => setSearch('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)]"
             >
-              <X size={14} />
+              <X size={13} />
             </button>
           )}
         </div>
 
         {/* Filtros Dropdowns */}
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+        <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
           
           {/* Selector de Severidad */}
-          <div className="flex items-center gap-2">
-            <Filter size={15} className="text-[var(--muted)]" />
+          <div className="flex items-center gap-1.5">
+            <Filter size={14} className="text-[var(--muted)]" />
             <select
               value={nivelFiltro}
               onChange={(e) => setNivelFiltro(e.target.value)}
-              className="px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+              className="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium"
             >
               <option value="ALL">Todos los Niveles</option>
               <option value="ERROR">Solo Errores (Error / Crítico)</option>
@@ -478,7 +478,7 @@ ${selectedLog.trace ? `#### 🛑 Stack Trace de Error:\n\`\`\`text\n${selectedLo
           <select
             value={moduloFiltro}
             onChange={(e) => setModuloFiltro(e.target.value)}
-            className="px-3 py-2 text-sm rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+            className="px-2.5 py-1.5 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium"
           >
             <option value="ALL">Todos los Módulos</option>
             <option value="GECLISA">Geclisa API</option>
@@ -492,28 +492,28 @@ ${selectedLog.trace ? `#### 🛑 Stack Trace de Error:\n\`\`\`text\n${selectedLo
           </select>
 
           {/* Contador de resultados */}
-          <span className="text-xs text-[var(--muted)] font-medium ml-auto md:ml-2">
+          <span className="text-xs text-[var(--muted)] font-medium ml-auto md:ml-1 font-mono">
             {filteredLogs.length} eventos
           </span>
         </div>
       </div>
 
-      {/* Tabla / Feed de Logs */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden shadow-xs">
+      {/* Tabla / Feed de Logs Contenido */}
+      <div className="flex-1 rounded-xl border border-[var(--border)] bg-[var(--card)] overflow-hidden shadow-xs flex flex-col min-h-0 min-w-0">
         {loading ? (
-          <div className="p-12 text-center flex flex-col items-center justify-center gap-3">
+          <div className="p-12 text-center flex flex-col items-center justify-center gap-3 my-auto">
             <RefreshCw size={24} className="animate-spin text-blue-500" />
-            <p className="text-sm text-[var(--muted)]">Cargando registros de auditoría...</p>
+            <p className="text-xs text-[var(--muted)]">Cargando registros de auditoría...</p>
           </div>
         ) : filteredLogs.length === 0 ? (
-          <div className="p-12 text-center flex flex-col items-center justify-center gap-2">
-            <CheckCircle2 size={32} className="text-emerald-500" />
-            <p className="text-base font-semibold">No se encontraron eventos con los filtros seleccionados</p>
+          <div className="p-12 text-center flex flex-col items-center justify-center gap-2 my-auto">
+            <CheckCircle2 size={30} className="text-emerald-500" />
+            <p className="text-sm font-semibold">No se encontraron eventos con los filtros seleccionados</p>
             <p className="text-xs text-[var(--muted)]">El sistema se encuentra operando sin incidencias en este criterio.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm border-collapse">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 panel-scroll">
+            <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-[var(--border)] bg-[var(--background)] text-xs font-semibold text-[var(--muted)]">
                   <th className="py-3 px-4 w-32">Nivel</th>

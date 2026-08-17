@@ -133,10 +133,10 @@ export default function PresupuestosPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto w-full">
+    <div className="flex-1 h-full overflow-y-auto overflow-x-hidden p-3 sm:p-5 md:p-6 space-y-5 max-w-7xl mx-auto w-full min-w-0 panel-scroll">
       
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
         <div>
           <h1 className="text-xl font-extrabold tracking-tight">Presupuestos Médicos</h1>
           <p className="text-xs text-[var(--secondary)]">

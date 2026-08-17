@@ -85,9 +85,9 @@ export default function Dashboard() {
   ]
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto w-full">
+    <div className="flex-1 h-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 md:p-8 space-y-6 max-w-7xl mx-auto w-full min-w-0 panel-scroll">
       {/* Saludo y Fecha */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Panel de Control</h1>
           <p className="text-xs text-[var(--secondary)] font-medium">

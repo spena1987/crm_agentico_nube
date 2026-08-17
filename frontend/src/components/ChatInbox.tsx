@@ -555,10 +555,10 @@ export default function ChatInbox() {
   const currentPaciente = getPatient(selectedConv)
 
   return (
-    <div className="flex h-[calc(100vh-2rem)] border border-slate-800 rounded-2xl overflow-hidden bg-[#0a101d] shadow-2xl max-w-7xl mx-auto w-full text-slate-100">
+    <div className="flex flex-1 h-full min-h-0 border border-slate-800 rounded-2xl overflow-hidden bg-[#0a101d] shadow-2xl w-full text-slate-100 min-w-0">
       
       {/* 1. Panel de Conversaciones (Izquierda) */}
-      <div className="w-88 border-r border-slate-800 flex flex-col bg-[#0d1527] min-w-[320px] max-w-[360px]">
+      <div className="w-80 md:w-88 border-r border-slate-800 flex flex-col bg-[#0d1527] min-w-[280px] max-w-[360px] min-h-0 shrink-0">
         
         {/* Cabecera de Chats y Estado de WhatsApp */}
         <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-[#101b33]">

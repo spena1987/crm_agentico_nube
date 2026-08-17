@@ -337,7 +337,7 @@ export default function PacientesPage() {
   })
 
   return (
-    <div className="flex flex-col h-[calc(100vh-2rem)] max-w-7xl mx-auto w-full gap-3">
+    <div className="flex flex-col flex-1 h-full min-h-0 w-full gap-3 p-3 sm:p-4 md:p-5 overflow-hidden min-w-0">
       
       {/* Barra Superior de Acciones Globales */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-[var(--border)] shrink-0">
