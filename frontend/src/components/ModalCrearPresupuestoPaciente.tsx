@@ -291,18 +291,72 @@ export default function ModalCrearPresupuestoPaciente({
       setEnviandoWhatsApp(true)
       setError(null)
 
+      // 1. Obtener o crear conversación en Supabase
+      let conversacionId: string | null = null
+      try {
+        if (pacienteId) {
+          const { data: convData } = await supabase
+            .from('conversaciones')
+            .select('id')
+            .eq('paciente_id', pacienteId)
+            .maybeSingle()
+
+          if (convData?.id) {
+            conversacionId = convData.id
+          } else {
+            const { data: newConv } = await supabase
+              .from('conversaciones')
+              .insert({ paciente_id: pacienteId, bot_disabled: false })
+              .select('id')
+              .single()
+            if (newConv?.id) conversacionId = newConv.id
+          }
+        }
+      } catch (convErr) {
+        console.warn('Error resolviendo conversación en Supabase:', convErr)
+      }
+
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          telefono: telefonoWhatsApp,
-          mensaje: mensajeWhatsApp
+          telefono: telefonoWhatsApp.trim(),
+          mensaje: mensajeWhatsApp.trim(),
+          phone: telefonoWhatsApp.trim(),
+          message: mensajeWhatsApp.trim(),
+          paciente_id: pacienteId,
+          conversacion_id: conversacionId
         })
       })
 
       const data = await res.json()
-      if (!res.ok || data.error) {
-        throw new Error(data.detail || data.error || 'Error al enviar WhatsApp.')
+      if (!res.ok || data.error || data.success === false) {
+        throw new Error(data.detail || data.error || data.mensaje || 'Error al enviar WhatsApp.')
+      }
+
+      // 2. Asegurar persistencia en el muro del chat
+      if (conversacionId) {
+        try {
+          await supabase.from('mensajes').insert({
+            conversacion_id: conversacionId,
+            emisor: 'operador',
+            contenido: mensajeWhatsApp.trim(),
+            metadata_json: {
+              tipo: 'presupuesto_quirurgico',
+              whatsapp_message_id: data.message_id || null
+            }
+          })
+
+          await supabase
+            .from('conversaciones')
+            .update({
+              ultimo_mensaje: mensajeWhatsApp.trim(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', conversacionId)
+        } catch (chatDbErr) {
+          console.warn('Error registrando mensaje en tabla mensajes:', chatDbErr)
+        }
       }
 
       setWhatsappEnviado(true)
