@@ -16,10 +16,12 @@ import {
   AlertCircle,
   CheckCircle2,
   Sparkles,
-  ClipboardList
+  ClipboardList,
+  ShieldCheck
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
 
 export interface AsesoriaEvolucion {
   id: string
@@ -94,28 +96,28 @@ export default function TimelineEvolucionesAsesoria({
   pacienteId,
   pacienteNombre
 }: TimelineEvolucionesAsesoriaProps) {
+  const { user } = useAuth()
   const [evoluciones, setEvoluciones] = useState<AsesoriaEvolucion[]>([])
   const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
-  // Formulario de nueva evolución
+  // Formulario de nueva evolución (Canal y Contenido únicamente; Asesora y Fecha son 100% automáticas)
   const [tipoContacto, setTipoContacto] = useState<AsesoriaEvolucion['tipo_contacto']>('llamada')
-  const [usuarioNombre, setUsuarioNombre] = useState('Asesora Quirúrgica')
   const [contenido, setContenido] = useState('')
-  const [fechaContacto, setFechaContacto] = useState('')
 
-  // Formato inicial de fecha/hora actual local
-  const getFechaHoraActual = () => {
-    const now = new Date()
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
-    return now.toISOString().slice(0, 16)
+  // Nombre de la asesora obtenido automáticamente de la sesión activa
+  const obtenerNombreAsesora = () => {
+    if (!user) return 'Asesora Quirúrgica'
+    return (
+      user.user_metadata?.full_name ||
+      user.user_metadata?.nombre ||
+      (user.email ? user.email.split('@')[0] : 'Asesora Quirúrgica')
+    )
   }
 
-  useEffect(() => {
-    setFechaContacto(getFechaHoraActual())
-  }, [asesoriaId])
+  const nombreAsesoraActual = obtenerNombreAsesora()
 
   // Cargar evoluciones desde Backend o Supabase
   const fetchEvoluciones = async () => {
@@ -175,7 +177,7 @@ export default function TimelineEvolucionesAsesoria({
     }
   }, [asesoriaId])
 
-  // Guardar nueva evolución
+  // Guardar nueva evolución (Asesora y Fecha automáticas)
   const handleGuardarEvolucion = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!contenido.trim()) {
@@ -191,13 +193,15 @@ export default function TimelineEvolucionesAsesoria({
       setGuardando(true)
       setError(null)
 
+      const fechaActualIso = new Date().toISOString()
       const payload = {
         asesoria_id: asesoriaId,
         paciente_id: pacienteId,
-        usuario_nombre: usuarioNombre.trim() || 'Asesora Quirúrgica',
+        usuario_id: user?.id || null,
+        usuario_nombre: nombreAsesoraActual,
         tipo_contacto: tipoContacto,
         contenido: contenido.trim(),
-        fecha_contacto: fechaContacto ? new Date(fechaContacto).toISOString() : new Date().toISOString()
+        fecha_contacto: fechaActualIso
       }
 
       const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${asesoriaId}/evoluciones`, {
@@ -214,28 +218,28 @@ export default function TimelineEvolucionesAsesoria({
       // Actualización inmediata en UI
       setEvoluciones((prev) => [data.evolucion, ...prev])
       setContenido('')
-      setFechaContacto(getFechaHoraActual())
       setMensajeExito('✔ Evolución registrada en la bitácora.')
       setTimeout(() => setMensajeExito(null), 3000)
     } catch (err: any) {
       console.error('Error al guardar evolución:', err)
-      // Fallback Supabase
+      // Fallback Supabase directo
       try {
+        const fechaActualIso = new Date().toISOString()
         const { data: sbIns, error: sbErr } = await supabase
           .from('asesoria_evoluciones')
           .insert({
             asesoria_id: asesoriaId,
             paciente_id: pacienteId,
-            usuario_nombre: usuarioNombre.trim() || 'Asesora Quirúrgica',
+            usuario_id: user?.id || null,
+            usuario_nombre: nombreAsesoraActual,
             tipo_contacto: tipoContacto,
             contenido: contenido.trim(),
-            fecha_contacto: fechaContacto ? new Date(fechaContacto).toISOString() : new Date().toISOString()
+            fecha_contacto: fechaActualIso
           })
           .select()
         if (!sbErr && sbIns && sbIns.length > 0) {
           setEvoluciones((prev) => [sbIns[0] as unknown as AsesoriaEvolucion, ...prev])
           setContenido('')
-          setFechaContacto(getFechaHoraActual())
           setMensajeExito('✔ Evolución registrada en la bitácora.')
           setTimeout(() => setMensajeExito(null), 3000)
         } else {
@@ -290,7 +294,7 @@ export default function TimelineEvolucionesAsesoria({
           </h4>
         </div>
         <span className="text-[10px] text-gray-400">
-          Registros cronológicos inmutables
+          Registros cronológicos automáticos
         </span>
       </div>
 
@@ -308,7 +312,7 @@ export default function TimelineEvolucionesAsesoria({
         </div>
       )}
 
-      {/* Formulario de Entrada Rápida */}
+      {/* Formulario de Entrada Rápida (Sin fricción: solo Canal y Texto) */}
       <form
         onSubmit={handleGuardarEvolucion}
         className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3 shadow-inner"
@@ -341,49 +345,31 @@ export default function TimelineEvolucionesAsesoria({
           </div>
         </div>
 
-        {/* Inputs de Asesora y Fecha de Contacto */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
-              <User size={12} className="text-gray-400" />
-              Asesora / Responsable
-            </label>
-            <input
-              type="text"
-              value={usuarioNombre}
-              onChange={(e) => setUsuarioNombre(e.target.value)}
-              placeholder="Nombre de la asesora..."
-              className="px-2.5 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-lg text-white focus:outline-none"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
-              <Calendar size={12} className="text-gray-400" />
-              Fecha y Hora del Contacto
-            </label>
-            <input
-              type="datetime-local"
-              value={fechaContacto}
-              onChange={(e) => setFechaContacto(e.target.value)}
-              className="px-2.5 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-lg text-white font-mono focus:outline-none"
-            />
-          </div>
-        </div>
-
         {/* Textarea de Contenido */}
         <div className="space-y-1">
           <textarea
             value={contenido}
             onChange={(e) => setContenido(e.target.value)}
             rows={3}
-            placeholder="Asentar aquí: lo que se le ofreció, dudas planteadas por el paciente, requisitos prequirúrgicos acordados, autorizaciones pendientes o motivos de seguimiento..."
+            placeholder="Asentar aquí: lo conversado con el paciente, presupuesto explicado, dudas resueltas, requisitos prequirúrgicos acordados, autorizaciones pendientes o motivos de seguimiento..."
             className="w-full p-3 text-xs border border-[var(--border)] rounded-xl bg-neutral-950 focus:outline-none focus:ring-1 focus:ring-blue-500 text-white placeholder-gray-500 leading-relaxed resize-none"
           />
         </div>
 
-        {/* Botón de Registro */}
-        <div className="flex items-center justify-end">
+        {/* Pie del Formulario: Metadatos Automáticos y Botón de Registro */}
+        <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+            <span className="flex items-center gap-1 font-medium text-gray-300">
+              <User size={12} className="text-blue-400" />
+              {nombreAsesoraActual}
+            </span>
+            <span>•</span>
+            <span className="flex items-center gap-1 font-mono text-[10px] text-gray-500">
+              <Clock size={11} />
+              Registro automático al guardar
+            </span>
+          </div>
+
           <button
             type="submit"
             disabled={guardando || !contenido.trim() || !asesoriaId}
@@ -415,7 +401,7 @@ export default function TimelineEvolucionesAsesoria({
           <div className="p-6 text-center border border-dashed border-[var(--border)] rounded-xl text-xs text-gray-500 space-y-1">
             <p className="font-semibold text-gray-400">Sin evoluciones registradas aún</p>
             <p className="text-[11px]">
-              Utiliza el formulario superior para asentar la primera llamada o entrevista de asesoramiento.
+              Selecciona el canal y redacta el primer contacto para iniciar la bitácora.
             </p>
           </div>
         ) : (
