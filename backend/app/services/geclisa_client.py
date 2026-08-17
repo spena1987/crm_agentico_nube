@@ -553,16 +553,26 @@ class GeclisaClient:
             
             turnos_normalizados = []
             for t in raw_turnos:
-                # Mapear campos de Geclisa (profesional, fechaHora, servicio/especialidad, estado, etc.)
+                # Mapear campos exactos devueltos por Geclisa
+                es_cancelado = bool(t.get("cancelado"))
+                es_confirmado = bool(t.get("confirmado"))
+                estado_calculado = "Cancelado" if es_cancelado else ("Confirmado" if es_confirmado else (t.get("estadoNombre") or t.get("estado") or "Pendiente"))
+
+                especialidad_str = t.get("nombrePractica") or t.get("practica") or t.get("servicioNombre") or t.get("servNombre") or "Consulta Médica"
+                profesional_str = t.get("nombrePrestador") or t.get("profNombre") or t.get("profesional") or t.get("medico")
+                consultorio_str = t.get("nombreConsultorio") or t.get("consultorio") or t.get("consNombre") or "CREO Mendoza"
+
                 turnos_normalizados.append({
-                    "id": t.get("turId") or t.get("id") or t.get("turnoId"),
-                    "fecha_hora": t.get("turFechaHora") or t.get("fechaHora") or t.get("fecha") or t.get("turFecha"),
-                    "profesional_nombre": t.get("profNombre") or t.get("medico") or t.get("profesional") or t.get("profesionalNombre"),
-                    "especialidad": t.get("servNombre") or t.get("especialidad") or t.get("servicio") or t.get("servicioNombre"),
-                    "estado": t.get("estadoNombre") or t.get("estado") or "Pendiente",
-                    "consultorio": t.get("consNombre") or t.get("consultorio") or t.get("sede") or t.get("lugar"),
-                    "observaciones": t.get("turObs") or t.get("observaciones") or t.get("obs") or "",
-                    "sobreturno": bool(t.get("sobreturno") or t.get("esSobreturno")),
+                    "id": t.get("turnoId") or t.get("turId") or t.get("id"),
+                    "fecha_hora": t.get("fecha") or t.get("turFechaHora") or t.get("fechaHora"),
+                    "profesional_nombre": profesional_str,
+                    "especialidad": especialidad_str,
+                    "estado": estado_calculado,
+                    "consultorio": consultorio_str,
+                    "observaciones": t.get("observaciones") or t.get("turObs") or t.get("obs") or "",
+                    "sobreturno": bool(t.get("esSobreturno") or t.get("sobreturno")),
+                    "practica": t.get("practica") or t.get("nombrePractica") or "",
+                    "obra_social_plan": t.get("osPlan") or "",
                     "raw": t
                 })
                 
@@ -573,7 +583,7 @@ class GeclisaClient:
                 mensaje=f"Consultados {len(turnos_normalizados)} turnos pendientes para fichaId {ficha_id}",
                 detalles={"ficha_id": ficha_id, "cantidad": len(turnos_normalizados)},
                 duracion_ms=duracion,
-                status_code=response.status_code
+                http_status=response.status_code
             )
             return {"success": True, "turnos": turnos_normalizados, "raw": res_json}
         except Exception as e:
