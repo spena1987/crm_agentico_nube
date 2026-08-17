@@ -1160,6 +1160,19 @@ def buscar_geclisa_ficha(ficha_id: int):
     resultado["crm_paciente_id"] = paciente_crm.get("id") if paciente_crm else None
     return resultado
 
+@app.get("/api/geclisa/turnos/pendientes/{ficha_id}")
+def obtener_turnos_pendientes_geclisa(ficha_id: int):
+    """
+    Consulta en tiempo real a Geclisa los turnos pendientes/agendados de una ficha de paciente (GET /api/Turnos/pendientes/{fichaId}).
+    No almacena en la base de datos local.
+    """
+    try:
+        resultado = geclisa_client.obtener_turnos_pendientes_ficha(ficha_id)
+        return resultado
+    except Exception as e:
+        logger.error(f"Error al obtener turnos pendientes de Geclisa para ficha {ficha_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/geclisa/pacientes/importar")
 def importar_paciente_geclisa(payload: Dict[str, Any] = Body(...)):
     """

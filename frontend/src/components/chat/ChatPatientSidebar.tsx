@@ -43,35 +43,64 @@ export default function ChatPatientSidebar({
   onOpenEditarPaciente,
   onInsertMessageToChat
 }: PatientSidebarProps) {
-  const [turnos, setTurnos] = useState<any[]>([])
+  // Estados para Presupuestos
   const [presupuestos, setPresupuestos] = useState<any[]>([])
-  const [cargandoTurnos, setCargandoTurnos] = useState(false)
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
-  
-  // Secciones colapsables (Presupuestos colapsado por defecto)
   const [presupuestosOpen, setPresupuestosOpen] = useState(false)
+
+  // Estados para Turnos Geclisa (On-Demand / Sin guardar en BD)
+  const [turnosGeclisa, setTurnosGeclisa] = useState<any[]>([])
+  const [cargandoTurnosGeclisa, setCargandoTurnosGeclisa] = useState(false)
+  const [turnosConsultados, setTurnosConsultados] = useState(false)
+  const [turnosOpen, setTurnosOpen] = useState(false)
+  const [selectedTurnoDetalle, setSelectedTurnoDetalle] = useState<any | null>(null)
+
+  // Consulta en vivo a la API de Geclisa: GET /api/Turnos/pendientes/{fichaId}
+  const fetchTurnosGeclisa = async () => {
+    const fichaId = paciente?.geclisa_ficha_id || paciente?.ficha_id
+    if (!fichaId) {
+      setTurnosGeclisa([])
+      setTurnosConsultados(true)
+      return
+    }
+
+    try {
+      setCargandoTurnosGeclisa(true)
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/turnos/pendientes/${fichaId}`)
+      if (res.ok) {
+        const data = await res.json()
+        setTurnosGeclisa(data.turnos || [])
+      } else {
+        console.warn('No se pudieron obtener turnos de Geclisa:', res.status)
+        setTurnosGeclisa([])
+      }
+    } catch (err) {
+      console.error('Error consultando turnos en Geclisa:', err)
+      setTurnosGeclisa([])
+    } finally {
+      setCargandoTurnosGeclisa(false)
+      setTurnosConsultados(true)
+    }
+  }
+
+  // Manejar apertura de acordeón de turnos (Lazy Loading)
+  const handleToggleTurnos = () => {
+    const nextState = !turnosOpen
+    setTurnosOpen(nextState)
+    if (nextState && !turnosConsultados) {
+      fetchTurnosGeclisa()
+    }
+  }
 
   useEffect(() => {
     if (!paciente?.id) return
 
-    const loadData = async () => {
-      // 1. Cargar turnos
-      try {
-        setCargandoTurnos(true)
-        const { data: turnosData } = await (supabase as any)
-          .from('turnos')
-          .select('*')
-          .eq('paciente_id', paciente.id)
-          .order('fecha_hora', { ascending: true })
-          .limit(5)
-        setTurnos(turnosData || [])
-      } catch (err) {
-        console.error('Error cargando turnos del paciente:', err)
-      } finally {
-        setCargandoTurnos(false)
-      }
+    // Resetear caché al cambiar de paciente
+    setTurnosGeclisa([])
+    setTurnosConsultados(false)
+    setTurnosOpen(false)
 
-      // 2. Cargar presupuestos enriquecidos (con servicios_precios y asesoria quirúrgica)
+    const loadPresupuestos = async () => {
       try {
         setCargandoPresupuestos(true)
         const { data: presData, error: presError } = await supabase
@@ -111,13 +140,11 @@ export default function ChatPatientSidebar({
             .eq('paciente_id', paciente.id)
             .order('created_at', { ascending: false })
           
-          // Filtrar solo casos activos/pendientes (excluir rechazados/desistidos)
           const activos = (fallback.data || []).filter(
             (p: any) => !['rechazado', 'cancelado', 'desistido'].includes((p.estado || '').toLowerCase())
           )
           setPresupuestos(activos)
         } else {
-          // Filtrar solo casos activos/pendientes
           const activos = (presData || []).filter(
             (p: any) => !['rechazado', 'cancelado', 'desistido'].includes((p.estado || '').toLowerCase())
           )
@@ -130,7 +157,7 @@ export default function ChatPatientSidebar({
       }
     }
 
-    loadData()
+    loadPresupuestos()
   }, [paciente?.id])
 
   if (!paciente) {
@@ -148,7 +175,6 @@ export default function ChatPatientSidebar({
     const rawPdf = p.pdf_url || `/static/presupuesto_${p.id}.pdf`
     const pdfLink = rawPdf.startsWith('http') ? rawPdf : `${BACKEND_URL.replace(/\/$/, '')}/${rawPdf.replace(/^\//, '')}`
     
-    // Obtener nombre de la práctica
     const practicaNombre = 
       p.asesorias_quirurgicas?.practica_nombre || 
       p.items_presupuesto?.[0]?.servicios_precios?.nombre_prestacion || 
@@ -161,6 +187,21 @@ export default function ChatPatientSidebar({
 
     if (onInsertMessageToChat) {
       onInsertMessageToChat(mensajeTexto)
+    }
+  }
+
+  // Enviar recordatorio del turno al chat de WhatsApp
+  const handleEnviarRecordatorioTurno = (t: any) => {
+    if (!t) return
+    const fechaObj = t.fecha_hora ? new Date(t.fecha_hora) : null
+    const fechaStr = fechaObj ? fechaObj.toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long' }) : 'Fecha a confirmar'
+    const horaStr = fechaObj ? fechaObj.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : 'Horario a confirmar'
+    
+    const mensajeTexto = `Hola *${paciente.nombre}*, le recordamos su turno agendado en la clínica:\n\n📅 *Fecha*: ${fechaStr}\n⏰ *Hora*: ${horaStr} hs\n🩺 *Especialidad*: ${t.especialidad || 'Consulta Médica'}\n👨‍⚕️ *Profesional*: ${t.profesional_nombre || 'Médico Asignado'}\n🏥 *Lugar/Consultorio*: ${t.consultorio || 'Sede Central'}\n\nPor favor concurrir con DNI y credencial médica con 10 minutos de anticipación. ¡Lo/a esperamos!`
+    
+    if (onInsertMessageToChat) {
+      onInsertMessageToChat(mensajeTexto)
+      setSelectedTurnoDetalle(null)
     }
   }
 
@@ -247,55 +288,118 @@ export default function ChatPatientSidebar({
           </div>
         </div>
 
-        {/* 2. PRÓXIMOS TURNOS */}
+        {/* 2. PRÓXIMOS TURNOS (CONSULTA EN VIVO A GECLISA - COLAPSABLE POR DEFECTO) */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h5 className="font-bold text-slate-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
-              <Calendar size={13} className="text-emerald-400" />
-              <span>Turnos Agendados</span>
-            </h5>
-            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-semibold">
-              {turnos.length}
-            </span>
+          
+          {/* Botón Acordeón Cabecera */}
+          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#14203d] border border-slate-700/60 transition-colors">
+            <button
+              type="button"
+              onClick={handleToggleTurnos}
+              className="flex-1 flex items-center justify-between text-left pr-2"
+            >
+              <div className="flex items-center gap-1.5 font-bold text-slate-200 text-[11px]">
+                <Calendar size={13} className="text-emerald-400" />
+                <span>Turnos Agendados (Geclisa)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {turnosConsultados && (
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                    turnosGeclisa.length > 0
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-800/60'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}>
+                    {turnosGeclisa.length}
+                  </span>
+                )}
+                <ChevronDown 
+                  size={15} 
+                  className={`text-slate-400 transition-transform duration-200 ${turnosOpen ? 'rotate-180 text-emerald-300' : ''}`} 
+                />
+              </div>
+            </button>
+
+            {/* Botón Refrescar en Vivo si está abierto */}
+            {turnosOpen && (
+              <button
+                type="button"
+                onClick={fetchTurnosGeclisa}
+                disabled={cargandoTurnosGeclisa}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-emerald-300 rounded-lg transition-colors shrink-0 disabled:opacity-50"
+                title="Consultar agenda de Geclisa nuevamente"
+              >
+                <Loader2 size={13} className={cargandoTurnosGeclisa ? 'animate-spin text-emerald-400' : 'hidden'} />
+                {!cargandoTurnosGeclisa && <Clock size={13} />}
+              </button>
+            )}
           </div>
 
-          {cargandoTurnos ? (
-            <div className="p-3 text-center text-slate-400">
-              <Loader2 size={16} className="animate-spin mx-auto text-blue-400" />
-            </div>
-          ) : turnos.length === 0 ? (
-            <div className="p-2.5 rounded-xl bg-[#14203d]/40 border border-slate-800 text-center text-slate-400 text-[11px]">
-              No registra turnos próximos.
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              {turnos.map((t) => {
-                const fecha = new Date(t.fecha_hora)
-                const estado = t.estado || 'pendiente'
-                return (
-                  <div key={t.id} className="p-2.5 rounded-xl bg-[#14203d] border border-slate-700/60 flex flex-col gap-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-slate-200">
-                        {t.especialidad || 'Consulta Médica'}
-                      </span>
-                      <span className={`text-[9.5px] px-1.5 py-0.2 rounded font-bold uppercase ${
-                        estado === 'confirmado' ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/40' :
-                        estado === 'cancelado' ? 'bg-rose-950/60 text-rose-300 border border-rose-800/40' :
-                        'bg-amber-950/60 text-amber-300 border border-amber-800/40'
-                      }`}>
-                        {estado}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-slate-400 text-[10.5px]">
-                      <Clock size={12} className="text-slate-400" />
-                      <span>{fecha.toLocaleDateString([], { day: '2-digit', month: 'short' })} a las {fecha.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} hs</span>
-                    </div>
-                    {t.profesional_nombre && (
-                      <p className="text-[10px] text-slate-400">Dr/a: {t.profesional_nombre}</p>
-                    )}
-                  </div>
-                )
-              })}
+          {/* Contenido Desplegable de Turnos */}
+          {turnosOpen && (
+            <div className="space-y-2 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+              {cargandoTurnosGeclisa ? (
+                <div className="p-3 text-center text-slate-400 space-y-1">
+                  <Loader2 size={16} className="animate-spin mx-auto text-emerald-400" />
+                  <p className="text-[10px]">Consultando agenda en vivo en Geclisa...</p>
+                </div>
+              ) : !paciente?.geclisa_ficha_id && !paciente?.ficha_id ? (
+                <div className="p-2.5 rounded-xl bg-amber-950/20 border border-amber-800/40 text-center text-amber-300 text-[10.5px]">
+                  Paciente sin Ficha Geclisa vinculada.
+                </div>
+              ) : turnosGeclisa.length === 0 ? (
+                <div className="p-2.5 rounded-xl bg-[#14203d]/40 border border-slate-800 text-center text-slate-400 text-[11px]">
+                  No registra turnos pendientes en Geclisa.
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {turnosGeclisa.map((t, idx) => {
+                    const fechaObj = t.fecha_hora ? new Date(t.fecha_hora) : null
+                    const fechaStr = fechaObj ? fechaObj.toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }) : 's/d'
+                    const horaStr = fechaObj ? fechaObj.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '--:--'
+                    const estado = (t.estado || 'Pendiente').toLowerCase()
+
+                    return (
+                      <div 
+                        key={t.id || idx} 
+                        onClick={() => setSelectedTurnoDetalle(t)}
+                        className="p-2.5 rounded-xl bg-[#14203d] hover:bg-[#1a2b52] border border-slate-700/60 hover:border-emerald-500/50 flex flex-col gap-1 transition-all cursor-pointer shadow-xs group"
+                        title="Haz clic para ver el detalle completo del turno"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-slate-200 group-hover:text-emerald-300 transition-colors truncate">
+                            {t.especialidad || 'Consulta Médica'}
+                          </span>
+                          <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase shrink-0 ${
+                            estado.includes('confirm') ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60' :
+                            estado.includes('cancel') ? 'bg-rose-950/80 text-rose-300 border border-rose-800/60' :
+                            'bg-blue-950/80 text-blue-300 border border-blue-800/60'
+                          }`}>
+                            {t.estado || 'Pendiente'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-slate-400 text-[10.5px]">
+                          <span className="flex items-center gap-1">
+                            <Clock size={11} className="text-emerald-400" />
+                            <span>{fechaStr} a las {horaStr} hs</span>
+                          </span>
+                          {t.sobreturno && (
+                            <span className="text-[8.5px] px-1 py-0.2 rounded bg-amber-950 text-amber-300 font-bold border border-amber-800/50">
+                              Sobreturno
+                            </span>
+                          )}
+                        </div>
+
+                        {t.profesional_nombre && (
+                          <p className="text-[10px] text-slate-400 truncate">
+                            Dr/a: <strong className="text-slate-300">{t.profesional_nombre}</strong>
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -322,7 +426,8 @@ export default function ChatPatientSidebar({
                 {presupuestos.length}
               </span>
               <ChevronDown 
-                size={15} 
+                size={15 
+                } 
                 className={`text-slate-400 transition-transform duration-200 ${presupuestosOpen ? 'rotate-180 text-blue-300' : ''}`} 
               />
             </div>
@@ -406,6 +511,98 @@ export default function ChatPatientSidebar({
         </div>
 
       </div>
+
+      {/* MODAL / POP-UP DE DETALLE DEL TURNO */}
+      {selectedTurnoDetalle && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setSelectedTurnoDetalle(null)}
+        >
+          <div 
+            className="bg-[#0f172a] border border-emerald-500/50 rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header del Modal */}
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-emerald-950 text-emerald-300 border border-emerald-700/50">
+                  <Calendar size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-100">Detalle del Turno Agendado</h3>
+                  <p className="text-[10px] text-slate-400">Origen: Geclisa Hospitalario</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setSelectedTurnoDetalle(null)}
+                className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Cuerpo del Turno */}
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Especialidad</span>
+                  <span className="font-bold text-emerald-300 text-sm">{selectedTurnoDetalle.especialidad || 'Consulta Médica'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Profesional</span>
+                  <span className="font-semibold text-slate-100">{selectedTurnoDetalle.profesional_nombre || 'Médico Asignado'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Fecha y Hora</span>
+                  <span className="font-bold text-slate-200">
+                    {selectedTurnoDetalle.fecha_hora 
+                      ? new Date(selectedTurnoDetalle.fecha_hora).toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }) + ' - ' + new Date(selectedTurnoDetalle.fecha_hora).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) + ' hs'
+                      : 's/d'}
+                  </span>
+                </div>
+                {selectedTurnoDetalle.consultorio && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase">Consultorio / Sede</span>
+                    <span className="text-slate-200">{selectedTurnoDetalle.consultorio}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Estado</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800/60 uppercase">
+                    {selectedTurnoDetalle.estado || 'Pendiente'}
+                  </span>
+                </div>
+              </div>
+
+              {selectedTurnoDetalle.observaciones && (
+                <div className="p-3 rounded-xl bg-[#0d1527] border border-slate-800 space-y-1">
+                  <span className="text-[10px] text-slate-400 font-bold uppercase">Observaciones / Indicaciones:</span>
+                  <p className="text-slate-300 text-[11px] leading-relaxed">{selectedTurnoDetalle.observaciones}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Acciones del Modal */}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSelectedTurnoDetalle(null)}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-colors"
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleEnviarRecordatorioTurno(selectedTurnoDetalle)}
+                className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-md"
+              >
+                <Send size={12} />
+                <span>Enviar Recordatorio al Chat</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

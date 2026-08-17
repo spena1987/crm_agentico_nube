@@ -534,6 +534,61 @@ class GeclisaClient:
             logger.error(f"Error al buscar turnos en Geclisa: {e}")
             return {"error": str(e)}
 
+    def obtener_turnos_pendientes_ficha(self, ficha_id: int) -> dict:
+        """
+        Consulta los turnos asignados/pendientes de un paciente en Geclisa por fichaId.
+        Ruta: GET /api/Turnos/pendientes/{fichaId}
+        """
+        url = f"{self.base_url}/api/Turnos/pendientes/{ficha_id}"
+        t_start = time.time()
+        try:
+            headers = self._get_headers()
+            response = self._do_request("GET", url, headers=headers, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
+            response.raise_for_status()
+            res_json = response.json()
+            
+            # Formatear la lista de turnos según venga dict o array
+            raw_turnos = res_json.get("data") if isinstance(res_json, dict) else (res_json if isinstance(res_json, list) else [])
+            
+            turnos_normalizados = []
+            for t in raw_turnos:
+                # Mapear campos de Geclisa (profesional, fechaHora, servicio/especialidad, estado, etc.)
+                turnos_normalizados.append({
+                    "id": t.get("turId") or t.get("id") or t.get("turnoId"),
+                    "fecha_hora": t.get("turFechaHora") or t.get("fechaHora") or t.get("fecha") or t.get("turFecha"),
+                    "profesional_nombre": t.get("profNombre") or t.get("medico") or t.get("profesional") or t.get("profesionalNombre"),
+                    "especialidad": t.get("servNombre") or t.get("especialidad") or t.get("servicio") or t.get("servicioNombre"),
+                    "estado": t.get("estadoNombre") or t.get("estado") or "Pendiente",
+                    "consultorio": t.get("consNombre") or t.get("consultorio") or t.get("sede") or t.get("lugar"),
+                    "observaciones": t.get("turObs") or t.get("observaciones") or t.get("obs") or "",
+                    "sobreturno": bool(t.get("sobreturno") or t.get("esSobreturno")),
+                    "raw": t
+                })
+                
+            log_event(
+                nivel="INFO",
+                modulo="GECLISA",
+                accion="TURNOS_PENDIENTES_FICHA",
+                mensaje=f"Consultados {len(turnos_normalizados)} turnos pendientes para fichaId {ficha_id}",
+                detalles={"ficha_id": ficha_id, "cantidad": len(turnos_normalizados)},
+                duracion_ms=duracion,
+                status_code=response.status_code
+            )
+            return {"success": True, "turnos": turnos_normalizados, "raw": res_json}
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Error consultando turnos pendientes en Geclisa para fichaId {ficha_id}: {e}")
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="TURNOS_PENDIENTES_FICHA_ERROR",
+                mensaje=f"Error consultando turnos pendientes: {e}",
+                detalles={"ficha_id": ficha_id, "error": str(e)},
+                duracion_ms=duracion
+            )
+            return {"success": False, "turnos": [], "error": str(e)}
+
     # ====================================================================
     # MÉTODOS DE NOMENCLADOR Y VALORIZACIÓN (PRESUPUESTOS)
     # ====================================================================
