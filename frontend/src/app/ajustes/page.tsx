@@ -1,15 +1,16 @@
 'use client'
 
 import React, { useState } from 'react'
-import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck } from 'lucide-react'
+import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck, ShieldCheck } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
 import SystemLogsCard from '@/components/settings/SystemLogsCard'
 import NomencladorSettingsCard from '@/components/settings/NomencladorSettingsCard'
 import BudgetTemplateDesignerCard from '@/components/settings/BudgetTemplateDesignerCard'
+import SecuritySettingsCard from '@/components/settings/SecuritySettingsCard'
 
-type TabType = 'whatsapp' | 'bot' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'logs'
+type TabType = 'whatsapp' | 'bot' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'seguridad' | 'logs'
 
 export default function AjustesPage() {
   const [activeTab, setActiveTab] = useState<TabType>('whatsapp')
@@ -20,13 +21,14 @@ export default function AjustesPage() {
     { id: 'clinica' as TabType, label: 'Perfil Clínica', icon: Building2, description: 'Datos del consultorio' },
     { id: 'nomenclador' as TabType, label: 'Nomencladores', icon: BookOpen, description: 'Aranceles y catálogo' },
     { id: 'plantilla_presupuesto' as TabType, label: 'Diseñador PDF', icon: FileCheck, description: 'Plantilla de presupuestos' },
+    { id: 'seguridad' as TabType, label: 'Seguridad & Sesión', icon: ShieldCheck, description: 'Inactividad y bloqueo' },
     { id: 'logs' as TabType, label: 'Monitor Logs', icon: Terminal, description: 'Consola técnica en vivo' },
   ]
 
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Selector de Sub-Pestañas de Configuración */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-[var(--border)]">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2.5 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-[var(--border)]">
         {tabs.map((t) => {
           const Icon = t.icon
           const isActive = activeTab === t.id
@@ -59,6 +61,7 @@ export default function AjustesPage() {
         {activeTab === 'clinica' && <ClinicProfileCard />}
         {activeTab === 'nomenclador' && <NomencladorSettingsCard />}
         {activeTab === 'plantilla_presupuesto' && <BudgetTemplateDesignerCard />}
+        {activeTab === 'seguridad' && <SecuritySettingsCard />}
         {activeTab === 'logs' && <SystemLogsCard />}
       </div>
     </div>

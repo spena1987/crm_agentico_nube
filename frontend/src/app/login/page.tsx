@@ -1,11 +1,11 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import React, { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
-import { Activity, Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react'
+import { Activity, Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Clock } from 'lucide-react'
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -14,6 +14,8 @@ export default function LoginPage() {
 
   const { user, loading, signIn } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isInactiveReason = searchParams.get('reason') === 'inactivity'
 
   useEffect(() => {
     // Si ya está autenticado, redirigir al dashboard principal
@@ -83,6 +85,19 @@ export default function LoginPage() {
             Ingreso exclusivo para personal médico y administrativo autorizado
           </p>
         </div>
+
+        {/* Aviso de Sesión Cerrada por Inactividad */}
+        {isInactiveReason && (
+          <div className="mb-6 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 flex items-start gap-3 text-amber-800 dark:text-amber-300 text-xs">
+            <Clock size={18} className="shrink-0 mt-0.5 text-amber-600" />
+            <div className="space-y-0.5">
+              <p className="font-bold">Sesión cerrada por seguridad</p>
+              <p className="text-amber-700 dark:text-amber-400">
+                Tu sesión anterior se cerró automáticamente por inactividad para proteger la confidencialidad médica. Por favor, ingresa nuevamente.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Mensaje de Error */}
         {errorMsg && (
@@ -170,5 +185,19 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen w-full flex items-center justify-center bg-[var(--background)]">
+          <Loader2 size={36} className="text-blue-600 animate-spin" />
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   )
 }

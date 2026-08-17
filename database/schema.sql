@@ -315,6 +315,25 @@ alter table public.rol_permisos enable row level security;
 alter table public.usuarios_perfil enable row level security;
 
 -- ====================================================================
+-- 6. Configuración de Seguridad y Caducidad de Sesión por Inactividad
+-- ====================================================================
+create table if not exists public.configuracion_seguridad (
+    id uuid primary key default gen_random_uuid(),
+    inactividad_minutos integer default 20 not null check (inactividad_minutos >= 0),
+    aviso_segundos integer default 60 not null check (aviso_segundos >= 10),
+    inactividad_habilitada boolean default true not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table public.configuracion_seguridad enable row level security;
+
+create policy "Lectura de configuracion_seguridad para usuarios autenticados" on public.configuracion_seguridad
+    for select using (auth.role() = 'authenticated');
+
+create policy "Admin gestion total configuracion_seguridad" on public.configuracion_seguridad
+    for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+-- ====================================================================
 -- 7. Tabla de Logs de Auditoría y Eventos del Sistema (system_logs)
 -- ====================================================================
 create table if not exists public.system_logs (

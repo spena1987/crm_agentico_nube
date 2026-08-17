@@ -7,41 +7,128 @@ export type Json =
   | Json[]
 
 export type Database = {
+  __InternalSupabase: {
+    PostgrestVersion: "14.15"
+  }
   public: {
     Tables: {
-      asesoria_evoluciones: {
+      agentes_directivas_globales: {
         Row: {
+          agente_defecto_codigo: string
+          created_at: string | null
+          guardrails_medicos: string
           id: string
-          asesoria_id: string
-          paciente_id: string
-          usuario_id: string | null
-          usuario_nombre: string
-          tipo_contacto: 'llamada' | 'whatsapp' | 'presencial' | 'email' | 'interno'
-          contenido: string
-          fecha_contacto: string
-          created_at: string
+          nombre_clinica: string
+          politica_escalamiento: string
+          politica_presupuestos: string | null
+          politica_turnos: string | null
+          tono_general: string
+          updated_at: string | null
         }
         Insert: {
+          agente_defecto_codigo?: string
+          created_at?: string | null
+          guardrails_medicos?: string
           id?: string
-          asesoria_id: string
-          paciente_id: string
-          usuario_id?: string | null
-          usuario_nombre?: string
-          tipo_contacto?: 'llamada' | 'whatsapp' | 'presencial' | 'email' | 'interno'
-          contenido: string
-          fecha_contacto?: string
-          created_at?: string
+          nombre_clinica?: string
+          politica_escalamiento?: string
+          politica_presupuestos?: string | null
+          politica_turnos?: string | null
+          tono_general?: string
+          updated_at?: string | null
         }
         Update: {
+          agente_defecto_codigo?: string
+          created_at?: string | null
+          guardrails_medicos?: string
           id?: string
-          asesoria_id?: string
-          paciente_id?: string
+          nombre_clinica?: string
+          politica_escalamiento?: string
+          politica_presupuestos?: string | null
+          politica_turnos?: string | null
+          tono_general?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      agentes_situacionales: {
+        Row: {
+          activo: boolean | null
+          codigo: string
+          created_at: string | null
+          criterios_activacion: Json | null
+          descripcion: string | null
+          directiva_particular: string
+          herramientas_habilitadas: Json | null
+          id: string
+          nombre: string
+          orden: number | null
+          temperatura: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          activo?: boolean | null
+          codigo: string
+          created_at?: string | null
+          criterios_activacion?: Json | null
+          descripcion?: string | null
+          directiva_particular: string
+          herramientas_habilitadas?: Json | null
+          id?: string
+          nombre: string
+          orden?: number | null
+          temperatura?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          activo?: boolean | null
+          codigo?: string
+          created_at?: string | null
+          criterios_activacion?: Json | null
+          descripcion?: string | null
+          directiva_particular?: string
+          herramientas_habilitadas?: Json | null
+          id?: string
+          nombre?: string
+          orden?: number | null
+          temperatura?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      asesoria_evoluciones: {
+        Row: {
+          asesoria_id: string
+          contenido: string
+          created_at: string
+          fecha_contacto: string
+          id: string
+          paciente_id: string
+          tipo_contacto: string
+          usuario_id: string | null
+          usuario_nombre: string
+        }
+        Insert: {
+          asesoria_id: string
+          contenido: string
+          created_at?: string
+          fecha_contacto?: string
+          id?: string
+          paciente_id: string
+          tipo_contacto?: string
           usuario_id?: string | null
           usuario_nombre?: string
-          tipo_contacto?: 'llamada' | 'whatsapp' | 'presencial' | 'email' | 'interno'
+        }
+        Update: {
+          asesoria_id?: string
           contenido?: string
-          fecha_contacto?: string
           created_at?: string
+          fecha_contacto?: string
+          id?: string
+          paciente_id?: string
+          tipo_contacto?: string
+          usuario_id?: string | null
+          usuario_nombre?: string
         }
         Relationships: [
           {
@@ -57,77 +144,77 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pacientes"
             referencedColumns: ["id"]
-          }
+          },
         ]
       }
       asesorias_quirurgicas: {
         Row: {
+          cobertura_obra_social: string | null
+          created_at: string
+          estado: string
+          fecha_definitiva_cirugia: string | null
+          fecha_probable_cirugia: string | null
           id: string
-          paciente_id: string
-          medico_derivador_id: number | null
-          medico_derivador_nombre: string | null
-          medico_derivador_matricula: string | null
           medico_cirujano_id: number | null
-          medico_cirujano_nombre: string | null
           medico_cirujano_matricula: string | null
+          medico_cirujano_nombre: string | null
+          medico_derivador_id: number | null
+          medico_derivador_matricula: string | null
+          medico_derivador_nombre: string | null
+          moneda_extra: string | null
+          monto_extra: number | null
+          motivo_cancelacion: string | null
+          paciente_id: string
           practica_codigo: string | null
           practica_nombre: string
-          cobertura_obra_social: string | null
-          monto_extra: number
-          moneda_extra: string
           presupuesto_id: string | null
-          fecha_probable_cirugia: string | null
-          fecha_definitiva_cirugia: string | null
-          estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
           situacion_paciente: string | null
-          motivo_cancelacion: string | null
-          created_at: string
           updated_at: string
         }
         Insert: {
+          cobertura_obra_social?: string | null
+          created_at?: string
+          estado?: string
+          fecha_definitiva_cirugia?: string | null
+          fecha_probable_cirugia?: string | null
           id?: string
-          paciente_id: string
-          medico_derivador_id?: number | null
-          medico_derivador_nombre?: string | null
-          medico_derivador_matricula?: string | null
           medico_cirujano_id?: number | null
-          medico_cirujano_nombre?: string | null
           medico_cirujano_matricula?: string | null
+          medico_cirujano_nombre?: string | null
+          medico_derivador_id?: number | null
+          medico_derivador_matricula?: string | null
+          medico_derivador_nombre?: string | null
+          moneda_extra?: string | null
+          monto_extra?: number | null
+          motivo_cancelacion?: string | null
+          paciente_id: string
           practica_codigo?: string | null
           practica_nombre: string
-          cobertura_obra_social?: string | null
-          monto_extra?: number
-          moneda_extra?: string
           presupuesto_id?: string | null
-          fecha_probable_cirugia?: string | null
-          fecha_definitiva_cirugia?: string | null
-          estado?: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
           situacion_paciente?: string | null
-          motivo_cancelacion?: string | null
-          created_at?: string
           updated_at?: string
         }
         Update: {
+          cobertura_obra_social?: string | null
+          created_at?: string
+          estado?: string
+          fecha_definitiva_cirugia?: string | null
+          fecha_probable_cirugia?: string | null
           id?: string
-          paciente_id?: string
-          medico_derivador_id?: number | null
-          medico_derivador_nombre?: string | null
-          medico_derivador_matricula?: string | null
           medico_cirujano_id?: number | null
-          medico_cirujano_nombre?: string | null
           medico_cirujano_matricula?: string | null
+          medico_cirujano_nombre?: string | null
+          medico_derivador_id?: number | null
+          medico_derivador_matricula?: string | null
+          medico_derivador_nombre?: string | null
+          moneda_extra?: string | null
+          monto_extra?: number | null
+          motivo_cancelacion?: string | null
+          paciente_id?: string
           practica_codigo?: string | null
           practica_nombre?: string
-          cobertura_obra_social?: string | null
-          monto_extra?: number
-          moneda_extra?: string
           presupuesto_id?: string | null
-          fecha_probable_cirugia?: string | null
-          fecha_definitiva_cirugia?: string | null
-          estado?: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
           situacion_paciente?: string | null
-          motivo_cancelacion?: string | null
-          created_at?: string
           updated_at?: string
         }
         Relationships: [
@@ -137,7 +224,14 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pacientes"
             referencedColumns: ["id"]
-          }
+          },
+          {
+            foreignKeyName: "asesorias_quirurgicas_presupuesto_id_fkey"
+            columns: ["presupuesto_id"]
+            isOneToOne: false
+            referencedRelation: "presupuestos"
+            referencedColumns: ["id"]
+          },
         ]
       }
       configuracion_nomenclador: {
@@ -167,8 +261,34 @@ export type Database = {
         }
         Relationships: []
       }
+      configuracion_seguridad: {
+        Row: {
+          aviso_segundos: number
+          id: string
+          inactividad_habilitada: boolean
+          inactividad_minutos: number
+          updated_at: string
+        }
+        Insert: {
+          aviso_segundos?: number
+          id?: string
+          inactividad_habilitada?: boolean
+          inactividad_minutos?: number
+          updated_at?: string
+        }
+        Update: {
+          aviso_segundos?: number
+          id?: string
+          inactividad_habilitada?: boolean
+          inactividad_minutos?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       conversaciones: {
         Row: {
+          agente_asignado_codigo: string | null
+          archivada: boolean
           bot_disabled: boolean
           id: string
           paciente_id: string
@@ -176,6 +296,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          agente_asignado_codigo?: string | null
+          archivada?: boolean
           bot_disabled?: boolean
           id?: string
           paciente_id: string
@@ -183,6 +305,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          agente_asignado_codigo?: string | null
+          archivada?: boolean
           bot_disabled?: boolean
           id?: string
           paciente_id?: string
@@ -427,6 +551,7 @@ export type Database = {
           direccion: string | null
           dni: string | null
           email: string | null
+          etapa_clinica: string | null
           fecha_nacimiento: string | null
           geclisa_ficha_id: number | null
           historial_notas: string | null
@@ -449,6 +574,7 @@ export type Database = {
           direccion?: string | null
           dni?: string | null
           email?: string | null
+          etapa_clinica?: string | null
           fecha_nacimiento?: string | null
           geclisa_ficha_id?: number | null
           historial_notas?: string | null
@@ -471,6 +597,7 @@ export type Database = {
           direccion?: string | null
           dni?: string | null
           email?: string | null
+          etapa_clinica?: string | null
           fecha_nacimiento?: string | null
           geclisa_ficha_id?: number | null
           historial_notas?: string | null
@@ -586,6 +713,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "presupuestos_asesoria_id_fkey"
+            columns: ["asesoria_id"]
+            isOneToOne: false
+            referencedRelation: "asesorias_quirurgicas"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "presupuestos_paciente_id_fkey"
             columns: ["paciente_id"]
             isOneToOne: false
@@ -689,6 +823,56 @@ export type Database = {
           precio?: number
         }
         Relationships: []
+      }
+      system_logs: {
+        Row: {
+          accion: string
+          created_at: string
+          detalles: Json
+          duracion_ms: number | null
+          http_status: number | null
+          id: string
+          mensaje: string
+          modulo: string
+          nivel: string
+          paciente_id: string | null
+          trace: string | null
+        }
+        Insert: {
+          accion: string
+          created_at?: string
+          detalles?: Json
+          duracion_ms?: number | null
+          http_status?: number | null
+          id?: string
+          mensaje: string
+          modulo: string
+          nivel: string
+          paciente_id?: string | null
+          trace?: string | null
+        }
+        Update: {
+          accion?: string
+          created_at?: string
+          detalles?: Json
+          duracion_ms?: number | null
+          http_status?: number | null
+          id?: string
+          mensaje?: string
+          modulo?: string
+          nivel?: string
+          paciente_id?: string | null
+          trace?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "system_logs_paciente_id_fkey"
+            columns: ["paciente_id"]
+            isOneToOne: false
+            referencedRelation: "pacientes"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       usuarios_perfil: {
         Row: {

@@ -4,6 +4,7 @@ import React, { useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import Navigation from '@/components/Navigation'
+import IdleTimeoutManager from '@/components/auth/IdleTimeoutManager'
 import { Loader2 } from 'lucide-react'
 
 export default function AppLayoutWrapper({
@@ -47,9 +48,10 @@ export default function AppLayoutWrapper({
     return null
   }
 
-  // Usuario autenticado en el CRM
+  // Usuario autenticado en el CRM con monitor de inactividad activo
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[var(--background)]">
+      <IdleTimeoutManager />
       <Navigation />
       <main className="flex-1 flex flex-col overflow-y-auto p-8 relative">
         {children}
