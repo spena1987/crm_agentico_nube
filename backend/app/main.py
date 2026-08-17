@@ -126,8 +126,11 @@ class PresupuestoInput(BaseModel):
     items: List[ItemPresupuestoInput]
 
 class SendMessageRequest(BaseModel):
-    telefono: str
-    mensaje: str
+    telefono: Optional[str] = None
+    mensaje: Optional[str] = None
+    phone: Optional[str] = None
+    message: Optional[str] = None
+    paciente_id: Optional[str] = None
     conversacion_id: Optional[str] = None
     is_internal_note: Optional[bool] = False
 
@@ -548,6 +551,10 @@ def send_message_api(payload: SendMessageRequest):
     """
     Envía un mensaje de texto directamente al WhatsApp real del paciente o lo guarda como NOTA INTERNA privada del equipo.
     """
+    texto_final = (payload.mensaje or payload.message or "").strip()
+    if not texto_final:
+        raise HTTPException(status_code=400, detail="El contenido del mensaje no puede estar vacío.")
+
     # 1. NOTA INTERNA (Solo visible en el CRM, NUNCA se envía al paciente por WhatsApp)
     if payload.is_internal_note:
         logger.info(f"Registrando nota interna en conversación {payload.conversacion_id}")
@@ -559,7 +566,7 @@ def send_message_api(payload: SendMessageRequest):
         msg = guardar_mensaje(
             conversacion_id=payload.conversacion_id,
             emisor="operador",
-            contenido=payload.mensaje,
+            contenido=texto_final,
             metadata_json=meta
         )
         return {
@@ -570,8 +577,8 @@ def send_message_api(payload: SendMessageRequest):
         }
 
     # 2. MENSAJE SALIENTE A WHATSAPP
-    telefono_final = payload.telefono
-    if (not telefono_final or not str(telefono_final).strip()) and payload.conversacion_id:
+    telefono_final = (payload.telefono or payload.phone or "").strip()
+    if not telefono_final and payload.conversacion_id:
         try:
             if supabase:
                 conv = supabase.table("conversaciones").select("paciente_id, pacientes(telefono)").eq("id", payload.conversacion_id).execute()
@@ -584,10 +591,22 @@ def send_message_api(payload: SendMessageRequest):
         except Exception as e:
             logger.warning(f"No se pudo recuperar teléfono por conversación {payload.conversacion_id}: {e}")
 
+    if not telefono_final and payload.paciente_id:
+        try:
+            if supabase:
+                pac_res = supabase.table("pacientes").select("telefono").eq("id", payload.paciente_id).execute()
+                if pac_res.data and len(pac_res.data) > 0:
+                    telefono_final = pac_res.data[0].get("telefono")
+        except Exception as e:
+            logger.warning(f"No se pudo recuperar teléfono por paciente_id {payload.paciente_id}: {e}")
+
+    if not telefono_final:
+        raise HTTPException(status_code=400, detail="Debe especificar un número de teléfono de destino válido.")
+
     logger.info(f"Enviando mensaje saliente a {telefono_final} [operador] (conversacion_id: {payload.conversacion_id})")
     result = whatsapp_manager.enviar_mensaje(
         telefono_o_jid=telefono_final,
-        texto=payload.mensaje,
+        texto=texto_final,
         conversacion_id=payload.conversacion_id,
         emisor="operador"
     )

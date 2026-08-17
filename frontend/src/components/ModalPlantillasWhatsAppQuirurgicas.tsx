@@ -161,6 +161,8 @@ export default function ModalPlantillasWhatsAppQuirurgicas({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          telefono: telefono.trim(),
+          mensaje: mensajeTexto.trim(),
           phone: telefono.trim(),
           message: mensajeTexto.trim(),
           paciente_id: pacienteId
@@ -168,8 +170,18 @@ export default function ModalPlantillasWhatsAppQuirurgicas({
       })
 
       const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || data.mensaje || 'Error al enviar mensaje por WhatsApp.')
+      if (!res.ok || data.error || data.success === false) {
+        let msgError = 'Error al enviar mensaje por WhatsApp.'
+        if (typeof data.detail === 'string') {
+          msgError = data.detail
+        } else if (Array.isArray(data.detail) && data.detail.length > 0) {
+          msgError = data.detail.map((d: any) => d.msg || (typeof d === 'string' ? d : JSON.stringify(d))).join(', ')
+        } else if (data.error) {
+          msgError = typeof data.error === 'string' ? data.error : JSON.stringify(data.error)
+        } else if (typeof data.mensaje === 'string') {
+          msgError = data.mensaje
+        }
+        throw new Error(msgError)
       }
 
       // 2. Asentar automáticamente en la Bitácora de Evoluciones
