@@ -28,11 +28,15 @@ import {
   XCircle,
   ExternalLink,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Lock,
+  Unlock,
+  ShieldAlert
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
+import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 
 export interface PresupuestoPaciente {
@@ -223,7 +227,39 @@ export default function ItemCasoQuirurgicoAcordeon({
   const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
   const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
+  const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [actualizandoEstadoPresupuestoId, setActualizandoEstadoPresupuestoId] = useState<string | null>(null)
+
+  // Reabrir caso cerrado
+  const handleReabrirCaso = async () => {
+    if (!confirm(`¿Deseas reabrir la cirugía #${index + 1} y volverla a poner en asesoramiento?`)) return
+    try {
+      setGuardando(true)
+      const payload = {
+        estado: 'en_asesoramiento',
+        motivo_cancelacion: null
+      }
+      await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      await supabase.from('asesorias_quirurgicas').update({
+        estado: 'en_asesoramiento',
+        motivo_cancelacion: null,
+        updated_at: new Date().toISOString()
+      }).eq('id', caso.id)
+
+      setEstado('en_asesoramiento')
+      onCasoActualizado({ ...caso, estado: 'en_asesoramiento', motivo_cancelacion: null })
+      setMensajeExito('✔ Caso quirúrgico reabierto exitosamente.')
+      setTimeout(() => setMensajeExito(null), 3000)
+    } catch (err: any) {
+      setError(err.message || 'Error al reabrir el caso.')
+    } finally {
+      setGuardando(false)
+    }
+  }
 
   // Sincronizar estado si cambian las props
   useEffect(() => {
@@ -541,6 +577,44 @@ export default function ItemCasoQuirurgicoAcordeon({
             <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2.5">
               <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
               <span>{mensajeExito}</span>
+            </div>
+          )}
+
+          {/* BANNER DE CASO CERRADO / DESISTIDO / OPERADO */}
+          {(estado === 'cancelado' || estado === 'operado' || caso.motivo_cancelacion) && (
+            <div
+              className={`p-4 rounded-xl border flex items-start justify-between gap-3 ${
+                estado === 'operado'
+                  ? 'bg-teal-950/40 border-teal-500/40 text-teal-300'
+                  : 'bg-red-950/40 border-red-500/40 text-red-300'
+              }`}
+            >
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert size={18} className="shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="text-xs font-black flex items-center gap-2">
+                    <span>
+                      {estado === 'operado' ? 'Caso Cerrado: Operado con Éxito' : 'Caso Cerrado: Desistido / Cancelado'}
+                    </span>
+                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-neutral-950/80 border border-current">
+                      Cerrado
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-200 leading-relaxed">
+                    {caso.motivo_cancelacion || 'Procedimiento cerrado formalmente.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleReabrirCaso}
+                disabled={guardando}
+                className="px-3 py-1.5 text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-white border border-[var(--border)] rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm transition-all"
+              >
+                <Unlock size={13} className="text-amber-400" />
+                Reabrir Caso
+              </button>
             </div>
           )}
 
@@ -917,34 +991,59 @@ export default function ItemCasoQuirurgicoAcordeon({
           </div>
 
           {/* 4. FOOTER DE ACCIONES DEL CASO */}
-          <div className="flex items-center justify-between pt-3 border-t border-[var(--border)]">
+          <div className="flex items-center justify-between pt-3 border-t border-[var(--border)] flex-wrap gap-2">
             <button
               type="button"
               onClick={handleEliminar}
               className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 font-semibold transition-colors"
             >
               <Trash2 size={13} />
-              Eliminar esta Cirugía
+              Eliminar Cirugía
             </button>
 
-            <button
-              type="button"
-              onClick={() => handleGuardar()}
-              disabled={guardando}
-              className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
-            >
-              {guardando ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Guardando cambios...
-                </>
+            <div className="flex items-center gap-2">
+              {/* Botón de Cerrar o Reabrir Caso */}
+              {estado === 'cancelado' || estado === 'operado' ? (
+                <button
+                  type="button"
+                  onClick={handleReabrirCaso}
+                  disabled={guardando}
+                  className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+                >
+                  <Unlock size={13} />
+                  Reabrir Caso
+                </button>
               ) : (
-                <>
-                  <Save size={13} />
-                  Guardar Cambios de Cirugía #{index + 1}
-                </>
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalCierre(true)}
+                  disabled={guardando}
+                  className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-gray-300 hover:text-white border border-[var(--border)] hover:border-red-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+                >
+                  <Lock size={13} className="text-amber-400" />
+                  Cerrar Caso...
+                </button>
               )}
-            </button>
+
+              <button
+                type="button"
+                onClick={() => handleGuardar()}
+                disabled={guardando}
+                className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
+              >
+                {guardando ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    Guardando...
+                  </>
+                ) : (
+                  <>
+                    <Save size={13} />
+                    Guardar Cambios
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* MODAL PRESUPUESTO */}
@@ -970,6 +1069,31 @@ export default function ItemCasoQuirurgicoAcordeon({
               setTimeout(() => setMensajeExito(null), 3000)
               handleGuardar()
               fetchPresupuestos()
+            }}
+          />
+
+          {/* MODAL CERRAR CASO */}
+          <ModalCerrarCasoQuirurgico
+            isOpen={mostrarModalCierre}
+            onClose={() => setMostrarModalCierre(false)}
+            casoId={caso.id}
+            pacienteId={pacienteId}
+            pacienteNombre={pacienteNombre}
+            practicaNombre={practicaNombre}
+            numeroCirugia={index + 1}
+            onCasoCerrado={(casoCerrado) => {
+              setEstado(casoCerrado.estado)
+              onCasoActualizado({
+                ...caso,
+                estado: casoCerrado.estado,
+                motivo_cancelacion: casoCerrado.motivo_cancelacion
+              })
+              setMensajeExito(
+                `✔ Cirugía #${index + 1} marcada como ${
+                  casoCerrado.estado === 'operado' ? 'Operada con Éxito' : 'Cancelada / Desistida'
+                }.`
+              )
+              setTimeout(() => setMensajeExito(null), 4000)
             }}
           />
 
