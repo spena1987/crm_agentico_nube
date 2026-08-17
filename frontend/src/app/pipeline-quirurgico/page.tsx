@@ -187,7 +187,7 @@ export default function PipelineQuirurgicoPage() {
   }, [etapas, filtroTexto, soloAlertas])
 
   return (
-    <div className="flex-1 h-full overflow-y-auto p-4 sm:p-6 space-y-6 max-w-7xl mx-auto w-full panel-scroll animate-fade-in">
+    <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 space-y-6 min-w-0 pb-12 animate-fade-in">
       
       {/* ==================================================================== */}
       {/* 1. HEADER PRINCIPAL DEL PIPELINE */}

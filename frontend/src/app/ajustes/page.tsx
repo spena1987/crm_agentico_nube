@@ -28,7 +28,7 @@ export default function AjustesPage() {
   ]
 
   return (
-    <div className="flex-1 h-full overflow-y-auto overflow-x-hidden p-3 sm:p-5 md:p-6 space-y-5 max-w-7xl mx-auto w-full min-w-0 panel-scroll animate-fade-in">
+    <div className="w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 space-y-5 min-w-0 animate-fade-in pb-12">
       {/* Selector de Sub-Pestañas de Configuración */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-[var(--border)] shrink-0">
         {tabs.map((t) => {

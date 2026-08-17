@@ -133,7 +133,7 @@ export default function PresupuestosPage() {
   }
 
   return (
-    <div className="flex-1 h-full overflow-y-auto overflow-x-hidden p-3 sm:p-5 md:p-6 space-y-5 max-w-7xl mx-auto w-full min-w-0 panel-scroll">
+    <div className="w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 space-y-5 min-w-0 pb-12">
       
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">

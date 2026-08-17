@@ -85,7 +85,7 @@ export default function Dashboard() {
   ]
 
   return (
-    <div className="flex-1 h-full overflow-y-auto overflow-x-hidden p-4 sm:p-6 md:p-8 space-y-6 max-w-7xl mx-auto w-full min-w-0 panel-scroll">
+    <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 md:p-8 space-y-6 min-w-0 pb-12">
       {/* Saludo y Fecha */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
         <div>

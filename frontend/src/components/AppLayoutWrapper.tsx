@@ -53,7 +53,7 @@ export default function AppLayoutWrapper({
     <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-[var(--background)] min-w-0">
       <IdleTimeoutManager />
       <Navigation />
-      <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-hidden relative">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
         {children}
       </main>
     </div>
