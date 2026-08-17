@@ -864,6 +864,7 @@ export default function ItemCasoQuirurgicoAcordeon({
                   asesoriaId={caso.id}
                   pacienteId={pacienteId}
                   pacienteNombre={pacienteNombre}
+                  disabled={true}
                 />
               </div>
 

@@ -17,7 +17,8 @@ import {
   CheckCircle2,
   Sparkles,
   ClipboardList,
-  ShieldCheck
+  ShieldCheck,
+  Lock
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -39,6 +40,7 @@ interface TimelineEvolucionesAsesoriaProps {
   asesoriaId?: string | null
   pacienteId: string
   pacienteNombre: string
+  disabled?: boolean
 }
 
 const CANALES: {
@@ -94,7 +96,8 @@ const CANALES: {
 export default function TimelineEvolucionesAsesoria({
   asesoriaId,
   pacienteId,
-  pacienteNombre
+  pacienteNombre,
+  disabled = false
 }: TimelineEvolucionesAsesoriaProps) {
   const { user } = useAuth()
   const [evoluciones, setEvoluciones] = useState<AsesoriaEvolucion[]>([])
@@ -177,23 +180,15 @@ export default function TimelineEvolucionesAsesoria({
     }
   }, [asesoriaId])
 
-  // Guardar nueva evolución (Asesora y Fecha automáticas)
+  // Guardar nueva evolución
   const handleGuardarEvolucion = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!contenido.trim()) {
-      setError('Por favor escribe el detalle de la evolución.')
-      return
-    }
-    if (!asesoriaId) {
-      setError('Debes guardar primero el caso quirúrgico antes de asentar evoluciones.')
-      return
-    }
+    if (disabled || !contenido.trim() || !asesoriaId) return
 
     try {
       setGuardando(true)
       setError(null)
 
-      const fechaActualIso = new Date().toISOString()
       const payload = {
         asesoria_id: asesoriaId,
         paciente_id: pacienteId,
@@ -201,7 +196,7 @@ export default function TimelineEvolucionesAsesoria({
         usuario_nombre: nombreAsesoraActual,
         tipo_contacto: tipoContacto,
         contenido: contenido.trim(),
-        fecha_contacto: fechaActualIso
+        fecha_contacto: new Date().toISOString()
       }
 
       const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${asesoriaId}/evoluciones`, {
@@ -224,7 +219,6 @@ export default function TimelineEvolucionesAsesoria({
       console.error('Error al guardar evolución:', err)
       // Fallback Supabase directo
       try {
-        const fechaActualIso = new Date().toISOString()
         const { data: sbIns, error: sbErr } = await supabase
           .from('asesoria_evoluciones')
           .insert({
@@ -234,7 +228,7 @@ export default function TimelineEvolucionesAsesoria({
             usuario_nombre: nombreAsesoraActual,
             tipo_contacto: tipoContacto,
             contenido: contenido.trim(),
-            fecha_contacto: fechaActualIso
+            fecha_contacto: new Date().toISOString()
           })
           .select()
         if (!sbErr && sbIns && sbIns.length > 0) {
@@ -255,6 +249,7 @@ export default function TimelineEvolucionesAsesoria({
 
   // Eliminar evolución
   const handleEliminarEvolucion = async (evolucionId: string) => {
+    if (disabled) return
     if (!confirm('¿Deseas eliminar este registro de la bitácora?')) return
 
     try {
@@ -312,83 +307,95 @@ export default function TimelineEvolucionesAsesoria({
         </div>
       )}
 
-      {/* Formulario de Entrada Rápida (Sin fricción: solo Canal y Texto) */}
-      <form
-        onSubmit={handleGuardarEvolucion}
-        className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3 shadow-inner"
-      >
-        {/* Selector de Canales */}
-        <div className="space-y-1.5">
-          <label className="text-[11px] font-semibold text-gray-400">
-            Canal de Contacto:
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {CANALES.map((c) => {
-              const Icon = c.icon
-              const isSelected = tipoContacto === c.id
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setTipoContacto(c.id)}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all border ${
-                    isSelected
-                      ? `${c.color} ${c.border} shadow-sm font-bold scale-[1.02]`
-                      : 'bg-neutral-950/70 border-[var(--border)] text-gray-400 hover:text-white hover:bg-neutral-800'
-                  }`}
-                >
-                  <Icon size={13} />
-                  {c.label}
-                </button>
-              )
-            })}
+      {/* Formulario de Entrada Rápida O Aviso de Solo Lectura si está bloqueado */}
+      {disabled ? (
+        <div className="p-3.5 rounded-xl bg-neutral-950/70 border border-[var(--border)] text-xs text-gray-400 flex items-center justify-between gap-3 shadow-inner">
+          <div className="flex items-center gap-2">
+            <Lock size={14} className="text-amber-400 shrink-0" />
+            <span className="text-gray-300 font-medium">Bitácora cerrada (solo lectura).</span>
           </div>
+          <span className="text-[10px] text-gray-500 font-mono">
+            Reabrir caso para agregar nuevos registros
+          </span>
         </div>
-
-        {/* Textarea de Contenido */}
-        <div className="space-y-1">
-          <textarea
-            value={contenido}
-            onChange={(e) => setContenido(e.target.value)}
-            rows={3}
-            placeholder="Asentar aquí: lo conversado con el paciente, presupuesto explicado, dudas resueltas, requisitos prequirúrgicos acordados, autorizaciones pendientes o motivos de seguimiento..."
-            className="w-full p-3 text-xs border border-[var(--border)] rounded-xl bg-neutral-950 focus:outline-none focus:ring-1 focus:ring-blue-500 text-white placeholder-gray-500 leading-relaxed resize-none"
-          />
-        </div>
-
-        {/* Pie del Formulario: Metadatos Automáticos y Botón de Registro */}
-        <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
-          <div className="flex items-center gap-2 text-[11px] text-gray-400">
-            <span className="flex items-center gap-1 font-medium text-gray-300">
-              <User size={12} className="text-blue-400" />
-              {nombreAsesoraActual}
-            </span>
-            <span>•</span>
-            <span className="flex items-center gap-1 font-mono text-[10px] text-gray-500">
-              <Clock size={11} />
-              Registro automático al guardar
-            </span>
+      ) : (
+        <form
+          onSubmit={handleGuardarEvolucion}
+          className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3 shadow-inner"
+        >
+          {/* Selector de Canales */}
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-semibold text-gray-400">
+              Canal de Contacto:
+            </label>
+            <div className="flex flex-wrap gap-1.5">
+              {CANALES.map((c) => {
+                const Icon = c.icon
+                const isSelected = tipoContacto === c.id
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setTipoContacto(c.id)}
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-all border ${
+                      isSelected
+                        ? `${c.color} ${c.border} shadow-sm font-bold scale-[1.02]`
+                        : 'bg-neutral-950/70 border-[var(--border)] text-gray-400 hover:text-white hover:bg-neutral-800'
+                    }`}
+                  >
+                    <Icon size={13} />
+                    {c.label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={guardando || !contenido.trim() || !asesoriaId}
-            className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
-          >
-            {guardando ? (
-              <>
-                <Loader2 size={13} className="animate-spin" />
-                Guardando en bitácora...
-              </>
-            ) : (
-              <>
-                <Plus size={13} />
-                + Registrar Evolución
-              </>
-            )}
-          </button>
-        </div>
-      </form>
+          {/* Textarea de Contenido */}
+          <div className="space-y-1">
+            <textarea
+              value={contenido}
+              onChange={(e) => setContenido(e.target.value)}
+              rows={3}
+              placeholder="Asentar aquí: lo conversado con el paciente, presupuesto explicado, dudas resueltas, requisitos prequirúrgicos acordados, autorizaciones pendientes o motivos de seguimiento..."
+              className="w-full p-3 text-xs border border-[var(--border)] rounded-xl bg-neutral-950 focus:outline-none focus:ring-1 focus:ring-blue-500 text-white placeholder-gray-500 leading-relaxed resize-none"
+            />
+          </div>
+
+          {/* Pie del Formulario: Metadatos Automáticos y Botón de Registro */}
+          <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+            <div className="flex items-center gap-2 text-[11px] text-gray-400">
+              <span className="flex items-center gap-1 font-medium text-gray-300">
+                <User size={12} className="text-blue-400" />
+                {nombreAsesoraActual}
+              </span>
+              <span>•</span>
+              <span className="flex items-center gap-1 font-mono text-[10px] text-gray-500">
+                <Clock size={11} />
+                Registro automático al guardar
+              </span>
+            </div>
+
+            <button
+              type="submit"
+              disabled={guardando || !contenido.trim() || !asesoriaId}
+              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+            >
+              {guardando ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Guardando en bitácora...
+                </>
+              ) : (
+                <>
+                  <Plus size={13} />
+                  + Registrar Evolución
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      )}
 
       {/* Timeline Cronológico de Entradas */}
       <div className="space-y-3 pt-2">
@@ -439,14 +446,16 @@ export default function TimelineEvolucionesAsesoria({
                           <Clock size={11} className="text-gray-500" />
                           {formatearFecha(ev.fecha_contacto)}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleEliminarEvolucion(ev.id)}
-                          className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 p-1 rounded transition-all"
-                          title="Eliminar registro"
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                        {!disabled && (
+                          <button
+                            type="button"
+                            onClick={() => handleEliminarEvolucion(ev.id)}
+                            className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 p-1 rounded transition-all"
+                            title="Eliminar registro"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                       </div>
                     </div>
 
