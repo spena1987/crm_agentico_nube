@@ -655,13 +655,6 @@ async function initBaileys(forceClean = false) {
   } finally {
     isInitializing = false
   }
-
-  } catch (error) {
-    connectionStatus = 'ERROR'
-    addLog('ERROR', `Error al inicializar Baileys: ${error.message}`)
-  } finally {
-    isInitializing = false
-  }
 }
 
 // ==========================================
