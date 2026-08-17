@@ -55,6 +55,8 @@ process.on('unhandledRejection', (reason, promise) => {
 
 // Almacén en memoria de mensajes para resolución de reintentos de cifrado (Decryption Retries)
 const msgStore = new Map()
+const processedMessageIds = new Set()
+
 function saveToMsgStore(keyId, messageObj) {
   if (!keyId || !messageObj) return
   msgStore.set(keyId, messageObj)
