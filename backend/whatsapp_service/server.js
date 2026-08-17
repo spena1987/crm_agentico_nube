@@ -375,12 +375,9 @@ async function initBaileys(forceClean = false) {
       browser: Browsers.macOS('Chrome'),
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 20000,
-      retryRequestDelayMs: 250,
-      maxRetries: 5,
+      keepAliveIntervalMs: 25000,
       generateHighQualityLinkPreview: true,
-      syncFullHistory: true,
-      shouldSyncHistoryMessage: (msg) => true,
+      syncFullHistory: false,
       markOnlineOnConnect: true,
       getMessage: async (key) => {
         if (key?.id && msgStore.has(key.id)) {
