@@ -722,22 +722,26 @@ async function initBaileys(forceClean = false) {
         // Intento 1: Despachar a FASTAPI_WEBHOOK
         let webhookSuccess = false
         try {
-          await axios.post(FASTAPI_WEBHOOK, webhookPayload, { timeout: 6000 })
-          webhookSuccess = true
+          const resp1 = await axios.post(FASTAPI_WEBHOOK, webhookPayload, { timeout: 6000 })
+          if (resp1.data && resp1.data.status !== 'error') {
+            webhookSuccess = true
+          }
         } catch (err1) {
           // Intento 2: Probar puerto alternativo (8000 si FASTAPI_PORT era dinámico, o viceversa)
           const altWebhook = `http://127.0.0.1:8000/api/whatsapp/webhook/incoming`
           if (FASTAPI_WEBHOOK !== altWebhook) {
             try {
-              await axios.post(altWebhook, webhookPayload, { timeout: 4000 })
-              webhookSuccess = true
+              const resp2 = await axios.post(altWebhook, webhookPayload, { timeout: 4000 })
+              if (resp2.data && resp2.data.status !== 'error') {
+                webhookSuccess = true
+              }
             } catch (err2) {}
           }
         }
 
         // Si ambos endpoints locales fallaron, guardar directamente en Supabase para no perder el mensaje
         if (!webhookSuccess && !fromMe && senderPhone && SUPABASE_KEY) {
-          addLog('WARNING', `Webhook FastAPI no disponible. Ejecutando guardado directo en Supabase para +${senderPhone}...`, 'WEBHOOK_FALLBACK_SUPABASE')
+          addLog('WARNING', `Webhook FastAPI no disponible o retornó error. Ejecutando guardado directo en Supabase para +${senderPhone}...`, 'WEBHOOK_FALLBACK_SUPABASE')
           await directSaveIncomingMessageToSupabase(webhookPayload)
         }
 

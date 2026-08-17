@@ -397,6 +397,10 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         if payload.media and isinstance(payload.media, dict):
             meta.update(payload.media)
 
+        caption_texto = payload.media.get("caption") if (payload.media and isinstance(payload.media, dict)) else None
+        tipo_label = payload.media.get("tipo", payload.message_type) if (payload.media and isinstance(payload.media, dict)) else payload.message_type
+        contenido_final = texto or caption_texto or f"[{tipo_label.upper()}]"
+
         # Calcular timestamp original del mensaje de WhatsApp
         created_at_iso = None
         if payload.timestamp and payload.timestamp > 0:
@@ -427,7 +431,8 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         return {"status": "processed", "conversacion_id": conversacion_id, "telefono": clean_phone}
     except Exception as e:
         logger.error(f"Error procesando mensaje entrante Baileys: {e}", exc_info=True)
-        return {"status": "error", "detail": str(e)}
+        log_event(nivel="ERROR", modulo="WHATSAPP", accion="ERROR_WEBHOOK_FASTAPI", mensaje=f"Error procesando mensaje: {e}", metadata_json={"error": str(e)})
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/conversaciones")
 def get_conversaciones_api(incluir_archivadas: bool = True):
