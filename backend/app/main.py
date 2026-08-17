@@ -577,7 +577,8 @@ def send_message_api(payload: SendMessageRequest):
         }
 
     # 2. MENSAJE SALIENTE A WHATSAPP
-    telefono_final = (payload.telefono or payload.phone or "").strip()
+    telefono_raw = (payload.telefono or payload.phone or "").strip()
+    telefono_final = normalize_phone_number(telefono_raw) if telefono_raw else ""
     conversacion_id = payload.conversacion_id
     paciente_id = payload.paciente_id
 
@@ -607,17 +608,20 @@ def send_message_api(payload: SendMessageRequest):
         except Exception as e:
             logger.warning(f"No se pudo resolver conversación por teléfono {telefono_final}: {e}")
 
-    # C. Recuperar teléfono si faltaba
+    # C. Recuperar y normalizar teléfono si faltaba
     if not telefono_final and conversacion_id:
         try:
             if supabase:
-                conv = supabase.table("conversaciones").select("paciente_id, pacientes(telefono)").eq("id", conversacion_id).execute()
-                if conv.data and len(conv.data) > 0:
-                    p_data = conv.data[0].get("pacientes")
+                conv_data = supabase.table("conversaciones").select("paciente_id, pacientes(telefono)").eq("id", conversacion_id).execute()
+                if conv_data.data and len(conv_data.data) > 0:
+                    p_data = conv_data.data[0].get("pacientes")
+                    raw_tel = None
                     if isinstance(p_data, list) and len(p_data) > 0:
-                        telefono_final = p_data[0].get("telefono")
+                        raw_tel = p_data[0].get("telefono")
                     elif isinstance(p_data, dict):
-                        telefono_final = p_data.get("telefono")
+                        raw_tel = p_data.get("telefono")
+                    if raw_tel:
+                        telefono_final = normalize_phone_number(raw_tel)
         except Exception as e:
             logger.warning(f"No se pudo recuperar teléfono por conversación {conversacion_id}: {e}")
 
@@ -626,9 +630,11 @@ def send_message_api(payload: SendMessageRequest):
             if supabase:
                 pac_res = supabase.table("pacientes").select("telefono").eq("id", paciente_id).execute()
                 if pac_res.data and len(pac_res.data) > 0:
-                    telefono_final = pac_res.data[0].get("telefono")
+                    raw_tel = pac_res.data[0].get("telefono")
+                    if raw_tel:
+                        telefono_final = normalize_phone_number(raw_tel)
         except Exception as e:
-            logger.warning(f"No se pudo recuperar teléfono por paciente_id {paciente_id}: {e}")
+            logger.warning(f"No se pudo recuperar teléfono por paciente_id {payload.paciente_id}: {e}")
 
     if not telefono_final:
         raise HTTPException(status_code=400, detail="Debe especificar un número de teléfono de destino válido.")

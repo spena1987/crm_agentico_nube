@@ -16,6 +16,7 @@ import {
 import { BACKEND_URL } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
+import { normalizePhoneNumber } from '@/lib/phoneUtils'
 
 export interface PlantillaWhatsAppItem {
   id: string
@@ -182,13 +183,14 @@ export default function ModalPlantillasWhatsAppQuirurgicas({
       }
 
       // 2. Enviar mensaje por WhatsApp (API Baileys)
+      const telFinal = normalizePhoneNumber(telefono.trim()) || telefono.trim()
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-message`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          telefono: telefono.trim(),
+          telefono: telFinal,
           mensaje: mensajeTexto.trim(),
-          phone: telefono.trim(),
+          phone: telFinal,
           message: mensajeTexto.trim(),
           paciente_id: pacienteId,
           conversacion_id: conversacionId
