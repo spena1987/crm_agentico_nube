@@ -495,11 +495,20 @@ export default function ItemCasoQuirurgicoAcordeon({
     }
   }
 
+  // Determinar si el caso está formalmente cerrado o en seguimiento activo
+  const isCerrado = estado === 'operado' || estado === 'cancelado' || Boolean(caso.motivo_cancelacion)
+
   // Obtener estilo cromático de la etapa actual
   const etapaActualInfo = ETAPAS.find((e) => e.id === estado) || ETAPAS[1]
 
   return (
-    <div className={`rounded-2xl border transition-all duration-200 overflow-hidden shadow-sm ${etapaActualInfo.headerBorder} bg-neutral-900/60`}>
+    <div
+      className={`rounded-2xl border transition-all duration-200 overflow-hidden shadow-sm ${
+        isCerrado
+          ? 'border-neutral-800 bg-neutral-950/85 opacity-90 hover:opacity-100'
+          : `${etapaActualInfo.headerBorder} bg-neutral-900/70 shadow-md`
+      }`}
+    >
       
       {/* ==================================================================== */}
       {/* ENCABEZADO CROMÁTICO DEL CASO (DESPLEGABLE / COLAPSABLE) */}
@@ -507,15 +516,40 @@ export default function ItemCasoQuirurgicoAcordeon({
       <button
         type="button"
         onClick={onToggle}
-        className={`w-full p-4 flex items-center justify-between text-left transition-colors ${etapaActualInfo.headerBg} select-none`}
+        className={`w-full p-4 flex items-center justify-between text-left transition-colors select-none ${
+          isCerrado
+            ? 'bg-gradient-to-r from-neutral-900/90 via-neutral-950 to-neutral-950'
+            : etapaActualInfo.headerBg
+        }`}
       >
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Badge Numérico de la Cirugía */}
-          <span className="text-xs font-mono font-black px-2.5 py-1 rounded-xl bg-neutral-950/80 text-white border border-[var(--border)] shadow-sm">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          
+          {/* 1. BADGE PROMINENTE DE ESTADO GLOBAL (ACTIVO vs CERRADO) */}
+          {isCerrado ? (
+            estado === 'operado' ? (
+              <span className="text-[11px] font-black px-2.5 py-1 rounded-xl bg-teal-950/90 text-teal-300 border border-teal-500/50 flex items-center gap-1.5 shadow-sm">
+                <CheckCircle2 size={13} className="text-teal-400 shrink-0" />
+                CERRADO (OPERADO)
+              </span>
+            ) : (
+              <span className="text-[11px] font-black px-2.5 py-1 rounded-xl bg-red-950/90 text-red-300 border border-red-500/50 flex items-center gap-1.5 shadow-sm">
+                <XCircle size={13} className="text-red-400 shrink-0" />
+                CERRADO (DESISTIDO)
+              </span>
+            )
+          ) : (
+            <span className="text-[11px] font-black px-2.5 py-1 rounded-xl bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 flex items-center gap-1.5 shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+              CASO ACTIVO
+            </span>
+          )}
+
+          {/* 2. Badge Numérico de la Cirugía */}
+          <span className="text-xs font-mono font-black px-2.5 py-1 rounded-xl bg-neutral-950/90 text-white border border-[var(--border)] shadow-sm">
             Cirugía #{index + 1}
           </span>
 
-          {/* Nombre de la Prestación */}
+          {/* 3. Nombre de la Prestación */}
           <div className="flex items-center gap-2">
             <h4 className="text-sm font-black text-white tracking-tight">
               {practicaNombre || 'Procedimiento / Cirugía Pendiente'}
@@ -527,12 +561,12 @@ export default function ItemCasoQuirurgicoAcordeon({
             )}
           </div>
 
-          {/* Badge de Etapa */}
+          {/* 4. Badge de Etapa */}
           <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider border ${etapaActualInfo.color}`}>
             {etapaActualInfo.label}
           </span>
 
-          {/* Fecha Probable / Definitiva */}
+          {/* 5. Fecha Probable / Definitiva */}
           {(fechaDefinitiva || fechaProbable) && (
             <span className="text-[11px] font-mono text-gray-300 flex items-center gap-1 bg-neutral-950/60 px-2 py-0.5 rounded-lg border border-[var(--border)]">
               <Calendar size={12} className={fechaDefinitiva ? 'text-emerald-400' : 'text-purple-400'} />
@@ -540,7 +574,7 @@ export default function ItemCasoQuirurgicoAcordeon({
             </span>
           )}
 
-          {/* Monto Extra Cotizado */}
+          {/* 6. Monto Extra Cotizado */}
           {Number(montoExtra) > 0 && (
             <span className="text-[11px] font-mono font-bold text-amber-300 flex items-center gap-1 bg-amber-950/50 px-2 py-0.5 rounded-lg border border-amber-500/30">
               <DollarSign size={12} />

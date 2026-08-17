@@ -204,6 +204,13 @@ export default function PanelAsesoriaQuirurgica({
     setTimeout(() => setMensajeExito(null), 3000)
   }
 
+  // Contadores de casos activos y cerrados
+  const totalCasos = asesorias.length
+  const casosActivos = asesorias.filter(
+    (a) => a.estado !== 'operado' && a.estado !== 'cancelado' && !a.motivo_cancelacion
+  ).length
+  const casosCerrados = totalCasos - casosActivos
+
   return (
     <div className="space-y-4 pt-4 border-t border-[var(--border)]">
       
@@ -216,13 +223,25 @@ export default function PanelAsesoriaQuirurgica({
             <Stethoscope className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-black text-white tracking-tight">
                 Sector de Asesoramiento Quirúrgico & Cirugías
               </h3>
               <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/40">
-                {asesorias.length} {asesorias.length === 1 ? 'Procedimiento' : 'Procedimientos'}
+                {totalCasos} {totalCasos === 1 ? 'Procedimiento' : 'Procedimientos'}
               </span>
+              {totalCasos > 0 && (
+                <div className="flex items-center gap-1.5 text-[11px] font-mono">
+                  <span className="px-2 py-0.5 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 font-bold">
+                    {casosActivos} {casosActivos === 1 ? 'Activo' : 'Activos'}
+                  </span>
+                  {casosCerrados > 0 && (
+                    <span className="px-2 py-0.5 rounded-lg bg-neutral-950 text-gray-400 border border-neutral-700 font-bold">
+                      {casosCerrados} {casosCerrados === 1 ? 'Cerrado' : 'Cerrados'}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
             <p className="text-xs text-[var(--secondary)]">
               Gestión individual y secuencial de cada cirugía programada para <strong className="text-white">{pacienteNombre}</strong>.
