@@ -63,16 +63,7 @@ export default function PanelAsesoriaQuirurgica({
       }
 
       setAsesorias(lista)
-
-      // Abrir por defecto el caso más reciente si no hay ninguno abierto
-      if (lista.length > 0) {
-        setDesplegados((prev) => {
-          if (Object.keys(prev).length === 0) {
-            return { [lista[0].id]: true }
-          }
-          return prev
-        })
-      }
+      // Todas las cirugías inician colapsadas por defecto para una vista panorámica limpia
     } catch (err: any) {
       console.error('Error cargando asesorías:', err)
       setError(err.message || 'Error al cargar los casos quirúrgicos.')

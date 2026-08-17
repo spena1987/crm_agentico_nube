@@ -671,7 +671,7 @@ export default function ItemCasoQuirurgicoAcordeon({
           )}
 
           {/* BANNER DE CASO CERRADO / DESISTIDO / OPERADO */}
-          {(estado === 'cancelado' || estado === 'operado' || caso.motivo_cancelacion) && (
+          {isCerrado && (
             <div
               className={`p-4 rounded-xl border flex items-start justify-between gap-3 ${
                 estado === 'operado'
@@ -687,11 +687,12 @@ export default function ItemCasoQuirurgicoAcordeon({
                       {estado === 'operado' ? 'Caso Cerrado: Operado con Éxito' : 'Caso Cerrado: Desistido / Cancelado'}
                     </span>
                     <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-neutral-950/80 border border-current">
-                      Cerrado
+                      Solo Lectura (Bloqueado)
                     </span>
                   </div>
                   <p className="text-xs text-gray-200 leading-relaxed">
-                    {caso.motivo_cancelacion || 'Procedimiento cerrado formalmente.'}
+                    {caso.motivo_cancelacion ? `Motivo: ${caso.motivo_cancelacion}. ` : ''}
+                    Todos los campos se encuentran bloqueados. Para modificar profesionales, prácticas, presupuestos, fechas o checklist, debes reabrir el caso.
                   </p>
                 </div>
               </div>
@@ -700,7 +701,7 @@ export default function ItemCasoQuirurgicoAcordeon({
                 type="button"
                 onClick={handleReabrirCaso}
                 disabled={guardando}
-                className="px-3 py-1.5 text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-white border border-[var(--border)] rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm transition-all"
+                className="px-3 py-1.5 text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/40 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm transition-all hover:scale-105"
               >
                 <Unlock size={13} className="text-amber-400" />
                 Reabrir Caso
@@ -720,14 +721,16 @@ export default function ItemCasoQuirurgicoAcordeon({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className={`grid grid-cols-2 sm:grid-cols-5 gap-2 ${isCerrado ? 'opacity-70 pointer-events-none' : ''}`}>
               {ETAPAS.filter((e) => e.id !== 'cancelado').map((e) => {
                 const isSelected = estado === e.id
                 return (
                   <button
                     key={e.id}
                     type="button"
+                    disabled={isCerrado}
                     onClick={() => {
+                      if (isCerrado) return
                       setEstado(e.id)
                       if (e.id === 'confirmado' && !fechaDefinitiva && fechaProbable) {
                         setFechaDefinitiva(fechaProbable)
@@ -737,7 +740,7 @@ export default function ItemCasoQuirurgicoAcordeon({
                       isSelected
                         ? `${e.color} shadow-lg scale-[1.02]`
                         : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white hover:bg-neutral-800'
-                    }`}
+                    } ${isCerrado ? 'cursor-not-allowed' : ''}`}
                   >
                     <div className="flex items-center justify-between">
                       <span className="truncate">{e.label}</span>
@@ -762,25 +765,32 @@ export default function ItemCasoQuirurgicoAcordeon({
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Buscar médico derivador en Geclisa..."
+                  disabled={isCerrado || guardando}
+                  placeholder={isCerrado ? 'Sin derivador asignado' : 'Buscar médico derivador en Geclisa...'}
                   value={busquedaDerivador}
                   onChange={(e) => {
+                    if (isCerrado) return
                     setBusquedaDerivador(e.target.value)
                     setMedicoDerivador({ nombre: e.target.value })
                     buscarPrestador('derivador', e.target.value)
                     setMostrarDropdownDerivador(true)
                   }}
                   onFocus={() => {
+                    if (isCerrado) return
                     buscarPrestador('derivador', busquedaDerivador)
                     setMostrarDropdownDerivador(true)
                   }}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                  className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
+                    isCerrado
+                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                      : 'bg-neutral-900 focus:border-blue-500'
+                  }`}
                 />
                 {buscandoDerivador && (
                   <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
                 )}
 
-                {mostrarDropdownDerivador && prestadoresDerivador.length > 0 && (
+                {!isCerrado && mostrarDropdownDerivador && prestadoresDerivador.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
                     {prestadoresDerivador.map((p) => (
                       <button
@@ -816,25 +826,32 @@ export default function ItemCasoQuirurgicoAcordeon({
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Buscar cirujano en Geclisa..."
+                  disabled={isCerrado || guardando}
+                  placeholder={isCerrado ? 'Sin cirujano asignado' : 'Buscar cirujano en Geclisa...'}
                   value={busquedaCirujano}
                   onChange={(e) => {
+                    if (isCerrado) return
                     setBusquedaCirujano(e.target.value)
                     setMedicoCirujano({ nombre: e.target.value })
                     buscarPrestador('cirujano', e.target.value)
                     setMostrarDropdownCirujano(true)
                   }}
                   onFocus={() => {
+                    if (isCerrado) return
                     buscarPrestador('cirujano', busquedaCirujano)
                     setMostrarDropdownCirujano(true)
                   }}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                  className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
+                    isCerrado
+                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                      : 'bg-neutral-900 focus:border-emerald-500'
+                  }`}
                 />
                 {buscandoCirujano && (
                   <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
                 )}
 
-                {mostrarDropdownCirujano && prestadoresCirujano.length > 0 && (
+                {!isCerrado && mostrarDropdownCirujano && prestadoresCirujano.length > 0 && (
                   <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
                     {prestadoresCirujano.map((p) => (
                       <button
@@ -870,25 +887,32 @@ export default function ItemCasoQuirurgicoAcordeon({
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Buscar práctica por código o nombre..."
+                  disabled={isCerrado || guardando}
+                  placeholder={isCerrado ? 'Sin práctica asignada' : 'Buscar práctica por código o nombre...'}
                   value={busquedaPractica}
                   onChange={(e) => {
+                    if (isCerrado) return
                     setBusquedaPractica(e.target.value)
                     setPracticaNombre(e.target.value)
                     buscarPracticasNomenclador(e.target.value)
                     setMostrarDropdownPractica(true)
                   }}
                   onFocus={() => {
+                    if (isCerrado) return
                     buscarPracticasNomenclador(busquedaPractica)
                     setMostrarDropdownPractica(true)
                   }}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                  className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
+                    isCerrado
+                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                      : 'bg-neutral-900 focus:border-indigo-500'
+                  }`}
                 />
                 {buscandoPractica && (
                   <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
                 )}
 
-                {mostrarDropdownPractica && (
+                {!isCerrado && mostrarDropdownPractica && (
                   <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-indigo-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
                     {practicasNomenclador.map((p, i) => (
                       <button
@@ -904,16 +928,21 @@ export default function ItemCasoQuirurgicoAcordeon({
                           }
                           setMostrarDropdownPractica(false)
                         }}
-                        className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group"
+                        className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group flex items-center justify-between"
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-white group-hover:text-indigo-300 transition-colors">
-                            {p.nombre}
-                          </span>
-                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-indigo-300 border border-indigo-500/20 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/30">
                             {p.codigo}
                           </span>
+                          <span className="font-bold text-white group-hover:text-indigo-300 transition-colors truncate max-w-xs">
+                            {p.nombre}
+                          </span>
                         </div>
+                        {p.precio && Number(p.precio) > 0 && (
+                          <span className="text-[11px] font-mono text-amber-300 font-bold shrink-0">
+                            $ {Number(p.precio).toLocaleString()}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -994,7 +1023,7 @@ export default function ItemCasoQuirurgicoAcordeon({
                             </a>
                           )}
 
-                          {!isAprobado && (
+                          {!isCerrado && !isAprobado && (
                             <button
                               type="button"
                               disabled={isCargandoAccion}
@@ -1006,7 +1035,7 @@ export default function ItemCasoQuirurgicoAcordeon({
                             </button>
                           )}
 
-                          {!isRechazado && (
+                          {!isCerrado && !isRechazado && (
                             <button
                               type="button"
                               disabled={isCargandoAccion}
@@ -1025,14 +1054,16 @@ export default function ItemCasoQuirurgicoAcordeon({
               ) : (
                 <div className="p-3 rounded-xl bg-neutral-950/60 border border-[var(--border)] text-center space-y-2">
                   <p className="text-[11px] text-gray-400">Sin presupuesto generado aún.</p>
-                  <button
-                    type="button"
-                    onClick={() => setMostrarModalPresupuesto(true)}
-                    className="w-full py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                  >
-                    <Receipt size={13} />
-                    + Armar Presupuesto
-                  </button>
+                  {!isCerrado && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarModalPresupuesto(true)}
+                      className="w-full py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Receipt size={13} />
+                      + Armar Presupuesto
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1045,9 +1076,17 @@ export default function ItemCasoQuirurgicoAcordeon({
               </label>
               <input
                 type="date"
+                disabled={isCerrado || guardando}
                 value={fechaProbable}
-                onChange={(e) => setFechaProbable(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-purple-500 rounded-xl text-white font-mono focus:outline-none"
+                onChange={(e) => {
+                  if (isCerrado) return
+                  setFechaProbable(e.target.value)
+                }}
+                className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white font-mono focus:outline-none ${
+                  isCerrado
+                    ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                    : 'bg-neutral-900 focus:border-purple-500'
+                }`}
               />
             </div>
 
@@ -1058,14 +1097,20 @@ export default function ItemCasoQuirurgicoAcordeon({
               </label>
               <input
                 type="date"
+                disabled={isCerrado || guardando}
                 value={fechaDefinitiva}
                 onChange={(e) => {
+                  if (isCerrado) return
                   setFechaDefinitiva(e.target.value)
-                  if (e.target.value && estado !== 'confirmado' && estado !== 'operado') {
+                  if (e.target.value && estado !== 'confirmado') {
                     setEstado('confirmado')
                   }
                 }}
-                className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-white font-mono focus:outline-none"
+                className={`w-full px-3 py-2 text-xs border border-emerald-500/40 rounded-xl text-white font-mono focus:outline-none ${
+                  isCerrado
+                    ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                    : 'bg-neutral-900 focus:border-emerald-500'
+                }`}
               />
             </div>
 
@@ -1075,7 +1120,11 @@ export default function ItemCasoQuirurgicoAcordeon({
           <div className="pt-2">
             <ChecklistPrequirurgico
               checklist={checklistPrequirurgico}
-              onChange={(nuevo) => setChecklistPrequirurgico(nuevo)}
+              disabled={isCerrado}
+              onChange={(nuevo) => {
+                if (isCerrado) return
+                setChecklistPrequirurgico(nuevo)
+              }}
             />
           </div>
 
@@ -1108,9 +1157,17 @@ export default function ItemCasoQuirurgicoAcordeon({
                 </label>
                 <input
                   type="date"
+                  disabled={isCerrado || guardando}
                   value={proximaAccionFecha}
-                  onChange={(e) => setProximaAccionFecha(e.target.value)}
-                  className="px-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white font-mono focus:outline-none"
+                  onChange={(e) => {
+                    if (isCerrado) return
+                    setProximaAccionFecha(e.target.value)
+                  }}
+                  className={`px-3 py-1.5 text-xs border border-[var(--border)] rounded-xl text-white font-mono focus:outline-none ${
+                    isCerrado
+                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                      : 'bg-neutral-950 focus:border-blue-500'
+                  }`}
                 />
               </div>
 
@@ -1121,10 +1178,18 @@ export default function ItemCasoQuirurgicoAcordeon({
                 </label>
                 <input
                   type="text"
+                  disabled={isCerrado || guardando}
                   value={proximaAccionTexto}
-                  onChange={(e) => setProximaAccionTexto(e.target.value)}
-                  placeholder="Ej: Chequear si OSDE emitió autorización, consultar por estudios de sangre..."
-                  className="px-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                  onChange={(e) => {
+                    if (isCerrado) return
+                    setProximaAccionTexto(e.target.value)
+                  }}
+                  placeholder={isCerrado ? 'Sin tareas pendientes (caso cerrado)' : 'Ej: Chequear si OSDE emitió autorización, consultar por estudios de sangre...'}
+                  className={`px-3 py-1.5 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
+                    isCerrado
+                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
+                      : 'bg-neutral-950 focus:border-blue-500'
+                  }`}
                 />
               </div>
             </div>
@@ -1161,47 +1226,54 @@ export default function ItemCasoQuirurgicoAcordeon({
                 WhatsApp Rápido
               </button>
 
-              {/* Botón de Cerrar o Reabrir Caso */}
-              {estado === 'cancelado' || estado === 'operado' ? (
-                <button
-                  type="button"
-                  onClick={handleReabrirCaso}
-                  disabled={guardando}
-                  className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
-                >
-                  <Unlock size={13} />
-                  Reabrir Caso
-                </button>
+              {/* Acciones según si está cerrado o activo */}
+              {isCerrado ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400 italic">
+                    Caso cerrado (solo lectura)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleReabrirCaso}
+                    disabled={guardando}
+                    className="px-4 py-2 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5 hover:scale-105"
+                  >
+                    <Unlock size={13} />
+                    Reabrir para Modificar
+                  </button>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setMostrarModalCierre(true)}
-                  disabled={guardando}
-                  className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-gray-300 hover:text-white border border-[var(--border)] hover:border-red-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
-                >
-                  <Lock size={13} className="text-amber-400" />
-                  Cerrar Caso...
-                </button>
-              )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalCierre(true)}
+                    disabled={guardando}
+                    className="px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-gray-300 hover:text-white border border-[var(--border)] hover:border-red-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+                  >
+                    <Lock size={13} className="text-amber-400" />
+                    Cerrar Caso...
+                  </button>
 
-              <button
-                type="button"
-                onClick={() => handleGuardar()}
-                disabled={guardando}
-                className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
-              >
-                {guardando ? (
-                  <>
-                    <Loader2 size={13} className="animate-spin" />
-                    Guardando...
-                  </>
-                ) : (
-                  <>
-                    <Save size={13} />
-                    Guardar Cambios
-                  </>
-                )}
-              </button>
+                  <button
+                    type="button"
+                    onClick={() => handleGuardar()}
+                    disabled={guardando}
+                    className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
+                  >
+                    {guardando ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <Save size={13} />
+                        Guardar Cambios
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
