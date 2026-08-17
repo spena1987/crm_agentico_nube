@@ -452,12 +452,20 @@ async function initBaileys(forceClean = false) {
       }
     })
 
-    // Deduplicación y procesamiento unificado de mensajes
-    const processedMessageIds = new Set()
+    // Función auxiliar para desencapsular mensajes efímeros, view-once y multimedia con subtítulo
+    function unwrapMessage(message) {
+      if (!message) return message
+      if (message.ephemeralMessage?.message) return unwrapMessage(message.ephemeralMessage.message)
+      if (message.viewOnceMessage?.message) return unwrapMessage(message.viewOnceMessage.message)
+      if (message.viewOnceMessageV2?.message) return unwrapMessage(message.viewOnceMessageV2.message)
+      if (message.documentWithCaptionMessage?.message) return unwrapMessage(message.documentWithCaptionMessage.message)
+      return message
+    }
 
     async function processIncomingMessage(msg) {
       try {
         if (!msg || !msg.message) return
+        const rawMessage = unwrapMessage(msg.message)
         const messageId = msg.key?.id
         
         // Almacenar en msgStore para resolver futuros reintentos de desencriptación
@@ -512,24 +520,26 @@ async function initBaileys(forceClean = false) {
           }
         }
         
-        // Extraer texto
-        let text = msg.message?.conversation || 
-                   msg.message?.extendedTextMessage?.text || 
-                   msg.message?.imageMessage?.caption || 
-                   msg.message?.documentMessage?.caption || 
-                   msg.message?.videoMessage?.caption || ''
+        // Extraer texto desencapsulado
+        let text = rawMessage?.conversation || 
+                   rawMessage?.extendedTextMessage?.text || 
+                   rawMessage?.imageMessage?.caption || 
+                   rawMessage?.documentMessage?.caption || 
+                   rawMessage?.videoMessage?.caption || 
+                   rawMessage?.buttonsResponseMessage?.selectedDisplayText ||
+                   rawMessage?.templateButtonReplyMessage?.selectedDisplayText ||
+                   rawMessage?.listResponseMessage?.title || ''
 
         // Determinar tipo de mensaje y procesar multimedia
         let messageType = 'text'
         let mediaInfo = null
 
         const isMedia = Boolean(
-          msg.message.imageMessage || 
-          msg.message.documentMessage || 
-          msg.message.documentWithCaptionMessage || 
-          msg.message.audioMessage || 
-          msg.message.videoMessage || 
-          msg.message.stickerMessage
+          rawMessage?.imageMessage || 
+          rawMessage?.documentMessage || 
+          rawMessage?.audioMessage || 
+          rawMessage?.videoMessage || 
+          rawMessage?.stickerMessage
         )
 
         if (isMedia) {
@@ -550,31 +560,30 @@ async function initBaileys(forceClean = false) {
             let fileName = 'archivo.bin'
             let tipo = 'documento'
 
-            if (msg.message.imageMessage) {
+            if (rawMessage.imageMessage) {
               messageType = 'image'
               tipo = 'imagen'
-              mimeType = msg.message.imageMessage.mimetype || 'image/jpeg'
+              mimeType = rawMessage.imageMessage.mimetype || 'image/jpeg'
               fileName = `imagen_${Date.now()}.jpg`
-            } else if (msg.message.audioMessage) {
+            } else if (rawMessage.audioMessage) {
               messageType = 'audio'
               tipo = 'audio'
-              mimeType = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus'
+              mimeType = rawMessage.audioMessage.mimetype || 'audio/ogg; codecs=opus'
               fileName = `audio_${Date.now()}.ogg`
-            } else if (msg.message.documentMessage || msg.message.documentWithCaptionMessage) {
+            } else if (rawMessage.documentMessage) {
               messageType = 'document'
               tipo = 'documento'
-              const doc = msg.message.documentMessage || msg.message.documentWithCaptionMessage?.message?.documentMessage
-              mimeType = doc?.mimetype || 'application/pdf'
-              fileName = doc?.fileName || doc?.title || `documento_${Date.now()}.pdf`
-            } else if (msg.message.videoMessage) {
+              mimeType = rawMessage.documentMessage.mimetype || 'application/pdf'
+              fileName = rawMessage.documentMessage.fileName || rawMessage.documentMessage.title || `documento_${Date.now()}.pdf`
+            } else if (rawMessage.videoMessage) {
               messageType = 'video'
               tipo = 'video'
-              mimeType = msg.message.videoMessage.mimetype || 'video/mp4'
+              mimeType = rawMessage.videoMessage.mimetype || 'video/mp4'
               fileName = `video_${Date.now()}.mp4`
-            } else if (msg.message.stickerMessage) {
+            } else if (rawMessage.stickerMessage) {
               messageType = 'sticker'
               tipo = 'sticker'
-              mimeType = msg.message.stickerMessage.mimetype || 'image/webp'
+              mimeType = rawMessage.stickerMessage.mimetype || 'image/webp'
               fileName = `sticker_${Date.now()}.webp`
             }
 
