@@ -131,16 +131,19 @@ def procesar_mensaje_agente(
                 )
             ]
 
-        # 5. Configurar generación con Directivas Dinámicas, Tools y thinking_budget=0
+        # 5. Configurar generación con Directivas Dinámicas, Tools y AFC optimizado
+        afc_config = types.AutomaticFunctionCallingConfig(ignore_call_history=True) if hasattr(types, "AutomaticFunctionCallingConfig") else None
         thinking_conf = types.ThinkingConfig(thinking_budget=0) if hasattr(types, "ThinkingConfig") else None
+        
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=agent_tools,
             temperature=agent_temp,
-            thinking_config=thinking_conf
+            thinking_config=thinking_conf,
+            automatic_function_calling=afc_config
         )
 
-        # 6. Ejecutar consulta inicial (con fallback ante fallas de historial o thought signature)
+        # 6. Ejecutar consulta inicial (con fallback multicapa resiliente)
         model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         try:
             response = client.models.generate_content(
@@ -149,8 +152,14 @@ def procesar_mensaje_agente(
                 config=config
             )
         except Exception as api_err:
-            if "thought signature" in str(api_err).lower() or "invalid_argument" in str(api_err).lower():
-                logger.warning(f"Reintentando consulta sin historial previo debido a thought signature error: {api_err}")
+            logger.warning(f"Error en inferencia primaria ({api_err}). Ejecutando fallback sin historial ni thinking_config...")
+            try:
+                # Reintento 1: Sin historial previo y sin thinking_config
+                fallback_config = types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    tools=agent_tools,
+                    temperature=agent_temp
+                )
                 contents_single = [
                     types.Content(
                         role="user",
@@ -160,10 +169,24 @@ def procesar_mensaje_agente(
                 response = client.models.generate_content(
                     model=model_name,
                     contents=contents_single,
-                    config=config
+                    config=fallback_config
                 )
-            else:
-                raise api_err
+            except Exception as fb_err:
+                logger.error(f"Falla también en fallback secundario ({fb_err}). Intentando con modelo alternativo...")
+                try:
+                    alt_model = "gemini-3.7-flash" if model_name != "gemini-3.7-flash" else "gemini-3.5-flash"
+                    fallback_config2 = types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=agent_temp
+                    )
+                    response = client.models.generate_content(
+                        model=alt_model,
+                        contents=final_texto or "Hola",
+                        config=fallback_config2
+                    )
+                except Exception as final_err:
+                    logger.critical(f"Falla crítica en todos los modelos de Gemini: {final_err}")
+                    raise final_err
 
         # 8. Loop de Function Calling
         intentos = 0
