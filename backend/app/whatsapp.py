@@ -44,10 +44,31 @@ class WhatsAppManager:
         self.logs_buffer: List[Dict[str, Any]] = []
         self.max_logs: int = 100
         self._lock = threading.Lock()
+        self._last_revive_attempt = 0
         
         self.add_log("INFO", f"WhatsAppManager inicializado con pasarela Baileys ({self.service_url}).")
         # Asegurar arranque del microservicio en segundo plano si corre en local o contenedor
         self.ensure_service_running()
+        self._start_watchdog()
+
+    def _start_watchdog(self):
+        """
+        Inicia un hilo guardián que verifica la salud de Baileys cada 20 segundos
+        y lo resucita automáticamente si detecta caída.
+        """
+        def _watchdog_loop():
+            time.sleep(5)
+            while True:
+                try:
+                    r = httpx.get(f"{self.service_url}/status", timeout=2.0)
+                    if r.status_code != 200:
+                        self.ensure_service_running()
+                except Exception:
+                    self.ensure_service_running()
+                time.sleep(20)
+
+        t = threading.Thread(target=_watchdog_loop, daemon=True)
+        t.start()
 
     def add_log(self, level: str, message: str, accion: str = "EVENTO_WHATSAPP", detalles: Optional[Dict[str, Any]] = None):
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -89,9 +110,15 @@ class WhatsAppManager:
         except Exception:
             pass
 
-        # Si ya hay un subproceso vivo, esperar a que termine de levantar el puerto
+        now = time.time()
+        # Evitar reintentos de spawn en ráfaga (mínimo 4s entre intentos)
+        if now - self._last_revive_attempt < 4:
+            return False
+        self._last_revive_attempt = now
+
+        # Si ya hay un subproceso vivo de python, esperar a que levante
         if self.node_process and self.node_process.poll() is None:
-            for _ in range(5):
+            for _ in range(4):
                 time.sleep(0.5)
                 try:
                     r = httpx.get(f"{self.service_url}/status", timeout=1.0)
@@ -101,13 +128,13 @@ class WhatsAppManager:
                     pass
             return True
 
-        # Si no responde y no hay proceso vivo, buscar server.js e iniciarlo
+        # Si no responde, buscar server.js e iniciarlo
         service_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "whatsapp_service")
         server_js = os.path.join(service_dir, "server.js")
         
         if os.path.exists(server_js):
             try:
-                self.add_log("INFO", f"Iniciando proceso único de Baileys desde {server_js}...")
+                self.add_log("INFO", f"Watchdog: Iniciando proceso Node.js de Baileys desde {server_js}...")
                 self.node_process = subprocess.Popen(
                     ["node", "server.js"],
                     cwd=service_dir,
@@ -115,7 +142,7 @@ class WhatsAppManager:
                     stderr=subprocess.DEVNULL,
                     env=dict(os.environ, WHATSAPP_SERVICE_PORT=str(BAILEYS_PORT))
                 )
-                time.sleep(1.2)
+                time.sleep(1.5)
                 return True
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo iniciar subproceso Node.js: {e}")
@@ -132,7 +159,8 @@ class WhatsAppManager:
                 self.status = data.get("status", "DISCONNECTED")
                 return data
         except Exception as e:
-            self.add_log("WARNING", f"Microservicio Baileys no disponible: {e}")
+            # Invocar auto-recuperación si no responde
+            self.ensure_service_running()
 
         return {
             "available": True,

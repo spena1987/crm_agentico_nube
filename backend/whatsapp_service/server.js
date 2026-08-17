@@ -38,6 +38,32 @@ app.use(cors())
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 
+// Manejadores Globales Anti-Crash (Evitan caídas por excepciones asíncronas no capturadas)
+process.on('uncaughtException', (err) => {
+  console.error('[ANTI-CRASH] uncaughtException interceptada:', err)
+  try {
+    addLog('ERROR', `Error no capturado en Node.js (rescatado): ${err?.message || err}`)
+  } catch (e) {}
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[ANTI-CRASH] unhandledRejection interceptada:', reason)
+  try {
+    addLog('WARNING', `Promesa rechazada no manejada (rescatada): ${reason?.message || reason}`)
+  } catch (e) {}
+})
+
+// Almacén en memoria de mensajes para resolución de reintentos de cifrado (Decryption Retries)
+const msgStore = new Map()
+function saveToMsgStore(keyId, messageObj) {
+  if (!keyId || !messageObj) return
+  msgStore.set(keyId, messageObj)
+  if (msgStore.size > 2000) {
+    const firstKey = msgStore.keys().next().value
+    msgStore.delete(firstKey)
+  }
+}
+
 // Estado global de la pasarela
 let sock = null
 let qrDataUri = null
@@ -349,10 +375,18 @@ async function initBaileys(forceClean = false) {
       browser: Browsers.macOS('Chrome'),
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 60000,
-      keepAliveIntervalMs: 25000,
+      keepAliveIntervalMs: 20000,
+      retryRequestDelayMs: 250,
+      maxRetries: 5,
       generateHighQualityLinkPreview: true,
       syncFullHistory: false,
-      markOnlineOnConnect: true
+      markOnlineOnConnect: true,
+      getMessage: async (key) => {
+        if (key?.id && msgStore.has(key.id)) {
+          return msgStore.get(key.id)?.message
+        }
+        return undefined
+      }
     })
 
     // Guardar credenciales de sesión automáticamente en disco y respaldar en Supabase
@@ -365,7 +399,7 @@ async function initBaileys(forceClean = false) {
       }
     })
 
-    // Manejo de actualizaciones de conexión
+    // Manejo de actualizaciones de conexión con reconexión inteligente
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update
 
@@ -399,186 +433,210 @@ async function initBaileys(forceClean = false) {
 
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode
-        addLog('WARNING', `Conexión cerrada. Código: ${statusCode}.`)
+        addLog('WARNING', `Conexión con WhatsApp cerrada. Código: ${statusCode || 'desconocido'}.`)
 
         if (statusCode === DisconnectReason.loggedOut) {
           connectionStatus = 'DISCONNECTED'
-          addLog('INFO', 'Sesión cerrada formalmente. Reiniciando almacenamiento...')
+          addLog('INFO', 'Sesión cerrada formalmente (401 Logged Out). Reiniciando credenciales...')
           initBaileys(true)
         } else if (statusCode === 440) {
           connectionStatus = 'DISCONNECTED'
-          addLog('WARNING', 'Conflicto de sesión (440 - connectionReplaced). Esperando 12s para estabilizar...')
-          reconnectTimeout = setTimeout(() => initBaileys(false), 12000)
+          addLog('WARNING', 'Conflicto de sesión (440 - connectionReplaced). Esperando 8s para estabilizar...')
+          reconnectTimeout = setTimeout(() => initBaileys(false), 8000)
+        } else if (statusCode === DisconnectReason.restartRequired) {
+          connectionStatus = 'INITIALIZING'
+          addLog('INFO', 'Reinicio requerido por WhatsApp (515). Reconectando de inmediato...')
+          reconnectTimeout = setTimeout(() => initBaileys(false), 800)
         } else {
           connectionStatus = 'INITIALIZING'
-          reconnectTimeout = setTimeout(() => initBaileys(false), 4000)
+          reconnectTimeout = setTimeout(() => initBaileys(false), 3000)
         }
       }
     })
 
-    // Manejo de mensajes entrantes (Reenvío al Webhook de FastAPI con deduplicación)
+    // Deduplicación y procesamiento unificado de mensajes
     const processedMessageIds = new Set()
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-      if (type !== 'notify') return
-
-      for (const msg of messages) {
-        try {
-          if (!msg.message) continue
-          const messageId = msg.key?.id
-          if (messageId) {
-            if (processedMessageIds.has(messageId)) {
-              continue
-            }
-            processedMessageIds.add(messageId)
-            if (processedMessageIds.size > 2000) {
-              const first = processedMessageIds.values().next().value
-              processedMessageIds.delete(first)
-            }
-          }
-
-          const remoteJid = msg.key.remoteJid || ''
-          
-          // Ignorar estados y listas de difusión
-          if (remoteJid === 'status@broadcast' || remoteJid.includes('@newsletter') || remoteJid.includes('@broadcast')) {
-            continue
-          }
-
-          const fromMe = Boolean(msg.key.fromMe)
-          
-          // Resolución inteligente de JID / Teléfono (incluyendo LIDs de WhatsApp)
-          let rawJid = msg.key.remoteJidAlt || msg.key.participant || remoteJid || ''
-          let senderPhone = rawJid.split('@')[0].split(':')[0]
-          const isLid = isLidUser(remoteJid) || remoteJid.includes('@lid') || rawJid.includes('@lid')
-          const lidDigits = (remoteJid.includes('@lid') ? remoteJid : rawJid).split('@')[0].split(':')[0]
-
-          if (isLid || senderPhone.length > 14 || !senderPhone.startsWith('54')) {
-            if (msg.key.remoteJidAlt && !msg.key.remoteJidAlt.includes('@lid')) {
-              senderPhone = normalizePhone(msg.key.remoteJidAlt)
-              saveLidMapping(lidDigits, senderPhone)
-            } else if (msg.key.participant && !msg.key.participant.includes('@lid')) {
-              senderPhone = normalizePhone(msg.key.participant)
-              saveLidMapping(lidDigits, senderPhone)
-            } else if (lidToPhoneMap.has(lidDigits)) {
-              senderPhone = lidToPhoneMap.get(lidDigits)
-              addLog('INFO', `LID ${lidDigits} resuelto exitosamente desde mapa a teléfono +${senderPhone}`)
-            } else if (lastContactedPhone) {
-              senderPhone = lastContactedPhone
-              saveLidMapping(lidDigits, lastContactedPhone)
-            }
-          } else {
-            if (remoteJid.includes('@lid')) {
-              saveLidMapping(lidDigits, senderPhone)
-            }
-          }
-          
-          // Extraer texto
-          let text = msg.message?.conversation || 
-                     msg.message?.extendedTextMessage?.text || 
-                     msg.message?.imageMessage?.caption || 
-                     msg.message?.documentMessage?.caption || 
-                     msg.message?.videoMessage?.caption || ''
-
-          // Determinar tipo de mensaje y procesar multimedia
-          let messageType = 'text'
-          let mediaInfo = null
-
-          const isMedia = Boolean(
-            msg.message.imageMessage || 
-            msg.message.documentMessage || 
-            msg.message.documentWithCaptionMessage || 
-            msg.message.audioMessage || 
-            msg.message.videoMessage || 
-            msg.message.stickerMessage
-          )
-
-          if (isMedia) {
-            try {
-              let mediaBuffer = null
-              try {
-                mediaBuffer = await downloadMediaMessage(
-                  msg,
-                  'buffer',
-                  {},
-                  { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
-                )
-              } catch (dlErr) {
-                addLog('WARNING', `Error descargando buffer de media: ${dlErr.message}`)
-              }
-
-              let mimeType = 'application/octet-stream'
-              let fileName = 'archivo.bin'
-              let tipo = 'documento'
-
-              if (msg.message.imageMessage) {
-                messageType = 'image'
-                tipo = 'imagen'
-                mimeType = msg.message.imageMessage.mimetype || 'image/jpeg'
-                fileName = `imagen_${Date.now()}.jpg`
-              } else if (msg.message.audioMessage) {
-                messageType = 'audio'
-                tipo = 'audio'
-                mimeType = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus'
-                fileName = `audio_${Date.now()}.ogg`
-              } else if (msg.message.documentMessage || msg.message.documentWithCaptionMessage) {
-                messageType = 'document'
-                tipo = 'documento'
-                const doc = msg.message.documentMessage || msg.message.documentWithCaptionMessage?.message?.documentMessage
-                mimeType = doc?.mimetype || 'application/pdf'
-                fileName = doc?.fileName || doc?.title || `documento_${Date.now()}.pdf`
-              } else if (msg.message.videoMessage) {
-                messageType = 'video'
-                tipo = 'video'
-                mimeType = msg.message.videoMessage.mimetype || 'video/mp4'
-                fileName = `video_${Date.now()}.mp4`
-              } else if (msg.message.stickerMessage) {
-                messageType = 'sticker'
-                tipo = 'sticker'
-                mimeType = msg.message.stickerMessage.mimetype || 'image/webp'
-                fileName = `sticker_${Date.now()}.webp`
-              }
-
-              let mediaUrl = null
-              if (mediaBuffer && mediaBuffer.length > 0) {
-                mediaUrl = await uploadMediaToSupabaseStorage(mediaBuffer, fileName, mimeType)
-                addLog('INFO', `Archivo [${tipo}] subido exitosamente a Supabase Storage: ${fileName}`)
-              }
-
-              mediaInfo = {
-                tipo,
-                media_url: mediaUrl,
-                file_name: fileName,
-                mime_type: mimeType,
-                file_size_bytes: mediaBuffer ? mediaBuffer.length : 0,
-                caption: text,
-                is_voice_note: Boolean(msg.message.audioMessage?.ptt)
-              }
-            } catch (mediaErr) {
-              addLog('WARNING', `Error procesando media adjunto: ${mediaErr.message}`)
-            }
-          }
-
-          addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`)
-
-          // Despachar al webhook dinámico de FastAPI con metadatos multimedia
-          axios.post(FASTAPI_WEBHOOK, {
-            message_id: msg.key.id,
-            from_me: fromMe,
-            phone: senderPhone,
-            jid: remoteJid,
-            name: msg.pushName || 'Paciente',
-            text: text,
-            message_type: messageType,
-            media: mediaInfo,
-            timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
-            raw_message: msg
-          }).catch(err => {
-            addLog('WARNING', `Webhook FastAPI no disponible (${FASTAPI_WEBHOOK}): ${err.message}`)
-          })
-
-        } catch (msgErr) {
-          addLog('ERROR', `Error procesando mensaje entrante: ${msgErr.message}`)
+    async function processIncomingMessage(msg) {
+      try {
+        if (!msg || !msg.message) return
+        const messageId = msg.key?.id
+        
+        // Almacenar en msgStore para resolver futuros reintentos de desencriptación
+        if (messageId) {
+          saveToMsgStore(messageId, msg)
         }
+
+        // Deduplicación de mensajes ya despachados
+        if (messageId) {
+          if (processedMessageIds.has(messageId)) {
+            return
+          }
+          processedMessageIds.add(messageId)
+          if (processedMessageIds.size > 3000) {
+            const first = processedMessageIds.values().next().value
+            processedMessageIds.delete(first)
+          }
+        }
+
+        const remoteJid = msg.key.remoteJid || ''
+        
+        // Ignorar estados y listas de difusión
+        if (remoteJid === 'status@broadcast' || remoteJid.includes('@newsletter') || remoteJid.includes('@broadcast')) {
+          return
+        }
+
+        const fromMe = Boolean(msg.key.fromMe)
+        
+        // Resolución inteligente de JID / Teléfono (incluyendo LIDs de WhatsApp)
+        let rawJid = msg.key.remoteJidAlt || msg.key.participant || remoteJid || ''
+        let senderPhone = rawJid.split('@')[0].split(':')[0]
+        const isLid = isLidUser(remoteJid) || remoteJid.includes('@lid') || rawJid.includes('@lid')
+        const lidDigits = (remoteJid.includes('@lid') ? remoteJid : rawJid).split('@')[0].split(':')[0]
+
+        if (isLid || senderPhone.length > 14 || !senderPhone.startsWith('54')) {
+          if (msg.key.remoteJidAlt && !msg.key.remoteJidAlt.includes('@lid')) {
+            senderPhone = normalizePhone(msg.key.remoteJidAlt)
+            saveLidMapping(lidDigits, senderPhone)
+          } else if (msg.key.participant && !msg.key.participant.includes('@lid')) {
+            senderPhone = normalizePhone(msg.key.participant)
+            saveLidMapping(lidDigits, senderPhone)
+          } else if (lidToPhoneMap.has(lidDigits)) {
+            senderPhone = lidToPhoneMap.get(lidDigits)
+            addLog('INFO', `LID ${lidDigits} resuelto exitosamente desde mapa a teléfono +${senderPhone}`)
+          } else if (lastContactedPhone) {
+            senderPhone = lastContactedPhone
+            saveLidMapping(lidDigits, lastContactedPhone)
+          }
+        } else {
+          if (remoteJid.includes('@lid')) {
+            saveLidMapping(lidDigits, senderPhone)
+          }
+        }
+        
+        // Extraer texto
+        let text = msg.message?.conversation || 
+                   msg.message?.extendedTextMessage?.text || 
+                   msg.message?.imageMessage?.caption || 
+                   msg.message?.documentMessage?.caption || 
+                   msg.message?.videoMessage?.caption || ''
+
+        // Determinar tipo de mensaje y procesar multimedia
+        let messageType = 'text'
+        let mediaInfo = null
+
+        const isMedia = Boolean(
+          msg.message.imageMessage || 
+          msg.message.documentMessage || 
+          msg.message.documentWithCaptionMessage || 
+          msg.message.audioMessage || 
+          msg.message.videoMessage || 
+          msg.message.stickerMessage
+        )
+
+        if (isMedia) {
+          try {
+            let mediaBuffer = null
+            try {
+              mediaBuffer = await downloadMediaMessage(
+                msg,
+                'buffer',
+                {},
+                { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage }
+              )
+            } catch (dlErr) {
+              addLog('WARNING', `Error descargando buffer de media: ${dlErr.message}`)
+            }
+
+            let mimeType = 'application/octet-stream'
+            let fileName = 'archivo.bin'
+            let tipo = 'documento'
+
+            if (msg.message.imageMessage) {
+              messageType = 'image'
+              tipo = 'imagen'
+              mimeType = msg.message.imageMessage.mimetype || 'image/jpeg'
+              fileName = `imagen_${Date.now()}.jpg`
+            } else if (msg.message.audioMessage) {
+              messageType = 'audio'
+              tipo = 'audio'
+              mimeType = msg.message.audioMessage.mimetype || 'audio/ogg; codecs=opus'
+              fileName = `audio_${Date.now()}.ogg`
+            } else if (msg.message.documentMessage || msg.message.documentWithCaptionMessage) {
+              messageType = 'document'
+              tipo = 'documento'
+              const doc = msg.message.documentMessage || msg.message.documentWithCaptionMessage?.message?.documentMessage
+              mimeType = doc?.mimetype || 'application/pdf'
+              fileName = doc?.fileName || doc?.title || `documento_${Date.now()}.pdf`
+            } else if (msg.message.videoMessage) {
+              messageType = 'video'
+              tipo = 'video'
+              mimeType = msg.message.videoMessage.mimetype || 'video/mp4'
+              fileName = `video_${Date.now()}.mp4`
+            } else if (msg.message.stickerMessage) {
+              messageType = 'sticker'
+              tipo = 'sticker'
+              mimeType = msg.message.stickerMessage.mimetype || 'image/webp'
+              fileName = `sticker_${Date.now()}.webp`
+            }
+
+            let mediaUrl = null
+            if (mediaBuffer && mediaBuffer.length > 0) {
+              mediaUrl = await uploadMediaToSupabaseStorage(mediaBuffer, fileName, mimeType)
+              addLog('INFO', `Archivo [${tipo}] subido exitosamente a Supabase Storage: ${fileName}`)
+            }
+
+            mediaInfo = {
+              tipo,
+              media_url: mediaUrl,
+              file_name: fileName,
+              mime_type: mimeType,
+              file_size_bytes: mediaBuffer ? mediaBuffer.length : 0,
+              caption: text,
+              is_voice_note: Boolean(msg.message.audioMessage?.ptt)
+            }
+          } catch (mediaErr) {
+            addLog('WARNING', `Error procesando media adjunto: ${mediaErr.message}`)
+          }
+        }
+
+        addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`)
+
+        // Despachar al webhook dinámico de FastAPI con metadatos multimedia
+        axios.post(FASTAPI_WEBHOOK, {
+          message_id: msg.key.id,
+          from_me: fromMe,
+          phone: senderPhone,
+          jid: remoteJid,
+          name: msg.pushName || 'Paciente',
+          text: text,
+          message_type: messageType,
+          media: mediaInfo,
+          timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
+          raw_message: msg
+        }).catch(err => {
+          addLog('WARNING', `Webhook FastAPI no disponible (${FASTAPI_WEBHOOK}): ${err.message}`)
+        })
+
+      } catch (msgErr) {
+        addLog('ERROR', `Error procesando mensaje entrante: ${msgErr.message}`)
+      }
+    }
+
+    // 1. Manejo de mensajes en tiempo real y acumulados (tanto notify como append)
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (!Array.isArray(messages)) return
+      for (const msg of messages) {
+        await processIncomingMessage(msg)
+      }
+    })
+
+    // 2. Recuperación de historial y mensajes pendientes al reconectar tras cortes
+    sock.ev.on('messaging-history.set', async ({ messages }) => {
+      if (!Array.isArray(messages)) return
+      addLog('INFO', `Sincronizando lote de ${messages.length} mensajes históricos/offline recibidos tras reconexión...`)
+      for (const msg of messages) {
+        await processIncomingMessage(msg)
       }
     })
 

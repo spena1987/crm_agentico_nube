@@ -25,8 +25,8 @@ RUN cd whatsapp_service && npm install --omit=dev
 # Copiar el backend
 COPY . ./
 
-# Script de arranque dual
-RUN printf '#!/bin/sh\nnode /app/whatsapp_service/server.js &\nexec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n' > /app/start.sh && chmod +x /app/start.sh
+# Script de arranque dual con supervisor auto-healing para Baileys
+RUN printf '#!/bin/sh\n(while true; do\n  echo "[SUPERVISOR] Iniciando microservicio WhatsApp Baileys en puerto ${WHATSAPP_SERVICE_PORT:-3001}..."\n  node /app/whatsapp_service/server.js\n  echo "[SUPERVISOR] Microservicio Baileys detenido. Reiniciando en 2 segundos..."\n  sleep 2\ndone) &\nexec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n' > /app/start.sh && chmod +x /app/start.sh
 
 EXPOSE 8000
 
