@@ -670,568 +670,224 @@ export default function ItemCasoQuirurgicoAcordeon({
             </div>
           )}
 
-          {/* BANNER DE CASO CERRADO / DESISTIDO / OPERADO */}
-          {isCerrado && (
-            <div
-              className={`p-4 rounded-xl border flex items-start justify-between gap-3 ${
-                estado === 'operado'
-                  ? 'bg-teal-950/40 border-teal-500/40 text-teal-300'
-                  : 'bg-red-950/40 border-red-500/40 text-red-300'
-              }`}
-            >
-              <div className="flex items-start gap-2.5">
-                <ShieldAlert size={18} className="shrink-0 mt-0.5" />
-                <div className="space-y-0.5">
-                  <div className="text-xs font-black flex items-center gap-2">
-                    <span>
-                      {estado === 'operado' ? 'Caso Cerrado: Operado con Éxito' : 'Caso Cerrado: Desistido / Cancelado'}
-                    </span>
-                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-neutral-950/80 border border-current">
-                      Solo Lectura (Bloqueado)
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-200 leading-relaxed">
-                    {caso.motivo_cancelacion ? `Motivo: ${caso.motivo_cancelacion}. ` : ''}
-                    Todos los campos se encuentran bloqueados. Para modificar profesionales, prácticas, presupuestos, fechas o checklist, debes reabrir el caso.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleReabrirCaso}
-                disabled={guardando}
-                className="px-3 py-1.5 text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/40 rounded-xl flex items-center gap-1.5 shrink-0 shadow-sm transition-all hover:scale-105"
+          {/* ==================================================================== */}
+          {/* MODO A: FICHA RESUMEN DE ARCHIVO CLÍNICO (CASO CERRADO / SOLO LECTURA) */}
+          {/* ==================================================================== */}
+          {isCerrado ? (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              
+              {/* 1. SELLO OFICIAL DE EXPEDIENTE ARCHIVADO */}
+              <div
+                className={`p-5 rounded-2xl border flex items-start justify-between gap-4 shadow-md ${
+                  estado === 'operado'
+                    ? 'bg-teal-950/40 border-teal-500/40 text-teal-200'
+                    : 'bg-red-950/40 border-red-500/40 text-red-200'
+                }`}
               >
-                <Unlock size={13} className="text-amber-400" />
-                Reabrir Caso
-              </button>
-            </div>
-          )}
-
-          {/* 1. STEPPER INTERACTIVO DE ETAPAS */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <Sparkles size={14} className="text-amber-400" />
-                Etapa del Proceso Quirúrgico
-              </span>
-              <span className="text-[10px] text-gray-400 font-mono">
-                {etapaActualInfo.desc}
-              </span>
-            </div>
-
-            <div className={`grid grid-cols-2 sm:grid-cols-5 gap-2 ${isCerrado ? 'opacity-70 pointer-events-none' : ''}`}>
-              {ETAPAS.filter((e) => e.id !== 'cancelado').map((e) => {
-                const isSelected = estado === e.id
-                return (
-                  <button
-                    key={e.id}
-                    type="button"
-                    disabled={isCerrado}
-                    onClick={() => {
-                      if (isCerrado) return
-                      setEstado(e.id)
-                      if (e.id === 'confirmado' && !fechaDefinitiva && fechaProbable) {
-                        setFechaDefinitiva(fechaProbable)
-                      }
-                    }}
-                    className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all border text-left flex flex-col justify-between ${
-                      isSelected
-                        ? `${e.color} shadow-lg scale-[1.02]`
-                        : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white hover:bg-neutral-800'
-                    } ${isCerrado ? 'cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="truncate">{e.label}</span>
-                      {isSelected && <Check size={13} className="shrink-0" />}
+                <div className="flex items-start gap-3.5">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center border shrink-0 ${
+                    estado === 'operado'
+                      ? 'bg-teal-600/20 text-teal-300 border-teal-500/40'
+                      : 'bg-red-600/20 text-red-300 border-red-500/40'
+                  }`}>
+                    {estado === 'operado' ? <CheckCircle2 size={22} /> : <XCircle size={22} />}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-sm font-black tracking-tight text-white">
+                        {estado === 'operado' ? 'Expediente Quirúrgico Concluido (Operado con Éxito)' : 'Expediente Quirúrgico Cerrado / Desistido'}
+                      </h4>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-black/60 border border-current uppercase">
+                        Archivo Clínico • Solo Lectura
+                      </span>
                     </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          {/* 2. GRID DE PROFESIONALES, PRÁCTICA, ASPECTOS ECONÓMICOS Y FECHAS */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            
-            {/* A. Médico Derivador (Geclisa) */}
-            <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <UserCheck size={14} className="text-blue-400" />
-                Médico Derivador (Consulta / Diagnóstico)
-              </label>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={isCerrado || guardando}
-                  placeholder={isCerrado ? 'Sin derivador asignado' : 'Buscar médico derivador en Geclisa...'}
-                  value={busquedaDerivador}
-                  onChange={(e) => {
-                    if (isCerrado) return
-                    setBusquedaDerivador(e.target.value)
-                    setMedicoDerivador({ nombre: e.target.value })
-                    buscarPrestador('derivador', e.target.value)
-                    setMostrarDropdownDerivador(true)
-                  }}
-                  onFocus={() => {
-                    if (isCerrado) return
-                    buscarPrestador('derivador', busquedaDerivador)
-                    setMostrarDropdownDerivador(true)
-                  }}
-                  className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
-                    isCerrado
-                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                      : 'bg-neutral-900 focus:border-blue-500'
-                  }`}
-                />
-                {buscandoDerivador && (
-                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
-                )}
-
-                {!isCerrado && mostrarDropdownDerivador && prestadoresDerivador.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                    {prestadoresDerivador.map((p) => (
-                      <button
-                        key={p.pre_id}
-                        type="button"
-                        onClick={() => {
-                          setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                          setBusquedaDerivador(p.nombre)
-                          setMostrarDropdownDerivador(false)
-                        }}
-                        className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
-                      >
-                        <span className="font-bold text-white group-hover:text-blue-300 transition-colors">
-                          {p.nombre}
-                        </span>
-                        <span className="text-[10px] text-gray-400 font-mono">
-                          Mat: {p.matricula || 'S/M'}
-                        </span>
-                      </button>
-                    ))}
+                    <p className="text-xs opacity-90 leading-relaxed max-w-2xl">
+                      {caso.motivo_cancelacion
+                        ? `Motivo de resolución registrado: "${caso.motivo_cancelacion}"`
+                        : estado === 'operado'
+                        ? 'Intervención quirúrgica completada y asentada exitosamente en el historial del paciente.'
+                        : 'Procedimiento cerrado formalmente.'}
+                    </p>
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
 
-            {/* B. Médico Cirujano (Geclisa) */}
-            <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <Stethoscope size={14} className="text-emerald-400" />
-                Médico Cirujano (Opera en Quirófano)
-              </label>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={isCerrado || guardando}
-                  placeholder={isCerrado ? 'Sin cirujano asignado' : 'Buscar cirujano en Geclisa...'}
-                  value={busquedaCirujano}
-                  onChange={(e) => {
-                    if (isCerrado) return
-                    setBusquedaCirujano(e.target.value)
-                    setMedicoCirujano({ nombre: e.target.value })
-                    buscarPrestador('cirujano', e.target.value)
-                    setMostrarDropdownCirujano(true)
-                  }}
-                  onFocus={() => {
-                    if (isCerrado) return
-                    buscarPrestador('cirujano', busquedaCirujano)
-                    setMostrarDropdownCirujano(true)
-                  }}
-                  className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
-                    isCerrado
-                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                      : 'bg-neutral-900 focus:border-emerald-500'
-                  }`}
-                />
-                {buscandoCirujano && (
-                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
-                )}
-
-                {!isCerrado && mostrarDropdownCirujano && prestadoresCirujano.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                    {prestadoresCirujano.map((p) => (
-                      <button
-                        key={p.pre_id}
-                        type="button"
-                        onClick={() => {
-                          setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                          setBusquedaCirujano(p.nombre)
-                          setMostrarDropdownCirujano(false)
-                        }}
-                        className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
-                      >
-                        <span className="font-bold text-white group-hover:text-emerald-300 transition-colors">
-                          {p.nombre}
-                        </span>
-                        <span className="text-[10px] text-gray-400 font-mono">
-                          Mat: {p.matricula || 'S/M'}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* C. Práctica del Nomenclador */}
-            <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <ClipboardList size={14} className="text-indigo-400" />
-                Práctica Quirúrgica (Nomenclador CRM)
-              </label>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={isCerrado || guardando}
-                  placeholder={isCerrado ? 'Sin práctica asignada' : 'Buscar práctica por código o nombre...'}
-                  value={busquedaPractica}
-                  onChange={(e) => {
-                    if (isCerrado) return
-                    setBusquedaPractica(e.target.value)
-                    setPracticaNombre(e.target.value)
-                    buscarPracticasNomenclador(e.target.value)
-                    setMostrarDropdownPractica(true)
-                  }}
-                  onFocus={() => {
-                    if (isCerrado) return
-                    buscarPracticasNomenclador(busquedaPractica)
-                    setMostrarDropdownPractica(true)
-                  }}
-                  className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
-                    isCerrado
-                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                      : 'bg-neutral-900 focus:border-indigo-500'
-                  }`}
-                />
-                {buscandoPractica && (
-                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
-                )}
-
-                {!isCerrado && mostrarDropdownPractica && (
-                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-indigo-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                    {practicasNomenclador.map((p, i) => (
-                      <button
-                        key={`${p.codigo}-${i}`}
-                        type="button"
-                        onClick={() => {
-                          setPracticaCodigo(p.codigo)
-                          setPracticaNombre(p.nombre)
-                          setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
-                          if (p.precio && Number(p.precio) > 0) {
-                            setMontoExtra(p.precio)
-                            setMonedaExtra(p.moneda || 'ARS')
-                          }
-                          setMostrarDropdownPractica(false)
-                        }}
-                        className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group flex items-center justify-between"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/30">
-                            {p.codigo}
-                          </span>
-                          <span className="font-bold text-white group-hover:text-indigo-300 transition-colors truncate max-w-xs">
-                            {p.nombre}
-                          </span>
-                        </div>
-                        {p.precio && Number(p.precio) > 0 && (
-                          <span className="text-[11px] font-mono text-amber-300 font-bold shrink-0">
-                            $ {Number(p.precio).toLocaleString()}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* D. Presupuesto & Condiciones Económicas */}
-            <div className="p-4 rounded-xl bg-neutral-900/60 border border-amber-500/20 space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                  <Receipt size={14} className="text-amber-400" />
-                  Condiciones Económicas & Presupuesto
-                </label>
                 <button
                   type="button"
-                  onClick={() => setMostrarModalPresupuesto(true)}
-                  className="text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1"
+                  onClick={handleReabrirCaso}
+                  disabled={guardando}
+                  className="px-4 py-2 text-xs font-bold bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/50 rounded-xl flex items-center gap-2 shrink-0 shadow-md transition-all hover:scale-105"
                 >
-                  <Plus size={12} />
-                  + Armar Presupuesto
+                  <Unlock size={14} className="text-amber-400" />
+                  Reabrir para Modificar
                 </button>
               </div>
 
-              {presupuestos.length > 0 ? (
-                <div className="p-3 rounded-xl bg-neutral-950/70 border border-[var(--border)] space-y-2.5">
+              {/* 2. TARJETAS DE DATOS RESUMEN (READ-ONLY CLEAN CARDS) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                
+                {/* Tarjeta: Procedimiento */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-1.5 shadow-inner">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <ClipboardList size={13} className="text-indigo-400" />
+                    Procedimiento Quirúrgico
+                  </span>
+                  <div className="text-sm font-bold text-white leading-snug">
+                    {practicaNombre || 'Sin práctica asignada'}
+                  </div>
+                  {practicaCodigo && (
+                    <span className="inline-block text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/30">
+                      Nomenclador: {practicaCodigo}
+                    </span>
+                  )}
+                </div>
+
+                {/* Tarjeta: Cirujano a Cargo */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-1.5 shadow-inner">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Stethoscope size={13} className="text-emerald-400" />
+                    Médico Cirujano (Quirófano)
+                  </span>
+                  <div className="text-sm font-bold text-emerald-300">
+                    {medicoCirujano.nombre ? `Dr/a. ${medicoCirujano.nombre}` : 'Sin cirujano asignado'}
+                  </div>
+                  {medicoCirujano.matricula && (
+                    <span className="text-[10px] font-mono text-gray-400 block">
+                      Matrícula Profesional: {medicoCirujano.matricula}
+                    </span>
+                  )}
+                </div>
+
+                {/* Tarjeta: Médico Derivador */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-1.5 shadow-inner">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <UserCheck size={13} className="text-blue-400" />
+                    Médico Derivador (Diagnóstico)
+                  </span>
+                  <div className="text-sm font-bold text-blue-300">
+                    {medicoDerivador.nombre ? `Dr/a. ${medicoDerivador.nombre}` : 'Sin derivador'}
+                  </div>
+                  {medicoDerivador.matricula && (
+                    <span className="text-[10px] font-mono text-gray-400 block">
+                      Matrícula: {medicoDerivador.matricula}
+                    </span>
+                  )}
+                </div>
+
+                {/* Tarjeta: Condiciones Económicas & Presupuesto */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-1.5 shadow-inner">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <DollarSign size={13} className="text-amber-400" />
+                    Condiciones Económicas
+                  </span>
+                  <div className="text-base font-black font-mono text-amber-300">
+                    {Number(montoExtra) > 0
+                      ? `$ ${Number(montoExtra).toLocaleString()} ${monedaExtra}`
+                      : 'Sin cotización extra'}
+                  </div>
+                  <span className="text-[11px] text-gray-400 block">
+                    Cobertura: <strong className="text-gray-200">{obraSocialDefault || 'Particular'}</strong>
+                  </span>
+                </div>
+
+                {/* Tarjeta: Fechas de Planificación */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-1.5 shadow-inner">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <Calendar size={13} className="text-purple-400" />
+                    Fechas del Procedimiento
+                  </span>
+                  {fechaDefinitiva ? (
+                    <div className="text-xs font-mono font-bold text-emerald-300 flex items-center gap-1">
+                      <Check size={13} />
+                      Fecha Quirófano: {fechaDefinitiva}
+                    </div>
+                  ) : fechaProbable ? (
+                    <div className="text-xs font-mono text-gray-300">
+                      Fecha Estimada: {fechaProbable}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-gray-500">Sin fecha programada</div>
+                  )}
+                </div>
+
+                {/* Tarjeta: Resumen de Requisitos Prequirúrgicos */}
+                <div className="p-4 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-1.5 shadow-inner">
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <ShieldCheck size={13} className="text-teal-400" />
+                    Requisitos Prequirúrgicos
+                  </span>
                   {(() => {
-                    const pActivo = presupuestos[0]
-                    const isAprobado = pActivo.estado === 'aprobado'
-                    const isRechazado = pActivo.estado === 'rechazado'
-                    const isCargandoAccion = actualizandoEstadoPresupuestoId === pActivo.id
-
+                    const chk = checklistPrequirurgico || {}
+                    const keys = Object.keys(chk)
+                    const cumplidos = keys.filter((k) => chk[k]).length
                     return (
-                      <>
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
-                            <FileText size={13} className="text-blue-400 shrink-0" />
-                            <span className="text-xs font-mono font-bold text-gray-200">
-                              #{pActivo.id.slice(0, 8).toUpperCase()}
+                      <div>
+                        <span className="text-xs font-mono font-bold text-white">
+                          {cumplidos} de {keys.length > 0 ? keys.length : 6} completados
+                        </span>
+                        <div className="flex flex-wrap gap-1 pt-1">
+                          {chk.presupuesto_aceptado && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                              ✔ Presupuesto
                             </span>
-                          </div>
-                          <span
-                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
-                              isAprobado
-                                ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
-                                : isRechazado
-                                ? 'bg-red-950 text-red-300 border-red-500/40'
-                                : 'bg-blue-950 text-blue-300 border-blue-500/40'
-                            }`}
-                          >
-                            {isAprobado ? 'Confirmado' : isRechazado ? 'Desistido' : 'En Análisis'}
-                          </span>
-                        </div>
-
-                        <div className="flex items-baseline justify-between pt-1 border-t border-[var(--border)]/50">
-                          <div className="text-base font-black font-mono text-white tracking-tight">
-                            $ {Number(pActivo.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </div>
-                          <div className="text-xs font-semibold text-blue-300">
-                            {obraSocialDefault || 'Particular'}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[var(--border)]/50">
-                          {pActivo.pdf_url && (
-                            <a
-                              href={
-                                pActivo.pdf_url.startsWith('http')
-                                  ? pActivo.pdf_url
-                                  : `${BACKEND_URL}${pActivo.pdf_url.startsWith('/') ? '' : '/'}${pActivo.pdf_url}`
-                              }
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
-                            >
-                              <Download size={12} className="text-blue-400" />
-                              PDF Oficial
-                            </a>
                           )}
-
-                          {!isCerrado && !isAprobado && (
-                            <button
-                              type="button"
-                              disabled={isCargandoAccion}
-                              onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'aprobado')}
-                              className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all"
-                            >
-                              {isCargandoAccion ? <Loader2 size={11} className="animate-spin" /> : <Check size={12} />}
-                              Confirmar
-                            </button>
+                          {chk.autorizacion_obra_social && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                              ✔ Obra Social
+                            </span>
                           )}
-
-                          {!isCerrado && !isRechazado && (
-                            <button
-                              type="button"
-                              disabled={isCargandoAccion}
-                              onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'rechazado')}
-                              className="px-2.5 py-1 bg-red-600/15 hover:bg-red-600/25 text-red-400 border border-red-500/30 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all"
-                            >
-                              <XCircle size={12} />
-                              Desistir
-                            </button>
+                          {chk.estudios_laboratorio && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                              ✔ Laboratorio
+                            </span>
+                          )}
+                          {chk.ecg_riesgo_quirurgico && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                              ✔ ECG / Riesgo
+                            </span>
+                          )}
+                          {chk.consentimiento_firmado && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                              ✔ Consentimiento
+                            </span>
                           )}
                         </div>
-                      </>
+                      </div>
                     )
                   })()}
                 </div>
-              ) : (
-                <div className="p-3 rounded-xl bg-neutral-950/60 border border-[var(--border)] text-center space-y-2">
-                  <p className="text-[11px] text-gray-400">Sin presupuesto generado aún.</p>
-                  {!isCerrado && (
-                    <button
-                      type="button"
-                      onClick={() => setMostrarModalPresupuesto(true)}
-                      className="w-full py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                    >
-                      <Receipt size={13} />
-                      + Armar Presupuesto
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
 
-            {/* E. Fechas Probable y Definitiva */}
-            <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <Calendar size={14} className="text-purple-400" />
-                Fecha Probable de Cirugía (Estimación)
-              </label>
-              <input
-                type="date"
-                disabled={isCerrado || guardando}
-                value={fechaProbable}
-                onChange={(e) => {
-                  if (isCerrado) return
-                  setFechaProbable(e.target.value)
-                }}
-                className={`w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl text-white font-mono focus:outline-none ${
-                  isCerrado
-                    ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                    : 'bg-neutral-900 focus:border-purple-500'
-                }`}
-              />
-            </div>
-
-            <div className="p-4 rounded-xl bg-neutral-900/40 border border-emerald-500/20 space-y-2">
-              <label className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <FileCheck2 size={14} className="text-emerald-400" />
-                Fecha Definitiva de Cirugía (Quirófano)
-              </label>
-              <input
-                type="date"
-                disabled={isCerrado || guardando}
-                value={fechaDefinitiva}
-                onChange={(e) => {
-                  if (isCerrado) return
-                  setFechaDefinitiva(e.target.value)
-                  if (e.target.value && estado !== 'confirmado') {
-                    setEstado('confirmado')
-                  }
-                }}
-                className={`w-full px-3 py-2 text-xs border border-emerald-500/40 rounded-xl text-white font-mono focus:outline-none ${
-                  isCerrado
-                    ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                    : 'bg-neutral-900 focus:border-emerald-500'
-                }`}
-              />
-            </div>
-
-          </div>
-
-          {/* 3. CHECKLIST PREQUIRÚRGICO ASISTIDO */}
-          <div className="pt-2">
-            <ChecklistPrequirurgico
-              checklist={checklistPrequirurgico}
-              disabled={isCerrado}
-              onChange={(nuevo) => {
-                if (isCerrado) return
-                setChecklistPrequirurgico(nuevo)
-              }}
-            />
-          </div>
-
-          {/* 4. PRÓXIMA ACCIÓN PROGRAMADA & SEGUIMIENTO PROACTIVO */}
-          <div className="p-4 rounded-xl bg-neutral-900/60 border border-blue-500/20 space-y-3 shadow-inner">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <TrendingUp size={16} className="text-blue-400" />
-                <h4 className="text-xs font-bold text-gray-200">
-                  Próxima Acción de Seguimiento (Agenda de Conversión)
-                </h4>
               </div>
 
-              {/* Botón destacado WhatsApp Rápido */}
-              <button
-                type="button"
-                onClick={() => setMostrarModalWhatsApp(true)}
-                className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
-              >
-                <Send size={13} />
-                📲 WhatsApp Rápido (1 Clic)
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
-                  <Calendar size={12} className="text-blue-400" />
-                  Fecha de Próximo Contacto
-                </label>
-                <input
-                  type="date"
-                  disabled={isCerrado || guardando}
-                  value={proximaAccionFecha}
-                  onChange={(e) => {
-                    if (isCerrado) return
-                    setProximaAccionFecha(e.target.value)
-                  }}
-                  className={`px-3 py-1.5 text-xs border border-[var(--border)] rounded-xl text-white font-mono focus:outline-none ${
-                    isCerrado
-                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                      : 'bg-neutral-950 focus:border-blue-500'
-                  }`}
+              {/* 3. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
+              <div className="pt-3 border-t border-[var(--border)]">
+                <TimelineEvolucionesAsesoria
+                  asesoriaId={caso.id}
+                  pacienteId={pacienteId}
+                  pacienteNombre={pacienteNombre}
                 />
               </div>
 
-              <div className="sm:col-span-2 flex flex-col gap-1">
-                <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
-                  <Tag size={12} className="text-blue-400" />
-                  Objetivo / Tarea a Realizar
-                </label>
-                <input
-                  type="text"
-                  disabled={isCerrado || guardando}
-                  value={proximaAccionTexto}
-                  onChange={(e) => {
-                    if (isCerrado) return
-                    setProximaAccionTexto(e.target.value)
-                  }}
-                  placeholder={isCerrado ? 'Sin tareas pendientes (caso cerrado)' : 'Ej: Chequear si OSDE emitió autorización, consultar por estudios de sangre...'}
-                  className={`px-3 py-1.5 text-xs border border-[var(--border)] rounded-xl text-white placeholder-gray-500 focus:outline-none ${
-                    isCerrado
-                      ? 'bg-neutral-950/80 text-gray-400 cursor-not-allowed opacity-75'
-                      : 'bg-neutral-950 focus:border-blue-500'
-                  }`}
-                />
-              </div>
-            </div>
-          </div>
+              {/* 4. FOOTER EN MODO ARCHIVO */}
+              <div className="flex items-center justify-between pt-3 border-t border-[var(--border)] flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleEliminar}
+                  className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 font-semibold transition-colors"
+                >
+                  <Trash2 size={13} />
+                  Eliminar Registro
+                </button>
 
-          {/* 5. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
-          <div className="pt-3 border-t border-[var(--border)]">
-            <TimelineEvolucionesAsesoria
-              asesoriaId={caso.id}
-              pacienteId={pacienteId}
-              pacienteNombre={pacienteNombre}
-            />
-          </div>
-
-          {/* 6. FOOTER DE ACCIONES DEL CASO */}
-          <div className="flex items-center justify-between pt-3 border-t border-[var(--border)] flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleEliminar}
-              className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 font-semibold transition-colors"
-            >
-              <Trash2 size={13} />
-              Eliminar Cirugía
-            </button>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Botón WhatsApp Rápido */}
-              <button
-                type="button"
-                onClick={() => setMostrarModalWhatsApp(true)}
-                className="px-3 py-2 bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
-              >
-                <MessageCircle size={13} className="text-emerald-400" />
-                WhatsApp Rápido
-              </button>
-
-              {/* Acciones según si está cerrado o activo */}
-              {isCerrado ? (
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-gray-400 italic">
-                    Caso cerrado (solo lectura)
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalWhatsApp(true)}
+                    className="px-3 py-2 bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+                  >
+                    <MessageCircle size={13} className="text-emerald-400" />
+                    WhatsApp
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleReabrirCaso}
@@ -1239,11 +895,486 @@ export default function ItemCasoQuirurgicoAcordeon({
                     className="px-4 py-2 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5 hover:scale-105"
                   >
                     <Unlock size={13} />
-                    Reabrir para Modificar
+                    Reabrir Caso para Modificar
                   </button>
                 </div>
-              ) : (
-                <div className="flex items-center gap-2">
+              </div>
+
+            </div>
+          ) : (
+            /* ==================================================================== */
+            /* MODO B: FORMULARIO INTERACTIVO COMPLETO (CASO ACTIVO EN CURSO) */
+            /* ==================================================================== */
+            <div className="space-y-6">
+              
+              {/* 1. STEPPER INTERACTIVO DE ETAPAS */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-amber-400" />
+                    Etapa del Proceso Quirúrgico
+                  </span>
+                  <span className="text-[10px] text-gray-400 font-mono">
+                    {etapaActualInfo.desc}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {ETAPAS.filter((e) => e.id !== 'cancelado').map((e) => {
+                    const isSelected = estado === e.id
+                    return (
+                      <button
+                        key={e.id}
+                        type="button"
+                        onClick={() => {
+                          setEstado(e.id)
+                          if (e.id === 'confirmado' && !fechaDefinitiva && fechaProbable) {
+                            setFechaDefinitiva(fechaProbable)
+                          }
+                        }}
+                        className={`py-2 px-2.5 rounded-xl text-xs font-bold transition-all border text-left flex flex-col justify-between ${
+                          isSelected
+                            ? `${e.color} shadow-lg scale-[1.02]`
+                            : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white hover:bg-neutral-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="truncate">{e.label}</span>
+                          {isSelected && <Check size={13} className="shrink-0" />}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* 2. GRID DE PROFESIONALES, PRÁCTICA, ASPECTOS ECONÓMICOS Y FECHAS */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                
+                {/* A. Médico Derivador (Geclisa) */}
+                <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
+                  <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                    <UserCheck size={14} className="text-blue-400" />
+                    Médico Derivador (Consulta / Diagnóstico)
+                  </label>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      disabled={guardando}
+                      placeholder="Buscar médico derivador en Geclisa..."
+                      value={busquedaDerivador}
+                      onChange={(e) => {
+                        setBusquedaDerivador(e.target.value)
+                        setMedicoDerivador({ nombre: e.target.value })
+                        buscarPrestador('derivador', e.target.value)
+                        setMostrarDropdownDerivador(true)
+                      }}
+                      onFocus={() => {
+                        buscarPrestador('derivador', busquedaDerivador)
+                        setMostrarDropdownDerivador(true)
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                    />
+                    {buscandoDerivador && (
+                      <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
+                    )}
+
+                    {mostrarDropdownDerivador && prestadoresDerivador.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                        {prestadoresDerivador.map((p) => (
+                          <button
+                            key={p.pre_id}
+                            type="button"
+                            onClick={() => {
+                              setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                              setBusquedaDerivador(p.nombre)
+                              setMostrarDropdownDerivador(false)
+                            }}
+                            className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
+                          >
+                            <span className="font-bold text-white group-hover:text-blue-300 transition-colors">
+                              {p.nombre}
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-mono">
+                              Mat: {p.matricula || 'S/M'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* B. Médico Cirujano (Geclisa) */}
+                <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
+                  <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                    <Stethoscope size={14} className="text-emerald-400" />
+                    Médico Cirujano (Opera en Quirófano)
+                  </label>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      disabled={guardando}
+                      placeholder="Buscar cirujano en Geclisa..."
+                      value={busquedaCirujano}
+                      onChange={(e) => {
+                        setBusquedaCirujano(e.target.value)
+                        setMedicoCirujano({ nombre: e.target.value })
+                        buscarPrestador('cirujano', e.target.value)
+                        setMostrarDropdownCirujano(true)
+                      }}
+                      onFocus={() => {
+                        buscarPrestador('cirujano', busquedaCirujano)
+                        setMostrarDropdownCirujano(true)
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                    />
+                    {buscandoCirujano && (
+                      <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
+                    )}
+
+                    {mostrarDropdownCirujano && prestadoresCirujano.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                        {prestadoresCirujano.map((p) => (
+                          <button
+                            key={p.pre_id}
+                            type="button"
+                            onClick={() => {
+                              setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                              setBusquedaCirujano(p.nombre)
+                              setMostrarDropdownCirujano(false)
+                            }}
+                            className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
+                          >
+                            <span className="font-bold text-white group-hover:text-emerald-300 transition-colors">
+                              {p.nombre}
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-mono">
+                              Mat: {p.matricula || 'S/M'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* C. Práctica del Nomenclador */}
+                <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
+                  <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                    <ClipboardList size={14} className="text-indigo-400" />
+                    Práctica Quirúrgica (Nomenclador CRM)
+                  </label>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      disabled={guardando}
+                      placeholder="Buscar práctica por código o nombre..."
+                      value={busquedaPractica}
+                      onChange={(e) => {
+                        setBusquedaPractica(e.target.value)
+                        setPracticaNombre(e.target.value)
+                        buscarPracticasNomenclador(e.target.value)
+                        setMostrarDropdownPractica(true)
+                      }}
+                      onFocus={() => {
+                        buscarPracticasNomenclador(busquedaPractica)
+                        setMostrarDropdownPractica(true)
+                      }}
+                      className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                    />
+                    {buscandoPractica && (
+                      <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
+                    )}
+
+                    {mostrarDropdownPractica && (
+                      <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-indigo-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                        {practicasNomenclador.map((p, i) => (
+                          <button
+                            key={`${p.codigo}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              setPracticaCodigo(p.codigo)
+                              setPracticaNombre(p.nombre)
+                              setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
+                              if (p.precio && Number(p.precio) > 0) {
+                                setMontoExtra(p.precio)
+                                setMonedaExtra(p.moneda || 'ARS')
+                              }
+                              setMostrarDropdownPractica(false)
+                            }}
+                            className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/30">
+                                {p.codigo}
+                              </span>
+                              <span className="font-bold text-white group-hover:text-indigo-300 transition-colors truncate max-w-xs">
+                                {p.nombre}
+                              </span>
+                            </div>
+                            {p.precio && Number(p.precio) > 0 && (
+                              <span className="text-[11px] font-mono text-amber-300 font-bold shrink-0">
+                                $ {Number(p.precio).toLocaleString()}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* D. Aspectos Económicos y Presupuesto */}
+                <div className="p-4 rounded-xl bg-neutral-900/40 border border-amber-500/20 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                      <DollarSign size={14} className="text-amber-400" />
+                      Presupuesto / Condiciones Económicas
+                    </label>
+                    <span className="text-[10px] font-mono text-gray-400">
+                      {obraSocialDefault ? `OS: ${obraSocialDefault}` : 'Particular'}
+                    </span>
+                  </div>
+
+                  {cargandoPresupuestos ? (
+                    <div className="p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2 bg-neutral-950/60 rounded-xl border border-[var(--border)]">
+                      <Loader2 size={13} className="animate-spin text-amber-400" />
+                      <span>Cargando presupuestos...</span>
+                    </div>
+                  ) : presupuestos.length > 0 ? (
+                    <div className="space-y-2">
+                      {(() => {
+                        const pActivo = presupuestos.find((p) => p.id === caso.presupuesto_id) || presupuestos[0]
+                        const isAprobado = pActivo.estado === 'aprobado'
+                        const isRechazado = pActivo.estado === 'rechazado'
+                        const isCargandoAccion = actualizandoEstadoPresupuestoId === pActivo.id
+
+                        return (
+                          <>
+                            <div className="p-3 rounded-xl bg-neutral-950/80 border border-amber-500/30 space-y-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5">
+                                  <FileText size={13} className="text-blue-400 shrink-0" />
+                                  <span className="text-xs font-mono font-bold text-gray-200">
+                                    #{pActivo.id.slice(0, 8).toUpperCase()}
+                                  </span>
+                                </div>
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border ${
+                                    isAprobado
+                                      ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                                      : isRechazado
+                                      ? 'bg-red-950 text-red-300 border-red-500/40'
+                                      : 'bg-blue-950 text-blue-300 border-blue-500/40'
+                                  }`}
+                                >
+                                  {isAprobado ? 'Confirmado' : isRechazado ? 'Desistido' : 'En Análisis'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-baseline justify-between pt-1 border-t border-[var(--border)]/50">
+                                <div className="text-base font-black font-mono text-white tracking-tight">
+                                  $ {Number(pActivo.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                </div>
+                                <div className="text-xs font-semibold text-blue-300">
+                                  {obraSocialDefault || 'Particular'}
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[var(--border)]/50">
+                                {pActivo.pdf_url && (
+                                  <a
+                                    href={
+                                      pActivo.pdf_url.startsWith('http')
+                                        ? pActivo.pdf_url
+                                        : `${BACKEND_URL}${pActivo.pdf_url.startsWith('/') ? '' : '/'}${pActivo.pdf_url}`
+                                    }
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors"
+                                  >
+                                    <Download size={12} className="text-blue-400" />
+                                    PDF Oficial
+                                  </a>
+                                )}
+
+                                {!isAprobado && (
+                                  <button
+                                    type="button"
+                                    disabled={isCargandoAccion}
+                                    onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'aprobado')}
+                                    className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all"
+                                  >
+                                    {isCargandoAccion ? <Loader2 size={11} className="animate-spin" /> : <Check size={12} />}
+                                    Confirmar
+                                  </button>
+                                )}
+
+                                {!isRechazado && (
+                                  <button
+                                    type="button"
+                                    disabled={isCargandoAccion}
+                                    onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'rechazado')}
+                                    className="px-2.5 py-1 bg-red-600/15 hover:bg-red-600/25 text-red-400 border border-red-500/30 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all"
+                                  >
+                                    <XCircle size={12} />
+                                    Desistir
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-neutral-950/60 border border-[var(--border)] text-center space-y-2">
+                      <p className="text-[11px] text-gray-400">Sin presupuesto generado aún.</p>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarModalPresupuesto(true)}
+                        className="w-full py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <Receipt size={13} />
+                        + Armar Presupuesto
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* E. Fechas Probable y Definitiva */}
+                <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2">
+                  <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                    <Calendar size={14} className="text-purple-400" />
+                    Fecha Probable de Cirugía (Estimación)
+                  </label>
+                  <input
+                    type="date"
+                    disabled={guardando}
+                    value={fechaProbable}
+                    onChange={(e) => setFechaProbable(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-purple-500 rounded-xl text-white font-mono focus:outline-none"
+                  />
+                </div>
+
+                <div className="p-4 rounded-xl bg-neutral-900/40 border border-emerald-500/20 space-y-2">
+                  <label className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                    <FileCheck2 size={14} className="text-emerald-400" />
+                    Fecha Definitiva de Cirugía (Quirófano)
+                  </label>
+                  <input
+                    type="date"
+                    disabled={guardando}
+                    value={fechaDefinitiva}
+                    onChange={(e) => {
+                      setFechaDefinitiva(e.target.value)
+                      if (e.target.value && estado !== 'confirmado') {
+                        setEstado('confirmado')
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-white font-mono focus:outline-none"
+                  />
+                </div>
+
+              </div>
+
+              {/* 3. CHECKLIST PREQUIRÚRGICO ASISTIDO */}
+              <div className="pt-2">
+                <ChecklistPrequirurgico
+                  checklist={checklistPrequirurgico}
+                  disabled={false}
+                  onChange={(nuevo) => setChecklistPrequirurgico(nuevo)}
+                />
+              </div>
+
+              {/* 4. PRÓXIMA ACCIÓN PROGRAMADA & SEGUIMIENTO PROACTIVO */}
+              <div className="p-4 rounded-xl bg-neutral-900/60 border border-blue-500/20 space-y-3 shadow-inner">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <TrendingUp size={16} className="text-blue-400" />
+                    <h4 className="text-xs font-bold text-gray-200">
+                      Próxima Acción de Seguimiento (Agenda de Conversión)
+                    </h4>
+                  </div>
+
+                  {/* Botón destacado WhatsApp Rápido */}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalWhatsApp(true)}
+                    className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+                  >
+                    <Send size={13} />
+                    📲 WhatsApp Rápido (1 Clic)
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
+                      <Calendar size={12} className="text-blue-400" />
+                      Fecha de Próximo Contacto
+                    </label>
+                    <input
+                      type="date"
+                      disabled={guardando}
+                      value={proximaAccionFecha}
+                      onChange={(e) => setProximaAccionFecha(e.target.value)}
+                      className="px-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white font-mono focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 flex flex-col gap-1">
+                    <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
+                      <Tag size={12} className="text-blue-400" />
+                      Objetivo / Tarea a Realizar
+                    </label>
+                    <input
+                      type="text"
+                      disabled={guardando}
+                      value={proximaAccionTexto}
+                      onChange={(e) => setProximaAccionTexto(e.target.value)}
+                      placeholder="Ej: Chequear si OSDE emitió autorización, consultar por estudios de sangre..."
+                      className="px-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
+              <div className="pt-3 border-t border-[var(--border)]">
+                <TimelineEvolucionesAsesoria
+                  asesoriaId={caso.id}
+                  pacienteId={pacienteId}
+                  pacienteNombre={pacienteNombre}
+                />
+              </div>
+
+              {/* 6. FOOTER DE ACCIONES DEL CASO ACTIVO */}
+              <div className="flex items-center justify-between pt-3 border-t border-[var(--border)] flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleEliminar}
+                  className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 font-semibold transition-colors"
+                >
+                  <Trash2 size={13} />
+                  Eliminar Cirugía
+                </button>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Botón WhatsApp Rápido */}
+                  <button
+                    type="button"
+                    onClick={() => setMostrarModalWhatsApp(true)}
+                    className="px-3 py-2 bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+                  >
+                    <MessageCircle size={13} className="text-emerald-400" />
+                    WhatsApp Rápido
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setMostrarModalCierre(true)}
@@ -1273,9 +1404,10 @@ export default function ItemCasoQuirurgicoAcordeon({
                     )}
                   </button>
                 </div>
-              )}
+              </div>
+
             </div>
-          </div>
+          )}
 
           {/* MODAL PRESUPUESTO */}
           <ModalCrearPresupuestoPaciente

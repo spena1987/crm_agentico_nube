@@ -43,6 +43,9 @@ export default function ChatPatientSidebar({
   onOpenEditarPaciente,
   onInsertMessageToChat
 }: PatientSidebarProps) {
+  // Estado local enriquecido del paciente (con fallback a BD)
+  const [pacienteInfo, setPacienteInfo] = useState<any>(paciente || {})
+
   // Estados para Presupuestos
   const [presupuestos, setPresupuestos] = useState<any[]>([])
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
@@ -56,8 +59,27 @@ export default function ChatPatientSidebar({
   const [selectedTurnoDetalle, setSelectedTurnoDetalle] = useState<any | null>(null)
 
   // Consulta en vivo a la API de Geclisa: GET /api/Turnos/pendientes/{fichaId}
-  const fetchTurnosGeclisa = async () => {
-    const fichaId = paciente?.geclisa_ficha_id || paciente?.ficha_id
+  const fetchTurnosGeclisa = async (fichaIdParam?: number | string) => {
+    let fichaId = fichaIdParam || pacienteInfo?.geclisa_ficha_id || pacienteInfo?.ficha_id || paciente?.geclisa_ficha_id || paciente?.ficha_id
+
+    // Fallback: Si no tenemos la ficha en memoria, buscarla directamente en Supabase
+    if (!fichaId && (paciente?.id || pacienteInfo?.id)) {
+      try {
+        const pId = paciente?.id || pacienteInfo?.id
+        const { data: pData } = await supabase
+          .from('pacientes')
+          .select('*')
+          .eq('id', pId)
+          .maybeSingle()
+        if (pData) {
+          setPacienteInfo(pData)
+          fichaId = pData.geclisa_ficha_id
+        }
+      } catch (err) {
+        console.error('Error recuperando ficha en fallback:', err)
+      }
+    }
+
     if (!fichaId) {
       setTurnosGeclisa([])
       setTurnosConsultados(true)
@@ -95,10 +117,23 @@ export default function ChatPatientSidebar({
   useEffect(() => {
     if (!paciente?.id) return
 
+    setPacienteInfo(paciente)
     // Resetear caché al cambiar de paciente
     setTurnosGeclisa([])
     setTurnosConsultados(false)
     setTurnosOpen(false)
+
+    // Si el prop del paciente no trajo geclisa_ficha_id o dni, cargar ficha completa de Supabase
+    if (!paciente.geclisa_ficha_id || !paciente.dni) {
+      supabase
+        .from('pacientes')
+        .select('*')
+        .eq('id', paciente.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) setPacienteInfo((prev: any) => ({ ...prev, ...data }))
+        })
+    }
 
     const loadPresupuestos = async () => {
       try {
@@ -248,28 +283,40 @@ export default function ChatPatientSidebar({
           <div className="space-y-1.5 text-slate-300 text-[11px]">
             <div className="flex items-center gap-2">
               <Phone size={13} className="text-slate-400 shrink-0" />
-              <span>{formatPhoneDisplay(paciente.telefono)}</span>
+              <span>{formatPhoneDisplay(pacienteInfo.telefono || paciente.telefono)}</span>
             </div>
 
-            {paciente.dni && (
+            {(pacienteInfo.dni || paciente.dni) && (
               <div className="flex items-center gap-2">
                 <CreditCard size={13} className="text-slate-400 shrink-0" />
-                <span>DNI: {paciente.dni}</span>
+                <span>DNI: {pacienteInfo.dni || paciente.dni}</span>
+              </div>
+            )}
+
+            {(pacienteInfo.geclisa_ficha_id || pacienteInfo.ficha_id || paciente.geclisa_ficha_id) && (
+              <div className="flex items-center gap-2">
+                <Tag size={13} className="text-emerald-400 shrink-0" />
+                <span>Ficha Geclisa: <strong className="text-emerald-300">#{pacienteInfo.geclisa_ficha_id || pacienteInfo.ficha_id || paciente.geclisa_ficha_id}</strong></span>
+                {(pacienteInfo.nro_hc || paciente.nro_hc) && (
+                  <span className="text-[10px] text-slate-400 font-normal">
+                    (HC: {pacienteInfo.nro_hc || paciente.nro_hc})
+                  </span>
+                )}
               </div>
             )}
 
             <div className="flex items-center gap-2">
               <Stethoscope size={13} className="text-blue-400 shrink-0" />
-              <span>Cobertura: <strong className="text-slate-200">{paciente.obra_social || 'Particular'}</strong></span>
-              {paciente.nro_afiliado && (
-                <span className="text-[10px] text-slate-400">({paciente.nro_afiliado})</span>
+              <span>Cobertura: <strong className="text-slate-200">{pacienteInfo.obra_social || paciente.obra_social || 'Particular'}</strong></span>
+              {(pacienteInfo.plan_cobertura || pacienteInfo.nro_afiliado || paciente.nro_afiliado) && (
+                <span className="text-[10px] text-slate-400">({pacienteInfo.plan_cobertura || pacienteInfo.nro_afiliado || paciente.nro_afiliado})</span>
               )}
             </div>
 
-            {paciente.alertas_medicas && (
+            {(pacienteInfo.alertas_medicas || paciente.alertas_medicas) && (
               <div className="mt-2 p-2 rounded-lg bg-amber-950/40 border border-amber-800/50 text-amber-300 text-[10px] flex items-start gap-1.5">
                 <AlertTriangle size={13} className="text-amber-400 shrink-0 mt-0.5" />
-                <span><strong>Alerta:</strong> {paciente.alertas_medicas}</span>
+                <span><strong>Alerta:</strong> {pacienteInfo.alertas_medicas || paciente.alertas_medicas}</span>
               </div>
             )}
           </div>
@@ -278,7 +325,7 @@ export default function ChatPatientSidebar({
           <div className="pt-2 border-t border-slate-700/60 flex items-center gap-2">
             {onOpenHistoriaClinica && (
               <button
-                onClick={() => onOpenHistoriaClinica(paciente.id)}
+                onClick={() => onOpenHistoriaClinica(pacienteInfo.id || paciente.id)}
                 className="flex-1 py-1.5 px-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
               >
                 <FileText size={12} />
@@ -323,7 +370,7 @@ export default function ChatPatientSidebar({
             {turnosOpen && (
               <button
                 type="button"
-                onClick={fetchTurnosGeclisa}
+                onClick={() => fetchTurnosGeclisa()}
                 disabled={cargandoTurnosGeclisa}
                 className="p-1 hover:bg-slate-800 text-slate-400 hover:text-emerald-300 rounded-lg transition-colors shrink-0 disabled:opacity-50"
                 title="Consultar agenda de Geclisa nuevamente"

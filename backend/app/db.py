@@ -396,7 +396,7 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
         return []
     try:
         query = supabase.table("conversaciones").select(
-            "id, paciente_id, bot_disabled, archivada, ultimo_mensaje, updated_at, pacientes(id, telefono, nombre, email)"
+            "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, updated_at, pacientes(*)"
         )
         if not incluir_archivadas:
             query = query.eq("archivada", False)

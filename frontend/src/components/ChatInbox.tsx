@@ -52,6 +52,14 @@ interface Paciente {
   telefono: string
   nombre: string
   email: string | null
+  geclisa_ficha_id?: number | null
+  dni?: string | null
+  obra_social?: string | null
+  plan_cobertura?: string | null
+  nro_hc?: string | null
+  nro_afiliado?: string | null
+  alertas_medicas?: string | null
+  direccion?: string | null
 }
 
 interface Conversacion {
@@ -192,14 +200,10 @@ export default function ChatInbox() {
             paciente_id,
             bot_disabled,
             archivada,
+            agente_asignado_codigo,
             ultimo_mensaje,
             updated_at,
-            pacientes (
-              id,
-              telefono,
-              nombre,
-              email
-            )
+            pacientes (*)
           `)
           .order('updated_at', { ascending: false })
         
