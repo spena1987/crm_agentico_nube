@@ -28,6 +28,8 @@ import {
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import ChatMediaViewer, { DeliveryStatusIcon } from './chat/ChatMediaViewer'
+import WhatsAppFormattedText from './chat/WhatsAppFormattedText'
+import ChatFloatingFormatToolbar from './chat/ChatFloatingFormatToolbar'
 import { BACKEND_URL } from '@/lib/api'
 
 interface Paciente {
@@ -126,6 +128,7 @@ export default function ChatInbox() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const messageInputRef = useRef<HTMLTextAreaElement>(null)
 
   const fetchWAStatus = async () => {
     try {
@@ -1009,9 +1012,9 @@ export default function ChatInbox() {
                         )}
                       </div>
                       
-                      {/* Contenido textual (si no es un placeholder genérico de media) */}
+                      {/* Contenido textual con formato enriquecido de WhatsApp (*negrita*, _cursiva_, ~tachado~, citas, listas) */}
                       {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
-                        <p className="whitespace-pre-line leading-relaxed">{msg.contenido}</p>
+                        <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
                       )}
                       
                       {/* Visualizador Multimedia (Fotos con Lightbox, Audios con Transcripción IA, PDFs) */}
@@ -1045,9 +1048,9 @@ export default function ChatInbox() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Caja de Entrada de Mensajes del Operador (Tema Oscuro) */}
+          {/* Caja de Entrada de Mensajes del Operador con Formateador Flotante (Tema Oscuro) */}
           <div className="p-3 border-t border-slate-800 bg-[#101b33]">
-            <form onSubmit={handleSend} className="flex items-center gap-2">
+            <form onSubmit={handleSend} className="flex items-end gap-2 relative">
               <input 
                 type="file" 
                 ref={fileInputRef} 
@@ -1059,23 +1062,39 @@ export default function ChatInbox() {
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={subiendoArchivo}
-                className="p-2.5 bg-[#14203d] hover:bg-[#1c2c54] border border-slate-700/60 rounded-xl text-slate-300 transition-colors shrink-0 disabled:opacity-50"
+                className="p-2.5 bg-[#14203d] hover:bg-[#1c2c54] border border-slate-700/60 rounded-xl text-slate-300 transition-colors shrink-0 disabled:opacity-50 mb-0.5"
                 title="Adjuntar archivo o imagen (PDF, JPG, PNG, Audio)"
               >
                 {subiendoArchivo ? <Loader2 size={18} className="animate-spin text-blue-400" /> : <Paperclip size={18} />}
               </button>
 
-              <input 
-                type="text"
-                value={nuevoMensaje}
-                onChange={(e) => setNuevoMensaje(e.target.value)}
-                placeholder={selectedConv.bot_disabled ? "Escribe un mensaje como operador (saldrá por WhatsApp real)..." : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."}
-                className="flex-1 px-4 py-2.5 text-xs border border-slate-700/80 rounded-xl bg-[#14203d] text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-              />
+              {/* Contenedor relativo para alojar el globo flotante de formato */}
+              <div className="flex-1 relative">
+                <ChatFloatingFormatToolbar
+                  textareaRef={messageInputRef}
+                  value={nuevoMensaje}
+                  onChange={(val) => setNuevoMensaje(val)}
+                />
+                <textarea
+                  ref={messageInputRef}
+                  rows={1}
+                  value={nuevoMensaje}
+                  onChange={(e) => setNuevoMensaje(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSend(e)
+                    }
+                  }}
+                  placeholder={selectedConv.bot_disabled ? "Escribe un mensaje (*negrita*, _cursiva_, ~tachado~, citas)..." : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."}
+                  className="w-full px-4 py-2.5 text-xs border border-slate-700/80 rounded-xl bg-[#14203d] text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none max-h-32 min-h-[38px] overflow-y-auto"
+                />
+              </div>
+
               <button 
                 type="submit"
                 disabled={!nuevoMensaje.trim()}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shrink-0"
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shrink-0 mb-0.5"
               >
                 <Send size={13} />
                 <span>Enviar</span>
