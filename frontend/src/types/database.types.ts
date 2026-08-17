@@ -169,6 +169,10 @@ export type Database = {
           practica_nombre: string
           presupuesto_id: string | null
           situacion_paciente: string | null
+          checklist_prequirurgico: Json | null
+          proxima_accion_fecha: string | null
+          proxima_accion_texto: string | null
+          ultimo_contacto_at: string | null
           updated_at: string
         }
         Insert: {
@@ -192,6 +196,10 @@ export type Database = {
           practica_nombre: string
           presupuesto_id?: string | null
           situacion_paciente?: string | null
+          checklist_prequirurgico?: Json | null
+          proxima_accion_fecha?: string | null
+          proxima_accion_texto?: string | null
+          ultimo_contacto_at?: string | null
           updated_at?: string
         }
         Update: {
@@ -215,6 +223,10 @@ export type Database = {
           practica_nombre?: string
           presupuesto_id?: string | null
           situacion_paciente?: string | null
+          checklist_prequirurgico?: Json | null
+          proxima_accion_fecha?: string | null
+          proxima_accion_texto?: string | null
+          ultimo_contacto_at?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -233,6 +245,33 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      configuracion_quirurgica: {
+        Row: {
+          id: string
+          sla_dias_alerta: number
+          sla_dias_critico: number
+          checklist_items: Json
+          plantillas_whatsapp: Json
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          sla_dias_alerta?: number
+          sla_dias_critico?: number
+          checklist_items?: Json
+          plantillas_whatsapp?: Json
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          sla_dias_alerta?: number
+          sla_dias_critico?: number
+          checklist_items?: Json
+          plantillas_whatsapp?: Json
+          updated_at?: string
+        }
+        Relationships: []
       }
       configuracion_nomenclador: {
         Row: {

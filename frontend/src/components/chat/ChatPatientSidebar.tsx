@@ -14,11 +14,13 @@ import {
   CheckCircle2, 
   XCircle, 
   Plus, 
+  ChevronDown, 
   ChevronRight, 
   Loader2, 
   ShieldCheck,
   Stethoscope,
-  X
+  X,
+  Tag
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -45,7 +47,9 @@ export default function ChatPatientSidebar({
   const [presupuestos, setPresupuestos] = useState<any[]>([])
   const [cargandoTurnos, setCargandoTurnos] = useState(false)
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
-  const [enviandoPresupuestoId, setEnviandoPresupuestoId] = useState<string | null>(null)
+  
+  // Secciones colapsables (Presupuestos colapsado por defecto)
+  const [presupuestosOpen, setPresupuestosOpen] = useState(false)
 
   useEffect(() => {
     if (!paciente?.id) return
@@ -67,16 +71,58 @@ export default function ChatPatientSidebar({
         setCargandoTurnos(false)
       }
 
-      // 2. Cargar presupuestos
+      // 2. Cargar presupuestos enriquecidos (con servicios_precios y asesoria quirúrgica)
       try {
         setCargandoPresupuestos(true)
-        const { data: presData } = await supabase
+        const { data: presData, error: presError } = await supabase
           .from('presupuestos')
-          .select('*')
+          .select(`
+            id,
+            paciente_id,
+            asesoria_id,
+            estado,
+            total,
+            pdf_url,
+            created_at,
+            items_presupuesto (
+              id,
+              servicio_id,
+              cantidad,
+              precio_unitario,
+              subtotal,
+              servicios_precios (
+                nombre_prestacion,
+                codigo
+              )
+            ),
+            asesorias_quirurgicas!presupuestos_asesoria_id_fkey (
+              practica_nombre,
+              practica_codigo
+            )
+          `)
           .eq('paciente_id', paciente.id)
           .order('created_at', { ascending: false })
-          .limit(5)
-        setPresupuestos(presData || [])
+
+        if (presError) {
+          console.warn('Error cargando presupuestos enriquecidos, intentando fallback simple:', presError)
+          const fallback = await supabase
+            .from('presupuestos')
+            .select('*')
+            .eq('paciente_id', paciente.id)
+            .order('created_at', { ascending: false })
+          
+          // Filtrar solo casos activos/pendientes (excluir rechazados/desistidos)
+          const activos = (fallback.data || []).filter(
+            (p: any) => !['rechazado', 'cancelado', 'desistido'].includes((p.estado || '').toLowerCase())
+          )
+          setPresupuestos(activos)
+        } else {
+          // Filtrar solo casos activos/pendientes
+          const activos = (presData || []).filter(
+            (p: any) => !['rechazado', 'cancelado', 'desistido'].includes((p.estado || '').toLowerCase())
+          )
+          setPresupuestos(activos)
+        }
       } catch (err) {
         console.error('Error cargando presupuestos del paciente:', err)
       } finally {
@@ -99,8 +145,19 @@ export default function ChatPatientSidebar({
   // Enviar link del presupuesto directamente al chat de WhatsApp
   const handleEnviarPresupuestoWhatsApp = async (p: any) => {
     if (!p.pdf_url && !p.id) return
-    const pdfLink = p.pdf_url || `${BACKEND_URL}/static/presupuesto_${p.id}.pdf`
-    const mensajeTexto = `Estimado/a *${paciente.nombre}*, adjuntamos el detalle de su presupuesto formal emitido por la clínica:\n\n📄 *Presupuesto #*: ${p.numero_presupuesto || p.id.slice(0, 8)}\n💰 *Monto Total*: $${Number(p.monto_total || 0).toLocaleString('es-AR')}\n🔗 *Descargar PDF*: ${pdfLink}\n\nQuedamos a su disposición ante cualquier duda o para confirmar la fecha. ¡Saludos!`
+    const rawPdf = p.pdf_url || `/static/presupuesto_${p.id}.pdf`
+    const pdfLink = rawPdf.startsWith('http') ? rawPdf : `${BACKEND_URL.replace(/\/$/, '')}/${rawPdf.replace(/^\//, '')}`
+    
+    // Obtener nombre de la práctica
+    const practicaNombre = 
+      p.asesorias_quirurgicas?.practica_nombre || 
+      p.items_presupuesto?.[0]?.servicios_precios?.nombre_prestacion || 
+      'Presupuesto de Consulta / Práctica Médica'
+    
+    const monto = Number(p.total ?? p.monto_total ?? 0).toLocaleString('es-AR')
+    const shortId = p.id ? p.id.slice(0, 8) : '0000'
+
+    const mensajeTexto = `Estimado/a *${paciente.nombre}*, adjuntamos el detalle de su presupuesto formal emitido por la clínica:\n\n🩺 *Práctica*: ${practicaNombre}\n📄 *Presupuesto #*: ${shortId}\n💰 *Monto Total*: $${monto}\n🔗 *Descargar PDF*: ${pdfLink}\n\nQuedamos a su entera disposición ante cualquier consulta o para coordinar la fecha. ¡Saludos!`
 
     if (onInsertMessageToChat) {
       onInsertMessageToChat(mensajeTexto)
@@ -243,63 +300,107 @@ export default function ChatPatientSidebar({
           )}
         </div>
 
-        {/* 3. PRESUPUESTOS Y COTIZACIONES */}
+        {/* 3. PRESUPUESTOS Y COTIZACIONES PENDIENTES (ACORDEÓN COLAPSABLE POR DEFECTO) */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h5 className="font-bold text-slate-300 text-[11px] uppercase tracking-wider flex items-center gap-1.5">
+          
+          {/* Botón Acordeón Cabecera */}
+          <button
+            type="button"
+            onClick={() => setPresupuestosOpen(!presupuestosOpen)}
+            className="w-full flex items-center justify-between p-2.5 rounded-xl bg-[#14203d] hover:bg-[#1a2b52] border border-slate-700/60 transition-colors text-left"
+          >
+            <div className="flex items-center gap-1.5 font-bold text-slate-200 text-[11px]">
               <FileText size={13} className="text-blue-400" />
-              <span>Presupuestos Emitidos</span>
-            </h5>
-            <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-semibold">
-              {presupuestos.length}
-            </span>
-          </div>
-
-          {cargandoPresupuestos ? (
-            <div className="p-3 text-center text-slate-400">
-              <Loader2 size={16} className="animate-spin mx-auto text-blue-400" />
+              <span>Presupuestos Pendientes</span>
             </div>
-          ) : presupuestos.length === 0 ? (
-            <div className="p-2.5 rounded-xl bg-[#14203d]/40 border border-slate-800 text-center text-slate-400 text-[11px]">
-              No registra presupuestos creados.
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+                presupuestos.length > 0
+                  ? 'bg-blue-950 text-blue-300 border-blue-800/60'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}>
+                {presupuestos.length}
+              </span>
+              <ChevronDown 
+                size={15} 
+                className={`text-slate-400 transition-transform duration-200 ${presupuestosOpen ? 'rotate-180 text-blue-300' : ''}`} 
+              />
             </div>
-          ) : (
-            <div className="space-y-2">
-              {presupuestos.map((p) => {
-                const monto = Number(p.monto_total || 0).toLocaleString('es-AR')
-                const estado = p.estado || 'borrador'
-                return (
-                  <div key={p.id} className="p-2.5 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-200">
-                        {p.numero_presupuesto ? `#${p.numero_presupuesto}` : `Presupuesto`}
-                      </span>
-                      <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
-                        estado === 'aprobado' ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800/40' :
-                        estado === 'rechazado' ? 'bg-rose-950/60 text-rose-300 border border-rose-800/40' :
-                        'bg-blue-950/60 text-blue-300 border border-blue-800/40'
-                      }`}>
-                        {estado}
-                      </span>
-                    </div>
+          </button>
 
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[10px] text-slate-400">Monto Total:</span>
-                      <span className="text-sm font-extrabold text-emerald-400">${monto}</span>
-                    </div>
+          {/* Contenido Desplegable */}
+          {presupuestosOpen && (
+            <div className="space-y-2 pt-1 animate-in fade-in slide-in-from-top-1 duration-150">
+              {cargandoPresupuestos ? (
+                <div className="p-3 text-center text-slate-400">
+                  <Loader2 size={16} className="animate-spin mx-auto text-blue-400" />
+                </div>
+              ) : presupuestos.length === 0 ? (
+                <div className="p-2.5 rounded-xl bg-[#14203d]/40 border border-slate-800 text-center text-slate-400 text-[11px]">
+                  No registra presupuestos pendientes o activos.
+                </div>
+              ) : (
+                presupuestos.map((p) => {
+                  const monto = Number(p.total ?? p.monto_total ?? 0).toLocaleString('es-AR')
+                  const estado = p.estado || 'borrador'
+                  const fechaStr = p.created_at 
+                    ? new Date(p.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                    : 'Reciente'
+                  
+                  // Práctica o Tratamiento
+                  const practicaNombre = 
+                    p.asesorias_quirurgicas?.practica_nombre || 
+                    p.items_presupuesto?.[0]?.servicios_precios?.nombre_prestacion || 
+                    'Consulta / Práctica Médica'
+                  
+                  const shortId = p.id ? p.id.slice(0, 8) : '0000'
 
-                    {/* Botón para enviar PDF al chat */}
-                    <button
-                      onClick={() => handleEnviarPresupuestoWhatsApp(p)}
-                      className="w-full py-1.5 px-2 bg-[#1b2b52] hover:bg-blue-600 text-blue-200 hover:text-white rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs border border-blue-500/30"
-                      title="Insertar texto y link de descarga en la caja de chat"
-                    >
-                      <Send size={11} />
-                      <span>Enviar PDF por WhatsApp</span>
-                    </button>
-                  </div>
-                )
-              })}
+                  return (
+                    <div key={p.id} className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-2 shadow-xs">
+                      
+                      {/* Cabecera del Presupuesto */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-bold text-slate-100 text-xs truncate" title={practicaNombre}>
+                            {practicaNombre}
+                          </p>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                            <span>#{shortId}</span>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              <Calendar size={10} /> {fechaStr}
+                            </span>
+                          </div>
+                        </div>
+
+                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase shrink-0 ${
+                          estado === 'aprobado' ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/60' :
+                          estado === 'enviado' ? 'bg-blue-950/80 text-blue-300 border border-blue-800/60' :
+                          'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                        }`}>
+                          {estado}
+                        </span>
+                      </div>
+
+                      {/* Monto Total Destacado */}
+                      <div className="p-2 rounded-lg bg-[#0d1527] border border-slate-800 flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400 font-semibold">Total a Abonar:</span>
+                        <span className="text-sm font-extrabold text-emerald-400">${monto}</span>
+                      </div>
+
+                      {/* Botón para enviar PDF al chat */}
+                      <button
+                        onClick={() => handleEnviarPresupuestoWhatsApp(p)}
+                        className="w-full py-1.5 px-2 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1.5 transition-all shadow-xs border border-blue-500/40"
+                        title="Insertar texto y link de descarga en la caja de chat"
+                      >
+                        <Send size={11} />
+                        <span>Enviar PDF por WhatsApp</span>
+                      </button>
+                    </div>
+                  )
+                })
+              )}
             </div>
           )}
         </div>
@@ -308,3 +409,4 @@ export default function ChatPatientSidebar({
     </div>
   )
 }
+

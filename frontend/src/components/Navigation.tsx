@@ -17,7 +17,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Menu,
-  X
+  X,
+  TrendingUp,
+  Stethoscope
 } from 'lucide-react'
 
 interface NavItem {
@@ -30,6 +32,7 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { code: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
+  { code: 'pipeline-quirurgico', label: 'Pipeline Quirúrgico', href: '/pipeline-quirurgico', icon: TrendingUp },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },

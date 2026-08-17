@@ -31,12 +31,18 @@ import {
   ChevronUp,
   Lock,
   Unlock,
-  ShieldAlert
+  ShieldAlert,
+  Send,
+  MessageCircle,
+  TrendingUp,
+  Tag
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
+import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
+import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 
 export interface PresupuestoPaciente {
@@ -77,6 +83,10 @@ export interface AsesoriaQuirurgica {
   estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
   situacion_paciente?: string | null
   motivo_cancelacion?: string | null
+  checklist_prequirurgico?: Record<string, boolean> | null
+  proxima_accion_fecha?: string | null
+  proxima_accion_texto?: string | null
+  ultimo_contacto_at?: string | null
   created_at: string
   updated_at: string
 }
@@ -228,7 +238,27 @@ export default function ItemCasoQuirurgicoAcordeon({
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
   const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
+  const [mostrarModalWhatsApp, setMostrarModalWhatsApp] = useState(false)
   const [actualizandoEstadoPresupuestoId, setActualizandoEstadoPresupuestoId] = useState<string | null>(null)
+
+  // Checklist prequirúrgico & Próxima acción
+  const [checklistPrequirurgico, setChecklistPrequirurgico] = useState<Record<string, boolean>>(
+    caso.checklist_prequirurgico || {}
+  )
+  const [proximaAccionFecha, setProximaAccionFecha] = useState(caso.proxima_accion_fecha || '')
+  const [proximaAccionTexto, setProximaAccionTexto] = useState(caso.proxima_accion_texto || '')
+
+  // Cálculo del tiempo transcurrido desde el último contacto (SLA Lead Aging)
+  const calcularSlaContacto = () => {
+    const fechaUltimo = caso.ultimo_contacto_at || caso.created_at
+    if (!fechaUltimo) return { texto: 'Sin contacto', nivel: 'al_dia' }
+    const diffMs = Date.now() - new Date(fechaUltimo).getTime()
+    const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    if (diffDias === 0) return { texto: 'Contacto: Hoy', nivel: 'al_dia' }
+    if (diffDias === 1) return { texto: 'Contacto: Ayer', nivel: 'al_dia' }
+    if (diffDias <= 4) return { texto: `Sin contacto: ${diffDias} d`, nivel: 'atencion' }
+    return { texto: `Alerta: ${diffDias} d sin contacto`, nivel: 'critico' }
+  }
 
   // Reabrir caso cerrado
   const handleReabrirCaso = async () => {
@@ -285,6 +315,9 @@ export default function ItemCasoQuirurgicoAcordeon({
     setMonedaExtra(caso.moneda_extra || 'ARS')
     setFechaProbable(caso.fecha_probable_cirugia || '')
     setFechaDefinitiva(caso.fecha_definitiva_cirugia || '')
+    setChecklistPrequirurgico(caso.checklist_prequirurgico || {})
+    setProximaAccionFecha(caso.proxima_accion_fecha || '')
+    setProximaAccionTexto(caso.proxima_accion_texto || '')
   }, [caso])
 
   // Cargar presupuestos vinculados
@@ -404,7 +437,10 @@ export default function ItemCasoQuirurgicoAcordeon({
         moneda_extra: monedaExtra,
         fecha_probable_cirugia: fechaProbable || null,
         fecha_definitiva_cirugia: fechaDefinitiva || null,
-        estado: estado
+        estado: estado,
+        checklist_prequirurgico: checklistPrequirurgico,
+        proxima_accion_fecha: proximaAccionFecha || null,
+        proxima_accion_texto: proximaAccionTexto || null
       }
 
       const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
@@ -581,6 +617,26 @@ export default function ItemCasoQuirurgicoAcordeon({
               $ {Number(montoExtra).toLocaleString()} {monedaExtra}
             </span>
           )}
+
+          {/* 7. Semáforo SLA de Tiempo sin Contacto (Lead Aging) */}
+          {!isCerrado && (() => {
+            const sla = calcularSlaContacto()
+            return (
+              <span
+                className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 shadow-sm ${
+                  sla.nivel === 'critico'
+                    ? 'bg-red-950/90 text-red-300 border-red-500/60 animate-pulse'
+                    : sla.nivel === 'atencion'
+                    ? 'bg-amber-950/90 text-amber-300 border-amber-500/50'
+                    : 'bg-neutral-950 text-emerald-400 border-emerald-500/30'
+                }`}
+                title="SLA: Tiempo transcurrido desde el último contacto"
+              >
+                <Clock size={11} className={sla.nivel === 'critico' ? 'text-red-400' : sla.nivel === 'atencion' ? 'text-amber-400' : 'text-emerald-400'} />
+                {sla.texto}
+              </span>
+            )
+          })()}
         </div>
 
         {/* Ícono de Despliegue */}
@@ -1015,7 +1071,66 @@ export default function ItemCasoQuirurgicoAcordeon({
 
           </div>
 
-          {/* 3. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
+          {/* 3. CHECKLIST PREQUIRÚRGICO ASISTIDO */}
+          <div className="pt-2">
+            <ChecklistPrequirurgico
+              checklist={checklistPrequirurgico}
+              onChange={(nuevo) => setChecklistPrequirurgico(nuevo)}
+            />
+          </div>
+
+          {/* 4. PRÓXIMA ACCIÓN PROGRAMADA & SEGUIMIENTO PROACTIVO */}
+          <div className="p-4 rounded-xl bg-neutral-900/60 border border-blue-500/20 space-y-3 shadow-inner">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <TrendingUp size={16} className="text-blue-400" />
+                <h4 className="text-xs font-bold text-gray-200">
+                  Próxima Acción de Seguimiento (Agenda de Conversión)
+                </h4>
+              </div>
+
+              {/* Botón destacado WhatsApp Rápido */}
+              <button
+                type="button"
+                onClick={() => setMostrarModalWhatsApp(true)}
+                className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+              >
+                <Send size={13} />
+                📲 WhatsApp Rápido (1 Clic)
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
+                  <Calendar size={12} className="text-blue-400" />
+                  Fecha de Próximo Contacto
+                </label>
+                <input
+                  type="date"
+                  value={proximaAccionFecha}
+                  onChange={(e) => setProximaAccionFecha(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white font-mono focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-2 flex flex-col gap-1">
+                <label className="text-[10px] text-gray-400 font-semibold flex items-center gap-1">
+                  <Tag size={12} className="text-blue-400" />
+                  Objetivo / Tarea a Realizar
+                </label>
+                <input
+                  type="text"
+                  value={proximaAccionTexto}
+                  onChange={(e) => setProximaAccionTexto(e.target.value)}
+                  placeholder="Ej: Chequear si OSDE emitió autorización, consultar por estudios de sangre..."
+                  className="px-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 5. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
           <div className="pt-3 border-t border-[var(--border)]">
             <TimelineEvolucionesAsesoria
               asesoriaId={caso.id}
@@ -1024,7 +1139,7 @@ export default function ItemCasoQuirurgicoAcordeon({
             />
           </div>
 
-          {/* 4. FOOTER DE ACCIONES DEL CASO */}
+          {/* 6. FOOTER DE ACCIONES DEL CASO */}
           <div className="flex items-center justify-between pt-3 border-t border-[var(--border)] flex-wrap gap-2">
             <button
               type="button"
@@ -1035,7 +1150,17 @@ export default function ItemCasoQuirurgicoAcordeon({
               Eliminar Cirugía
             </button>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Botón WhatsApp Rápido */}
+              <button
+                type="button"
+                onClick={() => setMostrarModalWhatsApp(true)}
+                className="px-3 py-2 bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all shadow flex items-center gap-1.5"
+              >
+                <MessageCircle size={13} className="text-emerald-400" />
+                WhatsApp Rápido
+              </button>
+
               {/* Botón de Cerrar o Reabrir Caso */}
               {estado === 'cancelado' || estado === 'operado' ? (
                 <button
@@ -1103,6 +1228,27 @@ export default function ItemCasoQuirurgicoAcordeon({
               setTimeout(() => setMensajeExito(null), 3000)
               handleGuardar()
               fetchPresupuestos()
+            }}
+          />
+
+          {/* MODAL WHATSAPP RÁPIDO */}
+          <ModalPlantillasWhatsAppQuirurgicas
+            isOpen={mostrarModalWhatsApp}
+            onClose={() => setMostrarModalWhatsApp(false)}
+            casoId={caso.id}
+            pacienteId={pacienteId}
+            pacienteNombre={pacienteNombre}
+            pacienteTelefono={pacienteTelefono}
+            practicaNombre={practicaNombre}
+            medicoCirujanoNombre={medicoCirujano.nombre}
+            montoExtra={montoExtra}
+            monedaExtra={monedaExtra}
+            fechaProbable={fechaProbable}
+            fechaDefinitiva={fechaDefinitiva}
+            onMensajeEnviado={() => {
+              setMensajeExito('✔ WhatsApp enviado y registrado en la bitácora.')
+              setTimeout(() => setMensajeExito(null), 3500)
+              handleGuardar()
             }}
           />
 

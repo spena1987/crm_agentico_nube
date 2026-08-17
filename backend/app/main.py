@@ -57,7 +57,10 @@ from app.db import (
     get_evoluciones_by_asesoria,
     crear_evolucion_asesoria,
     eliminar_evolucion_asesoria,
-    get_paciente_contexto_360
+    get_paciente_contexto_360,
+    get_configuracion_quirurgica,
+    actualizar_configuracion_quirurgica,
+    get_pipeline_quirurgico
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -2213,4 +2216,44 @@ def borrar_evolucion_asesoria(evolucion_id: str):
         return {"success": ok, "mensaje": "Evolución eliminada."}
     except Exception as e:
         logger.error(f"Error al eliminar evolución {evolucion_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: CONFIGURACIÓN QUIRÚRGICA & PIPELINE LEAD-TO-SURGERY
+# ====================================================================
+
+@app.get("/api/configuracion-quirurgica")
+def obtener_config_quirurgica():
+    """
+    Retorna la configuración de SLA, plantillas WhatsApp y checklist quirúrgico.
+    """
+    try:
+        config = get_configuracion_quirurgica()
+        return {"success": True, "configuracion": config}
+    except Exception as e:
+        logger.error(f"Error al obtener configuración quirúrgica: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/configuracion-quirurgica")
+def guardar_config_quirurgica(payload: Dict[str, Any] = Body(...)):
+    """
+    Actualiza la configuración de SLA, plantillas de WhatsApp o checklist.
+    """
+    try:
+        config = actualizar_configuracion_quirurgica(payload)
+        return {"success": True, "mensaje": "Configuración guardada correctamente.", "configuracion": config}
+    except Exception as e:
+        logger.error(f"Error al guardar configuración quirúrgica: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/pipeline-quirurgico")
+def obtener_pipeline():
+    """
+    Retorna el tablero global Kanban de cirugías por etapa con KPIs de ingresos.
+    """
+    try:
+        data = get_pipeline_quirurgico()
+        return {"success": True, **data}
+    except Exception as e:
+        logger.error(f"Error al obtener pipeline quirúrgico: {e}")
         raise HTTPException(status_code=500, detail=str(e))

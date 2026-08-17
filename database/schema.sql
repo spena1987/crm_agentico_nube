@@ -430,6 +430,19 @@ create table if not exists public.asesorias_quirurgicas (
     situacion_paciente text,
     motivo_cancelacion text,
     
+    -- Lead-to-Surgery & Conversión
+    checklist_prequirurgico jsonb default '{
+        "presupuesto_aceptado": false,
+        "autorizacion_obra_social": false,
+        "estudios_laboratorio": false,
+        "ecg_riesgo_quirurgico": false,
+        "consentimiento_firmado": false,
+        "reserva_quirofano": false
+    }'::jsonb,
+    proxima_accion_fecha date,
+    proxima_accion_texto text,
+    ultimo_contacto_at timestamp with time zone default timezone('utc'::text, now()),
+    
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
@@ -437,6 +450,8 @@ create table if not exists public.asesorias_quirurgicas (
 create index if not exists idx_asesorias_paciente on public.asesorias_quirurgicas(paciente_id);
 create index if not exists idx_asesorias_estado on public.asesorias_quirurgicas(estado);
 create index if not exists idx_asesorias_presupuesto on public.asesorias_quirurgicas(presupuesto_id);
+create index if not exists idx_asesorias_proxima_accion on public.asesorias_quirurgicas(proxima_accion_fecha);
+create index if not exists idx_asesorias_ultimo_contacto on public.asesorias_quirurgicas(ultimo_contacto_at desc);
 
 -- ====================================================================
 -- 12. TABLA DE EVOLUCIONES & BITÁCORA DE ASESORAMIENTO QUIRÚRGICO
@@ -466,6 +481,46 @@ create index if not exists idx_evoluciones_fecha on public.asesoria_evoluciones(
 comment on table public.asesoria_evoluciones is 'Registro cronológico e inmutable de cada contacto y asesoramiento quirúrgico.';
 
 -- ====================================================================
+-- 13. CONFIGURACIÓN DEL MÓDULO QUIRÚRGICO & CONVERSIÓN
+-- ====================================================================
+create table public.configuracion_quirurgica (
+    id varchar primary key default 'default',
+    sla_dias_alerta integer not null default 3,
+    sla_dias_critico integer not null default 6,
+    checklist_items jsonb not null default '[
+      {"id": "presupuesto_aceptado", "label": "Presupuesto Aceptado / Cotización Aprobada"},
+      {"id": "autorizacion_obra_social", "label": "Autorización / Bono de Obra Social Aprobado"},
+      {"id": "estudios_laboratorio", "label": "Laboratorio Completo & Coagulograma"},
+      {"id": "ecg_riesgo_quirurgico", "label": "ECG & Evaluación Cardiológica (Riesgo Quirúrgico)"},
+      {"id": "consentimiento_firmado", "label": "Consentimiento Informado Quirúrgico Firmado"},
+      {"id": "reserva_quirofano", "label": "Reserva y Asignación de Quirófano"}
+    ]'::jsonb,
+    plantillas_whatsapp jsonb not null default '[
+      {
+        "id": "seguimiento_cotizacion",
+        "titulo": "Seguimiento de Cotización / Presupuesto",
+        "mensaje": "Hola {paciente}, te contacto del equipo de Asesoramiento Quirúrgico de la clínica. Te escribo para consultar si pudiste revisar la propuesta para tu procedimiento de {cirugia}. Quedo a tu disposición por cualquier duda con las condiciones económicas o coberturas."
+      },
+      {
+        "id": "requisitos_prequirurgicos",
+        "titulo": "Guía de Requisitos Prequirúrgicos",
+        "mensaje": "Estimado/a {paciente}, para avanzar con la programación de tu cirugía ({cirugia}), te recordamos los estudios requeridos: 1) Análisis de sangre y coagulograma, 2) Electrocardiograma con evaluación de riesgo quirúrgico. Cuando los tengas listos, podés enviárnoslos por este medio."
+      },
+      {
+        "id": "guia_autorizacion",
+        "titulo": "Instrucciones de Autorización de Obra Social",
+        "mensaje": "Hola {paciente}, para gestionar la cobertura de tu procedimiento ({cirugia}), debes presentar la orden médica en tu obra social/prepaga. Si te solicitan presupuesto membretado o código de nomenclador, avísanos y te lo adjuntamos de inmediato."
+      },
+      {
+        "id": "recordatorio_quirofano",
+        "titulo": "Confirmación e Instrucciones de Quirófano",
+        "mensaje": "Hola {paciente}, te confirmamos la fecha definitiva de tu cirugía para el día {fecha_definitiva}. Recordá concurrir con 8 horas de ayuno total (líquidos y sólidos), DNI y los estudios prequirúrgicos originales en mano."
+      }
+    ]'::jsonb,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- ====================================================================
 -- SUPABASE REALTIME CONFIGURATION
 -- ====================================================================
 -- Habilitar replicación en tiempo real para mensajería y logs en el CRM
@@ -477,6 +532,7 @@ begin;
   alter publication supabase_realtime add table public.agentes_situacionales;
   alter publication supabase_realtime add table public.asesorias_quirurgicas;
   alter publication supabase_realtime add table public.asesoria_evoluciones;
+  alter publication supabase_realtime add table public.configuracion_quirurgica;
 exception when others then
   -- Ignorar errores si la publicación o la relación ya existe
 end;

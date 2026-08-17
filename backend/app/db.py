@@ -1026,7 +1026,8 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             "medico_cirujano_id", "medico_cirujano_nombre", "medico_cirujano_matricula",
             "practica_codigo", "practica_nombre", "cobertura_obra_social",
             "monto_extra", "moneda_extra", "fecha_probable_cirugia",
-            "fecha_definitiva_cirugia", "estado", "situacion_paciente", "motivo_cancelacion"
+            "fecha_definitiva_cirugia", "estado", "situacion_paciente", "motivo_cancelacion",
+            "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at"
         ]
         
         for k in campos_permitidos:
@@ -1088,7 +1089,15 @@ def get_presupuestos_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
                     servicio_id,
                     cantidad,
                     precio_unitario,
-                    subtotal
+                    subtotal,
+                    servicios_precios (
+                        nombre_prestacion,
+                        codigo
+                    )
+                ),
+                asesorias_quirurgicas!presupuestos_asesoria_id_fkey (
+                    practica_nombre,
+                    practica_codigo
                 )
             """) \
             .eq("paciente_id", paciente_id) \
@@ -1380,6 +1389,149 @@ def get_paciente_contexto_360(paciente_id: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error al obtener contexto 360 del paciente {paciente_id}: {e}")
         return {}
+
+# ====================================================================
+# CONFIGURACIÓN QUIRÚRGICA & PIPELINE LEAD-TO-SURGERY
+# ====================================================================
+
+def get_configuracion_quirurgica() -> Dict[str, Any]:
+    """
+    Recupera la configuración global del módulo quirúrgico (SLA, plantillas y checklist).
+    """
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("configuracion_quirurgica").select("*").eq("id", "default").limit(1).execute()
+        if resp.data:
+            return resp.data[0]
+        return {
+            "id": "default",
+            "sla_dias_alerta": 3,
+            "sla_dias_critico": 6,
+            "checklist_items": [],
+            "plantillas_whatsapp": []
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener configuración quirúrgica: {e}")
+        return {}
+
+def actualizar_configuracion_quirurgica(payload: dict) -> Dict[str, Any]:
+    """
+    Actualiza la configuración de SLA, plantillas o checklist del módulo quirúrgico.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        datos = {}
+        if "sla_dias_alerta" in payload:
+            datos["sla_dias_alerta"] = int(payload["sla_dias_alerta"])
+        if "sla_dias_critico" in payload:
+            datos["sla_dias_critico"] = int(payload["sla_dias_critico"])
+        if "checklist_items" in payload:
+            datos["checklist_items"] = payload["checklist_items"]
+        if "plantillas_whatsapp" in payload:
+            datos["plantillas_whatsapp"] = payload["plantillas_whatsapp"]
+            
+        datos["updated_at"] = "now()"
+        
+        resp = supabase.table("configuracion_quirurgica").upsert({"id": "default", **datos}).select().execute()
+        if not resp.data:
+            raise Exception("No se pudo actualizar la configuración quirúrgica.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al actualizar configuración quirúrgica: {e}")
+        raise
+
+def get_pipeline_quirurgico() -> Dict[str, Any]:
+    """
+    Retorna el tablero global del embudo quirúrgico (Lead-to-Surgery):
+    - Casos activos organizados por etapas
+    - Métricas globales de ingresos en juego (ARS y USD)
+    - Tasa de conversión y casos con alerta SLA
+    """
+    if not supabase:
+        return {"etapas": {}, "metricas": {}}
+    try:
+        # 1. Obtener todas las asesorías con datos de paciente
+        resp = supabase.table("asesorias_quirurgicas") \
+            .select("*, pacientes(id, nombre, dni, telefono, obra_social, email)") \
+            .order("created_at", desc=True) \
+            .execute()
+            
+        casos = resp.data or []
+        
+        # 2. Configuración de SLA
+        config = get_configuracion_quirurgica()
+        sla_alerta = config.get("sla_dias_alerta", 3)
+        sla_critico = config.get("sla_dias_critico", 6)
+        
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        
+        etapas_map = {
+            "derivado": [],
+            "en_asesoramiento": [],
+            "en_analisis": [],
+            "confirmado": [],
+            "operado": [],
+            "cancelado": []
+        }
+        
+        total_monto_ars = 0.0
+        total_monto_usd = 0.0
+        casos_activos_count = 0
+        casos_en_alerta_count = 0
+        
+        for c in casos:
+            est = c.get("estado") or "en_asesoramiento"
+            if est not in etapas_map:
+                etapas_map[est] = []
+                
+            # Cálculo de días sin contacto
+            ultimo_c = c.get("ultimo_contacto_at") or c.get("created_at")
+            dias_sin_contacto = 0
+            if ultimo_c:
+                try:
+                    dt = datetime.fromisoformat(ultimo_c.replace("Z", "+00:00"))
+                    dias_sin_contacto = (now - dt).days
+                except Exception:
+                    dias_sin_contacto = 0
+                    
+            c["dias_sin_contacto"] = max(0, dias_sin_contacto)
+            c["es_critico"] = dias_sin_contacto >= sla_critico
+            c["es_alerta"] = dias_sin_contacto >= sla_alerta and not c["es_critico"]
+            
+            # Acumuladores de métricas
+            monto = float(c.get("monto_extra") or 0.0)
+            moneda = (c.get("moneda_extra") or "ARS").upper()
+            
+            if est in ["derivado", "en_asesoramiento", "en_analisis", "confirmado"]:
+                casos_activos_count += 1
+                if moneda == "USD":
+                    total_monto_usd += monto
+                else:
+                    total_monto_ars += monto
+                    
+                if c["es_critico"] or c["es_alerta"]:
+                    casos_en_alerta_count += 1
+                    
+            etapas_map[est].append(c)
+            
+        return {
+            "etapas": etapas_map,
+            "metricas": {
+                "total_casos": len(casos),
+                "casos_activos": casos_activos_count,
+                "casos_en_alerta": casos_en_alerta_count,
+                "total_monto_ars": total_monto_ars,
+                "total_monto_usd": total_monto_usd,
+                "sla_dias_alerta": sla_alerta,
+                "sla_dias_critico": sla_critico
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener pipeline quirúrgico: {e}")
+        return {"etapas": {}, "metricas": {}}
 
 
 
