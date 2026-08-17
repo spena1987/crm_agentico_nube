@@ -1,94 +1,19 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { 
-  Stethoscope, 
-  UserCheck, 
-  Calendar, 
-  DollarSign, 
-  ClipboardList, 
-  CheckCircle2, 
-  Clock, 
-  AlertCircle, 
-  Plus, 
-  Save, 
-  Loader2, 
-  Search, 
-  ChevronRight,
-  ShieldCheck,
-  User,
-  X,
+import {
+  Stethoscope,
+  Plus,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Layers,
   Sparkles,
-  FileCheck2,
-  Trash2,
-  Receipt,
-  FileText,
-  Download,
-  Check,
-  XCircle,
-  ExternalLink
+  ClipboardList
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
-import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
-import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
-
-export interface PresupuestoPaciente {
-  id: string
-  paciente_id: string
-  asesoria_id?: string | null
-  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
-  total: number
-  pdf_url: string | null
-  created_at: string
-  items_presupuesto?: Array<{
-    id: string
-    servicio_id?: string
-    cantidad: number
-    precio_unitario: number
-    subtotal: number
-    nombre?: string
-  }>
-}
-
-export interface AsesoriaQuirurgica {
-  id: string
-  paciente_id: string
-  medico_derivador_id?: number | null
-  medico_derivador_nombre?: string | null
-  medico_derivador_matricula?: string | null
-  medico_cirujano_id?: number | null
-  medico_cirujano_nombre?: string | null
-  medico_cirujano_matricula?: string | null
-  practica_codigo?: string | null
-  practica_nombre: string
-  cobertura_obra_social?: string | null
-  monto_extra: number
-  moneda_extra: string
-  presupuesto_id?: string | null
-  fecha_probable_cirugia?: string | null
-  fecha_definitiva_cirugia?: string | null
-  estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
-  situacion_paciente?: string | null
-  motivo_cancelacion?: string | null
-  created_at: string
-  updated_at: string
-}
-
-interface PrestadorGeclisa {
-  pre_id: number
-  nombre: string
-  matricula: string
-  especialidad?: string
-}
-
-interface PracticaNomenclador {
-  codigo: string
-  nombre: string
-  categoria?: string
-  precio?: number
-  moneda?: string
-}
+import ItemCasoQuirurgicoAcordeon, { AsesoriaQuirurgica } from '@/components/ItemCasoQuirurgicoAcordeon'
 
 interface PanelAsesoriaQuirurgicaProps {
   pacienteId: string
@@ -98,14 +23,6 @@ interface PanelAsesoriaQuirurgicaProps {
   obraSocialDefault?: string | null
 }
 
-const ETAPAS: { id: AsesoriaQuirurgica['estado']; label: string; color: string; desc: string }[] = [
-  { id: 'derivado', label: '1. Derivado', color: 'border-blue-500 text-blue-400 bg-blue-500/10', desc: 'Derivado desde consulta médica' },
-  { id: 'en_asesoramiento', label: '2. En Asesoramiento', color: 'border-amber-500 text-amber-400 bg-amber-500/10', desc: 'Asesorando en quirófano y presupuesto' },
-  { id: 'en_analisis', label: '3. En Análisis', color: 'border-purple-500 text-purple-400 bg-purple-500/10', desc: 'Paciente evalúa propuesta y autorizaciones' },
-  { id: 'confirmado', label: '4. Cirugía Confirmada', color: 'border-emerald-500 text-emerald-400 bg-emerald-500/10', desc: 'Fecha definitiva fijada en quirófano' },
-  { id: 'operado', label: '5. Operado', color: 'border-teal-500 text-teal-300 bg-teal-500/10', desc: 'Intervención realizada con éxito' },
-]
-
 export default function PanelAsesoriaQuirurgica({
   pacienteId,
   pacienteNombre,
@@ -114,168 +31,26 @@ export default function PanelAsesoriaQuirurgica({
   obraSocialDefault
 }: PanelAsesoriaQuirurgicaProps) {
   const [asesorias, setAsesorias] = useState<AsesoriaQuirurgica[]>([])
-  const [asesoriaActivaId, setAsesoriaActivaId] = useState<string | null>(null)
+  const [desplegados, setDesplegados] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
-  const [guardando, setGuardando] = useState(false)
-  const [mensajeExito, setMensajeExito] = useState<string | null>(null)
+  const [creandoNuevo, setCreandoNuevo] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
-  // Estado del formulario de la asesoría activa
-  const [estado, setEstado] = useState<AsesoriaQuirurgica['estado']>('en_asesoramiento')
-  const [medicoDerivador, setMedicoDerivador] = useState<{ id?: number | null; nombre: string; matricula?: string }>({ nombre: '' })
-  const [medicoCirujano, setMedicoCirujano] = useState<{ id?: number | null; nombre: string; matricula?: string }>({ nombre: '' })
-  const [practicaCodigo, setPracticaCodigo] = useState('')
-  const [practicaNombre, setPracticaNombre] = useState('')
-  const [montoExtra, setMontoExtra] = useState<number | string>(0)
-  const [monedaExtra, setMonedaExtra] = useState('ARS')
-  const [fechaProbable, setFechaProbable] = useState('')
-  const [fechaDefinitiva, setFechaDefinitiva] = useState('')
-  const [situacionPaciente, setSituacionPaciente] = useState('')
-  const [motivoCancelacion, setMotivoCancelacion] = useState('')
-
-  // Autocompletados de Prestadores (Geclisa)
-  const [busquedaDerivador, setBusquedaDerivador] = useState('')
-  const [prestadoresDerivador, setPrestadoresDerivador] = useState<PrestadorGeclisa[]>([])
-  const [buscandoDerivador, setBuscandoDerivador] = useState(false)
-  const [mostrarDropdownDerivador, setMostrarDropdownDerivador] = useState(false)
-
-  const [busquedaCirujano, setBusquedaCirujano] = useState('')
-  const [prestadoresCirujano, setPrestadoresCirujano] = useState<PrestadorGeclisa[]>([])
-  const [buscandoCirujano, setBuscandoCirujano] = useState(false)
-  const [mostrarDropdownCirujano, setMostrarDropdownCirujano] = useState(false)
-
-  // Autocompletado de Prácticas (Nomenclador CRM)
-  const [busquedaPractica, setBusquedaPractica] = useState('')
-  const [practicasNomenclador, setPracticasNomenclador] = useState<PracticaNomenclador[]>([])
-  const [buscandoPractica, setBuscandoPractica] = useState(false)
-  const [mostrarDropdownPractica, setMostrarDropdownPractica] = useState(false)
-
-  // Presupuestos vinculados al paciente
-  const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
-  const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
-  const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
-  const [actualizandoEstadoPresupuestoId, setActualizandoEstadoPresupuestoId] = useState<string | null>(null)
-
-  // Cargar presupuestos emitidos al paciente
-  const fetchPresupuestos = async () => {
-    try {
-      setCargandoPresupuestos(true)
-      const res = await fetch(`/api/presupuestos/paciente/${pacienteId}`)
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setPresupuestos(data.presupuestos || [])
-      } else {
-        // Fallback Supabase
-        const { data: sbPres, error: sbErr } = await supabase
-          .from('presupuestos')
-          .select('*, items_presupuesto(*)')
-          .eq('paciente_id', pacienteId)
-          .order('created_at', { ascending: false })
-        if (!sbErr && sbPres) {
-          setPresupuestos(sbPres as unknown as PresupuestoPaciente[])
-        }
-      }
-    } catch (err) {
-      console.error('Error cargando presupuestos del paciente:', err)
-    } finally {
-      setCargandoPresupuestos(false)
-    }
-  }
-
-  // Cambiar estado del presupuesto (Confirmar / Desistir) con actualización inmediata
-  const handleCambiarEstadoPresupuesto = async (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado' | 'enviado') => {
-    try {
-      setActualizandoEstadoPresupuestoId(presupuestoId)
-      setError(null)
-
-      // 1. Actualización inmediata en el estado de React (UI)
-      setPresupuestos((prev) =>
-        prev.map((p) => (p.id === presupuestoId ? { ...p, estado: nuevoEstado } : p))
-      )
-
-      if (nuevoEstado === 'aprobado') {
-        setEstado('confirmado')
-        if (!fechaDefinitiva && fechaProbable) {
-          setFechaDefinitiva(fechaProbable)
-        }
-        setMensajeExito('✔ Presupuesto aprobado. Etapa de cirugía actualizada a 4. Cirugía Confirmada.')
-      } else if (nuevoEstado === 'rechazado') {
-        setMensajeExito('✖ Presupuesto marcado como desistido / rechazado.')
-      }
-
-      // 2. Persistir en Backend y Supabase
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${presupuestoId}/estado`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            estado: nuevoEstado,
-            asesoria_id: asesoriaActivaId || null
-          })
-        })
-        const data = await res.json()
-        if (!res.ok) {
-          throw new Error(data.detail || 'Error en API')
-        }
-      } catch (apiErr) {
-        console.warn('Fallback a Supabase directo:', apiErr)
-        // Fallback Supabase
-        await supabase.from('presupuestos').update({ estado: nuevoEstado }).eq('id', presupuestoId)
-        if (asesoriaActivaId) {
-          if (nuevoEstado === 'aprobado') {
-            await supabase.from('asesorias_quirurgicas').update({
-              estado: 'confirmado',
-              presupuesto_id: presupuestoId,
-              updated_at: new Date().toISOString()
-            }).eq('id', asesoriaActivaId)
-          } else if (nuevoEstado === 'rechazado') {
-            await supabase.from('asesorias_quirurgicas').update({
-              motivo_cancelacion: 'Presupuesto desistido por el paciente',
-              updated_at: new Date().toISOString()
-            }).eq('id', asesoriaActivaId)
-          }
-        }
-      }
-
-      setTimeout(() => setMensajeExito(null), 3500)
-    } catch (err: any) {
-      console.error('Error actualizando presupuesto:', err)
-      setError(err.message || 'Error al actualizar el estado del presupuesto.')
-    } finally {
-      setActualizandoEstadoPresupuestoId(null)
-    }
-  }
-
-  // Callback cuando se crea un presupuesto desde el modal
-  const handlePresupuestoCreado = (nuevo: PresupuestoPaciente) => {
-    setPresupuestos((prev) => [nuevo, ...prev])
-    setMontoExtra(nuevo.total)
-    setMensajeExito('✔ Presupuesto médico emitido y PDF generado correctamente.')
-    setTimeout(() => setMensajeExito(null), 4000)
-    fetchAsesorias()
-    fetchPresupuestos()
-  }
-
-  // Cargar asesorías del paciente
+  // Cargar todos los casos quirúrgicos del paciente
   const fetchAsesorias = async () => {
+    if (!pacienteId) return
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`/api/asesorias-quirurgicas/paciente/${pacienteId}`)
+      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/paciente/${pacienteId}`)
       const data = await res.json()
 
+      let lista: AsesoriaQuirurgica[] = []
       if (res.ok && data.success) {
-        const lista: AsesoriaQuirurgica[] = data.asesorias || []
-        setAsesorias(lista)
-        if (lista.length > 0) {
-          setAsesoriaActivaId(lista[0].id)
-          cargarAsesoriaEnFormulario(lista[0])
-        } else {
-          setAsesoriaActivaId(null)
-          resetFormulario()
-        }
+        lista = data.asesorias || []
       } else {
-        // Fallback directo a Supabase
+        // Fallback Supabase
         const { data: sbData, error: sbErr } = await supabase
           .from('asesorias_quirurgicas')
           .select('*')
@@ -283,875 +58,264 @@ export default function PanelAsesoriaQuirurgica({
           .order('created_at', { ascending: false })
 
         if (!sbErr && sbData) {
-          const lista = sbData as AsesoriaQuirurgica[]
-          setAsesorias(lista)
-          if (lista.length > 0) {
-            setAsesoriaActivaId(lista[0].id)
-            cargarAsesoriaEnFormulario(lista[0])
-          } else {
-            resetFormulario()
-          }
+          lista = sbData as AsesoriaQuirurgica[]
         }
+      }
+
+      setAsesorias(lista)
+
+      // Abrir por defecto el caso más reciente si no hay ninguno abierto
+      if (lista.length > 0) {
+        setDesplegados((prev) => {
+          if (Object.keys(prev).length === 0) {
+            return { [lista[0].id]: true }
+          }
+          return prev
+        })
       }
     } catch (err: any) {
       console.error('Error cargando asesorías:', err)
-      setError(err.message || 'Error al cargar casos quirúrgicos.')
+      setError(err.message || 'Error al cargar los casos quirúrgicos.')
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    if (pacienteId) {
-      fetchAsesorias()
-      fetchPresupuestos()
+    setDesplegados({})
+    fetchAsesorias()
+
+    // Suscripción Realtime a asesorías quirúrgicas de este paciente
+    const channel = supabase
+      .channel(`asesorias-paciente-${pacienteId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'asesorias_quirurgicas',
+          filter: `paciente_id=eq.${pacienteId}`
+        },
+        () => {
+          fetchAsesorias()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
     }
   }, [pacienteId])
 
-  // Cargar datos de una asesoría específica en los inputs
-  const cargarAsesoriaEnFormulario = (item: AsesoriaQuirurgica) => {
-    setEstado(item.estado)
-    setMedicoDerivador({
-      id: item.medico_derivador_id,
-      nombre: item.medico_derivador_nombre || '',
-      matricula: item.medico_derivador_matricula || ''
-    })
-    setBusquedaDerivador(item.medico_derivador_nombre ? `${item.medico_derivador_nombre} (Mat: ${item.medico_derivador_matricula || 'S/M'})` : '')
-    
-    setMedicoCirujano({
-      id: item.medico_cirujano_id,
-      nombre: item.medico_cirujano_nombre || '',
-      matricula: item.medico_cirujano_matricula || ''
-    })
-    setBusquedaCirujano(item.medico_cirujano_nombre ? `${item.medico_cirujano_nombre} (Mat: ${item.medico_cirujano_matricula || 'S/M'})` : '')
-
-    setPracticaCodigo(item.practica_codigo || '')
-    setPracticaNombre(item.practica_nombre || '')
-    setBusquedaPractica(item.practica_codigo ? `[${item.practica_codigo}] ${item.practica_nombre}` : item.practica_nombre || '')
-
-    setMontoExtra(item.monto_extra || 0)
-    setMonedaExtra(item.moneda_extra || 'ARS')
-    setFechaProbable(item.fecha_probable_cirugia || '')
-    setFechaDefinitiva(item.fecha_definitiva_cirugia || '')
-    setSituacionPaciente(item.situacion_paciente || '')
-    setMotivoCancelacion(item.motivo_cancelacion || '')
+  // Alternar despliegue de un caso
+  const toggleDespliegue = (id: string) => {
+    setDesplegados((prev) => ({
+      ...prev,
+      [id]: !prev[id]
+    }))
   }
 
-  const resetFormulario = () => {
-    setEstado('en_asesoramiento')
-    setMedicoDerivador({ nombre: '' })
-    setBusquedaDerivador('')
-    setMedicoCirujano({ nombre: '' })
-    setBusquedaCirujano('')
-    setPracticaCodigo('')
-    setPracticaNombre('')
-    setBusquedaPractica('')
-    setMontoExtra(0)
-    setMonedaExtra('ARS')
-    setFechaProbable('')
-    setFechaDefinitiva('')
-    setSituacionPaciente('')
-    setMotivoCancelacion('')
-  }
-
-  // Buscar Médicos en Geclisa
-  const buscarPrestadoresGeclisa = async (query: string, tipo: 'derivador' | 'cirujano') => {
-    if (!query || query.length < 2) return
+  // Crear una nueva cirugía / procedimiento para este paciente
+  const handleCrearNuevaCirugia = async () => {
     try {
-      if (tipo === 'derivador') setBuscandoDerivador(true)
-      else setBuscandoCirujano(true)
+      setCreandoNuevo(true)
+      setError(null)
 
-      const res = await fetch(`/api/geclisa/prestadores/buscar?query=${encodeURIComponent(query)}`)
+      const payload = {
+        paciente_id: pacienteId,
+        practica_nombre: 'Nueva Cirugía / Procedimiento',
+        cobertura_obra_social: obraSocialDefault || null,
+        estado: 'en_asesoramiento',
+        moneda_extra: 'ARS',
+        monto_extra: 0
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
       const data = await res.json()
-      if (res.ok && data.success) {
-        if (tipo === 'derivador') {
-          setPrestadoresDerivador(data.prestadores || [])
-          setMostrarDropdownDerivador(true)
-        } else {
-          setPrestadoresCirujano(data.prestadores || [])
-          setMostrarDropdownCirujano(true)
-        }
-      }
-    } catch (err) {
-      console.error('Error buscando prestadores:', err)
-    } finally {
-      if (tipo === 'derivador') setBuscandoDerivador(false)
-      else setBuscandoCirujano(false)
-    }
-  }
-
-  // Cargar catálogo de prácticas del nomenclador al inicio o al buscar
-  const buscarPracticas = async (query: string = '') => {
-    try {
-      setBuscandoPractica(true)
-      const qClean = (query || '').trim()
-      const res = await fetch(`/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
-      const data = await res.json()
-
-      let lista: PracticaNomenclador[] = []
-      if (res.ok && data.success) {
-        lista = data.resultados || data.prestaciones || []
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.mensaje || 'Error al crear nuevo caso.')
       }
 
-      // Si vino vacío o falló, consultar directamente a Supabase
-      if (lista.length === 0) {
-        let sbQuery = supabase
-          .from('nomenclador_practicas')
-          .select('id, codigo, nombre, categoria')
-          .eq('activo', true)
+      const nuevaAsesoria: AsesoriaQuirurgica = data.asesoria
+      setAsesorias((prev) => [nuevaAsesoria, ...prev])
+      
+      // Desplegar automáticamente el nuevo caso creado
+      setDesplegados((prev) => ({
+        ...prev,
+        [nuevaAsesoria.id]: true
+      }))
 
-        if (qClean) {
-          sbQuery = sbQuery.or(`codigo.ilike.%${qClean}%,nombre.ilike.%${qClean}%,categoria.ilike.%${qClean}%`)
-        }
-
-        const { data: sbData } = await sbQuery.order('nombre').limit(50)
-        if (sbData) {
-          lista = sbData as PracticaNomenclador[]
-        }
-      }
-
-      setPracticasNomenclador(lista)
-      setMostrarDropdownPractica(true)
-    } catch (err) {
-      console.error('Error buscando prácticas en nomenclador:', err)
-      // Fallback directo Supabase
+      setMensajeExito(`✔ Nuevo sector de cirugía #${asesorias.length + 1} habilitado para configurar.`)
+      setTimeout(() => setMensajeExito(null), 3500)
+    } catch (err: any) {
+      console.error('Error al crear nuevo caso:', err)
+      // Fallback Supabase directo
       try {
-        const { data: sbData } = await supabase
-          .from('nomenclador_practicas')
-          .select('id, codigo, nombre, categoria')
-          .eq('activo', true)
-          .order('nombre')
-          .limit(50)
-        if (sbData) {
-          setPracticasNomenclador(sbData as PracticaNomenclador[])
-          setMostrarDropdownPractica(true)
-        }
-      } catch (sbErr) {
-        console.error('Error en fallback Supabase nomenclador:', sbErr)
-      }
-    } finally {
-      setBuscandoPractica(false)
-    }
-  }
+        const { data: sbData, error: sbErr } = await supabase
+          .from('asesorias_quirurgicas')
+          .insert({
+            paciente_id: pacienteId,
+            practica_nombre: 'Nueva Cirugía / Procedimiento',
+            cobertura_obra_social: obraSocialDefault || null,
+            estado: 'en_asesoramiento',
+            moneda_extra: 'ARS',
+            monto_extra: 0
+          })
+          .select()
 
-  useEffect(() => {
-    // Precargar catálogo de prácticas para autocompletado instantáneo
-    buscarPracticas('')
-  }, [])
-
-  // Guardar o Actualizar Caso Quirúrgico
-  const handleGuardar = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    if (!practicaNombre.trim()) {
-      setError('Debes especificar el nombre o código de la práctica quirúrgica solicitada.')
-      return
-    }
-
-    setGuardando(true)
-    setError(null)
-    setMensajeExito(null)
-
-    const payload = {
-      paciente_id: pacienteId,
-      medico_derivador_id: medicoDerivador.id || null,
-      medico_derivador_nombre: medicoDerivador.nombre || null,
-      medico_derivador_matricula: medicoDerivador.matricula || null,
-      medico_cirujano_id: medicoCirujano.id || null,
-      medico_cirujano_nombre: medicoCirujano.nombre || null,
-      medico_cirujano_matricula: medicoCirujano.matricula || null,
-      practica_codigo: practicaCodigo.trim() || null,
-      practica_nombre: practicaNombre.trim(),
-      cobertura_obra_social: obraSocialDefault || null,
-      monto_extra: Number(montoExtra) || 0,
-      moneda_extra: monedaExtra,
-      fecha_probable_cirugia: fechaProbable || null,
-      fecha_definitiva_cirugia: fechaDefinitiva || null,
-      estado: estado,
-      situacion_paciente: situacionPaciente.trim() || null,
-      motivo_cancelacion: motivoCancelacion.trim() || null
-    }
-
-    try {
-      let asesoriaGuardada: AsesoriaQuirurgica | null = null
-
-      if (asesoriaActivaId) {
-        // Actualizar existente
-        const res = await fetch(`/api/asesorias-quirurgicas/${asesoriaActivaId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        })
-        const data = await res.json()
-        if (res.ok && data.success) {
-          asesoriaGuardada = data.asesoria
+        if (!sbErr && sbData && sbData.length > 0) {
+          const nueva = sbData[0] as AsesoriaQuirurgica
+          setAsesorias((prev) => [nueva, ...prev])
+          setDesplegados((prev) => ({ ...prev, [nueva.id]: true }))
+          setMensajeExito(`✔ Nuevo sector de cirugía #${asesorias.length + 1} habilitado.`)
+          setTimeout(() => setMensajeExito(null), 3500)
         } else {
-          // Fallback Supabase
-          const { data: sbData, error: sbErr } = await supabase
-            .from('asesorias_quirurgicas')
-            .update(payload as any)
-            .eq('id', asesoriaActivaId)
-            .select()
-          if (sbErr) throw sbErr
-          asesoriaGuardada = sbData ? sbData[0] as AsesoriaQuirurgica : null
+          throw sbErr || new Error('No se pudo crear el caso en Supabase.')
         }
-      } else {
-        // Crear nueva
-        const res = await fetch(`/api/asesorias-quirurgicas`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        })
-        const data = await res.json()
-        if (res.ok && data.success) {
-          asesoriaGuardada = data.asesoria
-        } else {
-          // Fallback Supabase
-          const { data: sbData, error: sbErr } = await supabase
-            .from('asesorias_quirurgicas')
-            .insert(payload as any)
-            .select()
-          if (sbErr) throw sbErr
-          asesoriaGuardada = sbData ? sbData[0] as AsesoriaQuirurgica : null
-        }
+      } catch (fallbackErr: any) {
+        setError(fallbackErr.message || 'Error inesperado al crear nuevo caso.')
       }
-
-      if (asesoriaGuardada) {
-        setMensajeExito('✔ Caso de asesoramiento quirúrgico guardado correctamente.')
-        setTimeout(() => setMensajeExito(null), 3500)
-        fetchAsesorias()
-      }
-    } catch (err: any) {
-      console.error('Error guardando asesoría:', err)
-      setError(err.message || 'Error al guardar el caso quirúrgico.')
     } finally {
-      setGuardando(false)
+      setCreandoNuevo(false)
     }
   }
 
-  // Eliminar asesoría
-  const handleEliminarAsesoria = async () => {
-    if (!asesoriaActivaId) return
-    if (!confirm('¿Estás seguro de que deseas eliminar este caso quirúrgico?')) return
-
-    try {
-      setGuardando(true)
-      await fetch(`/api/asesorias-quirurgicas/${asesoriaActivaId}`, { method: 'DELETE' })
-      await supabase.from('asesorias_quirurgicas').delete().eq('id', asesoriaActivaId)
-      setMensajeExito('Caso quirúrgico eliminado.')
-      setTimeout(() => setMensajeExito(null), 3000)
-      fetchAsesorias()
-    } catch (err: any) {
-      setError(err.message || 'Error al eliminar.')
-    } finally {
-      setGuardando(false)
-    }
+  // Callback cuando se actualiza un caso
+  const handleCasoActualizado = (casoActualizado: AsesoriaQuirurgica) => {
+    setAsesorias((prev) =>
+      prev.map((c) => (c.id === casoActualizado.id ? casoActualizado : c))
+    )
   }
 
-  // Crear nuevo caso quirúrgico en blanco
-  const handleIniciarNuevaAsesoria = () => {
-    setAsesoriaActivaId(null)
-    resetFormulario()
-    setMensajeExito('Formulario preparado para registrar un nuevo caso quirúrgico.')
+  // Callback cuando se elimina un caso
+  const handleCasoEliminado = (casoId: string) => {
+    setAsesorias((prev) => prev.filter((c) => c.id !== casoId))
+    setDesplegados((prev) => {
+      const copy = { ...prev }
+      delete copy[casoId]
+      return copy
+    })
+    setMensajeExito('✔ Procedimiento quirúrgico eliminado.')
     setTimeout(() => setMensajeExito(null), 3000)
   }
 
   return (
-    <div className="p-5 rounded-2xl bg-neutral-900/60 border border-[var(--border)] shadow-md space-y-5">
+    <div className="space-y-4 pt-4 border-t border-[var(--border)]">
       
-      {/* Header del Caso Quirúrgico */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[var(--border)]">
+      {/* ==================================================================== */}
+      {/* HEADER PRINCIPAL DEL SECTOR DE ASESORAMIENTO QUIRÚRGICO */}
+      {/* ==================================================================== */}
+      <div className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-2xl bg-neutral-900/80 border border-blue-500/20 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-indigo-600/10 text-indigo-400 border border-indigo-500/20">
+          <div className="w-10 h-10 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shadow-inner">
             <Stethoscope className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-extrabold text-white tracking-tight">
+              <h3 className="text-sm font-black text-white tracking-tight">
                 Sector de Asesoramiento Quirúrgico & Cirugías
               </h3>
-              {asesorias.length > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/10 text-blue-300 border border-blue-500/30">
-                  {asesorias.length} {asesorias.length === 1 ? 'caso' : 'casos'}
-                </span>
-              )}
+              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/40">
+                {asesorias.length} {asesorias.length === 1 ? 'Procedimiento' : 'Procedimientos'}
+              </span>
             </div>
             <p className="text-xs text-[var(--secondary)]">
-              Registro de médico derivador, cirujano, práctica solicitada, extras y fechas de quirófano.
+              Gestión individual y secuencial de cada cirugía programada para <strong className="text-white">{pacienteNombre}</strong>.
             </p>
           </div>
         </div>
 
-        {/* Acciones de Cabecera */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={handleIniciarNuevaAsesoria}
-            className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors"
-          >
-            <Plus size={13} />
-            + Nueva Cirugía
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleGuardar()}
-            disabled={guardando}
-            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow"
-          >
-            {guardando ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-            Guardar Caso
-          </button>
-        </div>
+        {/* Botón para incorporar nueva cirugía / procedimiento */}
+        <button
+          type="button"
+          onClick={handleCrearNuevaCirugia}
+          disabled={creandoNuevo || loading}
+          className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
+        >
+          {creandoNuevo ? (
+            <>
+              <Loader2 size={14} className="animate-spin" />
+              Creando sector...
+            </>
+          ) : (
+            <>
+              <Plus size={14} />
+              + Nueva Cirugía / Procedimiento
+            </>
+          )}
+        </button>
       </div>
 
-      {/* Historial de Pestañas si tiene más de 1 Asesoría */}
-      {asesorias.length > 1 && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider shrink-0">Casos:</span>
-          {asesorias.map((a, idx) => {
-            const isSelected = a.id === asesoriaActivaId
-            return (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => {
-                  setAsesoriaActivaId(a.id)
-                  cargarAsesoriaEnFormulario(a)
-                }}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all border ${
-                  isSelected 
-                    ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm' 
-                    : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
-                }`}
-              >
-                #{idx + 1} {a.practica_nombre || 'Cirugía'} ({a.estado.replace('_', ' ')})
-              </button>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Alertas de Feedback */}
-      {mensajeExito && (
-        <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-          <span>{mensajeExito}</span>
-        </div>
-      )}
-
       {error && (
-        <div className="p-3 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2 animate-in fade-in">
-          <AlertCircle size={14} className="text-red-400 shrink-0" />
+        <div className="p-3.5 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2.5 animate-in fade-in">
+          <AlertCircle size={15} className="text-red-400 shrink-0" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* ==================================================================== */}
-      {/* 1. BARRA DE ETAPAS INTERACTIVA (PIPELINE QUIRÚRGICO) */}
-      {/* ==================================================================== */}
-      <div className="space-y-1.5">
-        <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
-          <Clock size={13} className="text-indigo-400" />
-          Etapa del Proceso Quirúrgico (Haz clic para cambiar de estado)
-        </label>
-        
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-          {ETAPAS.map((etapa) => {
-            const isCurrent = estado === etapa.id
-            return (
-              <button
-                key={etapa.id}
-                type="button"
-                onClick={() => setEstado(etapa.id)}
-                className={`p-2.5 rounded-xl border text-left transition-all ${
-                  isCurrent 
-                    ? etapa.color + ' shadow-md ring-1 ring-white/20' 
-                    : 'bg-neutral-900/60 border-[var(--border)] text-gray-400 hover:border-gray-600 hover:text-gray-200'
-                }`}
-              >
-                <div className="text-xs font-bold truncate">{etapa.label}</div>
-                <div className="text-[10px] text-gray-500 line-clamp-1 mt-0.5">{etapa.desc}</div>
-              </button>
-            )
-          })}
+      {mensajeExito && (
+        <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2.5 animate-in fade-in">
+          <CheckCircle2 size={15} className="text-emerald-400 shrink-0" />
+          <span>{mensajeExito}</span>
         </div>
-      </div>
+      )}
 
       {/* ==================================================================== */}
-      {/* 2. FORMULARIO ESTRUCTURADO DEL CASO */}
+      {/* LISTADO DE CASOS EN ACORDEÓN CROMÁTICO DESPLEGABLE */}
       {/* ==================================================================== */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        
-        {/* A. Médico Derivador (Geclisa) */}
-        <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
-          <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-            <UserCheck size={14} className="text-blue-400" />
-            Médico Derivador (Indicó la cirugía en consulta)
-          </label>
-          
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Buscar médico en Geclisa por nombre o matrícula..."
-              value={busquedaDerivador}
-              onChange={(e) => {
-                setBusquedaDerivador(e.target.value)
-                setMedicoDerivador({ nombre: e.target.value })
-                buscarPrestadoresGeclisa(e.target.value, 'derivador')
-              }}
-              onFocus={() => {
-                if (prestadoresDerivador.length > 0) setMostrarDropdownDerivador(true)
-              }}
-              className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+      {loading ? (
+        <div className="p-8 text-center text-xs text-gray-500 flex items-center justify-center gap-2.5 bg-neutral-900/30 rounded-2xl border border-[var(--border)]">
+          <Loader2 size={16} className="animate-spin text-blue-400" />
+          <span>Cargando procedimientos quirúrgicos del paciente...</span>
+        </div>
+      ) : asesorias.length === 0 ? (
+        /* Estado vacío: Sin cirugías asignadas aún */
+        <div className="p-8 text-center border-2 border-dashed border-[var(--border)] rounded-2xl bg-neutral-950/40 space-y-3">
+          <div className="w-12 h-12 rounded-2xl bg-neutral-900 border border-[var(--border)] flex items-center justify-center text-gray-500 mx-auto">
+            <Layers size={22} className="text-blue-400" />
+          </div>
+          <div className="space-y-1">
+            <h4 className="text-sm font-bold text-white">No hay cirugías registradas para este paciente</h4>
+            <p className="text-xs text-gray-400 max-w-md mx-auto">
+              Inicia el seguimiento derivando una nueva prestación médica al sector de asesoramiento quirúrgico.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleCrearNuevaCirugia}
+            disabled={creandoNuevo}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all inline-flex items-center gap-1.5 shadow"
+          >
+            <Plus size={14} />
+            + Registrar Primera Cirugía
+          </button>
+        </div>
+      ) : (
+        /* Lista de Tarjetas de Acordeón Quirúrgico */
+        <div className="space-y-3">
+          {asesorias.map((caso, idx) => (
+            <ItemCasoQuirurgicoAcordeon
+              key={caso.id}
+              caso={caso}
+              index={idx}
+              isExpanded={!!desplegados[caso.id]}
+              onToggle={() => toggleDespliegue(caso.id)}
+              pacienteId={pacienteId}
+              pacienteNombre={pacienteNombre}
+              pacienteDni={pacienteDni}
+              pacienteTelefono={pacienteTelefono}
+              obraSocialDefault={obraSocialDefault}
+              onCasoActualizado={handleCasoActualizado}
+              onCasoEliminado={handleCasoEliminado}
             />
-            {buscandoDerivador && (
-              <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
-            )}
-
-            {/* Dropdown de Prestadores Geclisa */}
-            {mostrarDropdownDerivador && prestadoresDerivador.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                {prestadoresDerivador.map((p) => (
-                  <button
-                    key={p.pre_id}
-                    type="button"
-                    onClick={() => {
-                      setMedicoDerivador({
-                        id: p.pre_id,
-                        nombre: p.nombre,
-                        matricula: p.matricula
-                      })
-                      setBusquedaDerivador(`${p.nombre} (Mat: ${p.matricula || 'S/M'})`)
-                      setMostrarDropdownDerivador(false)
-                    }}
-                    className="w-full text-left p-2.5 hover:bg-blue-600/10 text-xs transition-colors"
-                  >
-                    <div className="font-bold text-white">{p.nombre}</div>
-                    <div className="text-[10px] text-gray-400 font-mono">
-                      Matrícula: {p.matricula || 'S/M'} {p.especialidad && `• ${p.especialidad}`}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {medicoDerivador.id && (
-            <div className="text-[10px] text-blue-400 font-mono">
-              ✔ Vinculado a Geclisa Prestador #{medicoDerivador.id}
-            </div>
-          )}
+          ))}
         </div>
-
-        {/* B. Médico Cirujano / Operador (Geclisa) */}
-        <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
-          <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-            <Stethoscope size={14} className="text-emerald-400" />
-            Médico Cirujano / Operador (Quién va a operar)
-          </label>
-          
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Buscar cirujano en Geclisa por nombre o matrícula..."
-              value={busquedaCirujano}
-              onChange={(e) => {
-                setBusquedaCirujano(e.target.value)
-                setMedicoCirujano({ nombre: e.target.value })
-                buscarPrestadoresGeclisa(e.target.value, 'cirujano')
-              }}
-              onFocus={() => {
-                if (prestadoresCirujano.length > 0) setMostrarDropdownCirujano(true)
-              }}
-              className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
-            />
-            {buscandoCirujano && (
-              <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
-            )}
-
-            {/* Dropdown de Prestadores Geclisa */}
-            {mostrarDropdownCirujano && prestadoresCirujano.length > 0 && (
-              <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                {prestadoresCirujano.map((p) => (
-                  <button
-                    key={p.pre_id}
-                    type="button"
-                    onClick={() => {
-                      setMedicoCirujano({
-                        id: p.pre_id,
-                        nombre: p.nombre,
-                        matricula: p.matricula
-                      })
-                      setBusquedaCirujano(`${p.nombre} (Mat: ${p.matricula || 'S/M'})`)
-                      setMostrarDropdownCirujano(false)
-                    }}
-                    className="w-full text-left p-2.5 hover:bg-emerald-600/10 text-xs transition-colors"
-                  >
-                    <div className="font-bold text-white">{p.nombre}</div>
-                    <div className="text-[10px] text-gray-400 font-mono">
-                      Matrícula: {p.matricula || 'S/M'} {p.especialidad && `• ${p.especialidad}`}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {medicoCirujano.id && (
-            <div className="text-[10px] text-emerald-400 font-mono">
-              ✔ Vinculado a Geclisa Cirujano #{medicoCirujano.id}
-            </div>
-          )}
-        </div>
-
-        {/* C. Práctica del Nomenclador */}
-        <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2 relative">
-          <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-            <ClipboardList size={14} className="text-indigo-400" />
-            Prestación / Práctica Requerida (Nomenclador) *
-          </label>
-          
-          <div className="relative">
-            <input
-              type="text"
-              required
-              placeholder="Buscar práctica (ej: FIV, Laparo, Consulta, Ecografía)..."
-              value={busquedaPractica}
-              onChange={(e) => {
-                setBusquedaPractica(e.target.value)
-                setPracticaNombre(e.target.value)
-                buscarPracticas(e.target.value)
-              }}
-              onFocus={() => {
-                buscarPracticas(busquedaPractica.startsWith('[') ? '' : busquedaPractica)
-                setMostrarDropdownPractica(true)
-              }}
-              className="w-full pl-3 pr-8 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none font-medium"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (!mostrarDropdownPractica) {
-                  buscarPracticas('')
-                }
-                setMostrarDropdownPractica(!mostrarDropdownPractica)
-              }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-1"
-            >
-              {buscandoPractica ? (
-                <Loader2 size={13} className="animate-spin text-indigo-400" />
-              ) : (
-                <Search size={13} />
-              )}
-            </button>
-
-            {/* Dropdown Nomenclador */}
-            {mostrarDropdownPractica && (
-              <div className="absolute top-full left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-neutral-900 border border-indigo-500/40 rounded-xl shadow-2xl z-40 divide-y divide-[var(--border)]">
-                {practicasNomenclador.length === 0 ? (
-                  <div className="p-3 text-center text-xs text-gray-500">
-                    No se encontraron prácticas con ese criterio.
-                  </div>
-                ) : (
-                  practicasNomenclador.map((p, i) => (
-                    <button
-                      key={`${p.codigo}-${i}`}
-                      type="button"
-                      onClick={() => {
-                        setPracticaCodigo(p.codigo)
-                        setPracticaNombre(p.nombre)
-                        setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
-                        if (p.precio && Number(p.precio) > 0) {
-                          setMontoExtra(p.precio)
-                          setMonedaExtra(p.moneda || 'ARS')
-                        }
-                        setMostrarDropdownPractica(false)
-                      }}
-                      className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-white group-hover:text-indigo-300 transition-colors">
-                          {p.nombre}
-                        </span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-indigo-300 border border-indigo-500/20 shrink-0">
-                          {p.codigo}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] text-gray-400 mt-1">
-                        <span>Categoría: <strong className="text-gray-300">{p.categoria || 'General'}</strong></span>
-                        {p.precio ? (
-                          <span className="text-emerald-400 font-mono font-bold">
-                            Arancel: ${p.precio.toLocaleString()} {p.moneda || 'ARS'}
-                          </span>
-                        ) : null}
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-          {practicaCodigo && (
-            <div className="text-[10px] text-indigo-400 font-mono">
-              Código Nomenclador: {practicaCodigo}
-            </div>
-          )}
-        </div>
-
-        {/* D. Aspectos Económicos: Presupuesto & Extras / Copagos */}
-        <div className="p-4 rounded-xl bg-neutral-900/60 border border-amber-500/20 space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-              <Receipt size={14} className="text-amber-400" />
-              Condiciones Económicas & Presupuesto
-            </label>
-            <button
-              type="button"
-              onClick={() => setMostrarModalPresupuesto(true)}
-              className="text-[11px] font-bold text-amber-400 hover:text-amber-300 hover:underline flex items-center gap-1"
-            >
-              <Plus size={12} />
-              + Armar Presupuesto
-            </button>
-          </div>
-
-          {cargandoPresupuestos ? (
-            <div className="p-4 text-center text-xs text-gray-500 flex items-center justify-center gap-2">
-              <Loader2 size={13} className="animate-spin text-amber-400" />
-              Cargando presupuestos...
-            </div>
-          ) : presupuestos.length > 0 ? (
-            /* Tarjeta de Presupuesto Emitido */
-            <div className="space-y-3">
-              {(() => {
-                const pActivo = presupuestos[0]
-                const isAprobado = pActivo.estado === 'aprobado'
-                const isRechazado = pActivo.estado === 'rechazado'
-                const isCargandoAccion = actualizandoEstadoPresupuestoId === pActivo.id
-
-                return (
-                  <div className="p-3 rounded-xl bg-neutral-950/70 border border-[var(--border)] space-y-2.5">
-                    {/* Header del Presupuesto */}
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <FileText size={13} className="text-blue-400 shrink-0" />
-                        <span className="text-xs font-mono font-bold text-gray-200">
-                          #{pActivo.id.slice(0, 8).toUpperCase()}
-                        </span>
-                        <span className="text-[10px] text-gray-500 font-mono">
-                          ({new Date(pActivo.created_at).toLocaleDateString()})
-                        </span>
-                      </div>
-
-                      {/* Badge de Estado */}
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
-                        isAprobado 
-                          ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
-                          : isRechazado
-                          ? 'bg-red-950 text-red-300 border-red-500/40'
-                          : 'bg-blue-950 text-blue-300 border-blue-500/40'
-                      }`}>
-                        {isAprobado ? 'Confirmado / Aprobado' : isRechazado ? 'Desistido / Rechazado' : 'En Análisis'}
-                      </span>
-                    </div>
-
-                    {/* Total y Cobertura */}
-                    <div className="flex items-baseline justify-between pt-1 border-t border-[var(--border)]/50">
-                      <div>
-                        <div className="text-[10px] text-gray-400 uppercase font-semibold">Total Cotizado:</div>
-                        <div className="text-base font-black font-mono text-white tracking-tight">
-                          $ {Number(pActivo.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-[10px] text-gray-400">Obra Social:</div>
-                        <div className="text-xs font-semibold text-blue-300 truncate max-w-[120px]">
-                          {obraSocialDefault || 'Particular'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Acciones de Presupuesto: Ver PDF, Confirmar, Desistir */}
-                    <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-[var(--border)]/50">
-                      {pActivo.pdf_url ? (
-                        <a
-                          href={
-                            pActivo.pdf_url.startsWith('http')
-                              ? pActivo.pdf_url
-                              : `${BACKEND_URL}${pActivo.pdf_url.startsWith('/') ? '' : '/'}${pActivo.pdf_url}`
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors shadow-sm"
-                          title="Descargar presupuesto membretado oficial"
-                        >
-                          <Download size={12} className="text-blue-400" />
-                          PDF Oficial
-                        </a>
-                      ) : (
-                        <a
-                          href={`${BACKEND_URL}/api/presupuestos/${pActivo.id}/pdf`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-lg text-[11px] font-bold flex items-center gap-1 transition-colors shadow-sm"
-                          title="Generar y descargar PDF membretado"
-                        >
-                          <Download size={12} className="text-blue-400" />
-                          PDF Oficial
-                        </a>
-                      )}
-
-                      {!isAprobado && (
-                        <button
-                          type="button"
-                          disabled={isCargandoAccion}
-                          onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'aprobado')}
-                          className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
-                          title="Confirmar presupuesto y pasar etapa a Cirugía Confirmada"
-                        >
-                          {isCargandoAccion ? <Loader2 size={11} className="animate-spin" /> : <Check size={12} />}
-                          Confirmar
-                        </button>
-                      )}
-
-                      {!isRechazado && (
-                        <button
-                          type="button"
-                          disabled={isCargandoAccion}
-                          onClick={() => handleCambiarEstadoPresupuesto(pActivo.id, 'rechazado')}
-                          className="px-2.5 py-1 bg-red-600/15 hover:bg-red-600/25 text-red-400 border border-red-500/30 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
-                          title="Desistir cotización"
-                        >
-                          <XCircle size={12} />
-                          Desistir
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={() => setMostrarModalPresupuesto(true)}
-                        className="ml-auto text-[10px] text-gray-400 hover:text-white underline font-medium"
-                      >
-                        + Nueva versión
-                      </button>
-                    </div>
-                  </div>
-                )
-              })()}
-            </div>
-          ) : (
-            /* Estado Inicial: Sin Presupuesto Emitido */
-            <div className="p-3.5 rounded-xl bg-neutral-950/60 border border-[var(--border)] text-center space-y-2">
-              <p className="text-[11px] text-gray-400">
-                Aún no se ha generado una cotización formal para este paciente.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMostrarModalPresupuesto(true)}
-                  className="w-full py-2 bg-gradient-to-r from-amber-600/20 to-amber-500/20 hover:from-amber-600/30 hover:to-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
-                >
-                  <Receipt size={13} />
-                  + Armar Presupuesto con Nomenclador
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Copago o Monto Extra Rápido */}
-          <div className="pt-2 border-t border-[var(--border)]/40 flex items-center gap-2">
-            <span className="text-[10px] text-gray-400 font-semibold shrink-0">Copago / Extra Directo:</span>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={montoExtra}
-              onChange={(e) => setMontoExtra(e.target.value)}
-              placeholder="0.00"
-              className="flex-1 px-2.5 py-1 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-lg text-white font-mono focus:outline-none"
-            />
-            <select
-              value={monedaExtra}
-              onChange={(e) => setMonedaExtra(e.target.value)}
-              className="px-2 py-1 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono focus:outline-none"
-            >
-              <option value="ARS">ARS</option>
-              <option value="USD">USD</option>
-            </select>
-          </div>
-        </div>
-
-        {/* E. Planificación de Fechas (Probable y Definitiva) */}
-        <div className="p-4 rounded-xl bg-neutral-900/40 border border-[var(--border)] space-y-2">
-          <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-            <Calendar size={14} className="text-purple-400" />
-            Fecha Probable de Cirugía (Estimación inicial)
-          </label>
-          
-          <input
-            type="date"
-            value={fechaProbable}
-            onChange={(e) => setFechaProbable(e.target.value)}
-            className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-purple-500 rounded-xl text-white font-mono focus:outline-none"
-          />
-          <span className="text-[10px] text-gray-500">
-            Fecha tentativa mientras el paciente analiza la propuesta.
-          </span>
-        </div>
-
-        <div className="p-4 rounded-xl bg-neutral-900/40 border border-emerald-500/20 space-y-2">
-          <label className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-            <FileCheck2 size={14} className="text-emerald-400" />
-            Fecha Definitiva de Cirugía (Quirófano Confirmado)
-          </label>
-          
-          <input
-            type="date"
-            value={fechaDefinitiva}
-            onChange={(e) => {
-              setFechaDefinitiva(e.target.value)
-              if (e.target.value && estado !== 'confirmado' && estado !== 'operado') {
-                setEstado('confirmado')
-              }
-            }}
-            className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-white font-mono focus:outline-none"
-          />
-          <span className="text-[10px] text-emerald-400/80">
-            Se fija cuando el paciente retorna y confirma que se opera.
-          </span>
-        </div>
-
-      </div>
-
-      {/* ==================================================================== */}
-      {/* 3. BITÁCORA CRONOLÓGICA DE EVOLUCIONES DEL ASESORAMIENTO */}
-      {/* ==================================================================== */}
-      <div className="pt-2 border-t border-[var(--border)]/70">
-        <TimelineEvolucionesAsesoria
-          asesoriaId={asesoriaActivaId}
-          pacienteId={pacienteId}
-          pacienteNombre={pacienteNombre}
-        />
-      </div>
-
-      {/* ==================================================================== */}
-      {/* 4. MODAL PARA EMITIR PRESUPUESTO CON NOMENCLADOR & PDF */}
-      {/* ==================================================================== */}
-      <ModalCrearPresupuestoPaciente
-        isOpen={mostrarModalPresupuesto}
-        onClose={() => setMostrarModalPresupuesto(false)}
-        pacienteId={pacienteId}
-        pacienteNombre={pacienteNombre}
-        pacienteDni={pacienteDni}
-        pacienteTelefono={pacienteTelefono}
-        obraSocial={obraSocialDefault}
-        asesoriaId={asesoriaActivaId}
-        practicaInicial={{
-          codigo: practicaCodigo,
-          nombre: practicaNombre,
-          precio: typeof montoExtra === 'number' ? montoExtra : parseFloat(montoExtra) || 0,
-          moneda: monedaExtra
-        }}
-        onPresupuestoCreado={handlePresupuestoCreado}
-      />
+      )}
 
     </div>
   )
