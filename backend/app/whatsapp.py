@@ -217,13 +217,24 @@ class WhatsAppManager:
 
     def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None, emisor: str = "operador") -> Dict[str, Any]:
         """
-        Envía un mensaje de texto saliente por WhatsApp.
+        Envía un mensaje de texto saliente por WhatsApp y lo registra en la conversación del CRM.
         """
         if not texto or not texto.strip():
             return {"error": "El mensaje no puede estar vacío"}
 
         telefono = normalize_phone_number(telefono_o_jid)
         self.add_log("INFO", f"Enviando mensaje a {format_phone_display(telefono)} [{emisor}]: {texto[:60]}...")
+
+        # Si no nos pasaron conversacion_id, intentamos resolverla automáticamente
+        if not conversacion_id:
+            try:
+                pac = get_paciente_by_telefono(telefono)
+                if pac:
+                    conv = get_or_create_conversacion(pac["id"])
+                    if conv:
+                        conversacion_id = conv.get("id")
+            except Exception as e:
+                self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
 
         try:
             r = httpx.post(f"{self.service_url}/send-message", json={"phone": telefono, "text": texto}, timeout=10.0)
@@ -241,7 +252,7 @@ class WhatsAppManager:
                         )
                     except Exception as db_err:
                         self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
-                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": telefono}
+                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": telefono, "conversacion_id": conversacion_id}
             else:
                 err = r.json().get("error", "Error al enviar mensaje")
                 self.add_log("WARNING", f"Fallo al enviar mensaje: {err}")

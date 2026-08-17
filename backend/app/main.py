@@ -578,10 +578,40 @@ def send_message_api(payload: SendMessageRequest):
 
     # 2. MENSAJE SALIENTE A WHATSAPP
     telefono_final = (payload.telefono or payload.phone or "").strip()
-    if not telefono_final and payload.conversacion_id:
+    conversacion_id = payload.conversacion_id
+    paciente_id = payload.paciente_id
+
+    # A. Resolver conversacion_id si se pasó paciente_id
+    if not conversacion_id and paciente_id:
+        try:
+            conv = get_or_create_conversacion(paciente_id)
+            if conv:
+                conversacion_id = conv.get("id")
+        except Exception as e:
+            logger.warning(f"No se pudo obtener/crear conversación para paciente {paciente_id}: {e}")
+
+    # B. Resolver conversacion_id si se pasó teléfono
+    if not conversacion_id and telefono_final:
+        try:
+            pac = get_paciente_by_telefono(telefono_final)
+            if not pac and paciente_id and supabase:
+                p_resp = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+                if p_resp.data:
+                    pac = p_resp.data[0]
+            if pac:
+                conv = get_or_create_conversacion(pac["id"])
+                if conv:
+                    conversacion_id = conv.get("id")
+                    if not paciente_id:
+                        paciente_id = pac["id"]
+        except Exception as e:
+            logger.warning(f"No se pudo resolver conversación por teléfono {telefono_final}: {e}")
+
+    # C. Recuperar teléfono si faltaba
+    if not telefono_final and conversacion_id:
         try:
             if supabase:
-                conv = supabase.table("conversaciones").select("paciente_id, pacientes(telefono)").eq("id", payload.conversacion_id).execute()
+                conv = supabase.table("conversaciones").select("paciente_id, pacientes(telefono)").eq("id", conversacion_id).execute()
                 if conv.data and len(conv.data) > 0:
                     p_data = conv.data[0].get("pacientes")
                     if isinstance(p_data, list) and len(p_data) > 0:
@@ -589,25 +619,25 @@ def send_message_api(payload: SendMessageRequest):
                     elif isinstance(p_data, dict):
                         telefono_final = p_data.get("telefono")
         except Exception as e:
-            logger.warning(f"No se pudo recuperar teléfono por conversación {payload.conversacion_id}: {e}")
+            logger.warning(f"No se pudo recuperar teléfono por conversación {conversacion_id}: {e}")
 
-    if not telefono_final and payload.paciente_id:
+    if not telefono_final and paciente_id:
         try:
             if supabase:
-                pac_res = supabase.table("pacientes").select("telefono").eq("id", payload.paciente_id).execute()
+                pac_res = supabase.table("pacientes").select("telefono").eq("id", paciente_id).execute()
                 if pac_res.data and len(pac_res.data) > 0:
                     telefono_final = pac_res.data[0].get("telefono")
         except Exception as e:
-            logger.warning(f"No se pudo recuperar teléfono por paciente_id {payload.paciente_id}: {e}")
+            logger.warning(f"No se pudo recuperar teléfono por paciente_id {paciente_id}: {e}")
 
     if not telefono_final:
         raise HTTPException(status_code=400, detail="Debe especificar un número de teléfono de destino válido.")
 
-    logger.info(f"Enviando mensaje saliente a {telefono_final} [operador] (conversacion_id: {payload.conversacion_id})")
+    logger.info(f"Enviando mensaje saliente a {telefono_final} [operador] (conversacion_id: {conversacion_id})")
     result = whatsapp_manager.enviar_mensaje(
         telefono_o_jid=telefono_final,
         texto=texto_final,
-        conversacion_id=payload.conversacion_id,
+        conversacion_id=conversacion_id,
         emisor="operador"
     )
     if "error" in result and not result.get("guardado_db"):
