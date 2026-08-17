@@ -23,13 +23,28 @@ import {
   AlertCircle,
   ExternalLink,
   Paperclip,
-  Loader2
+  Loader2,
+  Lock,
+  ShieldCheck,
+  Zap,
+  Wand2,
+  FileText,
+  Check,
+  Copy,
+  Info,
+  Smile,
+  ChevronRight
 } from 'lucide-react'
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import ChatMediaViewer, { DeliveryStatusIcon } from './chat/ChatMediaViewer'
 import WhatsAppFormattedText from './chat/WhatsAppFormattedText'
 import ChatFloatingFormatToolbar from './chat/ChatFloatingFormatToolbar'
+import ChatPatientSidebar from './chat/ChatPatientSidebar'
+import ChatQuickRepliesMenu from './chat/ChatQuickRepliesMenu'
+import ChatEmojiPicker from './chat/ChatEmojiPicker'
+import ModalHistoriaClinica from './ModalHistoriaClinica'
+import ModalEditarPaciente from './ModalEditarPaciente'
 import { BACKEND_URL } from '@/lib/api'
 
 interface Paciente {
@@ -119,6 +134,16 @@ export default function ChatInbox() {
   const [activeTab, setActiveTab] = useState<'derivados' | 'bot' | 'todos' | 'archivados'>('todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [showSimulator, setShowSimulator] = useState(false)
+
+  // Opciones avanzadas de CRM
+  const [showPatientSidebar, setShowPatientSidebar] = useState(true)
+  const [isInternalNote, setIsInternalNote] = useState(false)
+  const [quickRepliesOpen, setQuickRepliesOpen] = useState(false)
+  const [copilotLoading, setCopilotLoading] = useState<'sugerir' | 'mejorar' | 'resumir' | null>(null)
+  const [aiSummaryText, setAiSummaryText] = useState<string | null>(null)
+  const [selectedPacienteHistoriaClinica, setSelectedPacienteHistoriaClinica] = useState<any | null>(null)
+  const [selectedPacienteEditar, setSelectedPacienteEditar] = useState<any | null>(null)
+  const [guardandoPaciente, setGuardandoPaciente] = useState(false)
 
   // Para pruebas/simulación
   const [simTelefono, setSimTelefono] = useState('5491123456789')
@@ -404,7 +429,9 @@ export default function ChatInbox() {
     if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
 
     const mensajeAEnviar = nuevoMensaje.trim()
+    const esNotaInternaActual = isInternalNote
     setNuevoMensaje('')
+    setQuickRepliesOpen(false)
 
     const tempId = `temp_${Date.now()}`
     const optimisticMsg: Mensaje = {
@@ -412,7 +439,9 @@ export default function ChatInbox() {
       conversacion_id: selectedConvId,
       emisor: 'operador',
       contenido: mensajeAEnviar,
-      metadata_json: { status: 'delivered' },
+      metadata_json: esNotaInternaActual 
+        ? { is_internal_note: true, tipo: 'nota_interna' } 
+        : { status: 'delivered' },
       created_at: new Date().toISOString()
     }
     setMensajes((prev) => [...prev, optimisticMsg])
@@ -429,7 +458,8 @@ export default function ChatInbox() {
           body: JSON.stringify({
             telefono: telefonoDestino,
             mensaje: mensajeAEnviar,
-            conversacion_id: selectedConvId
+            conversacion_id: selectedConvId,
+            is_internal_note: esNotaInternaActual
           })
         })
         if (response.ok) {
@@ -446,13 +476,15 @@ export default function ChatInbox() {
             conversacion_id: selectedConvId,
             emisor: 'operador',
             contenido: mensajeAEnviar,
-            metadata_json: {}
+            metadata_json: esNotaInternaActual ? { is_internal_note: true, tipo: 'nota_interna' } : {}
           })
 
-        await supabase
-          .from('conversaciones')
-          .update({ ultimo_mensaje: mensajeAEnviar })
-          .eq('id', selectedConvId)
+        if (!esNotaInternaActual) {
+          await supabase
+            .from('conversaciones')
+            .update({ ultimo_mensaje: mensajeAEnviar })
+            .eq('id', selectedConvId)
+        }
       }
 
       setTimeout(() => {
@@ -464,8 +496,8 @@ export default function ChatInbox() {
     }
   }
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+  // Subir archivo reutilizable (input file o pegado con Ctrl+V)
+  const handleUploadFileDirect = async (file: File) => {
     if (!file || !selectedConvId || !selectedConv) return
 
     const paciente = getPatient(selectedConv)
@@ -475,7 +507,7 @@ export default function ChatInbox() {
       formData.append('file', file)
       formData.append('telefono', paciente?.telefono || '')
       formData.append('conversacion_id', selectedConvId)
-      formData.append('caption', file.name)
+      formData.append('caption', file.name || 'Captura de pantalla')
 
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-media`, {
         method: 'POST',
@@ -489,9 +521,136 @@ export default function ChatInbox() {
       }, 600)
     } catch (err) {
       console.error('Error subiendo archivo:', err)
+      alert('No se pudo enviar el archivo adjunto.')
     } finally {
       setSubiendoArchivo(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) handleUploadFileDirect(file)
+  }
+
+  // Pegado de imágenes con Ctrl+V directo en la caja de texto
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.indexOf('image') !== -1) {
+        const blob = item.getAsFile()
+        if (blob) {
+          e.preventDefault()
+          const file = new File([blob], `captura_${Date.now()}.png`, { type: blob.type })
+          handleUploadFileDirect(file)
+          break
+        }
+      }
+    }
+  }
+
+  // ====================================================================
+  // COPILOTO DE IA CON GOOGLE GEMINI
+  // ====================================================================
+
+  const handleCopilotSugerir = async () => {
+    if (!selectedConvId || copilotLoading) return
+    setCopilotLoading('sugerir')
+    try {
+      const paciente = getPatient(selectedConv)
+      const res = await fetch(`${BACKEND_URL}/api/chat/copilot/sugerir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversacion_id: selectedConvId,
+          paciente_id: paciente?.id || selectedConv?.paciente_id,
+          historial: mensajes.slice(-10)
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.sugerencia) {
+          setNuevoMensaje(data.sugerencia)
+          setTimeout(() => messageInputRef.current?.focus(), 50)
+        }
+      }
+    } catch (err) {
+      console.error('Error sugiriendo respuesta con Copilot:', err)
+    } finally {
+      setCopilotLoading(null)
+    }
+  }
+
+  const handleCopilotMejorar = async () => {
+    if (!nuevoMensaje.trim() || copilotLoading) return
+    setCopilotLoading('mejorar')
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/chat/copilot/mejorar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto: nuevoMensaje })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.texto_mejorado) {
+          setNuevoMensaje(data.texto_mejorado)
+          setTimeout(() => messageInputRef.current?.focus(), 50)
+        }
+      }
+    } catch (err) {
+      console.error('Error mejorando texto con Copilot:', err)
+    } finally {
+      setCopilotLoading(null)
+    }
+  }
+
+  const handleCopilotResumir = async () => {
+    if (!selectedConvId || copilotLoading) return
+    setCopilotLoading('resumir')
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/chat/copilot/resumir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversacion_id: selectedConvId,
+          historial: mensajes.slice(-25)
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.resumen) {
+          setAiSummaryText(data.resumen)
+        }
+      }
+    } catch (err) {
+      console.error('Error resumiendo chat con Copilot:', err)
+    } finally {
+      setCopilotLoading(null)
+    }
+  }
+
+  const handleSavePaciente = async (datosActualizados: any) => {
+    if (!selectedPacienteEditar?.id) return
+    setGuardandoPaciente(true)
+    try {
+      const { error } = await supabase
+        .from('pacientes')
+        .update(datosActualizados)
+        .eq('id', selectedPacienteEditar.id)
+
+      if (error) throw error
+
+      // Refrescar conversaciones
+      fetchConversaciones()
+      setSelectedPacienteEditar(null)
+    } catch (err) {
+      console.error('Error guardando paciente:', err)
+      alert('No se pudo guardar la información del paciente.')
+    } finally {
+      setGuardandoPaciente(false)
     }
   }
 
@@ -844,263 +1003,418 @@ export default function ChatInbox() {
         </div>
       </div>
 
-      {/* 2. Área de Mensajes del Chat (Derecha) */}
+      {/* 2. Área Central y Lateral del Chat Activo (Derecha) */}
       {selectedConv ? (
-        <div className="flex-1 flex flex-col bg-[#090e1a]">
+        <div className="flex-1 flex min-w-0 min-h-0">
           
-          {/* Header del Chat Activo */}
-          <div className="p-3.5 border-b border-slate-800 bg-[#101b33] flex items-center justify-between gap-3 shadow-xs">
+          {/* Panel Principal del Chat (Mensajes + Entrada) */}
+          <div className="flex-1 flex flex-col bg-[#090e1a] min-w-0 min-h-0">
             
-            {/* Info del Paciente y Enlace a Ficha Médica */}
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="w-10 h-10 rounded-full bg-blue-950 text-blue-300 border border-blue-700/60 font-bold flex items-center justify-center text-sm shrink-0 shadow-sm">
-                {getInitials(currentPaciente?.nombre)}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-bold text-sm truncate text-slate-100">
-                    {currentPaciente?.nombre || 'Paciente'}
-                  </h3>
-                  {currentPaciente?.id && (
-                    <Link 
-                      href={`/pacientes?pacienteId=${currentPaciente.id}`}
-                      className="text-[10px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-0.5 hover:underline"
-                      title="Ver Ficha Médica Completa"
-                    >
-                      <span>Ficha</span> <ExternalLink size={10} />
-                    </Link>
-                  )}
-                </div>
-                <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                  <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
-                </p>
-              </div>
-            </div>
-
-            {/* Acciones Rápidas: Archivar / Resolver y Switch Humano/Bot */}
-            <div className="flex items-center gap-2">
+            {/* Header del Chat Activo */}
+            <div className="p-3 border-b border-slate-800 bg-[#101b33] flex items-center justify-between gap-3 shadow-xs shrink-0">
               
-              {/* Botón Archivar / Marcar como Resuelto */}
-              <button
-                onClick={() => handleToggleArchivar(selectedConv.id, selectedConv.archivada)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
-                  selectedConv.archivada
-                    ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                    : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70 hover:bg-emerald-900/60'
-                }`}
-                title={selectedConv.archivada ? 'Reabrir conversación' : 'Marcar conversación como resuelta / archivar'}
-              >
-                {selectedConv.archivada ? (
-                  <>
-                    <ArchiveRestore size={14} className="text-slate-400" />
-                    <span>Reabrir Chat</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle2 size={14} className="text-emerald-400" />
-                    <span>Marcar Resuelto</span>
-                  </>
-                )}
-              </button>
-
-              {/* Selector de Agente Situacional */}
-              <div className="flex items-center gap-1 bg-[#131d35] border border-slate-700/60 rounded-xl px-2 py-1 text-xs text-slate-300">
-                <Bot size={13} className="text-blue-400 shrink-0" />
-                <select
-                  value={selectedConv.agente_asignado_codigo || 'AUTO'}
-                  onChange={async (e) => {
-                    const newAgent = e.target.value
-                    setConversaciones((prev) =>
-                      prev.map((c) => (c.id === selectedConv.id ? { ...c, agente_asignado_codigo: newAgent } : c))
-                    )
-                    try {
-                      await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConv.id}/agente`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ agente_codigo: newAgent })
-                      })
-                    } catch (err) {
-                      console.error('Error asignando agente a conversación:', err)
-                    }
-                  }}
-                  className="bg-transparent border-none text-[11px] font-semibold text-slate-200 focus:outline-none cursor-pointer pr-1"
-                  title="Perfil de agente asignado a este chat"
-                >
-                  <option value="AUTO" className="bg-[#131d35] text-slate-200">🤖 Auto (Router IA)</option>
-                  <option value="TURNOS_CONCRETOS" className="bg-[#131d35] text-slate-200">📅 Turnos Ágiles</option>
-                  <option value="QUIRURGICO_EMPATICO" className="bg-[#131d35] text-slate-200">❤️ Quirúrgico (Empático)</option>
-                  <option value="PRESUPUESTOS_COMERCIAL" className="bg-[#131d35] text-slate-200">💰 Presupuestos</option>
-                  <option value="POST_OPERATORIO" className="bg-[#131d35] text-slate-200">🩺 Post-Operatorio</option>
-                  <option value="GENERAL" className="bg-[#131d35] text-slate-200">🏛️ General</option>
-                </select>
+              {/* Info del Paciente */}
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-full bg-blue-950 text-blue-300 border border-blue-700/60 font-bold flex items-center justify-center text-sm shrink-0 shadow-sm">
+                  {getInitials(currentPaciente?.nombre)}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-sm truncate text-slate-100">
+                      {currentPaciente?.nombre || 'Paciente'}
+                    </h3>
+                    {currentPaciente?.id && (
+                      <button
+                        onClick={() => setSelectedPacienteHistoriaClinica(currentPaciente)}
+                        className="text-[10px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-0.5 hover:underline"
+                        title="Ver Historia Clínica"
+                      >
+                        <span>HC</span> <ExternalLink size={10} />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
+                  </p>
+                </div>
               </div>
 
-              {/* Switch de Atención Humano / Bot */}
-              <ToggleHuman
-                conversacionId={selectedConv.id}
-                botDisabled={selectedConv.bot_disabled}
-                onToggle={(disabled) => {
-                  setConversaciones((prev) =>
-                    prev.map((c) => (c.id === selectedConv.id ? { ...c, bot_disabled: disabled } : c))
+              {/* Acciones Rápidas de la Cabecera */}
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                
+                {/* Botón Resumir Chat con IA */}
+                <button
+                  onClick={handleCopilotResumir}
+                  disabled={copilotLoading === 'resumir'}
+                  className="px-2.5 py-1.5 rounded-xl bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
+                  title="Generar resumen ejecutivo de la conversación con Gemini IA"
+                >
+                  {copilotLoading === 'resumir' ? (
+                    <Loader2 size={13} className="animate-spin text-purple-300" />
+                  ) : (
+                    <Sparkles size={13} className="text-purple-300" />
+                  )}
+                  <span className="hidden sm:inline">Resumir Chat</span>
+                </button>
+
+                {/* Botón Archivar / Marcar como Resuelto */}
+                <button
+                  onClick={() => handleToggleArchivar(selectedConv.id, selectedConv.archivada)}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+                    selectedConv.archivada
+                      ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                      : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70 hover:bg-emerald-900/60'
+                  }`}
+                  title={selectedConv.archivada ? 'Reabrir conversación' : 'Marcar conversación como resuelta'}
+                >
+                  {selectedConv.archivada ? (
+                    <>
+                      <ArchiveRestore size={13} className="text-slate-400" />
+                      <span className="hidden md:inline">Reabrir</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={13} className="text-emerald-400" />
+                      <span className="hidden md:inline">Resolver</span>
+                    </>
+                  )}
+                </button>
+
+                {/* Switch de Atención Humano / Bot */}
+                <ToggleHuman
+                  conversacionId={selectedConv.id}
+                  botDisabled={selectedConv.bot_disabled}
+                  onToggle={(disabled) => {
+                    setConversaciones((prev) =>
+                      prev.map((c) => (c.id === selectedConv.id ? { ...c, bot_disabled: disabled } : c))
+                    )
+                  }}
+                />
+
+                {/* Toggle de Sidebar 360 */}
+                <button
+                  onClick={() => setShowPatientSidebar(!showPatientSidebar)}
+                  className={`p-1.5 rounded-xl text-xs transition-colors border ${
+                    showPatientSidebar
+                      ? 'bg-blue-900/60 text-blue-300 border-blue-600/60'
+                      : 'text-slate-400 hover:text-slate-200 border-slate-700/60 hover:bg-slate-800/60'
+                  }`}
+                  title={showPatientSidebar ? "Ocultar Ficha 360°" : "Mostrar Ficha 360°"}
+                >
+                  <ShieldCheck size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Historial de Mensajes */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#090e1a] panel-scroll">
+              {cargandoMensajes ? (
+                <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
+                  <Loader2 size={20} className="animate-spin text-blue-400" />
+                  <span>Cargando historial de mensajes...</span>
+                </div>
+              ) : mensajes.length === 0 ? (
+                <div className="text-center text-xs text-slate-400 py-12 flex flex-col items-center justify-center gap-2.5">
+                  <div className="p-3 bg-[#131d35] border border-slate-700/60 rounded-full">
+                    <MessageCircle size={24} className="text-slate-400" />
+                  </div>
+                  <span className="font-semibold text-slate-200 text-sm">No hay mensajes en esta conversación</span>
+                  <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
+                </div>
+              ) : (
+                mensajes.map((msg) => {
+                  const isOperator = msg.emisor === 'operador'
+                  const isBot = msg.emisor === 'bot'
+                  const isSystem = msg.metadata_json?.sistema === true
+                  const isInternal = Boolean(msg.metadata_json?.is_internal_note || msg.metadata_json?.tipo === 'nota_interna')
+                  
+                  if (isSystem) {
+                    return (
+                      <div key={msg.id} className="flex justify-center my-2">
+                        <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs">
+                          {msg.contenido}
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // 1. NOTA INTERNA PRIVADA (ÁMBAR)
+                  if (isInternal) {
+                    return (
+                      <div key={msg.id} className="flex justify-center my-2">
+                        <div className="max-w-md w-full bg-[#241a06] border border-amber-500/50 text-amber-200 rounded-2xl p-3 shadow-md text-xs">
+                          <div className="flex items-center justify-between gap-1 text-[9.5px] font-bold text-amber-400 mb-1.5 pb-1 border-b border-amber-800/40">
+                            <span className="flex items-center gap-1">
+                              <Lock size={11} /> NOTA INTERNA (Privado del Equipo Médico)
+                            </span>
+                            <span className="text-[8.5px] opacity-70">
+                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed text-amber-100" />
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  // 2. MENSAJE NORMAL DE WHATSAPP
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex ${isOperator ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
+                          isOperator
+                            ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                            : isBot
+                            ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
+                            : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
+                        }`}
+                      >
+                        {/* Badge del emisor */}
+                        <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider">
+                          {isOperator ? (
+                            <>
+                              <User size={10} className="text-blue-200" /> Operador Humano (CRM)
+                            </>
+                          ) : isBot ? (
+                            <>
+                              <Bot size={10} className="text-emerald-400" />
+                              <Sparkles size={8} className="text-emerald-300 animate-pulse" />
+                              Bot Gemini
+                            </>
+                          ) : (
+                            <>
+                              <User size={10} className="text-slate-300" /> Paciente
+                            </>
+                          )}
+                        </div>
+                        
+                        {/* Contenido textual con formato enriquecido */}
+                        {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
+                          <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
+                        )}
+                        
+                        {/* Visualizador Multimedia */}
+                        <ChatMediaViewer 
+                          metadata={msg.metadata_json} 
+                          isOperator={isOperator} 
+                          mensajeId={msg.id}
+                          onTranscribeSuccess={(mId, transcript) => {
+                            setMensajes((prev) =>
+                              prev.map((m) =>
+                                m.id === mId
+                                  ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
+                                  : m
+                              )
+                            )
+                          }}
+                        />
+                        
+                        {/* Pie con Hora y Tildes */}
+                        <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
+                          <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          {isOperator && (
+                            <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   )
-                }}
-              />
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Caja de Entrada de Mensajes y Barra de Copiloto IA (Tema Oscuro) */}
+            <div className="p-3 border-t border-slate-800 bg-[#101b33] flex flex-col gap-2 shrink-0">
+              
+              {/* Barra Superior: Selector de Modo (WhatsApp vs Nota Interna) + Copiloto IA */}
+              <div className="flex items-center justify-between gap-2 text-xs flex-wrap">
+                
+                {/* Selector de Modo */}
+                <div className="flex items-center bg-[#0d1527] p-0.5 rounded-xl border border-slate-700/60">
+                  <button
+                    type="button"
+                    onClick={() => setIsInternalNote(false)}
+                    className={`px-2.5 py-1 rounded-lg font-bold text-[10.5px] flex items-center gap-1 transition-all ${
+                      !isInternalNote
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <MessageCircle size={11} />
+                    <span>WhatsApp</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsInternalNote(true)}
+                    className={`px-2.5 py-1 rounded-lg font-bold text-[10.5px] flex items-center gap-1 transition-all ${
+                      isInternalNote
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-400 hover:text-amber-300'
+                    }`}
+                  >
+                    <Lock size={11} />
+                    <span>Nota Interna</span>
+                  </button>
+                </div>
+
+                {/* Acciones de Copiloto IA Gemini */}
+                <div className="flex items-center gap-1">
+                  {/* 1. Sugerir Respuesta */}
+                  <button
+                    type="button"
+                    onClick={handleCopilotSugerir}
+                    disabled={Boolean(copilotLoading)}
+                    className="px-2 py-1 bg-[#162345] hover:bg-[#1f315e] border border-blue-500/40 text-blue-300 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
+                    title="Pedirle a Gemini que redacte una sugerencia de respuesta para este paciente"
+                  >
+                    {copilotLoading === 'sugerir' ? <Loader2 size={11} className="animate-spin text-blue-400" /> : <Sparkles size={11} className="text-amber-400" />}
+                    <span>Sugerir (IA)</span>
+                  </button>
+
+                  {/* 2. Mejorar Redacción */}
+                  {nuevoMensaje.trim() && (
+                    <button
+                      type="button"
+                      onClick={handleCopilotMejorar}
+                      disabled={Boolean(copilotLoading)}
+                      className="px-2 py-1 bg-[#162345] hover:bg-[#1f315e] border border-emerald-500/40 text-emerald-300 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 transition-all disabled:opacity-50 animate-in fade-in duration-150"
+                      title="Mejorar ortografía, tono y formato del borrador actual"
+                    >
+                      {copilotLoading === 'mejorar' ? <Loader2 size={11} className="animate-spin text-emerald-400" /> : <Wand2 size={11} className="text-emerald-400" />}
+                      <span>Mejorar</span>
+                    </button>
+                  )}
+
+                  {/* 3. Botón Respuestas Rápidas */}
+                  <button
+                    type="button"
+                    onClick={() => setQuickRepliesOpen(!quickRepliesOpen)}
+                    className={`px-2 py-1 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 transition-all border ${
+                      quickRepliesOpen 
+                        ? 'bg-amber-600/30 text-amber-300 border-amber-500/60' 
+                        : 'bg-[#162345] hover:bg-[#1f315e] text-slate-300 border-slate-700/60'
+                    }`}
+                    title="Abrir menú de plantillas rápidas (o escribe / en el chat)"
+                  >
+                    <Zap size={11} className="text-amber-400" />
+                    <span>Plantillas (/)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Formulario Principal de Envío */}
+              <form onSubmit={handleSend} className="flex items-end gap-2 relative">
+                
+                {/* Menú Flotante de Respuestas Rápidas (Comando Slash) */}
+                <ChatQuickRepliesMenu
+                  isOpen={quickRepliesOpen || nuevoMensaje.startsWith('/')}
+                  searchFilter={nuevoMensaje.startsWith('/') ? nuevoMensaje : ''}
+                  pacienteNombre={currentPaciente?.nombre}
+                  pacienteTelefono={currentPaciente?.telefono}
+                  onSelect={(text) => {
+                    setNuevoMensaje(text)
+                    setQuickRepliesOpen(false)
+                    setTimeout(() => messageInputRef.current?.focus(), 50)
+                  }}
+                  onClose={() => setQuickRepliesOpen(false)}
+                />
+
+                {/* Adjuntar Archivo */}
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileUpload} 
+                  className="hidden" 
+                  accept="image/*,.pdf,.doc,.docx,audio/*"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={subiendoArchivo || isInternalNote}
+                  className="p-2.5 bg-[#14203d] hover:bg-[#1c2c54] border border-slate-700/60 rounded-xl text-slate-300 transition-colors shrink-0 disabled:opacity-40 mb-0.5"
+                  title="Adjuntar archivo o imagen (PDF, JPG, PNG, Audio)"
+                >
+                  {subiendoArchivo ? <Loader2 size={18} className="animate-spin text-blue-400" /> : <Paperclip size={18} />}
+                </button>
+
+                {/* Selector de Emojis */}
+                <ChatEmojiPicker
+                  onSelectEmoji={(emoji) => {
+                    setNuevoMensaje((prev) => prev + emoji)
+                    setTimeout(() => messageInputRef.current?.focus(), 50)
+                  }}
+                />
+
+                {/* Caja de Texto Multilínea con Globo Flotante de Formato y Soporte Pegar Capturas */}
+                <div className="flex-1 relative">
+                  <ChatFloatingFormatToolbar
+                    textareaRef={messageInputRef}
+                    value={nuevoMensaje}
+                    onChange={(val) => setNuevoMensaje(val)}
+                  />
+                  <textarea
+                    ref={messageInputRef}
+                    rows={1}
+                    value={nuevoMensaje}
+                    onChange={(e) => setNuevoMensaje(e.target.value)}
+                    onPaste={handlePaste}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        handleSend(e)
+                      }
+                    }}
+                    placeholder={
+                      isInternalNote
+                        ? "🔒 Escribe una nota interna para el equipo (solo visible en el CRM)..."
+                        : selectedConv.bot_disabled
+                        ? "Escribe un mensaje (*negrita*, _cursiva_, /plantillas, o pega capturas Ctrl+V)..."
+                        : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."
+                    }
+                    className={`w-full px-4 py-2.5 text-xs border rounded-xl text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 resize-none max-h-32 min-h-[38px] overflow-y-auto ${
+                      isInternalNote
+                        ? 'bg-[#1a1408] border-amber-500/50 focus:ring-amber-500 focus:border-amber-500'
+                        : 'bg-[#14203d] border-slate-700/80 focus:ring-blue-500 focus:border-blue-500'
+                    }`}
+                  />
+                </div>
+
+                {/* Botón Enviar / Guardar Nota */}
+                <button 
+                  type="submit"
+                  disabled={!nuevoMensaje.trim()}
+                  className={`px-4 py-2.5 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shrink-0 mb-0.5 ${
+                    isInternalNote
+                      ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/20'
+                      : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'
+                  }`}
+                >
+                  {isInternalNote ? <Lock size={13} /> : <Send size={13} />}
+                  <span>{isInternalNote ? 'Guardar Nota' : 'Enviar'}</span>
+                </button>
+              </form>
             </div>
           </div>
 
-          {/* Historial de Mensajes */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#090e1a]">
-            {cargandoMensajes ? (
-              <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
-                <Loader2 size={20} className="animate-spin text-blue-400" />
-                <span>Cargando historial de mensajes...</span>
-              </div>
-            ) : mensajes.length === 0 ? (
-              <div className="text-center text-xs text-slate-400 py-12 flex flex-col items-center justify-center gap-2.5">
-                <div className="p-3 bg-[#131d35] border border-slate-700/60 rounded-full">
-                  <MessageCircle size={24} className="text-slate-400" />
-                </div>
-                <span className="font-semibold text-slate-200 text-sm">No hay mensajes en esta conversación</span>
-                <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
-              </div>
-            ) : (
-              mensajes.map((msg) => {
-                const isOperator = msg.emisor === 'operador'
-                const isBot = msg.emisor === 'bot'
-                const isSystem = msg.metadata_json?.sistema === true
-                
-                if (isSystem) {
-                  return (
-                    <div key={msg.id} className="flex justify-center my-2">
-                      <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs">
-                        {msg.contenido}
-                      </div>
-                    </div>
-                  )
-                }
+          {/* 3. Panel Lateral Contextual 360° del Paciente (Drawer Derecho) */}
+          {showPatientSidebar && (
+            <ChatPatientSidebar
+              paciente={currentPaciente}
+              conversacionId={selectedConv.id}
+              onClose={() => setShowPatientSidebar(false)}
+              onOpenHistoriaClinica={(pId) => setSelectedPacienteHistoriaClinica(currentPaciente)}
+              onOpenEditarPaciente={(p) => setSelectedPacienteEditar(p)}
+              onInsertMessageToChat={(text) => {
+                setNuevoMensaje(text)
+                setTimeout(() => messageInputRef.current?.focus(), 50)
+              }}
+            />
+          )}
 
-                return (
-                  <div
-                    key={msg.id}
-                    className={`flex ${isOperator ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
-                        isOperator
-                          ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
-                          : isBot
-                          ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
-                          : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
-                      }`}
-                    >
-                      {/* Badge del emisor */}
-                      <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider">
-                        {isOperator ? (
-                          <>
-                            <User size={10} className="text-blue-200" /> Operador Humano (CRM)
-                          </>
-                        ) : isBot ? (
-                          <>
-                            <Bot size={10} className="text-emerald-400" />
-                            <Sparkles size={8} className="text-emerald-300 animate-pulse" />
-                            Bot Gemini
-                          </>
-                        ) : (
-                          <>
-                            <User size={10} className="text-slate-300" /> Paciente
-                          </>
-                        )}
-                      </div>
-                      
-                      {/* Contenido textual con formato enriquecido de WhatsApp (*negrita*, _cursiva_, ~tachado~, citas, listas) */}
-                      {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
-                        <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
-                      )}
-                      
-                      {/* Visualizador Multimedia (Fotos con Lightbox, Audios con Transcripción IA, PDFs) */}
-                      <ChatMediaViewer 
-                        metadata={msg.metadata_json} 
-                        isOperator={isOperator} 
-                        mensajeId={msg.id}
-                        onTranscribeSuccess={(mId, transcript) => {
-                          setMensajes((prev) =>
-                            prev.map((m) =>
-                              m.id === mId
-                                ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
-                                : m
-                            )
-                          )
-                        }}
-                      />
-                      
-                      {/* Pie con Hora y Tildes de lectura */}
-                      <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
-                        <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {isOperator && (
-                          <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-
-          {/* Caja de Entrada de Mensajes del Operador con Formateador Flotante (Tema Oscuro) */}
-          <div className="p-3 border-t border-slate-800 bg-[#101b33]">
-            <form onSubmit={handleSend} className="flex items-end gap-2 relative">
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileUpload} 
-                className="hidden" 
-                accept="image/*,.pdf,.doc,.docx,audio/*"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={subiendoArchivo}
-                className="p-2.5 bg-[#14203d] hover:bg-[#1c2c54] border border-slate-700/60 rounded-xl text-slate-300 transition-colors shrink-0 disabled:opacity-50 mb-0.5"
-                title="Adjuntar archivo o imagen (PDF, JPG, PNG, Audio)"
-              >
-                {subiendoArchivo ? <Loader2 size={18} className="animate-spin text-blue-400" /> : <Paperclip size={18} />}
-              </button>
-
-              {/* Contenedor relativo para alojar el globo flotante de formato */}
-              <div className="flex-1 relative">
-                <ChatFloatingFormatToolbar
-                  textareaRef={messageInputRef}
-                  value={nuevoMensaje}
-                  onChange={(val) => setNuevoMensaje(val)}
-                />
-                <textarea
-                  ref={messageInputRef}
-                  rows={1}
-                  value={nuevoMensaje}
-                  onChange={(e) => setNuevoMensaje(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSend(e)
-                    }
-                  }}
-                  placeholder={selectedConv.bot_disabled ? "Escribe un mensaje (*negrita*, _cursiva_, ~tachado~, citas)..." : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."}
-                  className="w-full px-4 py-2.5 text-xs border border-slate-700/80 rounded-xl bg-[#14203d] text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none max-h-32 min-h-[38px] overflow-y-auto"
-                />
-              </div>
-
-              <button 
-                type="submit"
-                disabled={!nuevoMensaje.trim()}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shrink-0 mb-0.5"
-              >
-                <Send size={13} />
-                <span>Enviar</span>
-              </button>
-            </form>
-          </div>
         </div>
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 bg-[#090e1a]">
@@ -1111,6 +1425,80 @@ export default function ChatInbox() {
           <p className="text-xs text-slate-400 max-w-sm mt-1">
             Selecciona una conversación de la izquierda para ver el historial y responder.
           </p>
+        </div>
+      )}
+
+      {/* MODAL HISTORIA CLÍNICA */}
+      {selectedPacienteHistoriaClinica && (
+        <ModalHistoriaClinica
+          isOpen={Boolean(selectedPacienteHistoriaClinica)}
+          onClose={() => setSelectedPacienteHistoriaClinica(null)}
+          paciente={selectedPacienteHistoriaClinica}
+        />
+      )}
+
+      {/* MODAL EDITAR PACIENTE */}
+      {selectedPacienteEditar && (
+        <ModalEditarPaciente
+          isOpen={Boolean(selectedPacienteEditar)}
+          paciente={selectedPacienteEditar}
+          guardando={guardandoPaciente}
+          onClose={() => setSelectedPacienteEditar(null)}
+          onSave={handleSavePaciente}
+        />
+      )}
+
+      {/* MODAL RESUMEN DEL CHAT (GEMINI IA) */}
+      {aiSummaryText && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setAiSummaryText(null)}
+        >
+          <div 
+            className="bg-[#0f172a] border border-purple-500/50 rounded-2xl p-5 max-w-lg w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 text-slate-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-purple-950 text-purple-300 border border-purple-700/50">
+                  <Sparkles size={16} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-100">Resumen Inteligente del Chat</h3>
+                  <p className="text-[10px] text-slate-400">Generado por Google Gemini</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setAiSummaryText(null)}
+                className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#14203d] border border-slate-700/60 text-xs leading-relaxed">
+              <WhatsAppFormattedText text={aiSummaryText} />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(aiSummaryText)
+                  alert('Resumen copiado al portapapeles.')
+                }}
+                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors"
+              >
+                <Copy size={13} />
+                <span>Copiar</span>
+              </button>
+              <button
+                onClick={() => setAiSummaryText(null)}
+                className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-colors"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -56,9 +56,15 @@ from app.db import (
     crear_presupuesto_rapido,
     get_evoluciones_by_asesoria,
     crear_evolucion_asesoria,
-    eliminar_evolucion_asesoria
+    eliminar_evolucion_asesoria,
+    get_paciente_contexto_360
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
+from app.services.copilot_service import (
+    sugerir_respuesta_copilot,
+    mejorar_redaccion_copilot,
+    resumir_conversacion_copilot
+)
 from app.services.phone_normalizer import normalize_phone_number
 from app.whatsapp import (
     iniciar_daemon_whatsapp, 
@@ -120,6 +126,20 @@ class SendMessageRequest(BaseModel):
     telefono: str
     mensaje: str
     conversacion_id: Optional[str] = None
+    is_internal_note: Optional[bool] = False
+
+class CopilotSugerirRequest(BaseModel):
+    conversacion_id: Optional[str] = None
+    paciente_id: Optional[str] = None
+    historial: Optional[List[Dict[str, Any]]] = None
+    contexto_paciente: Optional[Dict[str, Any]] = None
+
+class CopilotMejorarRequest(BaseModel):
+    texto: str
+
+class CopilotResumirRequest(BaseModel):
+    conversacion_id: Optional[str] = None
+    historial: Optional[List[Dict[str, Any]]] = None
 
 class TestMessageRequest(BaseModel):
     telefono: str
@@ -461,8 +481,30 @@ def estadisticas_storage_api():
 @app.post("/api/whatsapp/send-message")
 def send_message_api(payload: SendMessageRequest):
     """
-    Envía un mensaje de texto directamente al WhatsApp real del paciente y lo guarda en la BD como OPERADOR HUMANO.
+    Envía un mensaje de texto directamente al WhatsApp real del paciente o lo guarda como NOTA INTERNA privada del equipo.
     """
+    # 1. NOTA INTERNA (Solo visible en el CRM, NUNCA se envía al paciente por WhatsApp)
+    if payload.is_internal_note:
+        logger.info(f"Registrando nota interna en conversación {payload.conversacion_id}")
+        meta = {
+            "is_internal_note": True,
+            "tipo": "nota_interna",
+            "autor": "Operador Humano"
+        }
+        msg = guardar_mensaje(
+            conversacion_id=payload.conversacion_id,
+            emisor="operador",
+            contenido=payload.mensaje,
+            metadata_json=meta
+        )
+        return {
+            "success": True,
+            "is_internal_note": True,
+            "guardado_db": True,
+            "mensaje": msg
+        }
+
+    # 2. MENSAJE SALIENTE A WHATSAPP
     telefono_final = payload.telefono
     if (not telefono_final or not str(telefono_final).strip()) and payload.conversacion_id:
         try:
@@ -487,6 +529,53 @@ def send_message_api(payload: SendMessageRequest):
     if "error" in result and not result.get("guardado_db"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+# ====================================================================
+# ENDPOINTS COPILOTO DE IA (GEMINI)
+# ====================================================================
+
+@app.post("/api/chat/copilot/sugerir")
+def copilot_sugerir_api(payload: CopilotSugerirRequest):
+    """
+    Genera una sugerencia de respuesta redactada con Gemini basada en el historial del chat y la ficha clínica.
+    """
+    msgs = payload.historial or []
+    contexto = payload.contexto_paciente or {}
+    
+    if payload.conversacion_id and (not msgs or not contexto):
+        try:
+            if not msgs:
+                msgs = obtener_mensajes_conversacion(payload.conversacion_id)
+            if payload.paciente_id and not contexto:
+                contexto = get_paciente_contexto_360(payload.paciente_id)
+        except Exception as err:
+            logger.warning(f"Error cargando contexto para copilot sugerir: {err}")
+
+    sugerencia = sugerir_respuesta_copilot(msgs, contexto)
+    return {"success": True, "sugerencia": sugerencia}
+
+@app.post("/api/chat/copilot/mejorar")
+def copilot_mejorar_api(payload: CopilotMejorarRequest):
+    """
+    Mejora la redacción, tono, calidez y ortografía de un borrador de mensaje.
+    """
+    mejorado = mejorar_redaccion_copilot(payload.texto)
+    return {"success": True, "texto_mejorado": mejorado}
+
+@app.post("/api/chat/copilot/resumir")
+def copilot_resumir_api(payload: CopilotResumirRequest):
+    """
+    Genera un resumen ejecutivo en 3 puntos clave de la conversación médica/administrativa.
+    """
+    msgs = payload.historial or []
+    if payload.conversacion_id and not msgs:
+        try:
+            msgs = obtener_mensajes_conversacion(payload.conversacion_id)
+        except Exception as err:
+            logger.warning(f"Error cargando mensajes para copilot resumir: {err}")
+
+    resumen = resumir_conversacion_copilot(msgs)
+    return {"success": True, "resumen": resumen}
 
 @app.post("/api/whatsapp/send-test")
 def send_test_message(payload: TestMessageRequest):
