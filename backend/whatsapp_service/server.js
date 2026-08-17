@@ -252,7 +252,7 @@ let deviceInfo = {
 }
 const logsBuffer = []
 
-function addLog(level, message) {
+async function addLog(level, message, accion = 'EVENTO_WHATSAPP_NODE', detalles = null) {
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19)
   const entry = {
     id: `${Date.now()}_${logsBuffer.length}`,
@@ -263,6 +263,101 @@ function addLog(level, message) {
   logsBuffer.push(entry)
   if (logsBuffer.length > 80) logsBuffer.shift()
   console.log(`[${now}] [${level}] ${message}`)
+
+  if (SUPABASE_KEY) {
+    try {
+      axios.post(`${SUPABASE_URL}/rest/v1/system_logs`, {
+        nivel: level,
+        modulo: 'WHATSAPP',
+        accion: accion,
+        mensaje: message,
+        detalles: detalles || {},
+        created_at: new Date().toISOString()
+      }, {
+        headers: {
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 4000
+      }).catch(() => {})
+    } catch (e) {}
+  }
+}
+
+// Guardado de respaldo directo en Supabase ante caídas o desincronizaciones de FastAPI
+async function directSaveIncomingMessageToSupabase(payload) {
+  if (!SUPABASE_KEY || !payload) return
+  try {
+    const cleanPhone = normalizePhone(payload.phone)
+    if (!cleanPhone) return
+
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    }
+
+    // 1. Buscar o crear paciente
+    let pacienteId = null
+    const pacRes = await axios.get(`${SUPABASE_URL}/rest/v1/pacientes?telefono=eq.${cleanPhone}&select=id`, { headers, timeout: 4000 })
+    if (pacRes.data && pacRes.data.length > 0) {
+      pacienteId = pacRes.data[0].id
+    } else {
+      const newPac = await axios.post(`${SUPABASE_URL}/rest/v1/pacientes`, {
+        telefono: cleanPhone,
+        nombre: payload.name && payload.name !== 'Paciente' ? payload.name : `Paciente ${cleanPhone.slice(-4)}`
+      }, { headers: { ...headers, 'Prefer': 'return=representation' }, timeout: 4000 })
+      if (newPac.data && newPac.data.length > 0) {
+        pacienteId = newPac.data[0].id
+      }
+    }
+
+    if (!pacienteId) return
+
+    // 2. Buscar o crear conversación
+    let convId = null
+    const convRes = await axios.get(`${SUPABASE_URL}/rest/v1/conversaciones?paciente_id=eq.${pacienteId}&select=id`, { headers, timeout: 4000 })
+    if (convRes.data && convRes.data.length > 0) {
+      convId = convRes.data[0].id
+    } else {
+      const newConv = await axios.post(`${SUPABASE_URL}/rest/v1/conversaciones`, {
+        paciente_id: pacienteId,
+        bot_disabled: false
+      }, { headers: { ...headers, 'Prefer': 'return=representation' }, timeout: 4000 })
+      if (newConv.data && newConv.data.length > 0) {
+        convId = newConv.data[0].id
+      }
+    }
+
+    if (!convId) return
+
+    // 3. Insertar mensaje en Supabase con deduplicación
+    const meta = {
+      whatsapp_message_id: payload.message_id
+    }
+    if (payload.media) Object.assign(meta, payload.media)
+
+    const createdAt = payload.timestamp ? new Date(payload.timestamp * 1000).toISOString() : new Date().toISOString()
+    const content = payload.text || (payload.media ? `[${(payload.media.tipo || 'DOCUMENTO').toUpperCase()}]` : 'Mensaje')
+
+    await axios.post(`${SUPABASE_URL}/rest/v1/mensajes`, {
+      conversacion_id: convId,
+      emisor: 'paciente',
+      contenido: content,
+      metadata_json: meta,
+      created_at: createdAt
+    }, { headers, timeout: 4000 })
+
+    await axios.patch(`${SUPABASE_URL}/rest/v1/conversaciones?id=eq.${convId}`, {
+      ultimo_mensaje: content,
+      updated_at: createdAt
+    }, { headers, timeout: 4000 })
+
+    addLog('INFO', `✔ Mensaje de +${cleanPhone} registrado directamente en Supabase (Respaldo Seguro)`, 'MENSAJE_GUARDADO_DIRECTO')
+  } catch (err) {
+    addLog('ERROR', `Error en guardado directo de Supabase: ${err.message}`, 'ERROR_GUARDADO_DIRECTO')
+  }
 }
 
 // Normalización de números para Argentina (549) e Internacional
@@ -607,10 +702,9 @@ async function initBaileys(forceClean = false) {
           }
         }
 
-        addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`)
+        addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`, 'MENSAJE_ENTRANTE_RECIBIDO', { phone: senderPhone, text, message_type: messageType })
 
-        // Despachar al webhook dinámico de FastAPI con metadatos multimedia
-        axios.post(FASTAPI_WEBHOOK, {
+        const webhookPayload = {
           message_id: msg.key.id,
           from_me: fromMe,
           phone: senderPhone,
@@ -621,12 +715,32 @@ async function initBaileys(forceClean = false) {
           media: mediaInfo,
           timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000),
           raw_message: msg
-        }).catch(err => {
-          addLog('WARNING', `Webhook FastAPI no disponible (${FASTAPI_WEBHOOK}): ${err.message}`)
-        })
+        }
+
+        // Intento 1: Despachar a FASTAPI_WEBHOOK
+        let webhookSuccess = false
+        try {
+          await axios.post(FASTAPI_WEBHOOK, webhookPayload, { timeout: 6000 })
+          webhookSuccess = true
+        } catch (err1) {
+          // Intento 2: Probar puerto alternativo (8000 si FASTAPI_PORT era dinámico, o viceversa)
+          const altWebhook = `http://127.0.0.1:8000/api/whatsapp/webhook/incoming`
+          if (FASTAPI_WEBHOOK !== altWebhook) {
+            try {
+              await axios.post(altWebhook, webhookPayload, { timeout: 4000 })
+              webhookSuccess = true
+            } catch (err2) {}
+          }
+        }
+
+        // Si ambos endpoints locales fallaron, guardar directamente en Supabase para no perder el mensaje
+        if (!webhookSuccess && !fromMe && senderPhone && SUPABASE_KEY) {
+          addLog('WARNING', `Webhook FastAPI no disponible. Ejecutando guardado directo en Supabase para +${senderPhone}...`, 'WEBHOOK_FALLBACK_SUPABASE')
+          await directSaveIncomingMessageToSupabase(webhookPayload)
+        }
 
       } catch (msgErr) {
-        addLog('ERROR', `Error procesando mensaje entrante: ${msgErr.message}`)
+        addLog('ERROR', `Error procesando mensaje entrante: ${msgErr.message}`, 'ERROR_PROCESANDO_MENSAJE')
       }
     }
 
