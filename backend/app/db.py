@@ -301,7 +301,8 @@ def guardar_mensaje(
     metadata_json: Optional[dict] = None,
     remitente: Optional[str] = None,
     texto: Optional[str] = None,
-    whatsapp_message_id: Optional[str] = None
+    whatsapp_message_id: Optional[str] = None,
+    created_at: Optional[str] = None
 ):
     if not supabase:
         return None
@@ -325,6 +326,9 @@ def guardar_mensaje(
             "contenido": final_contenido,
             "metadata_json": meta
         }
+        if created_at:
+            data["created_at"] = created_at
+
         # Insertar mensaje en Supabase
         response = supabase.table("mensajes").insert(data).execute()
         

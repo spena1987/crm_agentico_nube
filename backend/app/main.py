@@ -397,15 +397,21 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
         if payload.media and isinstance(payload.media, dict):
             meta.update(payload.media)
 
-        caption_texto = payload.media.get("caption") if (payload.media and isinstance(payload.media, dict)) else None
-        tipo_label = payload.media.get("tipo", payload.message_type) if (payload.media and isinstance(payload.media, dict)) else payload.message_type
-        contenido_final = texto or caption_texto or f"[{tipo_label.upper()}]"
+        # Calcular timestamp original del mensaje de WhatsApp
+        created_at_iso = None
+        if payload.timestamp and payload.timestamp > 0:
+            try:
+                import datetime
+                created_at_iso = datetime.datetime.fromtimestamp(payload.timestamp, tz=datetime.timezone.utc).isoformat()
+            except Exception:
+                pass
 
         guardar_mensaje(
             conversacion_id=conversacion_id,
             emisor="paciente",
             contenido=contenido_final,
-            metadata_json=meta
+            metadata_json=meta,
+            created_at=created_at_iso
         )
 
         # 4. Procesar agente IA si el bot no está desactivado para esta conversación

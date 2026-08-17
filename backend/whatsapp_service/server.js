@@ -379,7 +379,8 @@ async function initBaileys(forceClean = false) {
       retryRequestDelayMs: 250,
       maxRetries: 5,
       generateHighQualityLinkPreview: true,
-      syncFullHistory: false,
+      syncFullHistory: true,
+      shouldSyncHistoryMessage: (msg) => true,
       markOnlineOnConnect: true,
       getMessage: async (key) => {
         if (key?.id && msgStore.has(key.id)) {
@@ -632,13 +633,28 @@ async function initBaileys(forceClean = false) {
     })
 
     // 2. Recuperación de historial y mensajes pendientes al reconectar tras cortes
-    sock.ev.on('messaging-history.set', async ({ messages }) => {
-      if (!Array.isArray(messages)) return
-      addLog('INFO', `Sincronizando lote de ${messages.length} mensajes históricos/offline recibidos tras reconexión...`)
-      for (const msg of messages) {
-        await processIncomingMessage(msg)
+    sock.ev.on('messaging-history.set', async ({ chats, messages }) => {
+      const allMsgs = []
+      if (Array.isArray(messages)) allMsgs.push(...messages)
+      if (Array.isArray(chats)) {
+        for (const c of chats) {
+          if (Array.isArray(c?.messages)) allMsgs.push(...c.messages)
+        }
+      }
+      if (allMsgs.length > 0) {
+        addLog('INFO', `Sincronizando lote de ${allMsgs.length} mensajes históricos/offline recibidos tras reconexión...`)
+        for (const msg of allMsgs) {
+          await processIncomingMessage(msg)
+        }
       }
     })
+
+  } catch (error) {
+    connectionStatus = 'ERROR'
+    addLog('ERROR', `Error al inicializar Baileys: ${error.message}`)
+  } finally {
+    isInitializing = false
+  }
 
   } catch (error) {
     connectionStatus = 'ERROR'
