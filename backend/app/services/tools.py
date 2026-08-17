@@ -1,7 +1,13 @@
 import logging
 from typing import Any, Optional, List, Dict
 from datetime import datetime, timedelta
-from app.db import supabase, actualizar_bot_disabled, guardar_mensaje
+from app.db import (
+    supabase, 
+    actualizar_bot_disabled, 
+    guardar_mensaje,
+    cambiar_estado_presupuesto,
+    get_presupuestos_by_paciente
+)
 from app.services.pdf_service import generar_pdf_presupuesto
 
 logger = logging.getLogger(__name__)
@@ -242,3 +248,99 @@ def escalar_a_operador_humano(conversacion_id: str, motivo: str) -> dict:
     except Exception as e:
         logger.error(f"Error al escalar a humano: {e}")
         return {"error": f"Error al procesar escalado: {str(e)}"}
+
+def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optional[str] = None, notas: Optional[str] = None) -> dict:
+    """
+    Aprueba formalmente un presupuesto médico cuando el paciente manifiesta su conformidad o aceptación.
+    Actualiza el estado a 'aprobado' en el CRM y confirma el caso quirúrgico si aplica.
+    
+    Args:
+        presupuesto_id: ID del presupuesto a aprobar (opcional si el paciente ya tiene un presupuesto emitido).
+        paciente_id: ID del paciente en atención.
+        notas: Comentarios adicionales sobre la aceptación del paciente.
+        
+    Returns:
+        Confirmación del estado de aprobación del presupuesto.
+    """
+    logger.info(f"Herramienta: aprobar_presupuesto para paciente {paciente_id}, presupuesto: {presupuesto_id}")
+    if not supabase:
+        return {"error": "Servicio de base de datos no disponible"}
+
+    target_id = presupuesto_id if (presupuesto_id and is_valid_uuid(presupuesto_id)) else None
+    real_paciente_id = paciente_id if (paciente_id and is_valid_uuid(paciente_id)) else None
+
+    # Si el paciente_id no era UUID (ej. DNI o teléfono), resolverlo
+    if not real_paciente_id and paciente_id and str(paciente_id).strip():
+        val = str(paciente_id).strip()
+        try:
+            p_find = supabase.table("pacientes").select("id").or_(f"dni.eq.{val},telefono.eq.{val}").limit(1).execute()
+            if p_find.data:
+                real_paciente_id = p_find.data[0]["id"]
+        except Exception as pf_err:
+            logger.warning(f"Error buscando paciente por DNI {val}: {pf_err}")
+
+    # Si no se pasó un ID exacto, buscar el presupuesto más reciente pendiente o enviado del paciente
+    if not target_id and real_paciente_id:
+        try:
+            pendientes = supabase.table("presupuestos") \
+                .select("id, total, estado") \
+                .eq("paciente_id", real_paciente_id) \
+                .in_("estado", ["enviado", "borrador"]) \
+                .order("created_at", desc=True) \
+                .limit(1) \
+                .execute()
+            if pendientes.data:
+                target_id = pendientes.data[0]["id"]
+        except Exception as q_err:
+            logger.warning(f"Error buscando presupuesto pendiente: {q_err}")
+
+    if not target_id:
+        return {
+            "error": "No se encontró ningún presupuesto pendiente de aprobación para este paciente. Por favor consulta con la secretaría o solicita una nueva cotización."
+        }
+
+    try:
+        updated = cambiar_estado_presupuesto(target_id, "aprobado")
+        total = updated.get("total", 0.0)
+        return {
+            "success": True,
+            "presupuesto_id": target_id,
+            "estado": "aprobado",
+            "total": float(total),
+            "mensaje": f"Presupuesto #{target_id[:8]} por un total de ${float(total):,.2f} aprobado y confirmado exitosamente en el sistema."
+        }
+    except Exception as e:
+        logger.error(f"Error al aprobar presupuesto {target_id}: {e}")
+        return {"error": f"No se pudo completar la aprobación del presupuesto: {str(e)}"}
+
+def consultar_presupuestos_paciente(paciente_id: Optional[str] = None) -> dict:
+    """
+    Consulta los presupuestos médicos emitidos al paciente en el sistema.
+    
+    Args:
+        paciente_id: ID del paciente a consultar.
+        
+    Returns:
+        Lista de presupuestos con sus montos, fechas, estados e ítems.
+    """
+    logger.info(f"Herramienta: consultar_presupuestos_paciente para paciente {paciente_id}")
+    if not paciente_id or not is_valid_uuid(paciente_id):
+        return {"presupuestos": [], "mensaje": "No se especificó un paciente válido."}
+
+    try:
+        presupuestos = get_presupuestos_by_paciente(paciente_id)
+        resumen = []
+        for p in presupuestos:
+            resumen.append({
+                "id": p.get("id"),
+                "estado": p.get("estado"),
+                "total": float(p.get("total") or 0.0),
+                "fecha": p.get("created_at"),
+                "pdf_url": p.get("pdf_url"),
+                "items_count": len(p.get("items_presupuesto") or [])
+            })
+        return {"presupuestos": resumen, "total_encontrados": len(resumen)}
+    except Exception as e:
+        logger.error(f"Error al consultar presupuestos: {e}")
+        return {"error": str(e)}
+

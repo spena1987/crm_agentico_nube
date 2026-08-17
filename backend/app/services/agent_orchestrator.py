@@ -3,7 +3,13 @@ import re
 import logging
 from typing import Optional, Dict, List, Any
 from app.db import supabase
-from app.services.tools import buscar_disponibilidad_turnos, crear_borrador_presupuesto, escalar_a_operador_humano
+from app.services.tools import (
+    buscar_disponibilidad_turnos, 
+    crear_borrador_presupuesto, 
+    escalar_a_operador_humano,
+    aprobar_presupuesto,
+    consultar_presupuestos_paciente
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +42,9 @@ def formatear_texto_whatsapp(texto: str) -> str:
 AVAILABLE_TOOLS_MAP = {
     "buscar_disponibilidad_turnos": buscar_disponibilidad_turnos,
     "crear_borrador_presupuesto": crear_borrador_presupuesto,
-    "escalar_a_operador_humano": escalar_a_operador_humano
+    "escalar_a_operador_humano": escalar_a_operador_humano,
+    "aprobar_presupuesto": aprobar_presupuesto,
+    "consultar_presupuestos_paciente": consultar_presupuestos_paciente
 }
 
 # Fallbacks predeterminados en memoria por si Supabase no responde
@@ -62,8 +70,8 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Asistente Administrativo General",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa. Si el paciente confirma un presupuesto emitido, apruébalo directamente.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
@@ -78,16 +86,16 @@ DEFAULT_AGENTS = {
         "codigo": "QUIRURGICO_EMPATICO",
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
-        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Su estado emocional suele requerir contención y serenidad. Trátalo con máxima calidez humana, empatía y paciencia. Utiliza frases de acompañamiento ('Entendemos tu consulta', 'Estamos para acompañarte en cada paso'). Explica los requisitos y consultas administrativas con calma y claridad.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "escalar_a_operador_humano"],
+        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Su estado emocional suele requerir contención y serenidad. Trátalo con máxima calidez humana, empatía y paciencia. Utiliza frases de acompañamiento ('Entendemos tu consulta', 'Estamos para acompañarte en cada paso'). Explica los requisitos y consultas administrativas con calma y claridad. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {
         "codigo": "PRESUPUESTOS_COMERCIAL",
         "nombre": "Cotizaciones y Planes de Tratamiento",
         "temperatura": 0.2,
-        "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías. Explica con claridad el desglose de los servicios solicitados, utiliza la herramienta crear_borrador_presupuesto para generar la cotización formal y menciona los medios de pago disponibles y vigencia del presupuesto.",
-        "herramientas_habilitadas": ["crear_borrador_presupuesto", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías, o desea confirmar su presupuesto. Si solicita cotización, explica el desglose y usa crear_borrador_presupuesto. Si manifiesta que acepta o aprueba el presupuesto, usa aprobar_presupuesto de inmediato sin volver a pedir DNI.",
+        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "escalar_a_operador_humano"],
         "activo": True
     },
     "POST_OPERATORIO": {
@@ -201,7 +209,7 @@ class AgentOrchestrator:
         # 2. Chequear etapa clínica del paciente
         if supabase and paciente_id:
             try:
-                p_resp = supabase.table("pacientes").select("etapa_clinica, nombre, apellido").eq("id", paciente_id).execute()
+                p_resp = supabase.table("pacientes").select("etapa_clinica, nombre").eq("id", paciente_id).execute()
                 if p_resp.data and len(p_resp.data) > 0:
                     etapa = (p_resp.data[0].get("etapa_clinica") or "").upper()
                     if etapa in ["PRE_QUIRURGICO", "QUIRURGICO", "CIRUGIA"] and "QUIRURGICO_EMPATICO" in agents:
@@ -281,17 +289,64 @@ class AgentOrchestrator:
         ]
 
         if paciente_info:
-            p_nom = paciente_info.get("nombre", "")
-            p_ape = paciente_info.get("apellido", "")
-            p_dni = paciente_info.get("dni", "")
-            p_etapa = paciente_info.get("etapa_clinica", "")
-            p_med = paciente_info.get("medico_cabecera", "")
+            p_data = paciente_info.get("paciente") or paciente_info
+            p_nom = p_data.get("nombre", "")
+            p_ape = p_data.get("apellido", "")
+            p_dni = p_data.get("dni", "")
+            p_tel = p_data.get("telefono", "")
+            p_os = p_data.get("obra_social", "")
+            p_plan = p_data.get("plan_cobertura", "")
+            p_etapa = p_data.get("etapa_clinica", "")
+            p_med = p_data.get("medico_cabecera_nombre") or p_data.get("medico_cabecera", "")
+            
+            p_nombre_completo = f"{p_nom} {p_ape}".strip() or "Paciente"
+            
             prompt_parts.extend([
                 "",
-                "=== CONTEXTO DEL PACIENTE EN ATENCIÓN ===",
-                f"- Paciente: {p_nom} {p_ape} (DNI: {p_dni})" if p_nom or p_dni else "",
-                f"- Etapa actual en la clínica: {p_etapa}" if p_etapa else "",
-                f"- Médico asignado: {p_med}" if p_med else ""
+                "=== CONTEXTO INTEGRAL DEL PACIENTE EN ATENCIÓN (YA IDENTIFICADO) ===",
+                f"- Paciente: {p_nombre_completo}",
+                f"- DNI: {p_dni}" if p_dni else "- DNI: No registrado",
+                f"- Teléfono: {p_tel}" if p_tel else "",
+                f"- Cobertura Médica: {p_os} {('(' + p_plan + ')') if p_plan else ''}".strip() if p_os else "- Cobertura: Particular",
+                f"- Etapa clínica en el CRM: {p_etapa}" if p_etapa else "",
+                f"- Médico tratante: {p_med}" if p_med else ""
+            ])
+
+            # Presupuestos activos / vigentes
+            presupuestos = paciente_info.get("presupuestos") or []
+            if presupuestos:
+                prompt_parts.append("\n=== HISTORIAL DE PRESUPUESTOS EMITIDOS AL PACIENTE ===")
+                for p in presupuestos:
+                    p_id = p.get("id", "")
+                    p_est = (p.get("estado") or "borrador").upper()
+                    p_tot = float(p.get("total") or 0.0)
+                    p_fec = (p.get("created_at") or "")[:10]
+                    # Resumen de items
+                    items_txt = []
+                    for it in (p.get("items_presupuesto") or []):
+                        serv = it.get("servicios_precios") or {}
+                        n_prest = serv.get("nombre_prestacion") or f"Item #{it.get('servicio_id')}"
+                        items_txt.append(f"{n_prest} (x{it.get('cantidad', 1)})")
+                    det_items = f" | Prácticas: {', '.join(items_txt)}" if items_txt else ""
+                    prompt_parts.append(f"* Presupuesto #{p_id[:8]} ({p_id}): Total ${p_tot:,.2f} | Estado: {p_est} | Fecha: {p_fec}{det_items}")
+
+            # Asesorías quirúrgicas activas
+            asesorias = paciente_info.get("asesorias") or []
+            if asesorias:
+                prompt_parts.append("\n=== ASESORÍAS Y CIRUGÍAS PROGRAMADAS ===")
+                for a in asesorias:
+                    a_est = (a.get("estado") or "").upper()
+                    a_prac = a.get("practica_nombre") or a.get("practica_codigo") or "Procedimiento"
+                    a_cir = a.get("medico_cirujano_nombre") or "Cirujano asignado"
+                    a_fec = a.get("fecha_probable_cirugia") or "A coordinar"
+                    prompt_parts.append(f"* Caso Quirúrgico: {a_prac} | Cirujano: {a_cir} | Estado: {a_est} | Fecha tentativa: {a_fec}")
+
+            prompt_parts.extend([
+                "",
+                "=== REGLAS CRÍTICAS DE CONTEXTO E INTEGRALIDAD ===",
+                "1. PACIENTE YA IDENTIFICADO: La ficha anterior pertenece al paciente con quien estás hablando. NUNCA le pidas su DNI, nombre o teléfono si ya figuran arriba. Reconócelo y salúdalo amablemente por su nombre (ej: 'Hola Sebastián...').",
+                "2. APROBACIÓN DE PRESUPUESTOS: Si el paciente dice que aprueba, acepta o confirma su presupuesto (o responde 'confirmo', 'acepto', 'apruebo'), NO le pidas su DNI ni confirmación redundante. Utiliza de inmediato la herramienta 'aprobar_presupuesto' para pasar su presupuesto a estado 'aprobado' y felicítalo/infórmale con calidez que su presupuesto ha quedado aprobado y confirmado en el sistema, indicando el total y que la secretaría/equipo médico se contactará para coordinar los turnos o fecha quirúrgica.",
+                "3. CONSULTA DE VALORES: Si el paciente consulta por presupuestos previos, cotizaciones o su saldo, utiliza los datos de su contexto o invoca 'consultar_presupuestos_paciente'."
             ])
 
         prompt_parts.append("\nResponde siempre respetando el formato de WhatsApp (*negrita* con 1 solo asterisco), conciso y utilizando las herramientas cuando sea oportuno.")

@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-from app.db import supabase, guardar_mensaje
+from app.db import supabase, guardar_mensaje, get_paciente_contexto_360
 from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP, formatear_texto_whatsapp
 from app.services.logger_service import log_event
 
@@ -54,11 +54,9 @@ def procesar_mensaje_agente(
     try:
         # 1. Recuperar contexto del paciente si está disponible
         paciente_info = None
-        if supabase and paciente_id:
+        if paciente_id:
             try:
-                p_resp = supabase.table("pacientes").select("id, nombre, apellido, dni, etapa_clinica, medico_cabecera").eq("id", paciente_id).execute()
-                if p_resp.data and len(p_resp.data) > 0:
-                    paciente_info = p_resp.data[0]
+                paciente_info = get_paciente_contexto_360(paciente_id)
             except Exception as pe:
                 logger.warning(f"No se pudo cargar ficha del paciente {paciente_id}: {pe}")
 
@@ -186,7 +184,7 @@ def procesar_mensaje_agente(
                 
                 if func_name in AVAILABLE_TOOLS_MAP:
                     try:
-                        if func_name == "crear_borrador_presupuesto" and paciente_id:
+                        if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente"] and paciente_id:
                             func_args["paciente_id"] = paciente_id
                         if func_name == "escalar_a_operador_humano" and conversacion_id:
                             func_args["conversacion_id"] = conversacion_id

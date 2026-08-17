@@ -1110,13 +1110,16 @@ def cambiar_estado_presupuesto(presupuesto_id: str, nuevo_estado: str, asesoria_
         resp = supabase.table("presupuestos") \
             .update({"estado": nuevo_estado}) \
             .eq("id", presupuesto_id) \
-            .select() \
             .execute()
             
         if not resp.data:
-            raise Exception(f"No se encontró el presupuesto {presupuesto_id}.")
-            
-        presupuesto = resp.data[0]
+            # Si resp.data viene vacío, obtener el registro directamente
+            fetch_resp = supabase.table("presupuestos").select("*").eq("id", presupuesto_id).execute()
+            if not fetch_resp.data:
+                raise Exception(f"No se encontró el presupuesto {presupuesto_id}.")
+            presupuesto = fetch_resp.data[0]
+        else:
+            presupuesto = resp.data[0]
         
         # Si se aprueba o rechaza, y está vinculado a una asesoría, sincronizar
         target_asesoria_id = asesoria_id or presupuesto.get("asesoria_id")
@@ -1329,5 +1332,54 @@ def eliminar_evolucion_asesoria(evolucion_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error al eliminar evolución {evolucion_id}: {e}")
         raise
+
+def get_paciente_contexto_360(paciente_id: str) -> Dict[str, Any]:
+    """
+    Recupera la visión integral 360° del paciente para el contexto del agente de IA:
+    - Ficha de filiación (nombre, apellido, DNI, teléfono, obra social, plan, etapa clínica, médico cabecera)
+    - Presupuestos recientes emitidos y su estado (borrador, enviado, aprobado, rechazado)
+    - Casos de asesoría quirúrgica y cirugías pendientes
+    """
+    if not supabase or not paciente_id:
+        return {}
+    try:
+        # 1. Ficha del paciente
+        p_resp = supabase.table("pacientes") \
+            .select("id, nombre, dni, telefono, email, obra_social, plan_cobertura, etapa_clinica, medico_cabecera, medico_cabecera_nombre, historial_notas") \
+            .eq("id", paciente_id) \
+            .limit(1) \
+            .execute()
+            
+        if not p_resp.data:
+            return {}
+            
+        paciente = p_resp.data[0]
+        
+        # 2. Presupuestos emitidos recientes (con detalle de ítems)
+        presupuestos = get_presupuestos_by_paciente(paciente_id)
+        
+        # 3. Asesorías quirúrgicas activas
+        asesorias = []
+        try:
+            a_resp = supabase.table("asesorias_quirurgicas") \
+                .select("id, estado, practica_codigo, practica_nombre, medico_cirujano_nombre, monto_extra, moneda_extra, fecha_probable_cirugia, situacion_paciente, presupuesto_id") \
+                .eq("paciente_id", paciente_id) \
+                .order("created_at", desc=True) \
+                .limit(3) \
+                .execute()
+            if a_resp.data:
+                asesorias = a_resp.data
+        except Exception as ae:
+            logger.warning(f"Error consultando asesorias de paciente {paciente_id}: {ae}")
+
+        return {
+            "paciente": paciente,
+            "presupuestos": presupuestos[:4],
+            "asesorias": asesorias
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener contexto 360 del paciente {paciente_id}: {e}")
+        return {}
+
 
 
