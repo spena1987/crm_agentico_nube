@@ -26,7 +26,10 @@ import {
   Check,
   Building2,
   Activity,
-  Phone
+  Phone,
+  RotateCcw,
+  CalendarDays,
+  X
 } from 'lucide-react'
 import Link from 'next/link'
 import { BACKEND_URL } from '@/lib/api'
@@ -129,6 +132,12 @@ export default function PipelineQuirurgicoPage() {
   const [filtroTexto, setFiltroTexto] = useState('')
   const [filtroCirujano, setFiltroCirujano] = useState<string>('todos')
   const [filtroObraSocial, setFiltroObraSocial] = useState<string>('todos')
+  const [filtroPractica, setFiltroPractica] = useState<string>('todas')
+  const [filtroFechaTipo, setFiltroFechaTipo] = useState<
+    'todas' | 'vencidas' | '7dias' | '30dias' | 'sin_fecha' | 'personalizado'
+  >('todas')
+  const [fechaDesde, setFechaDesde] = useState<string>('')
+  const [fechaHasta, setFechaHasta] = useState<string>('')
   const [soloAlertas, setSoloAlertas] = useState(false)
 
   // Feedback y estados de acción
@@ -175,12 +184,13 @@ export default function PipelineQuirurgicoPage() {
     }, 3500)
   }
 
-  // Lista única de cirujanos y obras sociales para los filtros
-  const { listaCirujanos, listaObrasSociales } = useMemo(() => {
+  // Lista única de cirujanos, obras sociales y prácticas vigentes para los filtros
+  const { listaCirujanos, listaObrasSociales, listaPracticas } = useMemo(() => {
     const cirujanosSet = new Set<string>()
     const obrasSet = new Set<string>()
+    const practicasMap = new Map<string, number>()
 
-    Object.values(etapas).forEach((lista) => {
+    Object.entries(etapas).forEach(([etapaKey, lista]) => {
       lista.forEach((c) => {
         if (c.medico_cirujano_nombre?.trim()) {
           cirujanosSet.add(c.medico_cirujano_nombre.trim())
@@ -189,14 +199,43 @@ export default function PipelineQuirurgicoPage() {
         if (os?.trim()) {
           obrasSet.add(os.trim())
         }
+        if (c.practica_nombre?.trim()) {
+          const pr = c.practica_nombre.trim()
+          practicasMap.set(pr, (practicasMap.get(pr) || 0) + 1)
+        }
       })
     })
 
     return {
       listaCirujanos: Array.from(cirujanosSet).sort(),
-      listaObrasSociales: Array.from(obrasSet).sort()
+      listaObrasSociales: Array.from(obrasSet).sort(),
+      listaPracticas: Array.from(practicasMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([nombre, count]) => ({ nombre, count }))
     }
   }, [etapas])
+
+  // Indicador si hay algún filtro activo y función para restablecer
+  const hayFiltrosActivos =
+    filtroTexto !== '' ||
+    filtroCirujano !== 'todos' ||
+    filtroObraSocial !== 'todos' ||
+    filtroPractica !== 'todas' ||
+    filtroFechaTipo !== 'todas' ||
+    soloAlertas ||
+    fechaDesde !== '' ||
+    fechaHasta !== ''
+
+  const handleLimpiarFiltros = () => {
+    setFiltroTexto('')
+    setFiltroCirujano('todos')
+    setFiltroObraSocial('todos')
+    setFiltroPractica('todas')
+    setFiltroFechaTipo('todas')
+    setFechaDesde('')
+    setFechaHasta('')
+    setSoloAlertas(false)
+  }
 
   // Cambiar etapa directamente desde el Kanban o abrir modal de cierre si es operado/cancelado
   const handleSeleccionarEtapa = async (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => {
@@ -274,7 +313,49 @@ export default function PipelineQuirurgicoPage() {
       filtroObraSocial === 'todos' ||
       os.trim().toLowerCase() === filtroObraSocial.toLowerCase()
 
-    return matchTexto && matchCirujano && matchObraSocial
+    const matchPractica =
+      filtroPractica === 'todas' ||
+      (caso.practica_nombre || '').trim().toLowerCase() === filtroPractica.toLowerCase()
+
+    // Lógica de fechas (fecha_definitiva_cirugia o fecha_probable_cirugia)
+    let matchFecha = true
+    const fechaCirugia = caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia
+
+    if (filtroFechaTipo !== 'todas') {
+      const hoy = new Date()
+      const hoyStr = hoy.toISOString().slice(0, 10) // YYYY-MM-DD
+
+      if (filtroFechaTipo === 'sin_fecha') {
+        matchFecha = !fechaCirugia
+      } else if (!fechaCirugia) {
+        matchFecha = false
+      } else {
+        const fechaCasoStr = fechaCirugia.slice(0, 10)
+
+        if (filtroFechaTipo === 'vencidas') {
+          matchFecha = fechaCasoStr < hoyStr
+        } else if (filtroFechaTipo === '7dias') {
+          const d7 = new Date(hoy)
+          d7.setDate(d7.getDate() + 7)
+          const d7Str = d7.toISOString().slice(0, 10)
+          matchFecha = fechaCasoStr >= hoyStr && fechaCasoStr <= d7Str
+        } else if (filtroFechaTipo === '30dias') {
+          const d30 = new Date(hoy)
+          d30.setDate(d30.getDate() + 30)
+          const d30Str = d30.toISOString().slice(0, 10)
+          matchFecha = fechaCasoStr >= hoyStr && fechaCasoStr <= d30Str
+        } else if (filtroFechaTipo === 'personalizado') {
+          if (fechaDesde && fechaCasoStr < fechaDesde) {
+            matchFecha = false
+          }
+          if (fechaHasta && fechaCasoStr > fechaHasta) {
+            matchFecha = false
+          }
+        }
+      }
+    }
+
+    return matchTexto && matchCirujano && matchObraSocial && matchPractica && matchFecha
   }
 
   // Casos activos filtrados por columna
@@ -291,7 +372,17 @@ export default function PipelineQuirurgicoPage() {
     })
 
     return res
-  }, [etapas, filtroTexto, filtroCirujano, filtroObraSocial, soloAlertas])
+  }, [
+    etapas,
+    filtroTexto,
+    filtroCirujano,
+    filtroObraSocial,
+    filtroPractica,
+    filtroFechaTipo,
+    fechaDesde,
+    fechaHasta,
+    soloAlertas
+  ])
 
   // Casos cerrados (Operados y Cancelados)
   const casosCerradosFiltrados = useMemo(() => {
@@ -309,7 +400,17 @@ export default function PipelineQuirurgicoPage() {
     }
 
     return lista.filter((caso) => matchFiltrosGenerales(caso, q))
-  }, [etapas, filtroTexto, filtroCirujano, filtroObraSocial, subfiltroCerrados])
+  }, [
+    etapas,
+    filtroTexto,
+    filtroCirujano,
+    filtroObraSocial,
+    filtroPractica,
+    filtroFechaTipo,
+    fechaDesde,
+    fechaHasta,
+    subfiltroCerrados
+  ])
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 space-y-6 min-w-0 pb-16 animate-fade-in">
@@ -553,10 +654,10 @@ export default function PipelineQuirurgicoPage() {
       {/* 4. BARRA DE HERRAMIENTAS Y FILTROS AVANZADOS */}
       {/* ==================================================================== */}
       <div className="p-3.5 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center justify-between flex-wrap gap-2.5">
           
           {/* Buscador de Texto */}
-          <div className="relative flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
@@ -567,13 +668,31 @@ export default function PipelineQuirurgicoPage() {
             />
           </div>
 
+          {/* Filtro por Práctica / Cirugía */}
+          <div className="flex items-center gap-1.5 min-w-[170px] max-w-[220px]">
+            <Stethoscope size={13} className="text-blue-400 shrink-0" />
+            <select
+              value={filtroPractica}
+              onChange={(e) => setFiltroPractica(e.target.value)}
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
+              title="Filtrar por tipo de práctica quirúrgica"
+            >
+              <option value="todas">Todas las Prácticas ({listaPracticas.reduce((a, b) => a + b.count, 0)})</option>
+              {listaPracticas.map((p) => (
+                <option key={p.nombre} value={p.nombre}>
+                  {p.nombre} ({p.count})
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Filtro por Cirujano */}
-          <div className="flex items-center gap-1.5 min-w-[170px]">
-            <User size={13} className="text-gray-400 shrink-0" />
+          <div className="flex items-center gap-1.5 min-w-[160px] max-w-[200px]">
+            <User size={13} className="text-emerald-400 shrink-0" />
             <select
               value={filtroCirujano}
               onChange={(e) => setFiltroCirujano(e.target.value)}
-              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
             >
               <option value="todos">Todos los Cirujanos</option>
               {listaCirujanos.map((cir) => (
@@ -585,12 +704,12 @@ export default function PipelineQuirurgicoPage() {
           </div>
 
           {/* Filtro por Obra Social */}
-          <div className="flex items-center gap-1.5 min-w-[170px]">
-            <Building2 size={13} className="text-gray-400 shrink-0" />
+          <div className="flex items-center gap-1.5 min-w-[160px] max-w-[200px]">
+            <Building2 size={13} className="text-purple-400 shrink-0" />
             <select
               value={filtroObraSocial}
               onChange={(e) => setFiltroObraSocial(e.target.value)}
-              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
             >
               <option value="todos">Todas las Obras Sociales</option>
               {listaObrasSociales.map((os) => (
@@ -598,6 +717,24 @@ export default function PipelineQuirurgicoPage() {
                   {os}
                 </option>
               ))}
+            </select>
+          </div>
+
+          {/* Filtro por Fecha de Cirugía (Presets) */}
+          <div className="flex items-center gap-1.5 min-w-[170px]">
+            <Calendar size={13} className="text-amber-400 shrink-0" />
+            <select
+              value={filtroFechaTipo}
+              onChange={(e) => setFiltroFechaTipo(e.target.value as any)}
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+              title="Filtrar por fecha de cirugía"
+            >
+              <option value="todas">Todas las Fechas</option>
+              <option value="vencidas">⚠️ Vencidas (&lt; Hoy)</option>
+              <option value="7dias">⏱️ Próximos 7 días</option>
+              <option value="30dias">📅 Próximos 30 días</option>
+              <option value="sin_fecha">❓ Sin fecha asignada</option>
+              <option value="personalizado">🎯 Rango Personalizado...</option>
             </select>
           </div>
 
@@ -652,7 +789,61 @@ export default function PipelineQuirurgicoPage() {
             </div>
           )}
 
+          {/* Botón Limpiar Filtros */}
+          {hayFiltrosActivos && (
+            <button
+              type="button"
+              onClick={handleLimpiarFiltros}
+              className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0"
+              title="Restablecer todos los filtros"
+            >
+              <RotateCcw size={12} className="text-blue-400" />
+              Limpiar
+            </button>
+          )}
+
         </div>
+
+        {/* Fila 2: Selector de Rango de Fechas Personalizado */}
+        {filtroFechaTipo === 'personalizado' && (
+          <div className="pt-2 border-t border-[var(--border)]/60 flex items-center flex-wrap gap-3 text-xs animate-in fade-in slide-in-from-top-1">
+            <span className="font-bold text-gray-400 flex items-center gap-1.5">
+              <CalendarDays size={13} className="text-amber-400" />
+              Rango de Fecha de Cirugía:
+            </span>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-gray-400">Desde:</label>
+              <input
+                type="date"
+                value={fechaDesde}
+                onChange={(e) => setFechaDesde(e.target.value)}
+                className="bg-neutral-950 border border-[var(--border)] rounded-lg px-2.5 py-1 text-white text-xs focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-[11px] text-gray-400">Hasta:</label>
+              <input
+                type="date"
+                value={fechaHasta}
+                onChange={(e) => setFechaHasta(e.target.value)}
+                className="bg-neutral-950 border border-[var(--border)] rounded-lg px-2.5 py-1 text-white text-xs focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            {(fechaDesde || fechaHasta) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFechaDesde('')
+                  setFechaHasta('')
+                }}
+                className="text-[11px] text-gray-400 hover:text-red-300 underline transition-colors"
+              >
+                Borrar fechas
+              </button>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* ==================================================================== */}
