@@ -330,23 +330,11 @@ export default function ChatInbox() {
   useEffect(() => {
     if (!selectedConvId) return
     fetchMensajes(selectedConvId)
+    // Notificar a WhatsApp y marcar mensajes como leídos (doble tilde azul en el celular del paciente)
+    fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
 
-    const intervalMsgs = setInterval(async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/mensajes`, { cache: 'no-store' })
-        if (res.ok) {
-          const apiMsgs = await res.json()
-          if (Array.isArray(apiMsgs)) {
-            const uniqueMap = new Map<string, Mensaje>()
-            for (const m of apiMsgs) {
-              uniqueMap.set(m.id, m)
-            }
-            setMensajes(Array.from(uniqueMap.values()))
-            return
-          }
-        }
-      } catch (e) {}
-
+    const intervalMsgs = setInterval(() => {
+      if (!selectedConvId) return
       supabase
         .from('mensajes')
         .select('*')
@@ -361,7 +349,7 @@ export default function ChatInbox() {
             setMensajes(Array.from(uniqueMap.values()))
           }
         })
-    }, 2000)
+    }, 2500)
 
     return () => clearInterval(intervalMsgs)
   }, [selectedConvId])
@@ -383,6 +371,10 @@ export default function ChatInbox() {
               if (prev.some((m) => m.id === newMsg.id)) return prev
               return [...prev.filter((m) => !m.id.startsWith('temp_')), newMsg]
             })
+            // Si llega un mensaje nuevo mientras tenemos el chat abierto, marcarlo leído
+            if (newMsg.emisor === 'paciente') {
+              fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
+            }
           }
           setConversaciones((prevConvs) => 
             prevConvs.map((conv) => {
@@ -396,6 +388,18 @@ export default function ChatInbox() {
               return conv
             }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
           )
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'mensajes' },
+        (payload) => {
+          const updatedMsg = payload.new as Mensaje
+          if (updatedMsg.conversacion_id === selectedConvId) {
+            setMensajes((prev) =>
+              prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m))
+            )
+          }
         }
       )
       .on(
@@ -1219,7 +1223,7 @@ export default function ChatInbox() {
                         {/* Pie con Hora y Tildes */}
                         <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
                           <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          {isOperator && (
+                          {(isOperator || isBot) && (
                             <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
                           )}
                         </div>

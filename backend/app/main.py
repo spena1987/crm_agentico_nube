@@ -23,6 +23,7 @@ from app.db import (
     obtener_metricas_conversaciones,
     obtener_conversaciones,
     obtener_mensajes_conversacion,
+    marcar_mensajes_conversacion_leidos,
     is_lid_number,
     get_paciente_by_lid,
     get_paciente_by_nombre_aproximado,
@@ -473,6 +474,25 @@ def get_mensajes_conversacion_api(conversacion_id: str):
     Retorna todo el historial de mensajes de una conversación específica.
     """
     return obtener_mensajes_conversacion(conversacion_id)
+
+@app.post("/api/conversaciones/{conversacion_id}/leer")
+def marcar_conversacion_leida_api(conversacion_id: str):
+    """
+    Marca los mensajes entrantes del paciente como leídos por el operador
+    y emite el recibo de lectura (doble tilde azul) a WhatsApp.
+    """
+    try:
+        res = marcar_mensajes_conversacion_leidos(conversacion_id)
+        w_ids = res.get("whatsapp_message_ids", [])
+        telefono = res.get("telefono")
+
+        if telefono and w_ids:
+            whatsapp_manager.marcar_como_leido(telefono_o_jid=telefono, message_ids=w_ids)
+
+        return {"success": True, "mensajes_marcados": len(w_ids)}
+    except Exception as e:
+        logger.error(f"Error marcando conversación {conversacion_id} como leída: {e}")
+        return {"success": False, "error": str(e)}
 
 @app.post("/api/mensajes/{mensaje_id}/transcribir")
 def transcribir_mensaje_api(mensaje_id: str):

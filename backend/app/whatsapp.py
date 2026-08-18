@@ -248,7 +248,8 @@ class WhatsAppManager:
                             conversacion_id=conversacion_id,
                             emisor=emisor,
                             contenido=texto,
-                            whatsapp_message_id=msg_id
+                            whatsapp_message_id=msg_id,
+                            metadata_json={"delivery_status": "enviado"}
                         )
                     except Exception as db_err:
                         self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
@@ -260,6 +261,25 @@ class WhatsAppManager:
         except Exception as e:
             self.add_log("ERROR", f"Error de conexión al enviar mensaje: {e}")
             return {"error": str(e), "enviado_real": False}
+
+    def marcar_como_leido(self, telefono_o_jid: str, message_ids: Optional[List[str]] = None, remote_jid: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Envía confirmación de lectura a WhatsApp para activar el doble tilde azul en el teléfono del paciente.
+        """
+        telefono = normalize_phone_number(telefono_o_jid) if telefono_o_jid else ""
+        try:
+            payload = {
+                "phone": telefono,
+                "message_ids": message_ids or [],
+                "remote_jid": remote_jid
+            }
+            r = httpx.post(f"{self.service_url}/read-messages", json=payload, timeout=5.0)
+            if r.status_code == 200:
+                return r.json()
+            return {"success": False, "error": r.text}
+        except Exception as e:
+            logger.warning(f"Error marcando mensajes como leídos en WhatsApp: {e}")
+            return {"success": False, "error": str(e)}
 
     def enviar_multimedia(self, telefono: str, media_url: str, media_type: str = "document", caption: str = "", filename: str = "") -> Dict[str, Any]:
         """

@@ -475,6 +475,45 @@ def obtener_mensajes_conversacion(conversacion_id: str):
         logger.error(f"Error al obtener mensajes para conversación {conversacion_id}: {e}")
         return []
 
+def marcar_mensajes_conversacion_leidos(conversacion_id: str):
+    """
+    Retorna la lista de whatsapp_message_ids y teléfono del paciente de los mensajes entrantes no leídos,
+    y actualiza sus metadatos con leido_por_operador = True.
+    """
+    if not supabase:
+        return {"whatsapp_message_ids": [], "telefono": None}
+    try:
+        import datetime
+        conv_res = supabase.table("conversaciones").select("id, paciente_id, pacientes(telefono)").eq("id", conversacion_id).execute()
+        if not conv_res.data:
+            return {"whatsapp_message_ids": [], "telefono": None}
+        
+        conv = conv_res.data[0]
+        telefono = conv.get("pacientes", {}).get("telefono") if isinstance(conv.get("pacientes"), dict) else None
+
+        msg_res = supabase.table("mensajes").select("id, metadata_json").eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()
+        whatsapp_ids = []
+        for m in msg_res.data or []:
+            meta = m.get("metadata_json") or {}
+            if isinstance(meta, str):
+                import json
+                try:
+                    meta = json.loads(meta)
+                except Exception:
+                    meta = {}
+            
+            w_id = meta.get("whatsapp_message_id")
+            if w_id and not meta.get("leido_por_operador"):
+                whatsapp_ids.append(w_id)
+                meta["leido_por_operador"] = True
+                meta["leido_por_operador_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                supabase.table("mensajes").update({"metadata_json": meta}).eq("id", m["id"]).execute()
+
+        return {"whatsapp_message_ids": whatsapp_ids, "telefono": telefono}
+    except Exception as e:
+        logger.error(f"Error marcando mensajes como leídos en conversación {conversacion_id}: {e}")
+        return {"whatsapp_message_ids": [], "telefono": None}
+
 # ====================================================================
 # GESTIÓN DE CONFIGURACIÓN DE NOMENCLADOR Y ARANCELES
 # ====================================================================

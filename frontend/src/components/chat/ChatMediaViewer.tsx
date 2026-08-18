@@ -374,28 +374,28 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
   )
 }
 
-export function DeliveryStatusIcon({ status }: { status?: 'enviado' | 'entregado' | 'leido' }) {
-  if (!status) return null
+export function DeliveryStatusIcon({ status }: { status?: 'enviado' | 'entregado' | 'leido' | string }) {
+  const normStatus = (status || 'enviado').toLowerCase()
 
-  if (status === 'leido') {
+  if (normStatus === 'leido' || normStatus === 'read' || normStatus === 'played') {
     return (
-      <span title="Leído (doble tilde azul)" className="inline-flex items-center">
-        <CheckCheck size={13} className="text-cyan-300 shrink-0 ml-1" />
+      <span title="Leído por el paciente (doble tilde azul)" className="inline-flex items-center">
+        <CheckCheck size={14} className="text-cyan-400 font-bold shrink-0 ml-1 drop-shadow-[0_0_3px_rgba(34,211,238,0.5)]" />
       </span>
     )
   }
 
-  if (status === 'entregado') {
+  if (normStatus === 'entregado' || normStatus === 'delivered') {
     return (
-      <span title="Entregado (doble tilde gris)" className="inline-flex items-center">
-        <CheckCheck size={13} className="opacity-70 shrink-0 ml-1" />
+      <span title="Entregado al teléfono del paciente (doble tilde gris)" className="inline-flex items-center">
+        <CheckCheck size={14} className="text-slate-300 opacity-85 shrink-0 ml-1" />
       </span>
     )
   }
 
   return (
-    <span title="Enviado al servidor" className="inline-flex">
-      <Check size={13} className="opacity-70 shrink-0 ml-1" />
+    <span title="Enviado a los servidores de WhatsApp (1 tilde gris)" className="inline-flex items-center">
+      <Check size={14} className="text-slate-300 opacity-80 shrink-0 ml-1" />
     </span>
   )
 }

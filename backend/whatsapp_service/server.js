@@ -809,6 +809,54 @@ async function initBaileys(forceClean = false) {
       }
     })
 
+    // 3. Actualización de Estados de Entrega y Lectura (Tildes: enviado, recibido, leído)
+    sock.ev.on('messages.update', async (updates) => {
+      if (!Array.isArray(updates) || !SUPABASE_KEY) return
+      for (const { key, update } of updates) {
+        if (!key?.id || update?.status === undefined) continue
+        
+        let statusLabel = null
+        // 2: SERVER_ACK (1 tilde), 3: DELIVERY_ACK (2 tildes grises), 4: READ (2 tildes azules), 5: PLAYED (leído/escuchado)
+        if (update.status === 2) statusLabel = 'enviado'
+        else if (update.status === 3) statusLabel = 'entregado'
+        else if (update.status === 4 || update.status === 5) statusLabel = 'leido'
+
+        if (!statusLabel) continue
+
+        try {
+          const res = await axios.get(`${SUPABASE_URL}/rest/v1/mensajes?metadata_json->>whatsapp_message_id=eq.${key.id}&select=id,metadata_json`, {
+            headers: {
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            },
+            timeout: 4000
+          })
+
+          if (res.data && res.data.length > 0) {
+            const row = res.data[0]
+            const meta = (typeof row.metadata_json === 'object' && row.metadata_json !== null) ? row.metadata_json : {}
+            if (meta.delivery_status !== statusLabel) {
+              meta.delivery_status = statusLabel
+              meta.delivery_status_updated_at = new Date().toISOString()
+              
+              await axios.patch(`${SUPABASE_URL}/rest/v1/mensajes?id=eq.${row.id}`, {
+                metadata_json: meta
+              }, {
+                headers: {
+                  'apikey': SUPABASE_KEY,
+                  'Authorization': `Bearer ${SUPABASE_KEY}`,
+                  'Content-Type': 'application/json'
+                },
+                timeout: 4000
+              })
+            }
+          }
+        } catch (err) {
+          // Silencioso en errores de red puntuales
+        }
+      }
+    })
+
   } catch (error) {
     connectionStatus = 'ERROR'
     addLog('ERROR', `Error al inicializar Baileys: ${error.message}`)
@@ -945,6 +993,44 @@ app.post('/link-lid', (req, res) => {
   }
   saveLidMapping(lid, phone)
   res.json({ success: true, lid: String(lid).replace(/\D/g, ''), phone: normalizePhone(phone) })
+})
+
+// 4.1 Marcar Mensajes como Leídos en WhatsApp (Enviar doble tilde azul al paciente)
+app.post('/read-messages', async (req, res) => {
+  try {
+    const { phone, message_ids, remote_jid } = req.body
+    if (!sock || connectionStatus !== 'CONNECTED') {
+      return res.status(503).json({ error: 'WhatsApp no está conectado.', status: connectionStatus })
+    }
+
+    let targetJid = remote_jid
+    if (!targetJid && phone) {
+      targetJid = await getValidJid(phone)
+    }
+
+    if (!targetJid) {
+      return res.status(400).json({ error: 'phone o remote_jid requerido' })
+    }
+
+    let keys = []
+    if (Array.isArray(message_ids) && message_ids.length > 0) {
+      keys = message_ids.filter(Boolean).map(id => ({
+        remoteJid: targetJid,
+        id: String(id),
+        participant: undefined
+      }))
+    }
+
+    if (keys.length > 0) {
+      await sock.readMessages(keys)
+      addLog('INFO', `Confirmación de lectura (doble tilde azul) enviada a ${targetJid} para ${keys.length} mensajes`, 'RECIBO_LECTURA_ENVIADO')
+    }
+
+    res.json({ success: true, count: keys.length, jid: targetJid })
+  } catch (error) {
+    addLog('WARNING', `Error enviando recibo de lectura a WhatsApp: ${error.message}`)
+    res.status(500).json({ error: error.message })
+  }
 })
 
 // 5. Enviar Mensaje Multimedia (PDF, Imagen, Audio)
