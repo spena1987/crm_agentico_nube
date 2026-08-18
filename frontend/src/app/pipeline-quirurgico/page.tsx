@@ -140,6 +140,10 @@ export default function PipelineQuirurgicoPage() {
   const [fechaHasta, setFechaHasta] = useState<string>('')
   const [soloAlertas, setSoloAlertas] = useState(false)
 
+  // Estados de Drag & Drop
+  const [draggedCaso, setDraggedCaso] = useState<AsesoriaCasoPipeline | null>(null)
+  const [dragOverColumnaId, setDragOverColumnaId] = useState<string | null>(null)
+
   // Feedback y estados de acción
   const [actualizandoCasoId, setActualizandoCasoId] = useState<string | null>(null)
   const [notificacionExito, setNotificacionExito] = useState<string | null>(null)
@@ -182,6 +186,49 @@ export default function PipelineQuirurgicoPage() {
     setTimeout(() => {
       setNotificacionExito(null)
     }, 3500)
+  }
+
+  // Mover etapa vía Drag & Drop con actualización optimista inmediata
+  const handleMoverEtapaDrop = async (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => {
+    if (caso.estado === nuevaEtapa) return
+
+    // Guardar estado previo para posible rollback
+    const etapasPrevias = { ...etapas }
+
+    // Actualización optimista inmediata en UI
+    setEtapas((prev) => {
+      const origen = (prev[caso.estado] || []).filter((c) => c.id !== caso.id)
+      const casoActualizado: AsesoriaCasoPipeline = {
+        ...caso,
+        estado: nuevaEtapa,
+        updated_at: new Date().toISOString()
+      }
+      const destino = [casoActualizado, ...(prev[nuevaEtapa] || [])]
+      return {
+        ...prev,
+        [caso.estado]: origen,
+        [nuevaEtapa]: destino
+      }
+    })
+
+    try {
+      setActualizandoCasoId(caso.id)
+      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: nuevaEtapa })
+      })
+      if (!res.ok) throw new Error('Error al mover de etapa.')
+      
+      const colDestino = ETAPAS_COLUMNAS_ACTIVAS.find((c) => c.id === nuevaEtapa)
+      mostrarToast(`Caso movido a ${colDestino ? colDestino.titulo : nuevaEtapa}.`)
+    } catch (err) {
+      console.error('Error al mover de etapa por drag and drop:', err)
+      setEtapas(etapasPrevias)
+      setError('No se pudo actualizar la etapa del caso.')
+    } finally {
+      setActualizandoCasoId(null)
+    }
   }
 
   // Lista única de cirujanos, obras sociales y prácticas vigentes para los filtros
@@ -861,7 +908,32 @@ export default function PipelineQuirurgicoPage() {
             return (
               <div
                 key={col.id}
-                className="flex flex-col bg-neutral-900/60 border border-[var(--border)] rounded-2xl p-3 min-h-[500px] space-y-3"
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                }}
+                onDragEnter={() => {
+                  if (draggedCaso && draggedCaso.estado !== col.id) {
+                    setDragOverColumnaId(col.id)
+                  }
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                    setDragOverColumnaId(null)
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setDragOverColumnaId(null)
+                  if (draggedCaso) {
+                    handleMoverEtapaDrop(draggedCaso, col.id)
+                  }
+                }}
+                className={`flex flex-col rounded-2xl p-3 min-h-[520px] space-y-3 transition-all duration-200 ${
+                  dragOverColumnaId === col.id
+                    ? 'ring-2 ring-blue-500/80 bg-blue-950/25 border-blue-500/60 shadow-lg shadow-blue-950/40'
+                    : 'bg-neutral-900/60 border border-[var(--border)]'
+                }`}
               >
                 {/* Header de la Columna */}
                 <div className={`p-2.5 rounded-xl border ${col.colorHeader} space-y-1`}>
@@ -887,8 +959,12 @@ export default function PipelineQuirurgicoPage() {
                 {/* Lista de Tarjetas */}
                 <div className="space-y-2.5 flex-1 overflow-y-auto pr-0.5">
                   {casosColumna.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-gray-500 border border-dashed border-[var(--border)] rounded-xl">
-                      Sin cirugías en esta etapa
+                    <div className={`p-6 text-center text-xs border border-dashed rounded-xl transition-all ${
+                      dragOverColumnaId === col.id
+                        ? 'border-blue-400/60 text-blue-300 bg-blue-950/30'
+                        : 'border-[var(--border)] text-gray-500'
+                    }`}>
+                      {dragOverColumnaId === col.id ? 'Soltar aquí para mover' : 'Sin cirugías en esta etapa'}
                     </div>
                   ) : (
                     casosColumna.map((caso) => {
@@ -900,12 +976,24 @@ export default function PipelineQuirurgicoPage() {
                       return (
                         <div
                           key={caso.id}
-                          className={`p-3.5 rounded-xl border transition-all space-y-2.5 bg-neutral-950/80 hover:bg-neutral-950 group relative ${
-                            isCritico
-                              ? 'border-red-500/50 shadow-sm shadow-red-950/20'
+                          draggable={true}
+                          onDragStart={(e) => {
+                            setDraggedCaso(caso)
+                            e.dataTransfer.setData('text/plain', caso.id)
+                            e.dataTransfer.effectAllowed = 'move'
+                          }}
+                          onDragEnd={() => {
+                            setDraggedCaso(null)
+                            setDragOverColumnaId(null)
+                          }}
+                          className={`p-3.5 rounded-xl border transition-all space-y-2.5 bg-neutral-950/80 hover:bg-neutral-950 group relative cursor-grab active:cursor-grabbing select-none ${
+                            draggedCaso?.id === caso.id
+                              ? 'opacity-40 scale-95 ring-2 ring-blue-500/80 border-blue-500'
+                              : isCritico
+                              ? 'border-red-500/50 shadow-sm shadow-red-950/20 hover:border-red-400'
                               : isAlerta
-                              ? 'border-amber-500/40'
-                              : 'border-[var(--border)] hover:border-blue-500/40'
+                              ? 'border-amber-500/40 hover:border-amber-400'
+                              : 'border-[var(--border)] hover:border-blue-500/50 hover:shadow-md'
                           }`}
                         >
                           {/* Cabecera de la Tarjeta */}
