@@ -1360,7 +1360,7 @@ def crear_evolucion_asesoria(payload: dict) -> Dict[str, Any]:
             "fecha_contacto": payload.get("fecha_contacto") or "now()"
         }
         
-        resp = supabase.table("asesoria_evoluciones").insert(data_ins).select().execute()
+        resp = supabase.table("asesoria_evoluciones").insert(data_ins).execute()
         if not resp.data:
             raise Exception("No se pudo insertar el registro de evolución.")
             
@@ -1477,10 +1477,15 @@ def actualizar_configuracion_quirurgica(payload: dict) -> Dict[str, Any]:
             
         datos["updated_at"] = "now()"
         
-        resp = supabase.table("configuracion_quirurgica").upsert({"id": "default", **datos}).select().execute()
-        if not resp.data:
-            raise Exception("No se pudo actualizar la configuración quirúrgica.")
-        return resp.data[0]
+        resp = supabase.table("configuracion_quirurgica").upsert({"id": "default", **datos}).execute()
+        if resp.data and len(resp.data) > 0:
+            return resp.data[0]
+            
+        resp_fallback = supabase.table("configuracion_quirurgica").select("*").eq("id", "default").limit(1).execute()
+        if resp_fallback.data and len(resp_fallback.data) > 0:
+            return resp_fallback.data[0]
+            
+        return {"id": "default", **datos}
     except Exception as e:
         logger.error(f"Error al actualizar configuración quirúrgica: {e}")
         raise
