@@ -78,6 +78,8 @@ let connectionStatus = 'DISCONNECTED' // DISCONNECTED | INITIALIZING | PAIRING_Q
 let isInitializing = false
 let reconnectTimeout = null
 const lidToPhoneMap = new Map()
+const phoneToLidMap = new Map()
+const phoneToRemoteJidMap = new Map()
 let lastContactedPhone = null
 
 const LID_MAP_FILE = path.join(SESSIONS_DIR, 'lid_mappings.json')
@@ -209,26 +211,34 @@ function loadLidMappings() {
       const data = JSON.parse(fs.readFileSync(LID_MAP_FILE, 'utf-8'))
       for (const [lid, phone] of Object.entries(data)) {
         if (lid && phone) {
-          lidToPhoneMap.set(String(lid).replace(/\D/g, ''), normalizePhone(phone))
+          const cleanLid = String(lid).replace(/\D/g, '')
+          const cleanPhone = normalizePhone(phone)
+          lidToPhoneMap.set(cleanLid, cleanPhone)
+          phoneToLidMap.set(cleanPhone, cleanLid)
+          phoneToRemoteJidMap.set(cleanPhone, `${cleanLid}@lid`)
         }
       }
     }
   } catch (e) {
     addLog('WARNING', `No se pudieron cargar mapeos de LID: ${e.message}`)
   }
-  // Mapeo conocido por defecto para el dispositivo de prueba
+  // Mapeo conocido por defecto para el dispositivo de prueba (+54 9 261 470-3230)
   if (!lidToPhoneMap.has('194149819109552')) {
     lidToPhoneMap.set('194149819109552', '5492614703230')
+    phoneToLidMap.set('5492614703230', '194149819109552')
+    phoneToRemoteJidMap.set('5492614703230', '194149819109552@lid')
   }
 }
 
-function saveLidMapping(lid, phone) {
+function saveLidMapping(lid, phone, fullRemoteJid = null) {
   if (!lid || !phone) return
   const cleanLid = String(lid).replace(/\D/g, '')
   const cleanPhone = normalizePhone(phone)
   if (!cleanLid || !cleanPhone || cleanLid === cleanPhone) return
   
   lidToPhoneMap.set(cleanLid, cleanPhone)
+  phoneToLidMap.set(cleanPhone, cleanLid)
+  phoneToRemoteJidMap.set(cleanPhone, fullRemoteJid || `${cleanLid}@lid`)
   try {
     const obj = {}
     for (const [k, v] of lidToPhoneMap.entries()) {
@@ -385,32 +395,46 @@ function phoneToJid(phone) {
 
 async function getValidJid(phone) {
   const clean = normalizePhone(phone)
-  const candidateJid = `${clean}@s.whatsapp.net`
   
-  if (!sock) return candidateJid
+  // 1. Si tenemos el canal activo directo registrado para este paciente (LID o JID directo), usarlo prioritariamente
+  if (phoneToRemoteJidMap.has(clean)) {
+    const directJid = phoneToRemoteJidMap.get(clean)
+    addLog('INFO', `Enrutando mensaje al canal activo directo de WhatsApp: ${directJid} (Teléfono: +${clean})`)
+    return directJid
+  }
 
+  if (phoneToLidMap.has(clean)) {
+    const lidJid = `${phoneToLidMap.get(clean)}@lid`
+    addLog('INFO', `Enrutando mensaje a LID de WhatsApp: ${lidJid} (Teléfono: +${clean})`)
+    return lidJid
+  }
+
+  if (!sock) return `${clean}@s.whatsapp.net`
+
+  // 2. Si no hay historial previo, probar validación onWhatsApp
   try {
+    const candidateJid = `${clean}@s.whatsapp.net`
     const results = await sock.onWhatsApp(candidateJid)
     if (results && results.length > 0 && results[0].exists) {
       return results[0].jid
     }
   } catch (e) {
-    addLog('WARNING', `onWhatsApp check falló para ${candidateJid}: ${e.message}`)
+    addLog('WARNING', `onWhatsApp check con 549 falló para ${clean}: ${e.message}`)
   }
 
-  // Para cuentas de Argentina creadas sin el 9
+  // 3. Para cuentas de Argentina creadas sin el 9
   if (clean.startsWith('549')) {
     const fallbackWithout9 = '54' + clean.slice(3) + '@s.whatsapp.net'
     try {
       const results = await sock.onWhatsApp(fallbackWithout9)
       if (results && results.length > 0 && results[0].exists) {
-        addLog('INFO', `Destinatario WhatsApp resuelto como: ${results[0].jid}`)
+        addLog('INFO', `Destinatario WhatsApp resuelto sin 9: ${results[0].jid}`)
         return results[0].jid
       }
     } catch (e) {}
   }
 
-  return candidateJid
+  return `${clean}@s.whatsapp.net`
 }
 
 async function initBaileys(forceClean = false) {
@@ -600,20 +624,23 @@ async function initBaileys(forceClean = false) {
         if (isLid || senderPhone.length > 14 || !senderPhone.startsWith('54')) {
           if (msg.key.remoteJidAlt && !msg.key.remoteJidAlt.includes('@lid')) {
             senderPhone = normalizePhone(msg.key.remoteJidAlt)
-            saveLidMapping(lidDigits, senderPhone)
+            saveLidMapping(lidDigits, senderPhone, remoteJid)
           } else if (msg.key.participant && !msg.key.participant.includes('@lid')) {
             senderPhone = normalizePhone(msg.key.participant)
-            saveLidMapping(lidDigits, senderPhone)
+            saveLidMapping(lidDigits, senderPhone, remoteJid)
           } else if (lidToPhoneMap.has(lidDigits)) {
             senderPhone = lidToPhoneMap.get(lidDigits)
+            phoneToRemoteJidMap.set(senderPhone, remoteJid)
             addLog('INFO', `LID ${lidDigits} resuelto exitosamente desde mapa a teléfono +${senderPhone}`)
           } else if (lastContactedPhone) {
             senderPhone = lastContactedPhone
-            saveLidMapping(lidDigits, lastContactedPhone)
+            saveLidMapping(lidDigits, lastContactedPhone, remoteJid)
           }
         } else {
+          senderPhone = normalizePhone(senderPhone)
+          phoneToRemoteJidMap.set(senderPhone, remoteJid)
           if (remoteJid.includes('@lid')) {
-            saveLidMapping(lidDigits, senderPhone)
+            saveLidMapping(lidDigits, senderPhone, remoteJid)
           }
         }
         
@@ -704,6 +731,13 @@ async function initBaileys(forceClean = false) {
           }
         }
 
+        // Si el mensaje fue enviado por nosotros mismos (CRM, Bot o WhatsApp Web), registrar como eco y no reingresar al flujo entrante
+        if (fromMe) {
+          addLog('INFO', `Eco de mensaje saliente enviado a +${senderPhone}: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`, 'ECO_MENSAJE_SALIENTE', { phone: senderPhone, text, message_type: messageType })
+          return
+        }
+
+        // Mensaje entrante genuino del paciente:
         addLog('INFO', `Mensaje recibido de +${senderPhone} [${messageType}]: ${text ? text.substring(0, 40) : `[${messageType.toUpperCase()}]`}`, 'MENSAJE_ENTRANTE_RECIBIDO', { phone: senderPhone, text, message_type: messageType })
 
         const webhookPayload = {
