@@ -270,7 +270,8 @@ export default function ChatInbox() {
 
       const uniqueMap = new Map<string, Mensaje>()
       for (const m of msgs) {
-        uniqueMap.set(m.id, m)
+        const dedupKey = m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id
+        uniqueMap.set(dedupKey, m)
       }
       setMensajes(Array.from(uniqueMap.values()))
     } catch (err) {
@@ -344,7 +345,8 @@ export default function ChatInbox() {
           if (data && data.length > 0) {
             const uniqueMap = new Map<string, Mensaje>()
             for (const m of (data as unknown as Mensaje[])) {
-              uniqueMap.set(m.id, m)
+              const dedupKey = m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id
+              uniqueMap.set(dedupKey, m)
             }
             setMensajes(Array.from(uniqueMap.values()))
           }
@@ -368,7 +370,10 @@ export default function ChatInbox() {
           const newMsg = payload.new as Mensaje
           if (newMsg.conversacion_id === selectedConvId) {
             setMensajes((prev) => {
-              if (prev.some((m) => m.id === newMsg.id)) return prev
+              const newKey = newMsg.metadata_json?.whatsapp_message_id ? `wa_${newMsg.metadata_json.whatsapp_message_id}` : newMsg.id
+              if (prev.some((m) => (m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id) === newKey)) {
+                return prev
+              }
               return [...prev.filter((m) => !m.id.startsWith('temp_')), newMsg]
             })
             // Si llega un mensaje nuevo mientras tenemos el chat abierto, marcarlo leído

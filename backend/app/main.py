@@ -331,11 +331,22 @@ class IncomingWebhookMessage(BaseModel):
     timestamp: Optional[int] = None
     raw_message: Optional[Dict[str, Any]] = None
 
-@app.post("/api/whatsapp/webhook/incoming")
-async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
+def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto: str):
     """
-    Webhook que recibe los mensajes entrantes de WhatsApp desde el microservicio Baileys
-    y ejecuta el pipeline de paciente, conversación y agente IA.
+    Ejecuta el Agente IA de Gemini en segundo plano para no demorar la respuesta del webhook.
+    """
+    try:
+        respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
+        if respuesta_agente:
+            whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot")
+    except Exception as agent_err:
+        logger.error(f"Error procesando respuesta de agente IA en background: {agent_err}")
+
+@app.post("/api/whatsapp/webhook/incoming")
+async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, background_tasks: BackgroundTasks):
+    """
+    Webhook ultra-rápido que recibe los mensajes entrantes de WhatsApp desde el microservicio Baileys,
+    persiste el mensaje en la BD y despacha el Agente IA en segundo plano.
     """
     try:
         if payload.from_me:
@@ -383,12 +394,12 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
 
         conversacion_id = conversacion["id"] if isinstance(conversacion, dict) else conversacion.get("id")
 
-        # 3. Guardar mensaje entrante del paciente (con deduplicación por whatsapp_message_id)
+        # 3. Guardar mensaje entrante del paciente (con deduplicación estricta por whatsapp_message_id)
         if payload.message_id and supabase:
             try:
-                existente = supabase.table("mensajes").select("id").eq("conversacion_id", conversacion_id).contains("metadata_json", {"whatsapp_message_id": payload.message_id}).execute()
+                existente = supabase.table("mensajes").select("id").filter("metadata_json->>whatsapp_message_id", "eq", payload.message_id).execute()
                 if existente.data and len(existente.data) > 0:
-                    logger.info(f"Mensaje {payload.message_id} ya registrado previamente en conversacion {conversacion_id}. Omitiendo duplicado.")
+                    logger.info(f"Mensaje {payload.message_id} ya registrado previamente. Omitiendo duplicado.")
                     return {"status": "ignored", "reason": "duplicate_message_id"}
             except Exception as dedup_err:
                 logger.warning(f"Error verificando duplicado: {dedup_err}")
@@ -422,15 +433,10 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage):
             created_at=created_at_iso
         )
 
-        # 4. Procesar agente IA si el bot no está desactivado para esta conversación
+        # 4. Despachar agente IA en background para responder de inmediato al webhook
         bot_disabled = conversacion.get("bot_disabled", False) if isinstance(conversacion, dict) else False
         if not bot_disabled and texto:
-            try:
-                respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
-                if respuesta_agente:
-                    whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot")
-            except Exception as agent_err:
-                logger.error(f"Error procesando respuesta de agente IA: {agent_err}")
+            background_tasks.add_task(procesar_agente_ia_background, conversacion_id, clean_phone, texto)
 
         return {"status": "processed", "conversacion_id": conversacion_id, "telefono": clean_phone}
     except Exception as e:

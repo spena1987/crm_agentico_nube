@@ -304,10 +304,14 @@ async function directSaveIncomingMessageToSupabase(payload) {
     const cleanPhone = normalizePhone(payload.phone)
     if (!cleanPhone) return
 
-    const headers = {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json'
+    // 0. Verificar si el mensaje ya existe en Supabase para evitar duplicados
+    if (payload.message_id) {
+      try {
+        const existCheck = await axios.get(`${SUPABASE_URL}/rest/v1/mensajes?metadata_json->>whatsapp_message_id=eq.${payload.message_id}&select=id`, { headers, timeout: 3000 })
+        if (existCheck.data && existCheck.data.length > 0) {
+          return
+        }
+      } catch (e) {}
     }
 
     // 1. Buscar o crear paciente
@@ -816,10 +820,15 @@ async function initBaileys(forceClean = false) {
         if (!key?.id || update?.status === undefined) continue
         
         let statusLabel = null
+        const s = String(update.status).toUpperCase()
         // 2: SERVER_ACK (1 tilde), 3: DELIVERY_ACK (2 tildes grises), 4: READ (2 tildes azules), 5: PLAYED (leído/escuchado)
-        if (update.status === 2) statusLabel = 'enviado'
-        else if (update.status === 3) statusLabel = 'entregado'
-        else if (update.status === 4 || update.status === 5) statusLabel = 'leido'
+        if (update.status === 2 || s === 'SERVER_ACK' || s === '2') {
+          statusLabel = 'enviado'
+        } else if (update.status === 3 || s === 'DELIVERY_ACK' || s === '3') {
+          statusLabel = 'entregado'
+        } else if (update.status === 4 || update.status === 5 || s === 'READ' || s === 'PLAYED' || s === '4' || s === '5') {
+          statusLabel = 'leido'
+        }
 
         if (!statusLabel) continue
 
