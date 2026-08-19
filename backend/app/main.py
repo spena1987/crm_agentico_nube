@@ -1655,16 +1655,18 @@ def eliminar_paciente_crm(paciente_id: str):
 
 
 @app.get("/api/geclisa/prestadores/buscar")
-def buscar_geclisa_prestadores(query: Optional[str] = ""):
+def buscar_geclisa_prestadores(query: Optional[str] = None, q: Optional[str] = None):
     """
     Busca prestadores médicos en Geclisa por nombre, apellido o número de matrícula.
     Operación a demanda activada exclusivamente por la búsqueda del usuario.
+    Acepta tanto 'query' como 'q'.
     """
+    termino = (query or q or "").strip()
     try:
-        prestadores = geclisa_client.buscar_prestadores(query or "")
+        prestadores = geclisa_client.buscar_prestadores(termino)
         return {
             "success": True,
-            "query": query,
+            "query": termino,
             "total": len(prestadores),
             "prestadores": prestadores
         }

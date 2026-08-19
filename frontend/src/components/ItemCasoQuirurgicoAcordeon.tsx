@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   Stethoscope,
   UserCheck,
@@ -351,6 +351,29 @@ export default function ItemCasoQuirurgicoAcordeon({
     }
   }, [isExpanded, pacienteId])
 
+  // Filtrado reactivo en memoria para respuesta instantánea (0 ms)
+  const derivadoresFiltrados = useMemo(() => {
+    const q = (busquedaDerivador || '').trim().toLowerCase()
+    if (!q) return prestadoresDerivador
+    return prestadoresDerivador.filter(
+      (p) =>
+        (p.nombre && p.nombre.toLowerCase().includes(q)) ||
+        (p.matricula && String(p.matricula).toLowerCase().includes(q)) ||
+        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+    )
+  }, [prestadoresDerivador, busquedaDerivador])
+
+  const cirujanosFiltrados = useMemo(() => {
+    const q = (busquedaCirujano || '').trim().toLowerCase()
+    if (!q) return prestadoresCirujano
+    return prestadoresCirujano.filter(
+      (p) =>
+        (p.nombre && p.nombre.toLowerCase().includes(q)) ||
+        (p.matricula && String(p.matricula).toLowerCase().includes(q)) ||
+        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+    )
+  }, [prestadoresCirujano, busquedaCirujano])
+
   // Buscar prestadores en Geclisa
   const buscarPrestador = async (tipo: 'derivador' | 'cirujano', query: string) => {
     const qClean = (query || '').trim()
@@ -358,7 +381,7 @@ export default function ItemCasoQuirurgicoAcordeon({
     if (tipo === 'cirujano') setBuscandoCirujano(true)
 
     try {
-      const res = await fetch(`/api/geclisa/prestadores/buscar?q=${encodeURIComponent(qClean)}`)
+      const res = await fetch(`/api/geclisa/prestadores/buscar?query=${encodeURIComponent(qClean)}&q=${encodeURIComponent(qClean)}`)
       const data = await res.json()
       if (res.ok && data.success) {
         const lista = data.prestadores || []
@@ -981,27 +1004,52 @@ export default function ItemCasoQuirurgicoAcordeon({
                       <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
                     )}
 
-                    {mostrarDropdownDerivador && prestadoresDerivador.length > 0 && (
+                    {mostrarDropdownDerivador && (
                       <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                        {prestadoresDerivador.map((p) => (
-                          <button
-                            key={p.pre_id}
-                            type="button"
-                            onClick={() => {
-                              setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                              setBusquedaDerivador(p.nombre)
-                              setMostrarDropdownDerivador(false)
-                            }}
-                            className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
-                          >
-                            <span className="font-bold text-white group-hover:text-blue-300 transition-colors">
-                              {p.nombre}
-                            </span>
-                            <span className="text-[10px] text-gray-400 font-mono">
-                              Mat: {p.matricula || 'S/M'}
-                            </span>
-                          </button>
-                        ))}
+                        {derivadoresFiltrados.length > 0 ? (
+                          derivadoresFiltrados.map((p) => (
+                            <button
+                              key={p.pre_id}
+                              type="button"
+                              onClick={() => {
+                                setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                                setBusquedaDerivador(p.nombre)
+                                setMostrarDropdownDerivador(false)
+                              }}
+                              className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
+                            >
+                              <div className="flex flex-col">
+                                <span className="font-bold text-white group-hover:text-blue-300 transition-colors">
+                                  {p.nombre}
+                                </span>
+                                {p.especialidad && (
+                                  <span className="text-[10px] text-gray-500">
+                                    {p.especialidad}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                                Mat: {p.matricula || 'S/M'}
+                              </span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
+                            <p className="text-[11px]">
+                              No se encontraron prestadores con &quot;<strong className="text-white">{busquedaDerivador}</strong>&quot; en Geclisa.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMedicoDerivador({ nombre: busquedaDerivador })
+                                setMostrarDropdownDerivador(false)
+                              }}
+                              className="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-[10px] font-bold transition-all"
+                            >
+                              Usar como médico derivador externo
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1036,27 +1084,52 @@ export default function ItemCasoQuirurgicoAcordeon({
                       <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
                     )}
 
-                    {mostrarDropdownCirujano && prestadoresCirujano.length > 0 && (
+                    {mostrarDropdownCirujano && (
                       <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                        {prestadoresCirujano.map((p) => (
-                          <button
-                            key={p.pre_id}
-                            type="button"
-                            onClick={() => {
-                              setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                              setBusquedaCirujano(p.nombre)
-                              setMostrarDropdownCirujano(false)
-                            }}
-                            className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
-                          >
-                            <span className="font-bold text-white group-hover:text-emerald-300 transition-colors">
-                              {p.nombre}
-                            </span>
-                            <span className="text-[10px] text-gray-400 font-mono">
-                              Mat: {p.matricula || 'S/M'}
-                            </span>
-                          </button>
-                        ))}
+                        {cirujanosFiltrados.length > 0 ? (
+                          cirujanosFiltrados.map((p) => (
+                            <button
+                              key={p.pre_id}
+                              type="button"
+                              onClick={() => {
+                                setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                                setBusquedaCirujano(p.nombre)
+                                setMostrarDropdownCirujano(false)
+                              }}
+                              className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
+                            >
+                              <div className="flex flex-col">
+                                <span className="font-bold text-white group-hover:text-emerald-300 transition-colors">
+                                  {p.nombre}
+                                </span>
+                                {p.especialidad && (
+                                  <span className="text-[10px] text-gray-500">
+                                    {p.especialidad}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                                Mat: {p.matricula || 'S/M'}
+                              </span>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
+                            <p className="text-[11px]">
+                              No se encontraron prestadores con &quot;<strong className="text-white">{busquedaCirujano}</strong>&quot; en Geclisa.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMedicoCirujano({ nombre: busquedaCirujano })
+                                setMostrarDropdownCirujano(false)
+                              }}
+                              className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold transition-all"
+                            >
+                              Usar como médico cirujano externo
+                            </button>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

@@ -433,6 +433,19 @@ class GeclisaClient:
                     data_mn = resp_mn.json()
                     items = data_mn if isinstance(data_mn, list) else data_mn.get("data", [])
 
+            # 3. Si aún no hay resultados y hay término, obtener catálogo completo y filtrar en memoria por nombre o matrícula
+            if not items and termino:
+                resp_all = self._do_request("GET", url_simple, headers=headers, params={}, timeout=10)
+                if resp_all.status_code == 200:
+                    data_all = resp_all.json()
+                    items_all = data_all if isinstance(data_all, list) else data_all.get("data", [])
+                    t_lower = termino.lower()
+                    for item in items_all:
+                        pre_nom = (item.get("preNom") or item.get("nombre") or "").strip()
+                        pre_mat = str(item.get("preMatp") or item.get("matp") or "").strip()
+                        if t_lower in pre_nom.lower() or (pre_mat and t_lower in pre_mat.lower()):
+                            items.append(item)
+
             prestadores_normalizados = []
             for item in items:
                 pre_id = item.get("preId") or item.get("id")
@@ -451,6 +464,14 @@ class GeclisaClient:
                     "np_id": item.get("npId", 0),
                     "cant_max_turnos": item.get("cantMaxEntreTurPre")
                 })
+
+            # Si el usuario ingresó un término de búsqueda, garantizar que la lista devuelta contenga la coincidencia
+            if termino:
+                t_clean = termino.lower()
+                prestadores_normalizados = [
+                    p for p in prestadores_normalizados
+                    if t_clean in p["nombre"].lower() or (p.get("matricula") and t_clean in str(p["matricula"]).lower())
+                ]
 
             return prestadores_normalizados
 
