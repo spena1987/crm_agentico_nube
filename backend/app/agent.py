@@ -207,9 +207,9 @@ def procesar_mensaje_agente(
                 
                 if func_name in AVAILABLE_TOOLS_MAP:
                     try:
-                        if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente"] and paciente_id:
+                        if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa"] and paciente_id:
                             func_args["paciente_id"] = paciente_id
-                        if func_name == "escalar_a_operador_humano" and conversacion_id:
+                        if func_name in ["escalar_a_operador_humano", "vincular_paciente_geclisa"] and conversacion_id:
                             func_args["conversacion_id"] = conversacion_id
                         
                         resultado = AVAILABLE_TOOLS_MAP[func_name](**func_args)

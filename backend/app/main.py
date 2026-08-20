@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import asyncio
 import logging
@@ -35,6 +36,8 @@ from app.db import (
     get_paciente_by_dni, 
     get_paciente_by_geclisa_id, 
     crear_o_actualizar_paciente_geclisa,
+    vincular_o_fusionar_paciente_con_geclisa,
+    registrar_dni_paciente_nuevo_crm,
     asignar_medico_paciente,
     list_nomencladores,
     get_nomenclador_by_id,
@@ -385,6 +388,31 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
             return {"status": "error", "detail": "No se pudo obtener paciente"}
 
         paciente_id = paciente["id"] if isinstance(paciente, dict) else paciente.get("id")
+
+        # 1.1 Interceptor Inteligente de DNI para Pacientes no vinculados a Geclisa
+        if paciente and not paciente.get("dni") and texto:
+            dni_match = re.search(r'\b(\d{7,8})\b', texto)
+            if dni_match:
+                potential_dni = dni_match.group(1)
+                logger.info(f"Detectado posible DNI {potential_dni} en mensaje de paciente {paciente_id}. Verificando en Geclisa...")
+                try:
+                    res_geclisa = geclisa_client.buscar_paciente_por_dni(potential_dni)
+                    if res_geclisa and res_geclisa.get("encontrado"):
+                        logger.info(f"✔ Paciente encontrado en Geclisa para DNI {potential_dni}: {res_geclisa.get('nombre_completo')}. Vinculando...")
+                        paciente_vinculado = vincular_o_fusionar_paciente_con_geclisa(
+                            paciente_temporal_id=paciente_id,
+                            datos_geclisa=res_geclisa,
+                            telefono_whatsapp=clean_phone
+                        )
+                        if paciente_vinculado:
+                            paciente = paciente_vinculado
+                            paciente_id = paciente.get("id")
+                    else:
+                        logger.info(f"DNI {potential_dni} no encontrado en Geclisa. Registrando como nuevo paciente CRM...")
+                        registrar_dni_paciente_nuevo_crm(paciente_id, potential_dni)
+                        paciente["dni"] = potential_dni
+                except Exception as g_err:
+                    logger.warning(f"Error en auto-vinculación de Geclisa desde webhook: {g_err}")
 
         # 2. Conversación
         conversacion = get_or_create_conversacion(paciente_id)

@@ -20,11 +20,13 @@ import {
   ShieldCheck,
   Stethoscope,
   X,
-  Tag
+  Tag,
+  Database
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import { formatPhoneDisplay } from '@/lib/phoneUtils'
+import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
 
 interface PatientSidebarProps {
   paciente: any
@@ -57,6 +59,7 @@ export default function ChatPatientSidebar({
   const [turnosConsultados, setTurnosConsultados] = useState(false)
   const [turnosOpen, setTurnosOpen] = useState(false)
   const [selectedTurnoDetalle, setSelectedTurnoDetalle] = useState<any | null>(null)
+  const [mostrarModalGeclisa, setMostrarModalGeclisa] = useState(false)
 
   // Consulta en vivo a la API de Geclisa: GET /api/Turnos/pendientes/{fichaId}
   const fetchTurnosGeclisa = async (fichaIdParam?: number | string) => {
@@ -267,13 +270,30 @@ export default function ChatPatientSidebar({
       <div className="p-4 space-y-4">
         
         {/* 1. FICHA PRINCIPAL */}
-        <div className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-sm text-slate-100 truncate">{paciente.nombre}</h3>
+        <div className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h3 className="font-bold text-sm text-slate-100 truncate">{paciente.nombre}</h3>
+              {/* Badge de Estado Geclisa */}
+              <div className="mt-1">
+                {(pacienteInfo.geclisa_ficha_id || pacienteInfo.ficha_id || paciente.geclisa_ficha_id) ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-semibold bg-emerald-950/70 border border-emerald-600/40 text-emerald-300">
+                    <ShieldCheck size={11} className="text-emerald-400" />
+                    Geclisa Ficha #{pacienteInfo.geclisa_ficha_id || pacienteInfo.ficha_id || paciente.geclisa_ficha_id}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] font-semibold bg-amber-950/70 border border-amber-600/40 text-amber-300">
+                    <AlertTriangle size={11} className="text-amber-400" />
+                    Paciente Nuevo / Sin Geclisa
+                  </span>
+                )}
+              </div>
+            </div>
+
             {onOpenEditarPaciente && (
               <button
                 onClick={() => onOpenEditarPaciente(paciente)}
-                className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-2"
+                className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold underline underline-offset-2 shrink-0 pt-0.5"
               >
                 Editar
               </button>
@@ -332,6 +352,15 @@ export default function ChatPatientSidebar({
                 <span>Historia Clínica</span>
               </button>
             )}
+
+            <button
+              onClick={() => setMostrarModalGeclisa(true)}
+              className="flex-1 py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
+              title="Buscar en Geclisa por DNI y vincular a este chat"
+            >
+              <Database size={12} />
+              <span>{pacienteInfo.geclisa_ficha_id ? 'Re-sincronizar' : 'Vincular Geclisa'}</span>
+            </button>
           </div>
         </div>
 
@@ -650,6 +679,19 @@ export default function ChatPatientSidebar({
           </div>
         </div>
       )}
+
+      {/* Modal Buscar y Vincular en Geclisa */}
+      <ModalBuscarGeclisa
+        isOpen={mostrarModalGeclisa}
+        onClose={() => setMostrarModalGeclisa(false)}
+        onPacienteImportado={(pacImportado) => {
+          setPacienteInfo((prev: any) => ({ ...prev, ...pacImportado }))
+          setMostrarModalGeclisa(false)
+          if (pacImportado?.geclisa_ficha_id) {
+            fetchTurnosGeclisa(pacImportado.geclisa_ficha_id)
+          }
+        }}
+      />
     </div>
   )
 }

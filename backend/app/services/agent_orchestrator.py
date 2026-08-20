@@ -8,7 +8,8 @@ from app.services.tools import (
     crear_borrador_presupuesto, 
     escalar_a_operador_humano,
     aprobar_presupuesto,
-    consultar_presupuestos_paciente
+    consultar_presupuestos_paciente,
+    vincular_paciente_geclisa
 )
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,8 @@ AVAILABLE_TOOLS_MAP = {
     "crear_borrador_presupuesto": crear_borrador_presupuesto,
     "escalar_a_operador_humano": escalar_a_operador_humano,
     "aprobar_presupuesto": aprobar_presupuesto,
-    "consultar_presupuestos_paciente": consultar_presupuestos_paciente
+    "consultar_presupuestos_paciente": consultar_presupuestos_paciente,
+    "vincular_paciente_geclisa": vincular_paciente_geclisa
 }
 
 # Fallbacks predeterminados en memoria por si Supabase no responde
@@ -70,16 +72,16 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Asistente Administrativo General",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa. Si el paciente confirma un presupuesto emitido, apruébalo directamente.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa. Si el paciente no tiene DNI, pídeselo para verificar su ficha en Geclisa usando vincular_paciente_geclisa. Si confirma un presupuesto emitido, apruébalo directamente.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
         "codigo": "TURNOS_CONCRETOS",
         "nombre": "Agente de Turnos Ágiles",
         "temperatura": 0.1,
-        "directiva_particular": "El paciente busca resolver una cita médica de manera rápida y sin demoras. Sé sumamente concreto, directo y eficiente. Pregunta especialidad o médico deseado, busca disponibilidad con tu herramienta y ofrece máximo 2 opciones puntuales de días y horarios. Evita rodeos o textos largos.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente busca resolver una cita médica de manera rápida y sin demoras. Sé sumamente concreto, directo y eficiente. Si el paciente no está identificado por DNI, solicítaselo para buscar su ficha en Geclisa con vincular_paciente_geclisa. Pregunta especialidad o médico deseado, busca disponibilidad con tu herramienta y ofrece máximo 2 opciones puntuales de días y horarios.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
         "activo": True
     },
     "QUIRURGICO_EMPATICO": {
@@ -87,7 +89,7 @@ DEFAULT_AGENTS = {
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
         "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Su estado emocional suele requerir contención y serenidad. Trátalo con máxima calidez humana, empatía y paciencia. Utiliza frases de acompañamiento ('Entendemos tu consulta', 'Estamos para acompañarte en cada paso'). Explica los requisitos y consultas administrativas con calma y claridad. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "escalar_a_operador_humano"],
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {
@@ -95,7 +97,7 @@ DEFAULT_AGENTS = {
         "nombre": "Cotizaciones y Planes de Tratamiento",
         "temperatura": 0.2,
         "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías, o desea confirmar su presupuesto. Si solicita cotización, explica el desglose y usa crear_borrador_presupuesto. Si manifiesta que acepta o aprueba el presupuesto, usa aprobar_presupuesto de inmediato sin volver a pedir DNI.",
-        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "escalar_a_operador_humano"],
+        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
         "activo": True
     },
     "POST_OPERATORIO": {
@@ -341,12 +343,30 @@ class AgentOrchestrator:
                     a_fec = a.get("fecha_probable_cirugia") or "A coordinar"
                     prompt_parts.append(f"* Caso Quirúrgico: {a_prac} | Cirujano: {a_cir} | Estado: {a_est} | Fecha tentativa: {a_fec}")
 
+            if p_dni:
+                prompt_parts.extend([
+                    "",
+                    "=== REGLAS CRÍTICAS DE CONTEXTO E INTEGRALIDAD ===",
+                    "1. PACIENTE YA IDENTIFICADO: La ficha anterior pertenece al paciente con quien estás hablando. NUNCA le pidas su DNI, nombre o teléfono si ya figuran arriba. Reconócelo y salúdalo amablemente por su nombre (ej: 'Hola Sebastián...').",
+                    "2. APROBACIÓN DE PRESUPUESTOS: Si el paciente dice que aprueba, acepta o confirma su presupuesto (o responde 'confirmo', 'acepto', 'apruebo'), NO le pidas su DNI ni confirmación redundante. Utiliza de inmediato la herramienta 'aprobar_presupuesto' para pasar su presupuesto a estado 'aprobado' y felicítalo/infórmale con calidez que su presupuesto ha quedado aprobado y confirmado en el sistema, indicando el total y que la secretaría/equipo médico se contactará para coordinar los turnos o fecha quirúrgica.",
+                    "3. CONSULTA DE VALORES: Si el paciente consulta por presupuestos previos, cotizaciones o su saldo, utiliza los datos de su contexto o invoca 'consultar_presupuestos_paciente'."
+                ])
+            else:
+                prompt_parts.extend([
+                    "",
+                    "=== PACIENTE PENDIENTE DE IDENTIFICACIÓN CON GECLISA ===",
+                    "- El paciente aún no tiene registrado su DNI en el sistema de la clínica.",
+                    "- Salúdalo amablemente y pídele cortésmente su número de DNI para ubicar su historial y cobertura médica.",
+                    "- Cuando el paciente proporcione su DNI (o lo mencione en su mensaje), ejecuta de inmediato la herramienta 'vincular_paciente_geclisa'.",
+                    "- Si la herramienta confirma ficha en Geclisa, dale una bienvenida personalizada mencionando su nombre y obra social.",
+                    "- Si la herramienta indica que es un nuevo paciente (sin ficha previa en Geclisa), continúa atendiéndolo normalmente como paciente nuevo en el CRM (para turnos, cotizaciones o asesoramiento)."
+                ])
+        else:
             prompt_parts.extend([
                 "",
-                "=== REGLAS CRÍTICAS DE CONTEXTO E INTEGRALIDAD ===",
-                "1. PACIENTE YA IDENTIFICADO: La ficha anterior pertenece al paciente con quien estás hablando. NUNCA le pidas su DNI, nombre o teléfono si ya figuran arriba. Reconócelo y salúdalo amablemente por su nombre (ej: 'Hola Sebastián...').",
-                "2. APROBACIÓN DE PRESUPUESTOS: Si el paciente dice que aprueba, acepta o confirma su presupuesto (o responde 'confirmo', 'acepto', 'apruebo'), NO le pidas su DNI ni confirmación redundante. Utiliza de inmediato la herramienta 'aprobar_presupuesto' para pasar su presupuesto a estado 'aprobado' y felicítalo/infórmale con calidez que su presupuesto ha quedado aprobado y confirmado en el sistema, indicando el total y que la secretaría/equipo médico se contactará para coordinar los turnos o fecha quirúrgica.",
-                "3. CONSULTA DE VALORES: Si el paciente consulta por presupuestos previos, cotizaciones o su saldo, utiliza los datos de su contexto o invoca 'consultar_presupuestos_paciente'."
+                "=== PACIENTE PENDIENTE DE IDENTIFICACIÓN CON GECLISA ===",
+                "- Solicita amablemente el DNI del paciente para consultar su ficha médica en Geclisa utilizando 'vincular_paciente_geclisa'.",
+                "- Si no posee ficha previa, continúa atendiéndolo con total normalidad como nuevo paciente en la clínica."
             ])
 
         prompt_parts.append("\nResponde siempre respetando el formato de WhatsApp (*negrita* con 1 solo asterisco), conciso y utilizando las herramientas cuando sea oportuno.")

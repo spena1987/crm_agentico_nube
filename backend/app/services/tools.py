@@ -1,3 +1,4 @@
+import re
 import logging
 from typing import Any, Optional, List, Dict
 from datetime import datetime, timedelta
@@ -6,11 +7,15 @@ from app.db import (
     actualizar_bot_disabled, 
     guardar_mensaje,
     cambiar_estado_presupuesto,
-    get_presupuestos_by_paciente
+    get_presupuestos_by_paciente,
+    vincular_o_fusionar_paciente_con_geclisa,
+    registrar_dni_paciente_nuevo_crm
 )
 from app.services.pdf_service import generar_pdf_presupuesto
+from app.services.geclisa_client import GeclisaClient
 
 logger = logging.getLogger(__name__)
+geclisa_client = GeclisaClient()
 
 def buscar_disponibilidad_turnos(fecha_iso: str) -> dict:
     """
@@ -343,4 +348,97 @@ def consultar_presupuestos_paciente(paciente_id: Optional[str] = None) -> dict:
     except Exception as e:
         logger.error(f"Error al consultar presupuestos: {e}")
         return {"error": str(e)}
+
+def vincular_paciente_geclisa(
+    dni: str, 
+    conversacion_id: Optional[str] = None, 
+    paciente_id: Optional[str] = None
+) -> dict:
+    """
+    Consulta la API de Geclisa utilizando el DNI del paciente para verificar si ya posee
+    ficha médica registrada en la clínica, y en caso afirmativo, vincula e importa sus datos
+    (Nombre, Obra Social, Plan, Ficha ID, Médico) directamente a la conversación del CRM.
+    Si el paciente no existe en Geclisa, registra su DNI en el CRM como nuevo paciente.
+    
+    Args:
+        dni: El número de DNI / Documento del paciente (solo dígitos).
+        conversacion_id: El UUID de la conversación activa.
+        paciente_id: El UUID del paciente actual en el CRM.
+        
+    Returns:
+        Diccionario con el resultado de la vinculación y los datos clínicos del paciente.
+    """
+    clean_dni = re.sub(r'[^0-9]', '', str(dni or "")).strip()
+    logger.info(f"Herramienta: vincular_paciente_geclisa para DNI {clean_dni} (paciente_id: {paciente_id})")
+
+    if not clean_dni or len(clean_dni) < 6:
+        return {
+            "success": False,
+            "error": "El DNI ingresado no tiene un formato válido (debe contener entre 7 y 9 dígitos numéricos)."
+        }
+
+    try:
+        # 1. Obtener teléfono de WhatsApp de la conversación actual si está disponible
+        telefono_whatsapp = None
+        if paciente_id and is_valid_uuid(paciente_id) and supabase:
+            try:
+                p_curr = supabase.table("pacientes").select("telefono").eq("id", paciente_id).limit(1).execute()
+                if p_curr.data:
+                    telefono_whatsapp = p_curr.data[0].get("telefono")
+            except Exception:
+                pass
+
+        # 2. Consultar la API de Geclisa
+        resultado_geclisa = geclisa_client.buscar_paciente_por_dni(clean_dni)
+        
+        # CASO 1: Encontrado en Geclisa
+        if resultado_geclisa and resultado_geclisa.get("encontrado"):
+            paciente_vinculado = vincular_o_fusionar_paciente_con_geclisa(
+                paciente_temporal_id=paciente_id,
+                datos_geclisa=resultado_geclisa,
+                telefono_whatsapp=telefono_whatsapp
+            )
+            
+            nombre_paciente = resultado_geclisa.get("nombre_completo") or resultado_geclisa.get("nombre") or "Paciente"
+            obra_social = resultado_geclisa.get("obra_social") or "Particular"
+            plan = resultado_geclisa.get("plan") or ""
+            ficha_id = resultado_geclisa.get("ficha_id")
+            
+            cobertura_str = f"{obra_social} {('(' + plan + ')') if plan else ''}".strip()
+            
+            return {
+                "success": True,
+                "encontrado_geclisa": True,
+                "nombre": nombre_paciente,
+                "dni": clean_dni,
+                "ficha_id": ficha_id,
+                "cobertura": cobertura_str,
+                "paciente_id": paciente_vinculado.get("id"),
+                "mensaje": (
+                    f"Paciente identificado exitosamente en Geclisa. "
+                    f"Nombre: {nombre_paciente} | DNI: {clean_dni} | Cobertura: {cobertura_str} | Ficha ID: {ficha_id}. "
+                    "Saluda al paciente por su nombre y procede con su consulta conociendo ya su cobertura."
+                )
+            }
+            
+        # CASO 2: No encontrado en Geclisa (Paciente Nuevo / Particular)
+        else:
+            if paciente_id and is_valid_uuid(paciente_id):
+                registrar_dni_paciente_nuevo_crm(paciente_id, clean_dni)
+
+            return {
+                "success": True,
+                "encontrado_geclisa": False,
+                "dni": clean_dni,
+                "mensaje": (
+                    f"No se encontró ficha previa en Geclisa para el DNI {clean_dni}. "
+                    "El DNI ha sido registrado en el CRM como nuevo paciente. "
+                    "Salúdalo cordialmente como nuevo paciente y continúa normalmente con su atención (turnos, cotizaciones, consultas)."
+                )
+            }
+
+    except Exception as e:
+        logger.error(f"Error en herramienta vincular_paciente_geclisa: {e}")
+        return {"success": False, "error": f"Error consultando el sistema Geclisa: {str(e)}"}
+
 

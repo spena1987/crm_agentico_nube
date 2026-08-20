@@ -254,6 +254,157 @@ def crear_o_actualizar_paciente_geclisa(payload: dict):
             ) from e
         raise
 
+def vincular_o_fusionar_paciente_con_geclisa(
+    paciente_temporal_id: Optional[str], 
+    datos_geclisa: dict, 
+    telefono_whatsapp: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Vincula o fusiona de forma atómica un contacto de WhatsApp con los datos reales de Geclisa:
+    1. Si ya existe un paciente en el CRM con ese DNI o Ficha ID, consolida los datos, actualiza el
+       teléfono al número actual de WhatsApp y reasigna conversaciones/mensajes/presupuestos.
+    2. Si es un paciente que no estaba en el CRM, actualiza el registro temporal con los datos de Geclisa.
+    3. Garantiza la integridad referencial y elimina stubs temporales huérfanos.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+
+    try:
+        dni = str(datos_geclisa.get("dni") or "").strip()
+        ficha_id = datos_geclisa.get("geclisa_ficha_id") or datos_geclisa.get("ficha_id")
+        nombre_completo = (datos_geclisa.get("nombre_completo") or datos_geclisa.get("nombre") or "").strip()
+        
+        clean_phone = normalize_phone_number(telefono_whatsapp) if telefono_whatsapp else None
+
+        # 1. Buscar si ya existe un paciente formal en el CRM con ese DNI o Ficha Geclisa
+        paciente_existente = None
+        if ficha_id:
+            paciente_existente = get_paciente_by_geclisa_id(int(ficha_id))
+        if not paciente_existente and dni:
+            paciente_existente = get_paciente_by_dni(dni)
+            # Intentar búsqueda alternativa sin ceros a la izquierda si aplica
+            if not paciente_existente and dni.lstrip("0") != dni:
+                paciente_existente = get_paciente_by_dni(dni.lstrip("0"))
+
+        datos_actualizar = {
+            "nombre": nombre_completo if nombre_completo else None,
+            "dni": dni if dni else None,
+            "geclisa_ficha_id": int(ficha_id) if ficha_id else None,
+            "nro_hc": str(datos_geclisa.get("nro_hc") or "").strip() or None,
+            "obra_social": datos_geclisa.get("obra_social") or datos_geclisa.get("ficObrasoc") or None,
+            "plan_cobertura": datos_geclisa.get("plan_cobertura") or datos_geclisa.get("plan") or datos_geclisa.get("ficPlan") or None,
+            "fecha_nacimiento": datos_geclisa.get("fecha_nacimiento") or None,
+            "sexo": datos_geclisa.get("sexo") or None,
+            "direccion": datos_geclisa.get("direccion") or None,
+            "telefono_fijo": datos_geclisa.get("telefono_fijo") or None,
+            "medico_cabecera": datos_geclisa.get("medico_cabecera") or datos_geclisa.get("medico_cabecera_nombre") or None,
+            "etapa_clinica": "PACIENTE_VINCULADO_GECLISA"
+        }
+        
+        # Prioridad de teléfono: registrar el número activo de WhatsApp en el CRM
+        if clean_phone and not clean_phone.startswith("temp_"):
+            datos_actualizar["telefono"] = clean_phone
+            
+        datos_limpios = {k: v for k, v in datos_actualizar.items() if v is not None}
+
+        # CASO A: El paciente ya existía en la base de datos de Supabase
+        if paciente_existente:
+            target_id = paciente_existente["id"]
+            logger.info(f"Paciente Geclisa encontrado en CRM (ID: {target_id}). Actualizando ficha y fusionando...")
+            
+            # Actualizar datos del paciente existente
+            resp = supabase.table("pacientes").update(datos_limpios).eq("id", target_id).execute()
+            paciente_final = resp.data[0] if resp.data else paciente_existente
+
+            # Si el chat estaba asociado a un paciente temporal diferente, fusionar
+            if paciente_temporal_id and paciente_temporal_id != target_id:
+                logger.info(f"Fusionando contacto temporal {paciente_temporal_id} -> {target_id}...")
+                
+                # Reasignar presupuestos
+                supabase.table("presupuestos").update({"paciente_id": target_id}).eq("paciente_id", paciente_temporal_id).execute()
+                
+                # Reasignar asesorías quirúrgicas
+                supabase.table("asesorias_quirurgicas").update({"paciente_id": target_id}).eq("paciente_id", paciente_temporal_id).execute()
+
+                # Reasignar conversaciones y mensajes
+                conv_temp = supabase.table("conversaciones").select("*").eq("paciente_id", paciente_temporal_id).execute()
+                if conv_temp.data:
+                    conv_temp_id = conv_temp.data[0]["id"]
+                    
+                    # Verificar si el paciente real ya tenía una conversación
+                    conv_real = supabase.table("conversaciones").select("*").eq("paciente_id", target_id).execute()
+                    if conv_real.data:
+                        conv_real_id = conv_real.data[0]["id"]
+                        # Mover mensajes del chat temporal al chat real
+                        supabase.table("mensajes").update({"conversacion_id": conv_real_id}).eq("conversacion_id", conv_temp_id).execute()
+                        # Eliminar conversación temporal vacía
+                        supabase.table("conversaciones").delete().eq("id", conv_temp_id).execute()
+                    else:
+                        # Reasignar la conversación directamente al paciente real
+                        supabase.table("conversaciones").update({"paciente_id": target_id}).eq("id", conv_temp_id).execute()
+
+                # Eliminar el registro temporal huérfano
+                try:
+                    supabase.table("pacientes").delete().eq("id", paciente_temporal_id).execute()
+                    logger.info(f"Registro temporal {paciente_temporal_id} eliminado exitosamente tras fusión.")
+                except Exception as del_err:
+                    logger.warning(f"No se pudo eliminar paciente temporal {paciente_temporal_id}: {del_err}")
+
+            return paciente_final
+
+        # CASO B: El paciente no existía en el CRM (primera vez que se importa desde Geclisa)
+        if paciente_temporal_id and is_valid_uuid(paciente_temporal_id):
+            logger.info(f"Actualizando paciente temporal {paciente_temporal_id} con datos de Geclisa...")
+            resp = supabase.table("pacientes").update(datos_limpios).eq("id", paciente_temporal_id).execute()
+            if resp.data:
+                return resp.data[0]
+
+        # Si no había temporal válido, insertar nuevo registro
+        logger.info(f"Insertando nuevo paciente importado desde Geclisa para DNI {dni}...")
+        resp_ins = supabase.table("pacientes").insert(datos_limpios).execute()
+        if resp_ins.data:
+            nuevo_pac = resp_ins.data[0]
+            get_or_create_conversacion(nuevo_pac["id"])
+            return nuevo_pac
+
+        raise Exception("No se pudo completar la vinculación del paciente con Geclisa.")
+
+    except Exception as e:
+        logger.error(f"Error en vincular_o_fusionar_paciente_con_geclisa: {e}")
+        raise
+
+def registrar_dni_paciente_nuevo_crm(
+    paciente_id: str, 
+    dni: str, 
+    nombre_opcional: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Registra el DNI de un paciente que no existe en Geclisa para que quede
+    dado de alta en el CRM como nuevo paciente/prospecto y continúe su atención.
+    """
+    if not supabase or not paciente_id:
+        return {}
+    try:
+        clean_dni = str(dni).strip()
+        update_data = {
+            "dni": clean_dni,
+            "etapa_clinica": "NUEVO_PACIENTE"
+        }
+        
+        # Si se proporciona nombre y el paciente actual tiene nombre genérico ("Paciente..."), actualizar
+        if nombre_opcional and nombre_opcional.strip():
+            update_data["nombre"] = nombre_opcional.strip()
+
+        resp = supabase.table("pacientes").update(update_data).eq("id", paciente_id).execute()
+        if resp.data and len(resp.data) > 0:
+            logger.info(f"DNI {clean_dni} registrado exitosamente para nuevo paciente CRM {paciente_id}")
+            return resp.data[0]
+        return {}
+    except Exception as e:
+        logger.error(f"Error al registrar DNI de nuevo paciente {paciente_id}: {e}")
+        return {}
+
+
 def asignar_medico_paciente(paciente_id: str, medico_payload: dict):
     """
     Asigna o remueve el médico de cabecera a un paciente en el CRM.
