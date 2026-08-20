@@ -40,6 +40,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
+import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -51,6 +52,8 @@ export interface PresupuestoPaciente {
   asesoria_id?: string | null
   estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
   total: number
+  total_ars?: number
+  total_usd?: number
   pdf_url: string | null
   created_at: string
   items_presupuesto?: Array<{
@@ -60,6 +63,7 @@ export interface PresupuestoPaciente {
     precio_unitario: number
     subtotal: number
     nombre?: string
+    moneda?: string
   }>
 }
 
@@ -237,6 +241,8 @@ export default function ItemCasoQuirurgicoAcordeon({
   const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
   const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
+  const [presupuestoParaWhatsApp, setPresupuestoParaWhatsApp] = useState<PresupuestoPaciente | null>(null)
+  const [mostrarModalWhatsAppPresupuesto, setMostrarModalWhatsAppPresupuesto] = useState(false)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [mostrarModalWhatsApp, setMostrarModalWhatsApp] = useState(false)
   const [actualizandoEstadoPresupuestoId, setActualizandoEstadoPresupuestoId] = useState<string | null>(null)
@@ -1251,8 +1257,26 @@ export default function ItemCasoQuirurgicoAcordeon({
                               </div>
 
                               <div className="flex items-baseline justify-between pt-1 border-t border-[var(--border)]/50">
-                                <div className="text-base font-black font-mono text-white tracking-tight">
-                                  $ {Number(pActivo.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                <div className="space-y-0.5">
+                                  {Number(pActivo.total_ars || 0) > 0 && Number(pActivo.total_usd || 0) > 0 ? (
+                                    <div className="space-y-1">
+                                      <div className="text-sm font-black font-mono text-emerald-400">
+                                        ${Number(pActivo.total_ars).toLocaleString('es-AR', { minimumFractionDigits: 2 })} <span className="text-[10px] text-emerald-300/80 font-sans font-bold">ARS</span>
+                                      </div>
+                                      <div className="text-sm font-black font-mono text-amber-400">
+                                        USD {Number(pActivo.total_usd).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                      </div>
+                                    </div>
+                                  ) : Number(pActivo.total_usd || 0) > 0 ? (
+                                    <div className="text-base font-black font-mono text-amber-400">
+                                      USD {Number(pActivo.total_usd).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                    </div>
+                                  ) : (
+                                    <div className="text-base font-black font-mono text-white tracking-tight">
+                                      $ {Number(pActivo.total_ars || pActivo.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}{' '}
+                                      <span className="text-[10px] text-gray-400 font-sans">ARS</span>
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="text-xs font-semibold text-blue-300">
                                   {obraSocialDefault || 'Particular'}
@@ -1275,6 +1299,19 @@ export default function ItemCasoQuirurgicoAcordeon({
                                     PDF Oficial
                                   </a>
                                 )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPresupuestoParaWhatsApp(pActivo)
+                                    setMostrarModalWhatsAppPresupuesto(true)
+                                  }}
+                                  className="px-2.5 py-1 bg-emerald-950/70 hover:bg-emerald-900/70 text-emerald-300 border border-emerald-500/40 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm"
+                                  title="Enviar Presupuesto Oficial y PDF por WhatsApp"
+                                >
+                                  <Send size={11} className="text-emerald-400" />
+                                  WhatsApp
+                                </button>
 
                                 {!isAprobado && (
                                   <button
@@ -1506,8 +1543,34 @@ export default function ItemCasoQuirurgicoAcordeon({
               setTimeout(() => setMensajeExito(null), 3000)
               handleGuardar()
               fetchPresupuestos()
+              // Abrir inmediatamente el modal unificado de despacho por WhatsApp
+              setPresupuestoParaWhatsApp(nuevoPres)
+              setMostrarModalWhatsAppPresupuesto(true)
             }}
           />
+
+          {/* MODAL ENVIAR PRESUPUESTO POR WHATSAPP (UNIFICADO) */}
+          {presupuestoParaWhatsApp && (
+            <ModalEnviarPresupuestoWhatsApp
+              isOpen={mostrarModalWhatsAppPresupuesto}
+              onClose={() => {
+                setMostrarModalWhatsAppPresupuesto(false)
+                setPresupuestoParaWhatsApp(null)
+                fetchPresupuestos()
+              }}
+              presupuestoId={presupuestoParaWhatsApp.id}
+              pacienteNombre={pacienteNombre}
+              telefonoDefault={pacienteTelefono || ''}
+              totalArs={presupuestoParaWhatsApp.total_ars || 0}
+              totalUsd={presupuestoParaWhatsApp.total_usd || 0}
+              pdfUrl={presupuestoParaWhatsApp.pdf_url}
+              onSuccess={() => {
+                setMensajeExito('✔ Presupuesto y PDF oficial enviados por WhatsApp.')
+                setTimeout(() => setMensajeExito(null), 4000)
+                fetchPresupuestos()
+              }}
+            />
+          )}
 
           {/* MODAL WHATSAPP RÁPIDO */}
           <ModalPlantillasWhatsAppQuirurgicas

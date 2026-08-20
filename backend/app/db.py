@@ -1713,7 +1713,7 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         items_db = []
         items_para_pdf = []
         
-        for item in items_in:
+        for idx, item in enumerate(items_in):
             cant = int(item.get("cantidad", 1))
             pu = float(item.get("precio_unitario", 0.0))
             sub = cant * pu
@@ -1724,16 +1724,30 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             else:
                 total_ars += sub
             
-            # Usar default_servicio_id para evitar violación de foreign key si el ID viene de nomenclador_practicas
-            srv_id = default_servicio_id
             nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
-            codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or "").strip().upper()
+            codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or f"PRACT-{idx+1}").strip().upper()
             
+            # Registrar o actualizar en servicios_precios para preservar nombre, código real y moneda
+            srv_id = default_servicio_id
+            try:
+                ins_srv = supabase.table("servicios_precios").upsert({
+                    "codigo": codigo_item,
+                    "nombre_prestacion": nombre_item,
+                    "precio": pu,
+                    "moneda": item_moneda,
+                    "activo": True
+                }, on_conflict="codigo").execute()
+                if ins_srv.data:
+                    srv_id = ins_srv.data[0]["id"]
+            except Exception as srv_err:
+                logger.warning(f"No se pudo registrar servicio {codigo_item}: {srv_err}")
+
             items_db.append({
                 "servicio_id": srv_id,
                 "cantidad": cant,
                 "precio_unitario": pu,
-                "subtotal": sub
+                "subtotal": sub,
+                "moneda": item_moneda
             })
             
             items_para_pdf.append({
@@ -1832,21 +1846,21 @@ def generar_mensaje_ameno_presupuesto(
     validez_dias = plantilla.get("validez_dias", 30)
     
     # Calcular totales
-    total_ars = float(presupuesto.get("total_ars") or sum(float(it.get("subtotal") or 0.0) for it in items if it.get("moneda") == "ARS"))
-    total_usd = float(presupuesto.get("total_usd") or sum(float(it.get("subtotal") or 0.0) for it in items if it.get("moneda") == "USD"))
+    total_ars = float(presupuesto.get("total_ars") or sum(float(it.get("subtotal") or 0.0) for it in items if str(it.get("moneda") or "").upper() == "ARS"))
+    total_usd = float(presupuesto.get("total_usd") or sum(float(it.get("subtotal") or 0.0) for it in items if str(it.get("moneda") or "").upper() == "USD"))
     
     # Armar lista de prestaciones
     lineas_items = []
     for it in items:
         nom = it.get("nombre") or it.get("nombre_prestacion") or "Prestación Médica"
         cod = it.get("codigo") or it.get("codigo_servicio") or ""
-        mon = it.get("moneda") or "ARS"
+        mon = str(it.get("moneda") or "ARS").upper()
         sub = float(it.get("subtotal") or 0.0)
         sub_str = f"USD {sub:,.2f}" if mon == "USD" else f"${sub:,.2f}"
         if cod:
-            lineas_items.append(f"• *{cod}* - {nom}: {sub_str}")
+            lineas_items.append(f"• *[{cod}]* {nom}: {sub_str}")
         else:
-            lineas_items.append(f"• {nom}: {sub_str}")
+            lineas_items.append(f"• *{nom}*: {sub_str}")
             
     items_texto = "\n".join(lineas_items) if lineas_items else "• Prestaciones médicas detalladas en el archivo adjunto"
     
@@ -1909,13 +1923,35 @@ def enviar_presupuesto_por_whatsapp(
     items = []
     for it in items_raw:
         srv = it.get("servicios_precios") or {}
+        srv_cod = srv.get("codigo") or ""
+        srv_nom = srv.get("nombre_prestacion") or "Prestación Médica"
+        
+        # Detectar moneda real de la práctica
+        it_moneda = it.get("moneda") or srv.get("moneda")
+        if not it_moneda and srv_cod:
+            try:
+                p_find = supabase.table("nomenclador_practicas")\
+                    .select("nombre, categoria, nomencladores(moneda_default)")\
+                    .eq("codigo", srv_cod)\
+                    .limit(1)\
+                    .execute()
+                if p_find.data:
+                    it_moneda = (p_find.data[0].get("nomencladores") or {}).get("moneda_default")
+                    if not srv_nom or srv_nom == "Prestación Médica":
+                        srv_nom = p_find.data[0].get("nombre") or srv_nom
+            except Exception:
+                pass
+                
+        if not it_moneda:
+            it_moneda = "USD" if (float(presupuesto.get("total_usd") or 0) > 0 and float(it.get("precio_unitario") or 0) <= float(presupuesto.get("total_usd") or 0)) else "ARS"
+                
         items.append({
-            "codigo": srv.get("codigo") or "",
-            "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+            "codigo": srv_cod,
+            "nombre": srv_nom,
             "precio_unitario": float(it.get("precio_unitario") or 0.0),
             "cantidad": int(it.get("cantidad") or 1),
             "subtotal": float(it.get("subtotal") or 0.0),
-            "moneda": "USD" if float(presupuesto.get("total_usd") or 0) > 0 and float(presupuesto.get("total_ars") or 0) == 0 else "ARS"
+            "moneda": str(it_moneda).upper()
         })
         
     # 2. Resolver teléfono y mensaje

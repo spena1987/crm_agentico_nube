@@ -67,6 +67,7 @@ create table public.servicios_precios (
     nombre_prestacion varchar not null,
     codigo varchar not null unique, -- Ej: CON-001, RX-002, CIR-003
     precio numeric(10, 2) not null check (precio >= 0),
+    moneda varchar(10) default 'ARS' not null check (moneda in ('ARS', 'USD')),
     activo boolean default true not null
 );
 
@@ -94,7 +95,8 @@ create table public.items_presupuesto (
     servicio_id uuid references public.servicios_precios(id) on delete restrict not null,
     cantidad integer default 1 not null check (cantidad > 0),
     precio_unitario numeric(10, 2) not null check (precio_unitario >= 0),
-    subtotal numeric(10, 2) not null check (subtotal >= 0)
+    subtotal numeric(10, 2) not null check (subtotal >= 0),
+    moneda varchar(10) default 'ARS' not null check (moneda in ('ARS', 'USD'))
 );
 
 comment on table public.items_presupuesto is 'Items individuales que componen un presupuesto.';
