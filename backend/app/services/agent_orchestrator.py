@@ -7,6 +7,7 @@ from app.services.tools import (
     buscar_disponibilidad_turnos, 
     crear_borrador_presupuesto, 
     escalar_a_operador_humano,
+    finalizar_y_cerrar_consulta,
     aprobar_presupuesto,
     consultar_presupuestos_paciente,
     vincular_paciente_geclisa
@@ -44,6 +45,7 @@ AVAILABLE_TOOLS_MAP = {
     "buscar_disponibilidad_turnos": buscar_disponibilidad_turnos,
     "crear_borrador_presupuesto": crear_borrador_presupuesto,
     "escalar_a_operador_humano": escalar_a_operador_humano,
+    "finalizar_y_cerrar_consulta": finalizar_y_cerrar_consulta,
     "aprobar_presupuesto": aprobar_presupuesto,
     "consultar_presupuestos_paciente": consultar_presupuestos_paciente,
     "vincular_paciente_geclisa": vincular_paciente_geclisa
@@ -55,12 +57,16 @@ DEFAULT_GLOBAL_DIRECTIVES = {
     "tono_general": "Profesional, empático, claro y resolutivo en todo momento.",
     "guardrails_medicos": (
         "PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. "
-        "Si el paciente consulta sobre síntomas o requiere atención médica urgente, explícale que lo derivarás con un profesional de la salud "
-        "y utiliza la herramienta escalar_a_operador_humano."
+        "Si el paciente consulta sobre síntomas complejos o requiere atención médica urgente, explícale con calma que lo derivarás con un profesional "
+        "y utiliza de inmediato la herramienta escalar_a_operador_humano."
     ),
     "politica_escalamiento": (
-        "Si el paciente solicita hablar con un humano, presenta dudas clínicas complejas o expresa enojo/frustración, "
-        "invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo."
+        "Si el paciente solicita hablar con un humano, persona o secretaria, o presenta dudas clínicas fuera de tu comprensión, "
+        "invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo detallado."
+    ),
+    "politica_cierre": (
+        "Cuando el paciente haya resuelto su objetivo (turno agendado, presupuesto aceptado), se despida, agradezca o manifieste que no precisa nada más, "
+        "utiliza la herramienta finalizar_y_cerrar_consulta y despídete con cordialidad."
     ),
     "politica_turnos": "Para turnos, ofrece un máximo de 2 opciones claras de fecha/horario y confirma nombre y DNI del paciente.",
     "politica_presupuestos": "Para cotizaciones, informa los valores con claridad, formas de pago disponibles y aclara la vigencia del presupuesto.",
@@ -72,40 +78,40 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Asistente Administrativo General",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa. Si el paciente no tiene DNI, pídeselo para verificar su ficha en Geclisa usando vincular_paciente_geclisa. Si confirma un presupuesto emitido, apruébalo directamente.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
         "codigo": "TURNOS_CONCRETOS",
         "nombre": "Agente de Turnos Ágiles",
         "temperatura": 0.1,
-        "directiva_particular": "El paciente busca resolver una cita médica de manera rápida y sin demoras. Sé sumamente concreto, directo y eficiente. Si el paciente no está identificado por DNI, solicítaselo para buscar su ficha en Geclisa con vincular_paciente_geclisa. Pregunta especialidad o médico deseado, busca disponibilidad con tu herramienta y ofrece máximo 2 opciones puntuales de días y horarios.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente busca resolver una cita médica de manera rápida y sin demoras. Sé sumamente concreto, directo y eficiente. Cuando el turno quede acordado o el paciente concluya, usa finalizar_y_cerrar_consulta. Si pide un humano o no encuentras disponibilidad adecuada, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "QUIRURGICO_EMPATICO": {
         "codigo": "QUIRURGICO_EMPATICO",
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
-        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Su estado emocional suele requerir contención y serenidad. Trátalo con máxima calidez humana, empatía y paciencia. Utiliza frases de acompañamiento ('Entendemos tu consulta', 'Estamos para acompañarte en cada paso'). Explica los requisitos y consultas administrativas con calma y claridad. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
+        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {
         "codigo": "PRESUPUESTOS_COMERCIAL",
         "nombre": "Cotizaciones y Planes de Tratamiento",
         "temperatura": 0.2,
-        "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías, o desea confirmar su presupuesto. Si solicita cotización, explica el desglose y usa crear_borrador_presupuesto. Si manifiesta que acepta o aprueba el presupuesto, usa aprobar_presupuesto de inmediato sin volver a pedir DNI.",
-        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías, o desea confirmar su presupuesto. Si solicita cotización, explica el desglose y usa crear_borrador_presupuesto. Si manifiesta que acepta el presupuesto, usa aprobar_presupuesto. Si finaliza la consulta, usa finalizar_y_cerrar_consulta.",
+        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "POST_OPERATORIO": {
         "codigo": "POST_OPERATORIO",
         "nombre": "Seguimiento y Control Post-Quirúrgico",
         "temperatura": 0.2,
-        "directiva_particular": "El paciente ha sido intervenido recientemente. Pregunta amablemente cómo se siente y cómo evoluciona. Si menciona síntomas de alarma (fiebre alta, sangrado abundante, dolor agudo intolerable), indícale con calma que lo derivarás de urgencia con el equipo médico y utiliza de inmediato escalar_a_operador_humano con motivo urgente.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente ha sido intervenido recientemente. Pregunta amablemente cómo se siente. Si menciona síntomas de alarma o dolor no manejable, usa de inmediato escalar_a_operador_humano con motivo urgente. Si todo está bien y concluye el control, usa finalizar_y_cerrar_consulta.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     }
 }

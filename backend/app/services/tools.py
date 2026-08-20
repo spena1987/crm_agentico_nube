@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from app.db import (
     supabase, 
     actualizar_bot_disabled, 
+    archivar_conversacion,
+    marcar_mensajes_conversacion_leidos,
     guardar_mensaje,
     cambiar_estado_presupuesto,
     get_presupuestos_by_paciente,
@@ -211,42 +213,106 @@ def is_valid_uuid(val: Any) -> bool:
     except Exception:
         return False
 
-def escalar_a_operador_humano(conversacion_id: str, motivo: str) -> dict:
+def finalizar_y_cerrar_consulta(conversacion_id: str, motivo: str) -> dict:
     """
-    Desactiva el bot automático para esta conversación para permitir que un operador
-    humano de la clínica tome el control y responda las dudas.
+    Finaliza y archiva la conversación cuando el paciente cumplió su objetivo
+    (ej. turno confirmado, presupuesto emitido/aprobado) o manifestó que no necesita nada más (se despide, agradece o desiste).
+    Marca todos los mensajes como leídos y archiva la conversación en el CRM (moviéndola a Cerrados).
     
     Args:
         conversacion_id: El UUID de la conversación.
-        motivo: Breve explicación de por qué se requiere intervención humana.
+        motivo: Breve explicación del motivo de finalización (ej: 'Turno confirmado y paciente agradece', 'Paciente desiste de consulta').
+        
+    Returns:
+        Un mensaje confirmando que la conversación fue cerrada y archivada exitosamente.
+    """
+    logger.info(f"Herramienta: finalizar_y_cerrar_consulta en conversación {conversacion_id} por: {motivo}")
+    
+    if not is_valid_uuid(conversacion_id):
+        return {
+            "success": True,
+            "mensaje": f"Conversación finalizada y archivada correctamente: {motivo}",
+            "conversacion_id": conversacion_id
+        }
+
+    try:
+        # 1. Marcar mensajes de la conversación como leídos
+        marcar_mensajes_conversacion_leidos(conversacion_id)
+
+        # 2. Archivar la conversación
+        archivar_conversacion(conversacion_id, True)
+
+        # 3. Registrar nota interna de cierre
+        guardar_mensaje(
+            conversacion_id=conversacion_id,
+            emisor="bot",
+            contenido=f"Consulta finalizada y archivada automáticamente por el Asistente IA.\nMotivo: {motivo}",
+            metadata_json={"sistema": True, "evento": "consulta_finalizada", "motivo": motivo}
+        )
+
+        return {
+            "success": True,
+            "mensaje": "La consulta ha sido finalizada y archivada exitosamente en el CRM. Despídete cordialmente del paciente.",
+            "conversacion_id": conversacion_id
+        }
+    except Exception as e:
+        logger.error(f"Error al finalizar y cerrar consulta: {e}")
+        return {"error": f"Error al finalizar consulta: {str(e)}"}
+
+def escalar_a_operador_humano(conversacion_id: str, motivo: str, nivel_urgencia: str = "normal") -> dict:
+    """
+    Desactiva el bot automático para esta conversación para transferir la atención
+    a un operador humano (secretaria / médico) de la clínica.
+    Utilízala cuando el paciente lo solicite expresamente, cuando la consulta médica/administrativa
+    esté fuera de tu alcance o directivas, o ante reiterada confusión o reclamo.
+    
+    Args:
+        conversacion_id: El UUID de la conversación.
+        motivo: Explicación clara y detallada del motivo por el cual se requiere intervención humana.
+        nivel_urgencia: Nivel de prioridad ('baja', 'normal', 'alta', 'urgente').
         
     Returns:
         Un mensaje de confirmación del escalado.
     """
-    logger.info(f"Herramienta: escalar_a_operador_humano en conversación {conversacion_id} por: {motivo}")
+    logger.info(f"Herramienta: escalar_a_operador_humano en conversación {conversacion_id} por: {motivo} (Urgencia: {nivel_urgencia})")
     
-    # Si no es un UUID válido (ej. prueba o simulador), responder exitosamente sin error de DB
     if not is_valid_uuid(conversacion_id):
         logger.info(f"Conversación no UUID ({conversacion_id}). Escalado registrado lógicamente.")
         return {
             "success": True,
-            "mensaje": f"Transferencia a operador humano registrada exitosamente: {motivo}",
+            "mensaje": f"Transferencia a operador humano registrada: {motivo}",
             "conversacion_id": conversacion_id
         }
 
     try:
         res = actualizar_bot_disabled(conversacion_id, True)
         if res:
-            # Registrar un mensaje interno notificando el escalado
+            # 1. Registrar NOTA INTERNA visible para el equipo médico en el CRM
             guardar_mensaje(
                 conversacion_id=conversacion_id,
                 emisor="bot",
-                contenido=f"[Sistema] Conversación transferida a operador humano. Motivo: {motivo}",
-                metadata_json={"sistema": True, "evento": "escalado", "motivo": motivo}
+                contenido=f"🚨 DERIVACIÓN A ATENCIÓN HUMANA\n\n📌 Motivo: {motivo}\n⚠️ Prioridad: {nivel_urgencia.upper()}",
+                metadata_json={
+                    "is_internal_note": True,
+                    "tipo": "nota_interna",
+                    "evento": "escalado_humano",
+                    "motivo": motivo,
+                    "urgencia": nivel_urgencia
+                }
             )
+
+            # 2. Desmarcar como leído para encender el badge rojo en la bandeja de operadores humanos
+            if supabase:
+                try:
+                    supabase.table("mensajes").update({
+                        "metadata_json": {"leido_por_operador": False, "requiere_atencion_humana": True}
+                    }).eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()
+                except Exception:
+                    pass
+
             return {
                 "success": True,
-                "mensaje": "La conversación ha sido transferida al equipo humano con éxito.",
+                "mensaje": "La conversación ha sido transferida al equipo humano de la clínica. Informa amablemente al paciente que un asesor se pondrá en contacto a la brevedad.",
                 "conversacion_id": conversacion_id
             }
         return {"error": "Conversación no encontrada o no se pudo actualizar."}

@@ -336,12 +336,33 @@ class IncomingWebhookMessage(BaseModel):
 
 def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto: str):
     """
-    Ejecuta el Agente IA de Gemini en segundo plano para no demorar la respuesta del webhook.
+    Ejecuta el Agente IA de Gemini en segundo plano con filtro rápido de escalamiento
+    y auto-lectura al responder con éxito.
     """
     try:
+        texto_lower = texto.lower()
+        # Filtro rápido de palabras clave para derivación inmediata a operador humano (0ms latencia)
+        patron_humano = r'\b(humano|persona|secretaria|operador|asesor|asesora|hablar con alguien|atencion humana|atención personalizada)\b'
+        if re.search(patron_humano, texto_lower):
+            logger.info(f"Petición explícita de atención humana detectada en '{texto[:40]}'. Escalando...")
+            from app.services.tools import escalar_a_operador_humano
+            escalar_a_operador_humano(conversacion_id=conversacion_id, motivo="Solicitud expresa del paciente por mensaje", nivel_urgencia="alta")
+            whatsapp_manager.enviar_mensaje(
+                clean_phone,
+                "Te comunico de inmediato con nuestro equipo de atención humana. Un asesor se contactará a la brevedad.",
+                conversacion_id=conversacion_id,
+                emisor="bot"
+            )
+            return
+
         respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
         if respuesta_agente:
             whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot")
+            # Auto-lectura de la consulta gestionada 100% por IA (no generar badges falsos a operadores humanos)
+            try:
+                marcar_mensajes_conversacion_leidos(conversacion_id)
+            except Exception as read_err:
+                logger.warning(f"Error en auto-lectura por IA para {conversacion_id}: {read_err}")
     except Exception as agent_err:
         logger.error(f"Error procesando respuesta de agente IA en background: {agent_err}")
 
