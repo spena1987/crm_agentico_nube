@@ -556,7 +556,8 @@ def archivar_conversacion(conversacion_id: str, archivada: bool = True):
 
 def obtener_conversaciones(incluir_archivadas: bool = True):
     """
-    Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados.
+    Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados
+    y el conteo de mensajes no leídos (unread_count).
     """
     if not supabase:
         return []
@@ -567,7 +568,33 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
         if not incluir_archivadas:
             query = query.eq("archivada", False)
         response = query.order("updated_at", desc=True).execute()
-        return response.data or []
+        convs = response.data or []
+
+        # Calcular conteo de mensajes no leídos por conversación
+        try:
+            msg_res = supabase.table("mensajes").select("id, conversacion_id, emisor, metadata_json").eq("emisor", "paciente").execute()
+            unread_by_conv = {}
+            import json
+            for m in msg_res.data or []:
+                meta = m.get("metadata_json") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                if not meta.get("leido_por_operador"):
+                    c_id = m.get("conversacion_id")
+                    if c_id:
+                        unread_by_conv[c_id] = unread_by_conv.get(c_id, 0) + 1
+            
+            for c in convs:
+                c["unread_count"] = unread_by_conv.get(c["id"], 0)
+        except Exception as unread_err:
+            logger.warning(f"No se pudo calcular unread_count en conversaciones: {unread_err}")
+            for c in convs:
+                c["unread_count"] = 0
+
+        return convs
     except Exception as e:
         logger.error(f"Error al obtener conversaciones: {e}")
         return []
@@ -576,12 +603,14 @@ def obtener_metricas_conversaciones():
     """
     Calcula en tiempo real los contadores para las pestañas de la bandeja de entrada:
     - total_activas
+    - no_leidos_count (conversaciones con al menos un mensaje no leído)
+    - total_mensajes_no_leidos
     - derivados_humano (bot_disabled == true and not archivada)
     - bot_activos (bot_disabled == false and not archivada)
     - archivados (archivada == true)
     """
     if not supabase:
-        return {"total_activas": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
+        return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
     try:
         res = supabase.table("conversaciones").select("id, bot_disabled, archivada").execute()
         convs = res.data or []
@@ -589,15 +618,41 @@ def obtener_metricas_conversaciones():
         bot_activos = sum(1 for c in convs if not c.get("bot_disabled") and not c.get("archivada"))
         archivados = sum(1 for c in convs if c.get("archivada"))
         total_activas = len(convs) - archivados
+
+        # Conteo de no leídos
+        no_leidos_count = 0
+        total_mensajes_no_leidos = 0
+        try:
+            msg_res = supabase.table("mensajes").select("id, conversacion_id, emisor, metadata_json").eq("emisor", "paciente").execute()
+            unread_by_conv = set()
+            import json
+            for m in msg_res.data or []:
+                meta = m.get("metadata_json") or {}
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                if not meta.get("leido_por_operador"):
+                    c_id = m.get("conversacion_id")
+                    if c_id:
+                        unread_by_conv.add(c_id)
+                        total_mensajes_no_leidos += 1
+            no_leidos_count = len(unread_by_conv)
+        except Exception as unread_err:
+            logger.warning(f"Error calculando no_leidos_count en métricas: {unread_err}")
+
         return {
             "total_activas": total_activas,
+            "no_leidos_count": no_leidos_count,
+            "total_mensajes_no_leidos": total_mensajes_no_leidos,
             "derivados_humano": derivados,
             "bot_activos": bot_activos,
             "archivados": archivados
         }
     except Exception as e:
         logger.error(f"Error al calcular métricas de conversaciones: {e}")
-        return {"total_activas": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
+        return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
 
 def guardar_transcripcion_mensaje(mensaje_id: str, transcripcion: str):
     """

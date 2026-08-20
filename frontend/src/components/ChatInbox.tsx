@@ -70,6 +70,7 @@ interface Conversacion {
   agente_asignado_codigo?: string
   ultimo_mensaje: string | null
   updated_at: string
+  unread_count?: number
   pacientes: Paciente | Paciente[] | null
 }
 
@@ -138,8 +139,8 @@ export default function ChatInbox() {
   const [cargandoConversaciones, setCargandoConversaciones] = useState(true)
   const [waStatus, setWaStatus] = useState<WAStatus | null>(null)
   
-  // Filtros y Búsqueda
-  const [activeTab, setActiveTab] = useState<'derivados' | 'bot' | 'todos' | 'archivados'>('todos')
+  // Filtros y Búsqueda (Soporte para pestaña No Leídos)
+  const [activeTab, setActiveTab] = useState<'no_leidos' | 'derivados' | 'bot' | 'todos' | 'archivados'>('todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [showSimulator, setShowSimulator] = useState(false)
 
@@ -384,10 +385,13 @@ export default function ChatInbox() {
           setConversaciones((prevConvs) => 
             prevConvs.map((conv) => {
               if (conv.id === newMsg.conversacion_id) {
+                const isCurrentActive = conv.id === selectedConvId
+                const unreadDelta = (newMsg.emisor === 'paciente' && !isCurrentActive) ? 1 : 0
                 return {
                   ...conv,
                   ultimo_mensaje: newMsg.contenido,
-                  updated_at: newMsg.created_at
+                  updated_at: newMsg.created_at,
+                  unread_count: isCurrentActive ? 0 : (conv.unread_count || 0) + unreadDelta
                 }
               }
               return conv
@@ -702,10 +706,20 @@ export default function ChatInbox() {
     }
   }
 
+  const noLeidosCount = conversaciones.filter((c) => (c.unread_count || 0) > 0 && !c.archivada).length
   const derivadosCount = conversaciones.filter((c) => Boolean(c.bot_disabled) && !c.archivada).length
   const botCount = conversaciones.filter((c) => !c.bot_disabled && !c.archivada).length
   const todosCount = conversaciones.filter((c) => !c.archivada).length
   const archivadosCount = conversaciones.filter((c) => Boolean(c.archivada)).length
+
+  // Actualización dinámica del título del navegador
+  useEffect(() => {
+    if (noLeidosCount > 0) {
+      document.title = `(${noLeidosCount}) MedCRM - Chats`
+    } else {
+      document.title = 'MedCRM - Clínica Nube'
+    }
+  }, [noLeidosCount])
 
   const filteredConversaciones = conversaciones.filter((conv) => {
     const paciente = getPatient(conv)
@@ -717,6 +731,7 @@ export default function ChatInbox() {
     const matchesSearch = !q || nombre.includes(q) || telefono.includes(q) || ultimoMsg.includes(q)
     if (!matchesSearch) return false
 
+    if (activeTab === 'no_leidos') return (conv.unread_count || 0) > 0 && !conv.archivada
     if (activeTab === 'derivados') return Boolean(conv.bot_disabled) && !conv.archivada
     if (activeTab === 'bot') return !conv.bot_disabled && !conv.archivada
     if (activeTab === 'archivados') return Boolean(conv.archivada)
@@ -798,77 +813,103 @@ export default function ChatInbox() {
           </div>
         </div>
 
-        {/* Pestañas de Estado con Contadores Dinámicos (Tema Oscuro Coherente) */}
-        <div className="p-1.5 grid grid-cols-4 gap-1 border-b border-slate-800 bg-[#0a101d] text-[11px] font-semibold">
+        {/* Pestañas de Estado con Contadores Dinámicos (5 Pestañas Adaptadas) */}
+        <div className="p-1.5 grid grid-cols-5 gap-1 border-b border-slate-800 bg-[#0a101d] text-[10px] font-semibold">
           
-          {/* 1. DERIVADOS / ATENCIÓN HUMANA */}
+          {/* 1. NO LEÍDOS */}
+          <button
+            onClick={() => setActiveTab('no_leidos')}
+            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
+              activeTab === 'no_leidos'
+                ? 'bg-[#0f2e22] text-emerald-300 border-emerald-500/60 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
+            }`}
+            title="Pacientes con mensajes pendientes de lectura"
+          >
+            <span className="truncate flex items-center gap-0.5">
+              🔴 No Leídos
+            </span>
+            <span className={`text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold border ${
+              noLeidosCount > 0 
+                ? 'bg-emerald-500/30 text-emerald-300 border-emerald-500/60 animate-pulse font-extrabold' 
+                : 'bg-slate-800/80 text-slate-400 border-slate-700/50'
+            }`}>
+              {noLeidosCount}
+            </span>
+          </button>
+
+          {/* 2. DERIVADOS / ATENCIÓN HUMANA */}
           <button
             onClick={() => setActiveTab('derivados')}
-            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
               activeTab === 'derivados'
                 ? 'bg-[#2a1722] text-rose-300 border-rose-500/50 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
+            title="Conversaciones asignadas a operadores humanos"
           >
-            <span className="truncate flex items-center gap-1">
-              🔴 Humano
+            <span className="truncate flex items-center gap-0.5">
+              👤 Humano
             </span>
-            <span className={`text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold border ${
+            <span className={`text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold border ${
               derivadosCount > 0 
-                ? 'bg-rose-500/30 text-rose-300 border-rose-500/50 animate-pulse' 
+                ? 'bg-rose-500/30 text-rose-300 border-rose-500/50' 
                 : 'bg-slate-800/80 text-slate-400 border-slate-700/50'
             }`}>
               {derivadosCount}
             </span>
           </button>
 
-          {/* 2. BOT GEMINI ACTIVO */}
+          {/* 3. BOT GEMINI ACTIVO */}
           <button
             onClick={() => setActiveTab('bot')}
-            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
               activeTab === 'bot'
-                ? 'bg-[#122822] text-emerald-300 border-emerald-500/50 shadow-sm font-bold'
+                ? 'bg-[#122822] text-teal-300 border-teal-500/50 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
+            title="Conversaciones atendidas por el Bot Gemini"
           >
-            <span className="truncate flex items-center gap-1">
-              🤖 Con Bot
+            <span className="truncate flex items-center gap-0.5">
+              🤖 Bot
             </span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/50">
+            <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/50">
               {botCount}
             </span>
           </button>
 
-          {/* 3. TODOS LOS CHATS ACTIVOS */}
+          {/* 4. TODOS LOS CHATS ACTIVOS */}
           <button
             onClick={() => setActiveTab('todos')}
-            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
               activeTab === 'todos'
                 ? 'bg-[#162547] text-blue-300 border-blue-500/50 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
+            title="Todas las conversaciones activas"
           >
             <span className="truncate">
               💬 Todos
             </span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/60">
+            <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/60">
               {todosCount}
             </span>
           </button>
 
-          {/* 4. CERRADOS / ARCHIVADOS */}
+          {/* 5. CERRADOS / ARCHIVADOS */}
           <button
             onClick={() => setActiveTab('archivados')}
-            className={`py-1.5 px-1 rounded-xl flex flex-col items-center justify-center transition-all border ${
+            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
               activeTab === 'archivados'
                 ? 'bg-[#1e293b] text-slate-200 border-slate-600 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
+            title="Conversaciones archivadas o resueltas"
           >
             <span className="truncate">
               ✅ Cerrados
             </span>
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-400 border border-slate-700/60">
+            <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-400 border border-slate-700/60">
               {archivadosCount}
             </span>
           </button>
@@ -941,14 +982,25 @@ export default function ChatInbox() {
               const snippet = formatMessageSnippet(conv.ultimo_mensaje)
               const isDerivado = Boolean(conv.bot_disabled)
               const isArchivada = Boolean(conv.archivada)
+              const unread = conv.unread_count || 0
+              const hasUnread = unread > 0
               
               return (
                 <div
                   key={conv.id}
-                  onClick={() => setSelectedConvId(conv.id)}
+                  onClick={() => {
+                    if (hasUnread) {
+                      setConversaciones((prev) =>
+                        prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c))
+                      )
+                    }
+                    setSelectedConvId(conv.id)
+                  }}
                   className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 ${
                     active 
                       ? 'bg-[#162547] border-l-blue-500 shadow-xs' 
+                      : hasUnread
+                      ? 'bg-[#0f1d38]/80 hover:bg-[#142345] border-l-emerald-500 shadow-inner'
                       : 'bg-transparent hover:bg-[#111c33] border-l-transparent'
                   }`}
                 >
@@ -967,6 +1019,8 @@ export default function ChatInbox() {
                         ? 'bg-slate-500'
                         : isDerivado
                         ? 'bg-rose-500 ring-2 ring-rose-900 animate-pulse'
+                        : hasUnread
+                        ? 'bg-emerald-400 ring-2 ring-emerald-900 animate-pulse'
                         : 'bg-emerald-500'
                     }`} />
                   </div>
@@ -974,10 +1028,16 @@ export default function ChatInbox() {
                   {/* Datos del Paciente y Preview de Mensaje */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
-                      <p className={`text-xs truncate ${active ? 'font-bold text-blue-200' : 'font-semibold text-slate-100'}`}>
+                      <p className={`text-xs truncate ${
+                        active 
+                          ? 'font-bold text-blue-200' 
+                          : hasUnread 
+                          ? 'font-extrabold text-white' 
+                          : 'font-semibold text-slate-100'
+                      }`}>
                         {paciente?.nombre || `Paciente (${paciente?.telefono ? paciente.telefono.slice(-4) : '...' })`}
                       </p>
-                      <span className="text-[10px] text-slate-400 shrink-0 font-medium">
+                      <span className={`text-[10px] shrink-0 font-medium ${hasUnread ? 'text-emerald-400 font-bold' : 'text-slate-400'}`}>
                         {formattedTime}
                       </span>
                     </div>
@@ -1004,10 +1064,17 @@ export default function ChatInbox() {
                       )}
                     </div>
 
-                    {/* Último Mensaje Snippet */}
-                    <p className="text-[11px] text-slate-400 truncate mt-1 leading-tight">
-                      {snippet}
-                    </p>
+                    {/* Último Mensaje Snippet con Badge de Mensajes No Leídos */}
+                    <div className="flex items-center justify-between gap-1 mt-1">
+                      <p className={`text-[11px] truncate leading-tight flex-1 ${hasUnread ? 'text-slate-100 font-medium' : 'text-slate-400'}`}>
+                        {snippet}
+                      </p>
+                      {hasUnread && (
+                        <span className="shrink-0 bg-emerald-500 text-white font-bold text-[9.5px] px-1.5 py-0.2 rounded-full min-w-[18px] text-center shadow-xs animate-pulse">
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )

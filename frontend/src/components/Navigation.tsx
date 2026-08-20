@@ -22,6 +22,9 @@ import {
   Stethoscope
 } from 'lucide-react'
 
+import { BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
+
 interface NavItem {
   code: string
   label: string
@@ -48,6 +51,18 @@ export default function Navigation() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   // Estado para menú móvil/drawer en pantallas pequeñas
   const [mobileOpen, setMobileOpen] = useState(false)
+  // Contador de chats con mensajes no leídos
+  const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
+
+  const fetchUnreadMetrics = async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/conversaciones/metricas`, { cache: 'no-store' })
+      if (res.ok) {
+        const data = await res.json()
+        setUnreadChatCount(data.no_leidos_count || 0)
+      }
+    } catch (e) {}
+  }
 
   // Cargar preferencia guardada de colapso y auto-colapsar en pantallas medianas
   useEffect(() => {
@@ -64,7 +79,35 @@ export default function Navigation() {
       }
     }
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+
+    // Cargar métricas iniciales y configurar polling de respaldo
+    fetchUnreadMetrics()
+    const intervalMetrics = setInterval(fetchUnreadMetrics, 5000)
+
+    // Suscripción Realtime a mensajes para actualizar badge en vivo
+    const channel = supabase
+      .channel('nav-unread-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'mensajes' },
+        () => {
+          fetchUnreadMetrics()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'conversaciones' },
+        () => {
+          fetchUnreadMetrics()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      clearInterval(intervalMetrics)
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   const toggleCollapse = () => {
@@ -126,36 +169,57 @@ export default function Navigation() {
             const isActive = item.href === '/' 
               ? pathname === '/' 
               : pathname === item.href || pathname.startsWith(item.href + '/')
+            const isChat = item.code === 'chat'
+            const hasUnread = isChat && unreadChatCount > 0
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
-                title={isCollapsed ? item.label : undefined}
+                title={isCollapsed ? `${item.label}${hasUnread ? ` (${unreadChatCount} sin leer)` : ''}` : undefined}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 group relative ${
                   isActive 
                     ? 'bg-blue-600 text-white shadow-xs glow-primary' 
                     : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-[var(--foreground)]'
                 } ${isCollapsed ? 'justify-center px-2' : ''}`}
               >
-                <Icon 
-                  size={19} 
-                  className={`shrink-0 transition-transform duration-200 group-hover:scale-110 ${
-                    isActive ? 'text-white' : 'text-slate-400 dark:text-slate-400'
-                  }`} 
-                />
+                <div className="relative shrink-0 flex items-center justify-center">
+                  <Icon 
+                    size={19} 
+                    className={`transition-transform duration-200 group-hover:scale-110 ${
+                      isActive ? 'text-white' : 'text-slate-400 dark:text-slate-400'
+                    }`} 
+                  />
+                  {/* Badge en modo colapsado */}
+                  {isCollapsed && hasUnread && (
+                    <span className="absolute -top-1 -right-1.5 w-3 h-3 bg-emerald-500 rounded-full ring-2 ring-[var(--background)] animate-pulse" />
+                  )}
+                </div>
                 
                 {!isCollapsed && (
-                  <span className="truncate text-xs font-medium tracking-tight">
-                    {item.label}
-                  </span>
+                  <>
+                    <span className="truncate text-xs font-medium tracking-tight">
+                      {item.label}
+                    </span>
+                    {/* Badge numérico en modo expandido */}
+                    {hasUnread && (
+                      <span className="ml-auto bg-emerald-500 text-white font-bold text-[10px] px-1.5 py-0.2 rounded-full min-w-[18px] text-center shadow-xs animate-pulse">
+                        {unreadChatCount > 99 ? '99+' : unreadChatCount}
+                      </span>
+                    )}
+                  </>
                 )}
 
                 {/* Tooltip flotante al estar colapsado */}
                 {isCollapsed && (
-                  <span className="absolute left-full ml-3 px-2.5 py-1 bg-slate-900 text-white text-xs font-medium rounded-md shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 whitespace-nowrap">
-                    {item.label}
+                  <span className="absolute left-full ml-3 px-2.5 py-1 bg-slate-900 text-white text-xs font-medium rounded-md shadow-lg opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 whitespace-nowrap flex items-center gap-1.5">
+                    <span>{item.label}</span>
+                    {hasUnread && (
+                      <span className="bg-emerald-500 text-white font-bold text-[9.5px] px-1.5 py-0.2 rounded-full">
+                        {unreadChatCount}
+                      </span>
+                    )}
                   </span>
                 )}
               </Link>
