@@ -425,7 +425,7 @@ create table if not exists public.asesorias_quirurgicas (
     
     -- Estado del Pipeline
     estado varchar default 'en_asesoramiento' not null check (
-        estado in ('derivado', 'en_asesoramiento', 'en_analisis', 'confirmado', 'operado', 'cancelado')
+        estado in ('derivado', 'en_asesoramiento', 'en_analisis', 'presupuesto_enviado', 'confirmado', 'operado', 'cancelado')
     ),
     
     -- Propuesta y Situación

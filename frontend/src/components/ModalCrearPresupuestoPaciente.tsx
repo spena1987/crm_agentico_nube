@@ -18,7 +18,10 @@ import {
   Send,
   MessageSquare,
   ExternalLink,
-  Download
+  Download,
+  RotateCcw,
+  Copy,
+  Check
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -30,6 +33,7 @@ interface ItemPresupuestoForm {
   cantidad: number
   precio_unitario: number
   subtotal: number
+  moneda: 'ARS' | 'USD'
 }
 
 interface PracticaNomenclador {
@@ -72,7 +76,7 @@ export default function ModalCrearPresupuestoPaciente({
   onPresupuestoCreado
 }: ModalCrearPresupuestoPacienteProps) {
   const [paso, setPaso] = useState<'formulario' | 'whatsapp'>('formulario')
-  const [moneda, setMoneda] = useState<'ARS' | 'USD'>('ARS')
+  const [monedaDefault, setMonedaDefault] = useState<'ARS' | 'USD'>('ARS')
   const [items, setItems] = useState<ItemPresupuestoForm[]>([])
   
   // Búsqueda en Nomenclador
@@ -91,6 +95,7 @@ export default function ModalCrearPresupuestoPaciente({
   const [mensajeWhatsApp, setMensajeWhatsApp] = useState('')
   const [enviandoWhatsApp, setEnviandoWhatsApp] = useState(false)
   const [whatsappEnviado, setWhatsappEnviado] = useState(false)
+  const [copiado, setCopiado] = useState(false)
 
   // Al abrir el modal, inicializar ítems y estados
   useEffect(() => {
@@ -105,15 +110,17 @@ export default function ModalCrearPresupuestoPaciente({
       
       if (practicaInicial && practicaInicial.nombre) {
         const pPrecio = Number(practicaInicial.precio) || 0
+        const pMoneda = (practicaInicial.moneda === 'USD' ? 'USD' : 'ARS') as 'ARS' | 'USD'
         listaInicial.push({
           codigo: practicaInicial.codigo || 'QUIR-01',
           nombre: practicaInicial.nombre,
           cantidad: 1,
           precio_unitario: pPrecio,
-          subtotal: pPrecio
+          subtotal: pPrecio,
+          moneda: pMoneda
         })
-        if (practicaInicial.moneda === 'USD') {
-          setMoneda('USD')
+        if (pMoneda === 'USD') {
+          setMonedaDefault('USD')
         }
       }
 
@@ -127,7 +134,7 @@ export default function ModalCrearPresupuestoPaciente({
     try {
       setBuscando(true)
       const qClean = (query || '').trim()
-      const res = await fetch(`/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
+      const res = await fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
       const data = await res.json()
 
       let lista: PracticaNomenclador[] = []
@@ -162,13 +169,15 @@ export default function ModalCrearPresupuestoPaciente({
   // Agregar ítem desde el catálogo
   const handleAgregarItem = (p: PracticaNomenclador) => {
     const precio = Number(p.precio) || 0
+    const pMoneda: 'ARS' | 'USD' = p.moneda === 'USD' ? 'USD' : 'ARS'
     const nuevo: ItemPresupuestoForm = {
       servicio_id: p.id,
       codigo: p.codigo,
       nombre: p.nombre,
       cantidad: 1,
       precio_unitario: precio,
-      subtotal: precio
+      subtotal: precio,
+      moneda: pMoneda
     }
     setItems((prev) => [...prev, nuevo])
     setBusqueda('')
@@ -182,13 +191,14 @@ export default function ModalCrearPresupuestoPaciente({
       nombre: 'Concepto adicional / Honorarios / Descartables',
       cantidad: 1,
       precio_unitario: 0,
-      subtotal: 0
+      subtotal: 0,
+      moneda: monedaDefault
     }
     setItems((prev) => [...prev, nuevo])
   }
 
-  // Modificar cantidad o precio de un ítem
-  const handleUpdateItem = (index: number, field: 'cantidad' | 'precio_unitario' | 'nombre', val: any) => {
+  // Modificar cantidad, precio, nombre o moneda de un ítem
+  const handleUpdateItem = (index: number, field: 'cantidad' | 'precio_unitario' | 'nombre' | 'moneda', val: any) => {
     setItems((prev) => {
       const copy = [...prev]
       const target = { ...copy[index] }
@@ -203,6 +213,8 @@ export default function ModalCrearPresupuestoPaciente({
         target.subtotal = target.cantidad * pu
       } else if (field === 'nombre') {
         target.nombre = val
+      } else if (field === 'moneda') {
+        target.moneda = val as 'ARS' | 'USD'
       }
       
       copy[index] = target
@@ -215,8 +227,9 @@ export default function ModalCrearPresupuestoPaciente({
     setItems((prev) => prev.filter((_, i) => i !== index))
   }
 
-  // Total acumulado
-  const totalGeneral = items.reduce((acc, it) => acc + (it.subtotal || 0), 0)
+  // Totales independientes por moneda
+  const totalARS = items.filter((it) => it.moneda === 'ARS').reduce((acc, it) => acc + (it.subtotal || 0), 0)
+  const totalUSD = items.filter((it) => it.moneda === 'USD').reduce((acc, it) => acc + (it.subtotal || 0), 0)
 
   // Emitir Presupuesto y Generar PDF
   const handleEmitir = async (e: React.FormEvent) => {
@@ -233,18 +246,19 @@ export default function ModalCrearPresupuestoPaciente({
       paciente_id: pacienteId,
       asesoria_id: asesoriaId || null,
       estado: emitirEstado,
-      moneda: moneda,
+      moneda: totalUSD > 0 && totalARS === 0 ? 'USD' : 'ARS',
       items: items.map((it) => ({
         servicio_id: it.servicio_id || null,
         codigo: it.codigo || null,
         nombre: it.nombre,
         cantidad: it.cantidad,
-        precio_unitario: it.precio_unitario
+        precio_unitario: it.precio_unitario,
+        moneda: it.moneda || 'ARS'
       }))
     }
 
     try {
-      const res = await fetch('/api/presupuestos/crear-rapido', {
+      const res = await fetch(`${BACKEND_URL}/api/presupuestos/crear-rapido`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -259,18 +273,20 @@ export default function ModalCrearPresupuestoPaciente({
       setPresupuestoGenerado(pres)
       onPresupuestoCreado(pres)
 
-      // Construir texto sugerido para WhatsApp
-      const pdfFullUrl = pres.pdf_url?.startsWith('http')
-        ? pres.pdf_url
-        : `${BACKEND_URL}${pres.pdf_url?.startsWith('/') ? '' : '/'}${pres.pdf_url || ''}`
+      // Cargar plantilla amena sugerida desde el backend
+      try {
+        const msgRes = await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/mensaje-sugerido`)
+        if (msgRes.ok) {
+          const msgData = await msgRes.json()
+          if (msgData.mensaje_sugerido) {
+            setMensajeWhatsApp(msgData.mensaje_sugerido)
+          }
+        }
+      } catch (msgErr) {
+        console.warn('Fallback al construir mensaje sugerido:', msgErr)
+      }
 
-      const totalFormateado = `${moneda === 'USD' ? 'USD ' : '$ '}${Number(pres.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-      const nombreItemPrincipal = items[0]?.nombre || 'Intervención Quirúrgica'
-
-      const texto = `Estimado/a *${pacienteNombre}*,\n\nTe compartimos el Presupuesto Médico Oficial por tu procedimiento médico:\n📋 *Prestación:* ${nombreItemPrincipal}\n💰 *Monto Total:* ${totalFormateado} ${moneda}\n\n📄 Puedes descargar y revisar el presupuesto membretado aquí:\n${pdfFullUrl}\n\nQuedamos a tu entera disposición ante cualquier duda o para coordinar la fecha quirúrgica.\n\n*Equipo de Asesoramiento Quirúrgico*`
-
-      setMensajeWhatsApp(texto)
-      // Pasar a la pantalla de decisión de WhatsApp
+      // Pasar a la pantalla de confirmación de WhatsApp
       setPaso('whatsapp')
     } catch (err: any) {
       console.error('Error emitiendo presupuesto:', err)
@@ -280,10 +296,15 @@ export default function ModalCrearPresupuestoPaciente({
     }
   }
 
-  // Enviar mensaje de WhatsApp
+  // Enviar mensaje y documento PDF por WhatsApp
   const handleEnviarWhatsApp = async () => {
-    if (!telefonoWhatsApp) {
-      setError('Debes ingresar o confirmar un número de teléfono.')
+    if (!telefonoWhatsApp || !telefonoWhatsApp.trim()) {
+      setError('Debes ingresar o confirmar un número de teléfono válido para WhatsApp.')
+      return
+    }
+
+    if (!presupuestoGenerado?.id) {
+      setError('No se encontró el ID del presupuesto generado.')
       return
     }
 
@@ -291,72 +312,18 @@ export default function ModalCrearPresupuestoPaciente({
       setEnviandoWhatsApp(true)
       setError(null)
 
-      // 1. Obtener o crear conversación en Supabase
-      let conversacionId: string | null = null
-      try {
-        if (pacienteId) {
-          const { data: convData } = await supabase
-            .from('conversaciones')
-            .select('id')
-            .eq('paciente_id', pacienteId)
-            .maybeSingle()
-
-          if (convData?.id) {
-            conversacionId = convData.id
-          } else {
-            const { data: newConv } = await supabase
-              .from('conversaciones')
-              .insert({ paciente_id: pacienteId, bot_disabled: false })
-              .select('id')
-              .single()
-            if (newConv?.id) conversacionId = newConv.id
-          }
-        }
-      } catch (convErr) {
-        console.warn('Error resolviendo conversación en Supabase:', convErr)
-      }
-
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-message`, {
+      const res = await fetch(`${BACKEND_URL}/api/presupuestos/${presupuestoGenerado.id}/enviar-whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           telefono: telefonoWhatsApp.trim(),
-          mensaje: mensajeWhatsApp.trim(),
-          phone: telefonoWhatsApp.trim(),
-          message: mensajeWhatsApp.trim(),
-          paciente_id: pacienteId,
-          conversacion_id: conversacionId
+          mensaje: mensajeWhatsApp.trim()
         })
       })
 
       const data = await res.json()
-      if (!res.ok || data.error || data.success === false) {
-        throw new Error(data.detail || data.error || data.mensaje || 'Error al enviar WhatsApp.')
-      }
-
-      // 2. Asegurar persistencia en el muro del chat
-      if (conversacionId) {
-        try {
-          await supabase.from('mensajes').insert({
-            conversacion_id: conversacionId,
-            emisor: 'operador',
-            contenido: mensajeWhatsApp.trim(),
-            metadata_json: {
-              tipo: 'presupuesto_quirurgico',
-              whatsapp_message_id: data.message_id || null
-            }
-          })
-
-          await supabase
-            .from('conversaciones')
-            .update({
-              ultimo_mensaje: mensajeWhatsApp.trim(),
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', conversacionId)
-        } catch (chatDbErr) {
-          console.warn('Error registrando mensaje en tabla mensajes:', chatDbErr)
-        }
+      if (!res.ok || data.success === false) {
+        throw new Error(data.detail || data.error || data.mensaje || 'Error al enviar por WhatsApp.')
       }
 
       setWhatsappEnviado(true)
@@ -365,10 +332,16 @@ export default function ModalCrearPresupuestoPaciente({
       }, 1500)
     } catch (err: any) {
       console.error('Error enviando mensaje de WhatsApp:', err)
-      setError(err.message || 'No se pudo enviar el mensaje por WhatsApp.')
+      setError(err.message || 'No se pudo enviar el presupuesto por WhatsApp.')
     } finally {
       setEnviandoWhatsApp(false)
     }
+  }
+
+  const handleCopiarTexto = () => {
+    navigator.clipboard.writeText(mensajeWhatsApp)
+    setCopiado(true)
+    setTimeout(() => setCopiado(false), 2000)
   }
 
   if (!isOpen) return null
@@ -386,7 +359,7 @@ export default function ModalCrearPresupuestoPaciente({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-white tracking-tight">
-                  {paso === 'whatsapp' ? '¿Enviar Presupuesto por WhatsApp?' : 'Emitir Presupuesto Médico Oficial'}
+                  {paso === 'whatsapp' ? '¿Enviar Presupuesto por WhatsApp al Paciente?' : 'Emitir Presupuesto Médico Oficial'}
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/40">
                   PDF Membretado
@@ -418,19 +391,19 @@ export default function ModalCrearPresupuestoPaciente({
               </div>
             )}
 
-            {/* Configuración de Moneda y Estado Inicial */}
+            {/* Configuración de Moneda por Defecto y Estado Inicial */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-neutral-950/40 border border-[var(--border)]">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                   <DollarSign size={14} className="text-amber-400" />
-                  Moneda de Cotización
+                  Moneda por Defecto (Nuevos Ítems)
                 </label>
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={() => setMoneda('ARS')}
+                    onClick={() => setMonedaDefault('ARS')}
                     className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
-                      moneda === 'ARS'
+                      monedaDefault === 'ARS'
                         ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm'
                         : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
                     }`}
@@ -439,9 +412,9 @@ export default function ModalCrearPresupuestoPaciente({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setMoneda('USD')}
+                    onClick={() => setMonedaDefault('USD')}
                     className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
-                      moneda === 'USD'
+                      monedaDefault === 'USD'
                         ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow-sm'
                         : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
                     }`}
@@ -488,7 +461,7 @@ export default function ModalCrearPresupuestoPaciente({
               <div className="relative">
                 <input
                   type="text"
-                  placeholder="Buscar prestación por código o nombre (ej: 180104, FIV, Laparoscopía, Anestesia)..."
+                  placeholder="Buscar prestación por código o nombre (ej: 180104, 111, Consulta, Facoemulsificación, LIO)..."
                   value={busqueda}
                   onChange={(e) => {
                     setBusqueda(e.target.value)
@@ -524,8 +497,9 @@ export default function ModalCrearPresupuestoPaciente({
                           </div>
                         </div>
                         {p.precio ? (
-                          <div className="text-xs font-mono font-bold text-emerald-400">
-                            ${Number(p.precio).toLocaleString()} {p.moneda || 'ARS'}
+                          <div className={`text-xs font-mono font-bold ${p.moneda === 'USD' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {p.moneda === 'USD' ? 'USD ' : '$ '}
+                            {Number(p.precio).toLocaleString('es-AR')} {p.moneda || 'ARS'}
                           </div>
                         ) : (
                           <span className="text-[10px] text-gray-500">Arancel a definir</span>
@@ -559,20 +533,21 @@ export default function ModalCrearPresupuestoPaciente({
                 <div className="border border-[var(--border)] rounded-xl overflow-hidden divide-y divide-[var(--border)]">
                   {/* Header de columnas */}
                   <div className="bg-neutral-950/80 px-3 py-2 text-[10px] font-bold text-gray-400 grid grid-cols-12 gap-2 uppercase">
-                    <div className="col-span-6">Descripción de la Prestación / Concepto</div>
-                    <div className="col-span-2 text-center">Cantidad</div>
-                    <div className="col-span-2 text-right">Precio Unitario ({moneda})</div>
+                    <div className="col-span-5">Descripción de la Prestación / Concepto</div>
+                    <div className="col-span-2 text-center">Moneda</div>
+                    <div className="col-span-1 text-center">Cant.</div>
+                    <div className="col-span-2 text-right">Precio Unit.</div>
                     <div className="col-span-2 text-right">Subtotal</div>
                   </div>
 
                   {/* Filas */}
                   {items.map((item, idx) => (
                     <div key={idx} className="p-2.5 bg-neutral-900/60 grid grid-cols-12 gap-2 items-center text-xs">
-                      <div className="col-span-6 flex items-center gap-2">
+                      <div className="col-span-5 flex items-center gap-2">
                         <button
                           type="button"
                           onClick={() => handleEliminarItem(idx)}
-                          className="text-gray-500 hover:text-red-400 p-1 rounded transition-colors"
+                          className="text-gray-500 hover:text-red-400 p-1 rounded transition-colors shrink-0"
                           title="Eliminar fila"
                         >
                           <Trash2 size={13} />
@@ -585,13 +560,29 @@ export default function ModalCrearPresupuestoPaciente({
                         />
                       </div>
 
-                      <div className="col-span-2">
+                      {/* Selector de Moneda por Fila */}
+                      <div className="col-span-2 flex items-center justify-center">
+                        <select
+                          value={item.moneda || 'ARS'}
+                          onChange={(e) => handleUpdateItem(idx, 'moneda', e.target.value)}
+                          className={`px-2 py-1 rounded-lg text-[10px] font-extrabold border outline-none ${
+                            item.moneda === 'USD'
+                              ? 'bg-amber-950/60 border-amber-600 text-amber-300'
+                              : 'bg-emerald-950/60 border-emerald-600 text-emerald-300'
+                          }`}
+                        >
+                          <option value="ARS">🇦🇷 ARS ($)</option>
+                          <option value="USD">🇺🇸 USD ($)</option>
+                        </select>
+                      </div>
+
+                      <div className="col-span-1">
                         <input
                           type="number"
                           min="1"
                           value={item.cantidad}
                           onChange={(e) => handleUpdateItem(idx, 'cantidad', e.target.value)}
-                          className="w-full px-2 py-1 bg-neutral-950 border border-[var(--border)] rounded-lg text-center font-mono text-xs text-white focus:outline-none focus:border-blue-500"
+                          className="w-full px-1.5 py-1 bg-neutral-950 border border-[var(--border)] rounded-lg text-center font-mono text-xs text-white focus:outline-none focus:border-blue-500"
                         />
                       </div>
 
@@ -606,20 +597,44 @@ export default function ModalCrearPresupuestoPaciente({
                         />
                       </div>
 
-                      <div className="col-span-2 text-right font-mono font-bold text-emerald-400">
-                        ${item.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <div className="col-span-2 text-right font-mono font-bold">
+                        <span className={item.moneda === 'USD' ? 'text-amber-400' : 'text-emerald-400'}>
+                          {item.moneda === 'USD' ? 'USD ' : '$ '}
+                          {item.subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
                       </div>
                     </div>
                   ))}
 
-                  {/* Footer Total */}
-                  <div className="p-3 bg-neutral-950 flex items-center justify-between border-t border-[var(--border)]">
-                    <span className="text-xs font-bold text-gray-300">TOTAL GENERAL COTIZADO:</span>
-                    <span className="text-base font-black font-mono text-white tracking-tight">
-                      {moneda === 'USD' ? 'USD ' : '$ '}
-                      {totalGeneral.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
-                      <span className="text-xs text-gray-400 font-sans font-normal">{moneda}</span>
+                  {/* Footer Totales Discriminados Multi-Moneda */}
+                  <div className="p-3.5 bg-neutral-950 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-t border-[var(--border)]">
+                    <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">
+                      Total General Cotizado:
                     </span>
+                    
+                    <div className="flex flex-wrap items-center gap-3">
+                      {totalARS > 0 && (
+                        <div className="px-3 py-1 bg-emerald-950/60 border border-emerald-800/60 rounded-xl">
+                          <span className="text-[10px] text-emerald-400 font-semibold mr-1.5">🇦🇷 Total ARS:</span>
+                          <span className="text-sm font-black font-mono text-emerald-300">
+                            ${totalARS.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      )}
+                      
+                      {totalUSD > 0 && (
+                        <div className="px-3 py-1 bg-amber-950/60 border border-amber-800/60 rounded-xl">
+                          <span className="text-[10px] text-amber-400 font-semibold mr-1.5">🇺🇸 Total USD:</span>
+                          <span className="text-sm font-black font-mono text-amber-300">
+                            USD {totalUSD.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      )}
+
+                      {totalARS === 0 && totalUSD === 0 && (
+                        <span className="text-xs font-mono font-bold text-gray-500">$ 0,00</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -639,7 +654,7 @@ export default function ModalCrearPresupuestoPaciente({
               <button
                 type="submit"
                 disabled={guardando || items.length === 0}
-                className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg flex items-center gap-2"
+                className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg flex items-center gap-2"
               >
                 {guardando ? (
                   <>
@@ -657,14 +672,14 @@ export default function ModalCrearPresupuestoPaciente({
 
           </form>
         ) : (
-          /* PASO 2: Confirmación de Envío por WhatsApp */
+          /* PASO 2: Confirmación de Envío por WhatsApp con Mensaje Ameno */
           <div className="p-6 space-y-5">
             <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/30 flex items-center gap-3">
               <CheckCircle2 size={24} className="text-emerald-400 shrink-0" />
               <div>
                 <h4 className="text-sm font-bold text-white">¡Presupuesto Emitido con Éxito!</h4>
                 <p className="text-xs text-emerald-300">
-                  El PDF membretado ha sido generado y guardado en el expediente. ¿Deseas enviarlo ahora por WhatsApp al paciente?
+                  El documento PDF membretado ha sido generado. Puedes despacharlo ahora por WhatsApp con el mensaje protocolar adjunto.
                 </p>
               </div>
             </div>
@@ -679,8 +694,8 @@ export default function ModalCrearPresupuestoPaciente({
             {whatsappEnviado ? (
               <div className="p-6 text-center space-y-2 bg-neutral-950 rounded-xl border border-emerald-500/40">
                 <CheckCircle2 size={32} className="mx-auto text-emerald-400 animate-bounce" />
-                <h4 className="text-sm font-bold text-white">¡Mensaje Enviado por WhatsApp!</h4>
-                <p className="text-xs text-gray-400">El paciente ya recibió la cotización y el enlace al documento membretado.</p>
+                <h4 className="text-sm font-bold text-white">¡Presupuesto y PDF Enviados por WhatsApp!</h4>
+                <p className="text-xs text-gray-400">El paciente ya recibió la cotización y el documento PDF membretado en su WhatsApp.</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -694,8 +709,8 @@ export default function ModalCrearPresupuestoPaciente({
                       type="text"
                       value={telefonoWhatsApp}
                       onChange={(e) => setTelefonoWhatsApp(e.target.value)}
-                      placeholder="Ej: +5491122334455 o 381..."
-                      className="px-3 py-2 text-xs bg-neutral-950 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white font-mono focus:outline-none"
+                      placeholder="Ej: +5492615551234"
+                      className="px-3 py-2 text-xs bg-neutral-950 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white font-mono font-bold focus:outline-none"
                     />
                   </div>
 
@@ -712,22 +727,35 @@ export default function ModalCrearPresupuestoPaciente({
                         className="py-2 px-3 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
                       >
                         <Download size={13} className="text-blue-400" />
-                        Ver PDF Generado
+                        Ver Documento PDF Oficial
                       </a>
                     )}
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-300">
-                    Mensaje de WhatsApp a Enviar
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-gray-300">
+                      Mensaje de Acompañamiento (WhatsApp)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleCopiarTexto}
+                      className="px-2 py-0.5 text-[10px] font-bold text-gray-400 hover:text-white bg-neutral-800 rounded flex items-center gap-1 transition"
+                    >
+                      {copiado ? <Check size={10} className="text-emerald-400" /> : <Copy size={10} />}
+                      {copiado ? 'Copiado' : 'Copiar'}
+                    </button>
+                  </div>
                   <textarea
                     value={mensajeWhatsApp}
                     onChange={(e) => setMensajeWhatsApp(e.target.value)}
-                    rows={6}
+                    rows={8}
                     className="w-full p-3 text-xs border border-[var(--border)] rounded-xl bg-neutral-950 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-sans text-white leading-relaxed resize-none"
                   />
+                  <p className="text-[10px] text-gray-400">
+                    💡 El archivo PDF oficial se adjuntará y enviará directamente al número de WhatsApp del paciente.
+                  </p>
                 </div>
 
                 <div className="flex items-center justify-end gap-3 pt-3 border-t border-[var(--border)]">
@@ -744,17 +772,17 @@ export default function ModalCrearPresupuestoPaciente({
                     type="button"
                     onClick={handleEnviarWhatsApp}
                     disabled={enviandoWhatsApp || !telefonoWhatsApp}
-                    className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg flex items-center gap-2"
+                    className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg flex items-center gap-2"
                   >
                     {enviandoWhatsApp ? (
                       <>
                         <Loader2 size={14} className="animate-spin" />
-                        Enviando por WhatsApp...
+                        Enviando PDF por WhatsApp...
                       </>
                     ) : (
                       <>
                         <Send size={14} />
-                        Sí, Enviar por WhatsApp
+                        🚀 Enviar Presupuesto por WhatsApp Ahora
                       </>
                     )}
                   </button>

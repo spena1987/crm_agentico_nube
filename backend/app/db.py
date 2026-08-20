@@ -1792,7 +1792,7 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                     "presupuesto_id": presupuesto_id,
                     "monto_extra": total_escalar,
                     "moneda_extra": "USD" if total_usd > 0 else "ARS",
-                    "etapa": "presupuesto_enviado",
+                    "estado": "presupuesto_enviado",
                     "updated_at": "now()"
                 }) \
                 .eq("id", asesoria_id) \
@@ -1953,7 +1953,7 @@ def enviar_presupuesto_por_whatsapp(
     # 7. Sincronizar asesoría quirúrgica si existe
     if presupuesto.get("asesoria_id"):
         supabase.table("asesorias_quirurgicas") \
-            .update({"etapa": "presupuesto_enviado", "updated_at": "now()"}) \
+            .update({"estado": "presupuesto_enviado", "updated_at": "now()"}) \
             .eq("id", presupuesto["asesoria_id"]) \
             .execute()
             
