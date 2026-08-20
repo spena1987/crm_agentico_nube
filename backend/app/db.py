@@ -1,4 +1,5 @@
 import os
+import uuid
 import logging
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
@@ -8,6 +9,15 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def is_valid_uuid(val: Any) -> bool:
+    if not val:
+        return False
+    try:
+        uuid.UUID(str(val))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
 
 raw_url = (os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or "").strip().strip("'\"")
 SUPABASE_URL = raw_url if raw_url and not "tu_proyecto" in raw_url else None
@@ -310,23 +320,19 @@ def vincular_o_fusionar_paciente_con_geclisa(
         # CASO A: El paciente ya existía en la base de datos de Supabase
         if paciente_existente:
             target_id = paciente_existente["id"]
-            logger.info(f"Paciente Geclisa encontrado en CRM (ID: {target_id}). Actualizando ficha y fusionando...")
-            
-            # Actualizar datos del paciente existente
-            resp = supabase.table("pacientes").update(datos_limpios).eq("id", target_id).execute()
-            paciente_final = resp.data[0] if resp.data else paciente_existente
+            logger.info(f"Paciente Geclisa encontrado en CRM (ID: {target_id}). Fusionando y actualizando...")
 
-            # Si el chat estaba asociado a un paciente temporal diferente, fusionar
+            # Si el chat estaba asociado a un paciente temporal diferente, transferir registros primero
             if paciente_temporal_id and paciente_temporal_id != target_id:
-                logger.info(f"Fusionando contacto temporal {paciente_temporal_id} -> {target_id}...")
+                logger.info(f"Transferir registros de paciente temporal {paciente_temporal_id} -> {target_id}...")
                 
-                # Reasignar presupuestos
+                # 1. Reasignar presupuestos
                 supabase.table("presupuestos").update({"paciente_id": target_id}).eq("paciente_id", paciente_temporal_id).execute()
                 
-                # Reasignar asesorías quirúrgicas
+                # 2. Reasignar asesorías quirúrgicas
                 supabase.table("asesorias_quirurgicas").update({"paciente_id": target_id}).eq("paciente_id", paciente_temporal_id).execute()
 
-                # Reasignar conversaciones y mensajes
+                # 3. Reasignar conversaciones y mensajes
                 conv_temp = supabase.table("conversaciones").select("*").eq("paciente_id", paciente_temporal_id).execute()
                 if conv_temp.data:
                     conv_temp_id = conv_temp.data[0]["id"]
@@ -343,13 +349,18 @@ def vincular_o_fusionar_paciente_con_geclisa(
                         # Reasignar la conversación directamente al paciente real
                         supabase.table("conversaciones").update({"paciente_id": target_id}).eq("id", conv_temp_id).execute()
 
-                # Eliminar el registro temporal huérfano
+                # 4. Eliminar el registro temporal huérfano para liberar el constraint único de teléfono
                 try:
+                    # Liberar teléfono temporal primero por seguridad
+                    supabase.table("pacientes").update({"telefono": f"temp_fused_{paciente_temporal_id[:8]}"}).eq("id", paciente_temporal_id).execute()
                     supabase.table("pacientes").delete().eq("id", paciente_temporal_id).execute()
                     logger.info(f"Registro temporal {paciente_temporal_id} eliminado exitosamente tras fusión.")
                 except Exception as del_err:
                     logger.warning(f"No se pudo eliminar paciente temporal {paciente_temporal_id}: {del_err}")
 
+            # Ahora actualizar datos del paciente existente (incluyendo su nuevo teléfono de WhatsApp libre de conflicto)
+            resp = supabase.table("pacientes").update(datos_limpios).eq("id", target_id).execute()
+            paciente_final = resp.data[0] if resp.data else paciente_existente
             return paciente_final
 
         # CASO B: El paciente no existía en el CRM (primera vez que se importa desde Geclisa)
