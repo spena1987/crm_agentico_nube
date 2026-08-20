@@ -3,6 +3,7 @@ import time
 import logging
 import requests
 import urllib3
+from typing import Optional, List, Dict, Any, Union
 from dotenv import load_dotenv
 
 # Deshabilitar advertencias de certificados no verificados en conexiones a Geclisa
@@ -915,6 +916,78 @@ class GeclisaClient:
         }
 
     # ====================================================================
+    # NOMENCLADORES Y PRÁCTICAS MÉDICAS (CENTRO VISIÓN / GECLISA)
+    # ====================================================================
+    def obtener_tipos_nomenclador(self) -> List[Dict[str, Any]]:
+        """
+        Obtiene los tipos de nomencladores disponibles en Geclisa (GET /api/Nomenclador/tipos).
+        Retorna lista de objetos: [{ "nomId": 1, "nomNom": "Prestaciones Oftalmológicas" }, ...]
+        """
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/Nomenclador/tipos"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        
+        t_start = time.time()
+        try:
+            res = self._do_request("GET", url, headers=headers, timeout=12)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            tipos = res.json() or []
+            return tipos
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Error al consultar tipos de nomenclador en Geclisa: {e}")
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="NOMENCLADOR_TIPOS",
+                mensaje=f"Error consultando tipos de nomenclador: {e}",
+                duracion_ms=duracion
+            )
+            return []
+
+    def buscar_practicas_nomenclador(self, nom_id: Optional[int] = None, search_string: str = "") -> List[Dict[str, Any]]:
+        """
+        Busca prácticas en vivo dentro del nomenclador de Geclisa (GET /api/Nomenclador/practicaByTipo).
+        Retorna lista de prácticas con nomCod, nombre, tipo, etc.
+        """
+        token = self._obtener_token()
+        params = {}
+        if nom_id:
+            params["nomId"] = nom_id
+        if search_string:
+            params["searchString"] = search_string.strip()
+            
+        url = f"{self.base_url}/api/Nomenclador/practicaByTipo"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        
+        t_start = time.time()
+        try:
+            res = self._do_request("GET", url, headers=headers, params=params, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            data = res.json()
+            
+            # Geclisa devuelve un dict con {"data": [...], "totalItems": N} o directamente una lista
+            if isinstance(data, dict):
+                return data.get("data") or []
+            elif isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Error al buscar prácticas en Geclisa ({nom_id}, '{search_string}'): {e}")
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="NOMENCLADOR_BUSCAR",
+                mensaje=f"Error buscando prácticas en nomenclador {nom_id}: {e}",
+                detalles={"nomId": nom_id, "search": search_string},
+                duracion_ms=duracion
+            )
+            return []
+
+    # ====================================================================
     # SCRIPT DE DIAGNÓSTICO E INICIALIZACIÓN
     # ====================================================================
     def test_read_connection(self) -> bool:
@@ -945,7 +1018,11 @@ class GeclisaClient:
             print(f"[ERROR] Fallo el chequeo de configuracion inicial de Geclisa: {e}")
             return False
 
+# Instancia global reutilizable
+geclisa_client = GeclisaClient()
+
 # Código de ejecución si se corre el script directamente
 if __name__ == "__main__":
     client = GeclisaClient()
     client.test_read_connection()
+

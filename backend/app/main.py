@@ -64,7 +64,11 @@ from app.db import (
     get_paciente_contexto_360,
     get_configuracion_quirurgica,
     actualizar_configuracion_quirurgica,
-    get_pipeline_quirurgico
+    get_pipeline_quirurgico,
+    enriquecer_practicas_geclisa_con_crm,
+    guardar_practica_crm_con_arancel,
+    listar_catalogo_completo_crm,
+    eliminar_practica_crm
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -1758,8 +1762,90 @@ def asignar_medico_a_paciente(paciente_id: str, payload: Dict[str, Any] = Body(.
 
 
 # ====================================================================
-# ENDPOINTS REST: NOMENCLADORES PROPIOS DEL CRM (MULTI-MONEDA: ARS / USD)
+# ENDPOINTS REST: NOMENCLADORES Y ARANCELES (GECLISA LIVE + CRM LOCAL)
 # ====================================================================
+
+@app.get("/api/geclisa/nomenclador/tipos")
+def get_geclisa_nomenclador_tipos():
+    """
+    Obtiene los tipos de nomencladores configurados en Geclisa (GET /api/Nomenclador/tipos).
+    """
+    try:
+        tipos = geclisa_client.obtener_tipos_nomenclador()
+        return {"success": True, "tipos": tipos}
+    except Exception as e:
+        logger.error(f"Error al obtener tipos de nomenclador de Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geclisa/nomenclador/buscar")
+def buscar_geclisa_nomenclador_practicas(nom_id: Optional[int] = None, q: Optional[str] = ""):
+    """
+    Busca prácticas en tiempo real en Geclisa por tipo de nomenclador y texto de búsqueda,
+    cruzándolas con la base de datos del CRM para indicar si ya tienen arancel configurado.
+    """
+    try:
+        raw_practicas = geclisa_client.buscar_practicas_nomenclador(nom_id=nom_id, search_string=q or "")
+        enriquecidas = enriquecer_practicas_geclisa_con_crm(raw_practicas)
+        return {
+            "success": True,
+            "total": len(enriquecidas),
+            "practicas": enriquecidas
+        }
+    except Exception as e:
+        logger.error(f"Error al buscar prácticas en Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/guardar-practica-arancel")
+def guardar_practica_arancel_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Guarda o actualiza una práctica (desde Geclisa o Manual) y su arancel/vigencia en el CRM.
+    """
+    try:
+        if not payload.get("codigo") or not payload.get("nombre"):
+            raise HTTPException(status_code=400, detail="El código y nombre de la práctica son obligatorios.")
+        res = guardar_practica_crm_con_arancel(payload)
+        return {
+            "success": True,
+            "mensaje": f"Práctica {payload.get('codigo')} configurada correctamente en el CRM.",
+            "resultado": res
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al guardar práctica y arancel: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/nomenclador/practicas-configuradas")
+def get_practicas_configuradas_crm(
+    moneda: Optional[str] = None,
+    origen: Optional[str] = None,
+    q: Optional[str] = None
+):
+    """
+    Lista el catálogo consolidado de prácticas configuradas en el CRM (Geclisa y Manuales).
+    """
+    try:
+        practicas = listar_catalogo_completo_crm(filtro_moneda=moneda, filtro_origen=origen, q=q)
+        return {
+            "success": True,
+            "total": len(practicas),
+            "practicas": practicas
+        }
+    except Exception as e:
+        logger.error(f"Error al listar prácticas configuradas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/nomenclador/practicas-configuradas/{practica_id}")
+def eliminar_practica_crm_api(practica_id: str):
+    """
+    Elimina una práctica del catálogo del CRM.
+    """
+    try:
+        ok = eliminar_practica_crm(practica_id)
+        return {"success": ok, "mensaje": "Práctica eliminada del catálogo del CRM."}
+    except Exception as e:
+        logger.error(f"Error al eliminar práctica {practica_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/nomencladores")
 def get_all_nomencladores():

@@ -1038,6 +1038,268 @@ def upsert_arancel_practica(practica_id: str, payload: dict):
         logger.error(f"Error al guardar arancel para práctica {practica_id}: {e}")
         raise
 
+def enriquecer_practicas_geclisa_con_crm(geclisa_practicas: list) -> list:
+    """
+    Cruza una lista de prácticas obtenidas de Geclisa con la base de datos local de Supabase.
+    Identifica si ya están registradas en el CRM, adjunta su arancel actual, moneda y vigencias.
+    """
+    if not supabase or not geclisa_practicas:
+        return geclisa_practicas
+        
+    from datetime import date
+    today_str = date.today().isoformat()
+    
+    try:
+        # Extraer códigos únicos
+        codigos = list(set(str(p.get("nomCod") or p.get("codigo") or "").strip().upper() for p in geclisa_practicas if p.get("nomCod") or p.get("codigo")))
+        if not codigos:
+            return geclisa_practicas
+            
+        # Buscar en nomenclador_practicas
+        p_resp = supabase.table("nomenclador_practicas")\
+            .select("id, codigo, nombre, categoria, descripcion, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
+            .in_("codigo", codigos)\
+            .execute()
+            
+        crm_practicas = p_resp.data or []
+        if not crm_practicas:
+            for p in geclisa_practicas:
+                p["ya_en_crm"] = False
+                p["precio_crm"] = 0.0
+                p["moneda_crm"] = "ARS"
+            return geclisa_practicas
+            
+        crm_map = {p["codigo"].upper(): p for p in crm_practicas}
+        p_ids = [p["id"] for p in crm_practicas]
+        
+        # Buscar aranceles vigentes
+        ar_resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .in_("practica_id", p_ids)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+            
+        ar_map = {}
+        for ar in (ar_resp.data or []):
+            pid = ar["practica_id"]
+            if pid not in ar_map:
+                ar_map[pid] = ar
+                
+        resultados = []
+        for gp in geclisa_practicas:
+            cod = str(gp.get("nomCod") or gp.get("codigo") or "").strip().upper()
+            crm_p = crm_map.get(cod)
+            
+            item = dict(gp)
+            item["nomCod"] = cod
+            item["nombre"] = gp.get("nombre") or gp.get("practica") or (crm_p["nombre"] if crm_p else f"Práctica {cod}")
+            
+            if crm_p:
+                item["ya_en_crm"] = True
+                item["crm_practica_id"] = crm_p["id"]
+                item["categoria"] = crm_p.get("categoria", "General")
+                nom_info = crm_p.get("nomencladores") or {}
+                
+                ar = ar_map.get(crm_p["id"])
+                if ar:
+                    item["precio_crm"] = float(ar.get("precio", 0.0))
+                    item["moneda_crm"] = ar.get("moneda") or nom_info.get("moneda_default", "ARS")
+                    item["vigencia_desde"] = ar.get("vigencia_desde")
+                    item["vigencia_hasta"] = ar.get("vigencia_hasta")
+                    item["arancel_activo"] = ar.get("activo", True)
+                else:
+                    item["precio_crm"] = 0.0
+                    item["moneda_crm"] = nom_info.get("moneda_default", "ARS")
+                    item["vigencia_desde"] = None
+                    item["vigencia_hasta"] = None
+                    item["arancel_activo"] = False
+            else:
+                item["ya_en_crm"] = False
+                item["crm_practica_id"] = None
+                item["precio_crm"] = 0.0
+                item["moneda_crm"] = "ARS"
+                item["vigencia_desde"] = None
+                item["vigencia_hasta"] = None
+                item["arancel_activo"] = False
+                
+            resultados.append(item)
+            
+        return resultados
+    except Exception as e:
+        logger.error(f"Error al enriquecer prácticas Geclisa con CRM: {e}")
+        return geclisa_practicas
+
+def guardar_practica_crm_con_arancel(payload: dict):
+    """
+    Guarda o actualiza una práctica (sea de Geclisa o Manual) y registra su arancel con vigencia.
+    """
+    if not supabase:
+        return None
+        
+    from datetime import date
+    today_str = date.today().isoformat()
+    
+    try:
+        codigo = str(payload.get("codigo") or payload.get("nomCod") or "").strip().upper()
+        nombre = str(payload.get("nombre") or payload.get("practica") or "").strip()
+        categoria = str(payload.get("categoria") or "General").strip()
+        descripcion = str(payload.get("descripcion") or "").strip()
+        origen = str(payload.get("origen") or "GECLISA").upper() # 'GECLISA' o 'MANUAL'
+        
+        precio = float(payload.get("precio", 0.0) or 0.0)
+        moneda = str(payload.get("moneda") or "ARS").upper()
+        vig_desde = payload.get("vigencia_desde") or today_str
+        vig_hasta = payload.get("vigencia_hasta") or None
+        
+        # 1. Obtener o resolver nomenclador_id basado en la moneda (NOM_ARS o NOM_USD)
+        nom_codigo = "NOM_USD" if moneda == "USD" else "NOM_ARS"
+        nom_resp = supabase.table("nomencladores").select("id").eq("codigo", nom_codigo).limit(1).execute()
+        if nom_resp.data:
+            nomenclador_id = nom_resp.data[0]["id"]
+        else:
+            # Fallback a cualquier nomenclador activo
+            nom_any = supabase.table("nomencladores").select("id").limit(1).execute()
+            nomenclador_id = nom_any.data[0]["id"] if nom_any.data else None
+            
+        # 2. Upsert en nomenclador_practicas
+        p_data = {
+            "nomenclador_id": nomenclador_id,
+            "codigo": codigo,
+            "nombre": nombre,
+            "categoria": categoria,
+            "descripcion": f"[ORIGEN:{origen}] {descripcion}".strip(),
+            "activo": True
+        }
+        
+        p_resp = supabase.table("nomenclador_practicas").upsert(
+            p_data,
+            on_conflict="nomenclador_id,codigo"
+        ).execute()
+        
+        if not p_resp.data:
+            raise Exception("No se pudo guardar el registro de la práctica en Supabase.")
+            
+        practica = p_resp.data[0]
+        practica_id = practica["id"]
+        
+        # 3. Registrar / Actualizar arancel con vigencia
+        ar_data = {
+            "practica_id": practica_id,
+            "precio": precio,
+            "moneda": moneda,
+            "vigencia_desde": vig_desde,
+            "vigencia_hasta": vig_hasta,
+            "observaciones": f"Configurado vía CRM ({origen})",
+            "activo": True
+        }
+        
+        ar_resp = supabase.table("nomenclador_aranceles").insert(ar_data).execute()
+        arancel = ar_resp.data[0] if ar_resp.data else ar_data
+        
+        return {
+            "success": True,
+            "practica": practica,
+            "arancel": arancel
+        }
+    except Exception as e:
+        logger.error(f"Error al guardar práctica con arancel: {e}")
+        raise
+
+def listar_catalogo_completo_crm(
+    filtro_moneda: Optional[str] = None,
+    filtro_origen: Optional[str] = None,
+    q: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Lista todas las prácticas configuradas en el CRM con su arancel vigente, moneda y origen.
+    """
+    if not supabase:
+        return []
+        
+    try:
+        query = supabase.table("nomenclador_practicas")\
+            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, nomencladores(id, nombre, codigo, moneda_default)")\
+            .eq("activo", True)
+            
+        term = (q or "").strip().upper()
+        if term:
+            query = query.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
+            
+        p_resp = query.order("nombre").execute()
+        practicas = p_resp.data or []
+        if not practicas:
+            return []
+            
+        p_ids = [p["id"] for p in practicas]
+        
+        # Obtener los aranceles más recientes
+        ar_resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .in_("practica_id", p_ids)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+            
+        ar_map = {}
+        for ar in (ar_resp.data or []):
+            pid = ar["practica_id"]
+            if pid not in ar_map:
+                ar_map[pid] = ar
+                
+        resultados = []
+        for p in practicas:
+            desc = p.get("descripcion") or ""
+            origen = "MANUAL" if "[ORIGEN:MANUAL]" in desc else "GECLISA"
+            
+            ar = ar_map.get(p["id"])
+            nom_info = p.get("nomencladores") or {}
+            
+            precio = float(ar.get("precio", 0.0)) if ar else 0.0
+            moneda = ar.get("moneda") if ar else nom_info.get("moneda_default", "ARS")
+            
+            # Filtro por moneda
+            if filtro_moneda and filtro_moneda.upper() != "TODAS" and moneda != filtro_moneda.upper():
+                continue
+                
+            # Filtro por origen
+            if filtro_origen and filtro_origen.upper() != "TODOS" and origen != filtro_origen.upper():
+                continue
+                
+            resultados.append({
+                "id": p["id"],
+                "codigo": p["codigo"],
+                "nombre": p["nombre"],
+                "categoria": p.get("categoria", "General"),
+                "descripcion": desc.replace("[ORIGEN:MANUAL]", "").replace("[ORIGEN:GECLISA]", "").strip(),
+                "origen": origen,
+                "precio": precio,
+                "moneda": moneda,
+                "vigencia_desde": ar.get("vigencia_desde") if ar else None,
+                "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
+                "arancel_id": ar.get("id") if ar else None,
+                "activo": p.get("activo", True),
+                "created_at": p.get("created_at")
+            })
+            
+        return resultados
+    except Exception as e:
+        logger.error(f"Error al listar catálogo completo del CRM: {e}")
+        return []
+
+def eliminar_practica_crm(practica_id: str) -> bool:
+    """
+    Desactiva o elimina una práctica y sus aranceles del catálogo del CRM.
+    """
+    if not supabase:
+        return False
+    try:
+        supabase.table("nomenclador_aranceles").delete().eq("practica_id", practica_id).execute()
+        supabase.table("nomenclador_practicas").delete().eq("id", practica_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar práctica del CRM ({practica_id}): {e}")
+        raise
+
+
 # ====================================================================
 # BÚSQUEDA RÁPIDA PARA MODAL DE PRESUPUESTOS (NATIVO CRM)
 # ====================================================================

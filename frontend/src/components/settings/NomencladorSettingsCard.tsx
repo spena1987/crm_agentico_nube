@@ -1,300 +1,369 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
-  FileSpreadsheet,
-  Upload,
-  Download,
-  Plus,
-  Trash2,
-  Edit2,
-  Calendar,
-  DollarSign,
-  Layers,
   Search,
-  CheckCircle,
+  Plus,
+  Edit2,
+  Trash2,
+  CheckCircle2,
   AlertCircle,
   Loader2,
+  Building,
+  DollarSign,
+  Calendar,
+  Sparkles,
   RefreshCw,
-  Clock,
-  ArrowRight,
-  FileText
+  X,
+  SlidersHorizontal,
+  ExternalLink,
+  Layers,
+  Filter
 } from 'lucide-react'
 
-interface Nomenclador {
-  id: string
-  codigo: string
-  nombre: string
-  moneda_default: 'ARS' | 'USD'
-  descripcion?: string
-  activo: boolean
-  total_practicas?: number
+interface GeclisaTipoNomenclador {
+  nomId: number
+  nomNom: string
 }
 
-interface PracticaCatalogo {
+interface GeclisaPracticaItem {
+  nomCod: string
+  nombre?: string
+  practica?: string
+  codyPractica?: string
+  tipo?: string
+  ya_en_crm: boolean
+  crm_practica_id?: string | null
+  precio_crm: number
+  moneda_crm: 'ARS' | 'USD'
+  vigencia_desde?: string | null
+  vigencia_hasta?: string | null
+  arancel_activo?: boolean
+}
+
+interface CrmPracticaConfigurada {
   id: string
-  nomenclador_id: string
-  nomenclador_nombre: string
-  nomenclador_codigo: string
   codigo: string
   nombre: string
   categoria: string
-  descripcion?: string
-  activo: boolean
+  descripcion: string
+  origen: 'GECLISA' | 'MANUAL'
   precio: number
   moneda: 'ARS' | 'USD'
   vigencia_desde?: string | null
   vigencia_hasta?: string | null
   arancel_id?: string | null
-  tiene_arancel: boolean
+  activo: boolean
+  created_at: string
 }
-import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function NomencladorSettingsCard() {
-  const [loading, setLoading] = useState(true)
-  const [nomencladores, setNomencladores] = useState<Nomenclador[]>([])
-  const [selectedNomId, setSelectedNomId] = useState<string>('all')
+  // Estado de Tipos de Nomenclador Geclisa
+  const [tiposGeclisa, setTiposGeclisa] = useState<GeclisaTipoNomenclador[]>([])
+  const [selectedNomId, setSelectedNomId] = useState<number | ''>('')
+  
+  // Búsqueda en Geclisa
+  const [searchGeclisaQuery, setSearchGeclisaQuery] = useState('')
+  const [searchingGeclisa, setSearchingGeclisa] = useState(false)
+  const [geclisaResults, setGeclisaResults] = useState<GeclisaPracticaItem[]>([])
 
-  // Prácticas
-  const [practicas, setPracticas] = useState<PracticaCatalogo[]>([])
-  const [searchQuery, setSearchQuery] = useState('')
-  const [filtroMoneda, setFiltroMoneda] = useState<'todas' | 'ARS' | 'USD'>('todas')
-  const [filtroVigencia, setFiltroVigencia] = useState<'todas' | 'vigentes' | 'futuras' | 'sin_precio'>('todas')
-  const [loadingPracticas, setLoadingPracticas] = useState(false)
+  // Catálogo Maestro en CRM
+  const [crmPracticas, setCrmPracticas] = useState<CrmPracticaConfigurada[]>([])
+  const [loadingCrm, setLoadingCrm] = useState(true)
+  const [filtroTab, setFiltroTab] = useState<'todas' | 'ARS' | 'USD' | 'MANUAL' | 'GECLISA'>('todas')
+  const [crmSearchTerm, setCrmSearchTerm] = useState('')
 
-  // Modales
-  const [modalPracticaOpen, setModalPracticaOpen] = useState(false)
-  const [editingPractica, setEditingPractica] = useState<PracticaCatalogo | null>(null)
-  const [practicaForm, setPracticaForm] = useState({
-    nomenclador_id: '',
+  // Modal de Configuración / Creación de Arancel
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [modalMode, setModalMode] = useState<'geclisa' | 'manual' | 'edit'>('geclisa')
+  const [savingModal, setSavingModal] = useState(false)
+
+  // Datos del Formulario del Modal
+  const [formData, setFormData] = useState({
     codigo: '',
     nombre: '',
     categoria: 'General',
-    precio: '',
+    descripcion: '',
+    origen: 'GECLISA' as 'GECLISA' | 'MANUAL',
+    nom_id: null as number | null,
+    precio: 0,
     moneda: 'ARS' as 'ARS' | 'USD',
     vigencia_desde: new Date().toISOString().split('T')[0],
-    vigencia_hasta: '',
-    descripcion: ''
+    vigencia_hasta: ''
   })
 
-  // Importador Excel
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [importNomId, setImportNomId] = useState<string>('')
-  const [importModo, setImportModo] = useState<'upsert' | 'replace'>('upsert')
-  const [importVigDesde, setImportVigDesde] = useState(new Date().toISOString().split('T')[0])
-  const [importVigHasta, setImportVigHasta] = useState('')
-  const [importing, setImporting] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Feedback
+  // Mensaje de feedback
   const [feedback, setFeedback] = useState<{ tipo: 'success' | 'error'; texto: string } | null>(null)
 
+  // 1. Cargar tipos de Geclisa y catálogo actual del CRM al inicio
   useEffect(() => {
-    loadNomencladores()
+    loadTiposGeclisa()
+    loadCatalogoCrm()
   }, [])
 
-  useEffect(() => {
-    loadPracticas()
-  }, [selectedNomId, searchQuery])
-
-  const loadNomencladores = async () => {
+  const loadTiposGeclisa = async () => {
     try {
-      setLoading(true)
-      const res = await fetch(`${API_BASE_URL}/api/nomencladores`)
+      const res = await fetch(`${API_BASE_URL}/api/geclisa/nomenclador/tipos`)
       if (res.ok) {
         const data = await res.json()
-        const noms = data.nomencladores || []
-        setNomencladores(noms)
-        if (noms.length > 0 && !importNomId) {
-          setImportNomId(noms[0].id)
+        const tipos: GeclisaTipoNomenclador[] = data.tipos || []
+        setTiposGeclisa(tipos)
+        if (tipos.length > 0 && selectedNomId === '') {
+          setSelectedNomId(tipos[0].nomId)
         }
       }
     } catch (err) {
-      console.error('Error cargando nomencladores:', err)
-    } finally {
-      setLoading(false)
+      console.error('Error al cargar tipos de nomenclador de Geclisa:', err)
     }
   }
 
-  const loadPracticas = async () => {
+  const loadCatalogoCrm = async () => {
     try {
-      setLoadingPracticas(true)
-      const params = new URLSearchParams()
-      if (selectedNomId !== 'all') params.append('nomenclador_id', selectedNomId)
-      if (searchQuery.trim()) params.append('q', searchQuery.trim())
-
-      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas?${params.toString()}`)
+      setLoadingCrm(true)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas-configuradas`)
       if (res.ok) {
         const data = await res.json()
-        setPracticas(data.practicas || [])
+        setCrmPracticas(data.practicas || [])
       }
     } catch (err) {
-      console.error('Error cargando prácticas:', err)
+      console.error('Error al cargar catálogo configurado en CRM:', err)
     } finally {
-      setLoadingPracticas(false)
+      setLoadingCrm(false)
     }
   }
 
-  // Guardar / Editar Práctica
-  const handleSavePractica = async (e: React.FormEvent) => {
+  // 2. Disparar búsqueda en vivo en Geclisa
+  const handleSearchGeclisa = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    try {
+      setSearchingGeclisa(true)
+      setFeedback(null)
+      const params = new URLSearchParams()
+      if (selectedNomId) params.append('nom_id', String(selectedNomId))
+      if (searchGeclisaQuery.trim()) params.append('q', searchGeclisaQuery.trim())
+
+      const res = await fetch(`${API_BASE_URL}/api/geclisa/nomenclador/buscar?${params.toString()}`)
+      if (res.ok) {
+        const data = await res.json()
+        setGeclisaResults(data.practicas || [])
+        if ((data.practicas || []).length === 0) {
+          setFeedback({ tipo: 'error', texto: 'No se encontraron prácticas en Geclisa para esa búsqueda.' })
+        }
+      } else {
+        setFeedback({ tipo: 'error', texto: 'No se pudo consultar el nomenclador de Geclisa.' })
+      }
+    } catch (err) {
+      console.error('Error al buscar en Geclisa:', err)
+      setFeedback({ tipo: 'error', texto: 'Error al conectar con la API de Geclisa.' })
+    } finally {
+      setSearchingGeclisa(false)
+    }
+  }
+
+  // 3. Abrir Modal para práctica de Geclisa
+  const handleOpenConfigureGeclisa = (item: GeclisaPracticaItem) => {
+    const today = new Date().toISOString().split('T')[0]
+    setModalMode('geclisa')
+    setFormData({
+      codigo: item.nomCod,
+      nombre: item.nombre || item.practica || `Práctica ${item.nomCod}`,
+      categoria: item.tipo || 'Oftalmología',
+      descripcion: '',
+      origen: 'GECLISA',
+      nom_id: typeof selectedNomId === 'number' ? selectedNomId : 1,
+      precio: item.precio_crm || 0,
+      moneda: item.moneda_crm || 'ARS',
+      vigencia_desde: item.vigencia_desde || today,
+      vigencia_hasta: item.vigencia_hasta || ''
+    })
+    setIsModalOpen(true)
+  }
+
+  // 4. Abrir Modal para crear práctica manual
+  const handleOpenCreateManual = () => {
+    const today = new Date().toISOString().split('T')[0]
+    setModalMode('manual')
+    setFormData({
+      codigo: '',
+      nombre: '',
+      categoria: 'General',
+      descripcion: '',
+      origen: 'MANUAL',
+      nom_id: null,
+      precio: 0,
+      moneda: 'ARS',
+      vigencia_desde: today,
+      vigencia_hasta: ''
+    })
+    setIsModalOpen(true)
+  }
+
+  // 5. Abrir Modal para editar práctica del CRM existente
+  const handleOpenEditCrm = (p: CrmPracticaConfigurada) => {
+    const today = new Date().toISOString().split('T')[0]
+    setModalMode('edit')
+    setFormData({
+      codigo: p.codigo,
+      nombre: p.nombre,
+      categoria: p.categoria || 'General',
+      descripcion: p.descripcion || '',
+      origen: p.origen || 'GECLISA',
+      nom_id: null,
+      precio: p.precio || 0,
+      moneda: p.moneda || 'ARS',
+      vigencia_desde: p.vigencia_desde || today,
+      vigencia_hasta: p.vigencia_hasta || ''
+    })
+    setIsModalOpen(true)
+  }
+
+  // 6. Guardar práctica con arancel en CRM
+  const handleSavePracticaArancel = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!practicaForm.codigo.trim() || !practicaForm.nombre.trim() || !practicaForm.nomenclador_id) {
-      setFeedback({ tipo: 'error', texto: 'Nomenclador, código y nombre son obligatorios.' })
+    if (!formData.codigo.trim() || !formData.nombre.trim()) {
+      setFeedback({ tipo: 'error', texto: 'El código y nombre de la práctica son obligatorios.' })
       return
     }
 
     try {
-      const nomElegido = nomencladores.find((n) => n.id === practicaForm.nomenclador_id)
-      const monedaFinal = nomElegido ? nomElegido.moneda_default : practicaForm.moneda
+      setSavingModal(true)
+      setFeedback(null)
 
       const payload = {
-        nomenclador_id: practicaForm.nomenclador_id,
-        codigo: practicaForm.codigo.trim().toUpperCase(),
-        nombre: practicaForm.nombre.trim(),
-        categoria: practicaForm.categoria.trim() || 'General',
-        precio: parseFloat(practicaForm.precio) || 0.0,
-        moneda: monedaFinal,
-        vigencia_desde: practicaForm.vigencia_desde || new Date().toISOString().split('T')[0],
-        vigencia_hasta: practicaForm.vigencia_hasta || null,
-        descripcion: practicaForm.descripcion.trim()
+        codigo: formData.codigo.trim().toUpperCase(),
+        nombre: formData.nombre.trim(),
+        categoria: formData.categoria.trim() || 'General',
+        descripcion: formData.descripcion.trim(),
+        origen: formData.origen,
+        precio: parseFloat(String(formData.precio)) || 0,
+        moneda: formData.moneda,
+        vigencia_desde: formData.vigencia_desde || new Date().toISOString().split('T')[0],
+        vigencia_hasta: formData.vigencia_hasta ? formData.vigencia_hasta : null
       }
 
-      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas`, {
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/guardar-practica-arancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
 
       if (res.ok) {
-        setFeedback({ tipo: 'success', texto: 'Práctica guardada correctamente.' })
-        setModalPracticaOpen(false)
-        setEditingPractica(null)
-        loadPracticas()
-        loadNomencladores()
+        setIsModalOpen(false)
+        setFeedback({ tipo: 'success', texto: `¡Práctica ${formData.codigo.toUpperCase()} guardada con éxito en el CRM!` })
+        // Refrescar catálogo local y resultados de Geclisa
+        await loadCatalogoCrm()
+        if (geclisaResults.length > 0) {
+          handleSearchGeclisa()
+        }
+      } else {
+        const errData = await res.json()
+        setFeedback({ tipo: 'error', texto: errData.detail || 'Error al guardar la práctica.' })
       }
     } catch (err) {
-      setFeedback({ tipo: 'error', texto: 'Error al guardar la práctica.' })
+      console.error('Error al guardar práctica:', err)
+      setFeedback({ tipo: 'error', texto: 'No se pudo conectar con el servidor.' })
+    } finally {
+      setSavingModal(false)
     }
   }
 
-  // Eliminar Práctica
-  const handleDeletePractica = async (id: string) => {
-    if (!confirm('¿Deseas eliminar esta prestación del catálogo?')) return
+  // 7. Eliminar práctica del CRM
+  const handleDeleteCrmPractica = async (practicaId: string, codigo: string) => {
+    if (!window.confirm(`¿Estás seguro de que deseas eliminar la práctica ${codigo} del catálogo del CRM?`)) {
+      return
+    }
+
     try {
-      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas-configuradas/${practicaId}`, {
         method: 'DELETE'
       })
       if (res.ok) {
-        setPracticas(practicas.filter((p) => p.id !== id))
-        setFeedback({ tipo: 'success', texto: 'Práctica eliminada.' })
-        loadNomencladores()
+        setFeedback({ tipo: 'success', texto: `Práctica ${codigo} eliminada correctamente.` })
+        loadCatalogoCrm()
+        if (geclisaResults.length > 0) {
+          handleSearchGeclisa()
+        }
       }
     } catch (err) {
-      setFeedback({ tipo: 'error', texto: 'Error al eliminar práctica.' })
+      console.error('Error al eliminar práctica:', err)
+      setFeedback({ tipo: 'error', texto: 'No se pudo eliminar la práctica.' })
     }
   }
 
-  // Importar Excel
-  const handleImportExcel = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!importFile) {
-      setFeedback({ tipo: 'error', texto: 'Por favor selecciona un archivo Excel (.xlsx) o CSV.' })
-      return
-    }
-    if (!importNomId) {
-      setFeedback({ tipo: 'error', texto: 'Selecciona la moneda del nomenclador (Pesos o Dólares).' })
-      return
+  // Filtrado de la tabla maestra del CRM
+  const filteredCrmPracticas = crmPracticas.filter((p) => {
+    // Filtro por Tab
+    if (filtroTab === 'ARS' && p.moneda !== 'ARS') return false
+    if (filtroTab === 'USD' && p.moneda !== 'USD') return false
+    if (filtroTab === 'MANUAL' && p.origen !== 'MANUAL') return false
+    if (filtroTab === 'GECLISA' && p.origen !== 'GECLISA') return false
+
+    // Filtro por texto
+    if (crmSearchTerm.trim()) {
+      const term = crmSearchTerm.toLowerCase()
+      const matchCod = p.codigo.toLowerCase().includes(term)
+      const matchNom = p.nombre.toLowerCase().includes(term)
+      const matchCat = (p.categoria || '').toLowerCase().includes(term)
+      if (!matchCod && !matchNom && !matchCat) return false
     }
 
-    try {
-      setImporting(true)
-      setFeedback(null)
-
-      const nomElegido = nomencladores.find((n) => n.id === importNomId)
-      const monedaDestino = nomElegido?.moneda_default || 'ARS'
-
-      const formData = new FormData()
-      formData.append('file', importFile)
-      formData.append('nomenclador_id', importNomId)
-      formData.append('modo', importModo)
-      formData.append('default_moneda', monedaDestino)
-      if (importVigDesde) formData.append('default_vigencia_desde', importVigDesde)
-      if (importVigHasta) formData.append('default_vigencia_hasta', importVigHasta)
-
-      const res = await fetch(`${API_BASE_URL}/api/nomenclador/importar-excel`, {
-        method: 'POST',
-        body: formData
-      })
-
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setFeedback({ tipo: 'success', texto: data.mensaje || 'Planilla Excel importada exitosamente.' })
-        setImportFile(null)
-        if (fileInputRef.current) fileInputRef.current.value = ''
-        loadPracticas()
-        loadNomencladores()
-      } else {
-        setFeedback({ tipo: 'error', texto: data.detail || 'Error al procesar el archivo Excel.' })
-      }
-    } catch (err) {
-      console.error('Error importando Excel:', err)
-      setFeedback({ tipo: 'error', texto: 'Error al conectar con el servidor para importar Excel.' })
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  // Filtrado en cliente
-  const filteredPracticas = practicas.filter((p) => {
-    if (filtroMoneda !== 'todas' && p.moneda !== filtroMoneda) return false
-    const today = new Date().toISOString().split('T')[0]
-    if (filtroVigencia === 'vigentes') {
-      return p.tiene_arancel && (!p.vigencia_desde || p.vigencia_desde <= today) && (!p.vigencia_hasta || p.vigencia_hasta >= today)
-    }
-    if (filtroVigencia === 'futuras') {
-      return p.tiene_arancel && p.vigencia_desde && p.vigencia_desde > today
-    }
-    if (filtroVigencia === 'sin_precio') {
-      return !p.tiene_arancel || p.precio === 0
-    }
     return true
   })
 
+  // Estadísticas
+  const totalArs = crmPracticas.filter((p) => p.moneda === 'ARS').length
+  const totalUsd = crmPracticas.filter((p) => p.moneda === 'USD').length
+  const totalManuales = crmPracticas.filter((p) => p.origen === 'MANUAL').length
+
   return (
-    <div className="space-y-8 max-w-6xl mx-auto pb-12">
-      {/* Encabezado del Módulo */}
+    <div className="space-y-8 max-w-7xl mx-auto pb-12 animate-fade-in">
+      {/* 1. Header Principal & Métricas */}
       <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
           <div>
             <h2 className="text-lg font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
-              <DollarSign className="text-emerald-600" size={22} />
-              Catálogo de Nomencladores y Aranceles (Pesos y Dólares)
+              <Building className="text-blue-600" size={22} />
+              Nomenclador & Gestión de Aranceles Médicos
             </h2>
             <p className="text-xs text-[var(--secondary)] mt-1">
-              Gestiona los aranceles de tus prácticas médicas diferenciados por moneda (**Pesos ARS** y **Dólares USD**), con control de vigencias temporales e importación masiva vía Excel.
+              Consulta en vivo el nomenclador hospitalario de Geclisa o crea prácticas personalizadas. Define el valor, la moneda (ARS / USD) y las fechas de vigencia para presupuestos automáticos.
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <a
-              href={`${API_BASE_URL}/api/nomenclador/descargar-plantilla`}
-              download
-              className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-[var(--border)]"
+            <button
+              onClick={handleOpenCreateManual}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-sm"
             >
-              <Download size={14} /> Descargar Plantilla Excel
-            </a>
-
-            <a
-              href={`${API_BASE_URL}/api/nomenclador/exportar-excel`}
-              download
-              className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-[var(--border)]"
-            >
-              <FileSpreadsheet size={14} /> Exportar a Excel
-            </a>
+              <Plus size={15} />
+              + Crear Práctica Personalizada
+            </button>
           </div>
         </div>
 
-        {/* Feedback Alert */}
+        {/* Métricas Rápidas */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-[var(--border)]">
+            <span className="text-[11px] text-slate-400 font-semibold block">Prácticas en CRM</span>
+            <span className="text-lg font-extrabold text-slate-900 dark:text-slate-100">{crmPracticas.length}</span>
+          </div>
+          <div className="p-3 bg-emerald-50/50 dark:bg-emerald-950/20 rounded-xl border border-emerald-200 dark:border-emerald-800">
+            <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold block">Aranceles en Pesos ($ ARS)</span>
+            <span className="text-lg font-extrabold text-emerald-600 dark:text-emerald-200">{totalArs}</span>
+          </div>
+          <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 rounded-xl border border-amber-200 dark:border-amber-800">
+            <span className="text-[11px] text-amber-700 dark:text-amber-300 font-semibold block">Aranceles en Dólares (USD)</span>
+            <span className="text-lg font-extrabold text-amber-600 dark:text-amber-200">{totalUsd}</span>
+          </div>
+          <div className="p-3 bg-purple-50/50 dark:bg-purple-950/20 rounded-xl border border-purple-200 dark:border-purple-800">
+            <span className="text-[11px] text-purple-700 dark:text-purple-300 font-semibold block">Prácticas Manuales / Propias</span>
+            <span className="text-lg font-extrabold text-purple-600 dark:text-purple-200">{totalManuales}</span>
+          </div>
+        </div>
+
+        {/* Alerta de Feedback */}
         {feedback && (
           <div
             className={`p-3 rounded-xl text-xs font-medium flex items-center justify-between gap-2 animate-scale-in ${
@@ -304,7 +373,7 @@ export default function NomencladorSettingsCard() {
             }`}
           >
             <div className="flex items-center gap-2">
-              {feedback.tipo === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+              {feedback.tipo === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
               <span>{feedback.texto}</span>
             </div>
             <button onClick={() => setFeedback(null)} className="text-xs font-bold hover:underline">
@@ -312,468 +381,463 @@ export default function NomencladorSettingsCard() {
             </button>
           </div>
         )}
-
-        {/* Pestañas de Moneda / Nomenclador */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          <button
-            onClick={() => setSelectedNomId('all')}
-            className={`px-4 py-2.5 rounded-xl text-xs font-bold transition shrink-0 flex items-center gap-2 ${
-              selectedNomId === 'all'
-                ? 'bg-blue-600 text-white shadow-sm'
-                : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-            }`}
-          >
-            <span>Todos los Precios</span>
-            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-black/10 dark:bg-white/10 font-mono">
-              {nomencladores.reduce((acc, curr) => acc + (curr.total_practicas || 0), 0)}
-            </span>
-          </button>
-
-          {nomencladores.map((nom) => {
-            const isUSD = nom.moneda_default === 'USD'
-            return (
-              <button
-                key={nom.id}
-                onClick={() => setSelectedNomId(nom.id)}
-                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
-                  selectedNomId === nom.id
-                    ? isUSD
-                      ? 'bg-amber-600 text-white shadow-sm'
-                      : 'bg-emerald-600 text-white shadow-sm'
-                    : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                }`}
-              >
-                <span>{isUSD ? '🇺🇸 Nomenclador en Dólares (USD)' : '🇦🇷 Nomenclador en Pesos (ARS)'}</span>
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-black/10 dark:bg-white/10 font-mono font-bold">
-                  {nom.total_practicas || 0} prácticas
-                </span>
-              </button>
-            )
-          })}
-        </div>
       </div>
 
-      {/* ==================================================================== */}
-      {/* SECCIÓN 1: IMPORTADOR MASIVO EXCEL CON VIGENCIAS */}
-      {/* ==================================================================== */}
+      {/* 2. Buscador en Vivo en Nomenclador de Geclisa */}
       <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
-        <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-          <h3 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
-            <FileSpreadsheet className="text-emerald-600" size={18} />
-            Importar Prácticas y Valores desde Excel
-          </h3>
-          <span className="text-[11px] text-slate-400">Formatos aceptados: .xlsx y .csv</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
+          <div className="flex items-center gap-2">
+            <span className="p-1.5 bg-blue-100 dark:bg-blue-950 text-blue-600 rounded-lg">
+              <Search size={16} />
+            </span>
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Buscador en Vivo del Nomenclador Hospitalario (Geclisa)
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                Consulta códigos oficiales de Geclisa para vincularlos y fijarles arancel en el CRM.
+              </p>
+            </div>
+          </div>
         </div>
 
-        <form onSubmit={handleImportExcel} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-          {/* Nomenclador / Moneda de Destino */}
-          <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">Moneda del Nomenclador</label>
+        {/* Formulario de Búsqueda */}
+        <form onSubmit={handleSearchGeclisa} className="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
+          <div className="sm:col-span-4">
+            <label className="font-bold text-slate-500 block mb-1">Tipo de Nomenclador Geclisa</label>
             <select
-              value={importNomId}
-              onChange={(e) => setImportNomId(e.target.value)}
-              className="w-full text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none focus:ring-2 focus:ring-blue-500"
+              value={selectedNomId}
+              onChange={(e) => setSelectedNomId(Number(e.target.value))}
+              className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
             >
-              {nomencladores.map((nom) => (
-                <option key={nom.id} value={nom.id}>
-                  {nom.moneda_default === 'USD' ? '🇺🇸 Dólares (USD)' : '🇦🇷 Pesos (ARS)'} - {nom.nombre}
+              {tiposGeclisa.map((t) => (
+                <option key={t.nomId} value={t.nomId}>
+                  {t.nomNom} ({t.nomId})
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Vigencia Desde */}
-          <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">Vigencia Desde (Inicio)</label>
-            <input
-              type="date"
-              value={importVigDesde}
-              onChange={(e) => setImportVigDesde(e.target.value)}
-              className="w-full text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Vigencia Hasta (Opcional) */}
-          <div>
-            <label className="text-xs font-bold text-slate-500 block mb-1">
-              Vigencia Hasta <span className="text-[10px] text-slate-400">(Opcional)</span>
-            </label>
-            <input
-              type="date"
-              value={importVigHasta}
-              onChange={(e) => setImportVigHasta(e.target.value)}
-              placeholder="Indefinido"
-              className="w-full text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          {/* Selector de Archivo */}
-          <div>
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".xlsx,.xls,.csv"
-              onChange={(e) => setImportFile(e.target.files?.[0] || null)}
-              className="hidden"
-              id="excel-file-input"
-            />
-            <label
-              htmlFor="excel-file-input"
-              className="w-full text-xs p-2.5 rounded-xl border border-dashed border-blue-400 bg-blue-50/40 dark:bg-blue-950/20 text-blue-700 dark:text-blue-300 font-bold flex items-center justify-center gap-1.5 cursor-pointer hover:bg-blue-100/50 transition truncate block text-center"
-            >
-              <Upload size={14} className="inline" />
-              {importFile ? importFile.name : 'Seleccionar Archivo Excel'}
-            </label>
-          </div>
-
-          <div className="md:col-span-3 flex items-center gap-4 pt-1">
-            <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
-              <span className="font-bold text-slate-400">Modo:</span>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="radio"
-                  name="modo_import"
-                  value="upsert"
-                  checked={importModo === 'upsert'}
-                  onChange={() => setImportModo('upsert')}
-                  className="text-blue-600"
-                />
-                <span>Actualizar precios existentes y agregar nuevas prácticas</span>
-              </label>
-
-              <label className="flex items-center gap-1.5 cursor-pointer text-amber-600 dark:text-amber-400">
-                <input
-                  type="radio"
-                  name="modo_import"
-                  value="replace"
-                  checked={importModo === 'replace'}
-                  onChange={() => setImportModo('replace')}
-                  className="text-blue-600"
-                />
-                <span>Reemplazar catálogo completo</span>
-              </label>
+          <div className="sm:col-span-6">
+            <label className="font-bold text-slate-500 block mb-1">Código o Nombre de Práctica</label>
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-3 text-slate-400" />
+              <input
+                type="text"
+                value={searchGeclisaQuery}
+                onChange={(e) => setSearchGeclisaQuery(e.target.value)}
+                placeholder="ej: 100, 111, Consulta, Ecografía, Fondo de Ojo, Blefaroplastia..."
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
 
-          <div className="md:col-span-1">
+          <div className="sm:col-span-2 flex items-end">
             <button
               type="submit"
-              disabled={importing || !importFile}
-              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
+              disabled={searchingGeclisa}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
             >
-              {importing ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" /> Procesando...
-                </>
-              ) : (
-                <>
-                  <Upload size={14} /> Importar Planilla
-                </>
-              )}
+              {searchingGeclisa ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+              Buscar en Geclisa
             </button>
           </div>
         </form>
-      </div>
 
-      {/* ==================================================================== */}
-      {/* SECCIÓN 2: TABLA DE PRÁCTICAS Y ARANCELES */}
-      {/* ==================================================================== */}
-      <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3 flex-1">
-            <div className="relative flex-1 max-w-md">
-              <Search size={15} className="absolute left-3.5 top-3 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar por código, nombre o categoría..."
-                className="w-full text-xs pl-10 pr-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-blue-500 font-medium"
-              />
+        {/* Resultados de Geclisa */}
+        {geclisaResults.length > 0 && (
+          <div className="space-y-2 pt-2">
+            <div className="flex items-center justify-between text-xs text-slate-400">
+              <span>{geclisaResults.length} práctica(s) encontrada(s) en Geclisa:</span>
+              <button
+                onClick={() => setGeclisaResults([])}
+                className="text-[11px] text-blue-600 hover:underline font-semibold"
+              >
+                Ocultar resultados
+              </button>
             </div>
 
-            {/* Filtro Moneda */}
-            <select
-              value={filtroMoneda}
-              onChange={(e: any) => setFiltroMoneda(e.target.value)}
-              className="text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
-            >
-              <option value="todas">Todas las Monedas</option>
-              <option value="ARS">Pesos ($ ARS)</option>
-              <option value="USD">Dólares (USD)</option>
-            </select>
+            <div className="max-h-72 overflow-y-auto border border-[var(--border)] rounded-xl divide-y divide-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30">
+              {geclisaResults.map((item, idx) => {
+                const nombre = item.nombre || item.practica || `Práctica ${item.nomCod}`
+                return (
+                  <div
+                    key={idx}
+                    className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-white dark:hover:bg-slate-800 transition"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span className="font-mono text-xs font-bold text-blue-600 bg-blue-50 dark:bg-blue-950 px-2 py-0.5 rounded">
+                        {item.nomCod}
+                      </span>
+                      <div>
+                        <div className="font-bold text-xs text-slate-900 dark:text-slate-100">{nombre}</div>
+                        <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+                          <span>{item.tipo || 'Geclisa'}</span>
+                          {item.ya_en_crm ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-100 dark:bg-emerald-950/60 dark:text-emerald-300 px-1.5 py-0.2 rounded">
+                              <CheckCircle2 size={11} /> En CRM: {item.moneda_crm === 'USD' ? 'USD' : '$'} {item.precio_crm.toLocaleString('es-AR')} {item.vigencia_desde ? `(Vig: ${item.vigencia_desde})` : ''}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.2 rounded">
+                              Sin arancel en CRM
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
 
-            {/* Filtro Vigencia */}
-            <select
-              value={filtroVigencia}
-              onChange={(e: any) => setFiltroVigencia(e.target.value)}
-              className="text-xs p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
-            >
-              <option value="todas">Todos los Estados</option>
-              <option value="vigentes">🟢 Vigentes Hoy</option>
-              <option value="futuras">🟡 Programadas a Futuro</option>
-              <option value="sin_precio">⚪ Sin Precio Cargado</option>
-            </select>
+                    <div className="shrink-0 self-end sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenConfigureGeclisa(item)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                          item.ya_en_crm
+                            ? 'bg-slate-200 hover:bg-blue-600 hover:text-white text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm'
+                        }`}
+                      >
+                        {item.ya_en_crm ? <Edit2 size={12} /> : <Plus size={12} />}
+                        {item.ya_en_crm ? 'Editar Arancel' : 'Configurar en CRM'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3. Tabla Maestra de Prácticas y Aranceles Configurados en CRM */}
+      <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Layers className="text-emerald-600" size={18} />
+              Catálogo de Tarifas y Prácticas en el CRM ({crmPracticas.length})
+            </h3>
+            <p className="text-[11px] text-slate-400">
+              Prácticas activas disponibles para el cotizador de presupuestos y el agente de WhatsApp.
+            </p>
           </div>
 
           <button
-            onClick={() => {
-              setEditingPractica(null)
-              setPracticaForm({
-                nomenclador_id: selectedNomId !== 'all' ? selectedNomId : (nomencladores[0]?.id || ''),
-                codigo: '',
-                nombre: '',
-                categoria: 'General',
-                precio: '',
-                moneda: 'ARS',
-                vigencia_desde: new Date().toISOString().split('T')[0],
-                vigencia_hasta: '',
-                descripcion: ''
-              })
-              setModalPracticaOpen(true)
-            }}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm shrink-0"
+            onClick={loadCatalogoCrm}
+            className="text-xs text-slate-400 hover:text-blue-600 flex items-center gap-1 transition"
           >
-            <Plus size={15} /> Nueva Práctica Manual
+            <RefreshCw size={13} /> Actualizar Tabla
           </button>
         </div>
 
-        {/* Tabla */}
-        <div className="overflow-x-auto border border-[var(--border)] rounded-xl">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/50 text-slate-400 font-semibold uppercase">
-                <th className="py-3 px-4">Código</th>
-                <th className="py-3 px-4">Descripción / Práctica</th>
-                <th className="py-3 px-4">Categoría</th>
-                <th className="py-3 px-4 text-right">Arancel Vigente</th>
-                <th className="py-3 px-4 text-center">Vigencia</th>
-                <th className="py-3 px-4 text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {loadingPracticas ? (
-                <tr>
-                  <td colSpan={6} className="py-10 text-center text-slate-400">
-                    <Loader2 size={20} className="animate-spin mx-auto mb-2 text-blue-600" />
-                    Cargando catálogo de prácticas...
-                  </td>
+        {/* Barra de Filtros y Búsqueda Local */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => setFiltroTab('todas')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition ${
+                filtroTab === 'todas'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              Todas ({crmPracticas.length})
+            </button>
+            <button
+              onClick={() => setFiltroTab('ARS')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition ${
+                filtroTab === 'ARS'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              🇦🇷 Pesos ARS ({totalArs})
+            </button>
+            <button
+              onClick={() => setFiltroTab('USD')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition ${
+                filtroTab === 'USD'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              🇺🇸 Dólares USD ({totalUsd})
+            </button>
+            <button
+              onClick={() => setFiltroTab('MANUAL')}
+              className={`px-3 py-1.5 rounded-xl font-bold transition ${
+                filtroTab === 'MANUAL'
+                  ? 'bg-purple-600 text-white shadow-sm'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              ✨ Personalizadas ({totalManuales})
+            </button>
+          </div>
+
+          <div className="relative w-full sm:w-64">
+            <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              value={crmSearchTerm}
+              onChange={(e) => setCrmSearchTerm(e.target.value)}
+              placeholder="Filtrar en catálogo local..."
+              className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-medium outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Tabla de Prácticas */}
+        {loadingCrm ? (
+          <div className="py-12 text-center text-xs text-slate-400">
+            <Loader2 size={20} className="animate-spin mx-auto mb-2 text-blue-600" />
+            Cargando tarifas del CRM...
+          </div>
+        ) : filteredCrmPracticas.length === 0 ? (
+          <div className="py-10 text-center text-xs text-slate-400 border border-dashed border-[var(--border)] rounded-xl">
+            No hay prácticas configuradas con los filtros seleccionados.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-[var(--border)] text-slate-400 font-semibold uppercase text-[11px]">
+                  <th className="py-2.5 px-3">Código</th>
+                  <th className="py-2.5 px-3">Descripción / Práctica</th>
+                  <th className="py-2.5 px-3 text-center">Origen</th>
+                  <th className="py-2.5 px-3 text-center">Moneda</th>
+                  <th className="py-2.5 px-3 text-right">Precio Unit.</th>
+                  <th className="py-2.5 px-3 text-center">Vigencia</th>
+                  <th className="py-2.5 px-3 text-right">Acciones</th>
                 </tr>
-              ) : filteredPracticas.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
-                    No se encontraron prácticas con los filtros seleccionados.
-                  </td>
-                </tr>
-              ) : (
-                filteredPracticas.map((p) => {
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {filteredCrmPracticas.map((p) => {
                   const isUSD = p.moneda === 'USD'
-                  const today = new Date().toISOString().split('T')[0]
-                  const isVigente = p.tiene_arancel && (!p.vigencia_desde || p.vigencia_desde <= today) && (!p.vigencia_hasta || p.vigencia_hasta >= today)
-                  const isFutura = p.tiene_arancel && p.vigencia_desde && p.vigencia_desde > today
+                  const isManual = p.origen === 'MANUAL'
 
                   return (
                     <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition">
-                      <td className="py-3 px-4 font-mono font-bold text-blue-600">{p.codigo}</td>
-                      <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-900 dark:text-slate-100">{p.nombre}</div>
-                        {p.descripcion && <div className="text-[11px] text-slate-400">{p.descripcion}</div>}
+                      <td className="py-3 px-3 font-mono font-bold text-blue-600">{p.codigo}</td>
+                      <td className="py-3 px-3">
+                        <div className="font-bold text-slate-800 dark:text-slate-200">{p.nombre}</div>
+                        <div className="text-[10px] text-slate-400">{p.categoria}</div>
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                          {p.categoria}
+                      <td className="py-3 px-3 text-center">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            isManual
+                              ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300'
+                              : 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                          }`}
+                        >
+                          {isManual ? 'Personalizada' : 'Geclisa'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right">
-                        {p.tiene_arancel ? (
-                          <div className="font-mono font-bold text-xs flex items-center justify-end gap-1.5">
-                            <span
-                              className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
-                                isUSD
-                                  ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
-                                  : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
-                              }`}
-                            >
-                              {p.moneda}
-                            </span>
-                            <span className="text-slate-900 dark:text-slate-100">
-                              {isUSD ? 'USD ' : '$ '}
-                              {p.precio.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-slate-400 italic">Sin precio</span>
-                        )}
+                      <td className="py-3 px-3 text-center">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                            isUSD
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          }`}
+                        >
+                          {p.moneda}
+                        </span>
                       </td>
-                      <td className="py-3 px-4 text-center">
-                        {isVigente && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
-                            🟢 Vigente
-                          </span>
-                        )}
-                        {isFutura && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300">
-                            🟡 Rige {p.vigencia_desde}
-                          </span>
-                        )}
-                        {!p.tiene_arancel && (
-                          <span className="text-[10px] text-slate-400">⚪ Pendiente</span>
-                        )}
+                      <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
+                        {isUSD ? 'USD ' : '$ '}
+                        {p.precio.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
                       </td>
-                      <td className="py-3 px-4 text-right space-x-1">
+                      <td className="py-3 px-3 text-center text-[11px] text-slate-500 font-mono">
+                        {p.vigencia_desde || 'Hoy'} {p.vigencia_hasta ? `hasta ${p.vigencia_hasta}` : '• Indefinida'}
+                      </td>
+                      <td className="py-3 px-3 text-right space-x-1">
                         <button
-                          onClick={() => {
-                            setEditingPractica(p)
-                            setPracticaForm({
-                              nomenclador_id: p.nomenclador_id,
-                              codigo: p.codigo,
-                              nombre: p.nombre,
-                              categoria: p.categoria,
-                              precio: p.precio ? p.precio.toString() : '',
-                              moneda: p.moneda,
-                              vigencia_desde: p.vigencia_desde || new Date().toISOString().split('T')[0],
-                              vigencia_hasta: p.vigencia_hasta || '',
-                              descripcion: p.descripcion || ''
-                            })
-                            setModalPracticaOpen(true)
-                          }}
-                          className="p-1.5 text-slate-400 hover:text-blue-600 rounded transition"
-                          title="Editar"
+                          type="button"
+                          onClick={() => handleOpenEditCrm(p)}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                          title="Editar Arancel y Vigencia"
                         >
                           <Edit2 size={14} />
                         </button>
                         <button
-                          onClick={() => handleDeletePractica(p.id)}
-                          className="p-1.5 text-slate-400 hover:text-red-600 rounded transition"
-                          title="Eliminar"
+                          type="button"
+                          onClick={() => handleDeleteCrmPractica(p.id, p.codigo)}
+                          className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                          title="Eliminar del CRM"
                         >
                           <Trash2 size={14} />
                         </button>
                       </td>
                     </tr>
                   )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* ==================================================================== */}
-      {/* MODAL: CREAR / EDITAR PRÁCTICA INDIVIDUAL */}
+      {/* MODAL DE CONFIGURACIÓN DE ARANCEL / CREACIÓN DE PRÁCTICA */}
       {/* ==================================================================== */}
-      {modalPracticaOpen && (
+      {isModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-scale-in">
-            <h3 className="text-sm font-bold flex items-center gap-2">
-              <Plus className="text-blue-600" size={18} />
-              {editingPractica ? 'Editar Práctica y Arancel' : 'Nueva Práctica del Catálogo'}
-            </h3>
+            {/* Header del Modal */}
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                <DollarSign className="text-emerald-600" size={20} />
+                {modalMode === 'manual'
+                  ? 'Nueva Práctica Personalizada'
+                  : modalMode === 'edit'
+                  ? 'Actualizar Arancel & Vigencia'
+                  : 'Configurar Práctica desde Geclisa'}
+              </h3>
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
 
-            <form onSubmit={handleSavePractica} className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-500 block mb-1">Moneda del Nomenclador</label>
-                  <select
-                    value={practicaForm.nomenclador_id}
-                    onChange={(e) => setPracticaForm({ ...practicaForm, nomenclador_id: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
-                  >
-                    {nomencladores.map((nom) => (
-                      <option key={nom.id} value={nom.id}>
-                        {nom.moneda_default === 'USD' ? '🇺🇸 Dólares (USD)' : '🇦🇷 Pesos (ARS)'}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
+            {/* Formulario */}
+            <form onSubmit={handleSavePracticaArancel} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-500 block mb-1">Código de Práctica</label>
                   <input
                     type="text"
                     required
-                    placeholder="ej: 420101 o FIV-01"
-                    value={practicaForm.codigo}
-                    onChange={(e) => setPracticaForm({ ...practicaForm, codigo: e.target.value.toUpperCase() })}
-                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono font-bold outline-none uppercase"
+                    readOnly={modalMode === 'geclisa'}
+                    value={formData.codigo}
+                    onChange={(e) => setFormData({ ...formData, codigo: e.target.value.toUpperCase() })}
+                    placeholder="ej: CIR-01, 100, PACK-FIV"
+                    className={`w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono font-bold outline-none focus:ring-2 focus:ring-blue-500 ${
+                      modalMode === 'geclisa' ? 'bg-slate-100 dark:bg-slate-800/60 cursor-not-allowed' : ''
+                    }`}
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-500 block mb-1">Categoría / Especialidad</label>
+                  <input
+                    type="text"
+                    value={formData.categoria}
+                    onChange={(e) => setFormData({ ...formData, categoria: e.target.value })}
+                    placeholder="ej: Oftalmología, Estética, Cirugía..."
+                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="font-bold text-slate-500 block mb-1">Nombre descriptivo</label>
+                <label className="font-bold text-slate-500 block mb-1">Nombre o Descripción de la Prestación</label>
                 <input
                   type="text"
                   required
-                  placeholder="ej: Consulta Médica / Ecografía Tocoginecológica"
-                  value={practicaForm.nombre}
-                  onChange={(e) => setPracticaForm({ ...practicaForm, nombre: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
+                  value={formData.nombre}
+                  onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
+                  placeholder="ej: Consulta Oftalmológica Especializada / Pack Quirúrgico"
+                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-semibold outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-3">
-                  <label className="font-bold text-slate-500 block mb-1">Precio / Arancel</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    placeholder="0.00"
-                    value={practicaForm.precio}
-                    onChange={(e) => setPracticaForm({ ...practicaForm, precio: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono font-bold text-emerald-600 outline-none"
-                  />
+              {/* Selector de Moneda y Precio */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] rounded-xl space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Moneda del Arancel</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, moneda: 'ARS' })}
+                        className={`p-2 rounded-xl font-bold transition flex items-center justify-center gap-1.5 ${
+                          formData.moneda === 'ARS'
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-[var(--background)] border border-[var(--border)] text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        🇦🇷 Pesos ($)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, moneda: 'USD' })}
+                        className={`p-2 rounded-xl font-bold transition flex items-center justify-center gap-1.5 ${
+                          formData.moneda === 'USD'
+                            ? 'bg-amber-600 text-white shadow-sm'
+                            : 'bg-[var(--background)] border border-[var(--border)] text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        🇺🇸 Dólares (USD)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">
+                      Precio / Arancel ({formData.moneda === 'USD' ? 'USD' : '$'})
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-slate-400 font-bold">
+                        {formData.moneda === 'USD' ? 'USD' : '$'}
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        required
+                        value={formData.precio}
+                        onChange={(e) => setFormData({ ...formData, precio: parseFloat(e.target.value) || 0 })}
+                        className="w-full pl-11 pr-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono font-bold text-emerald-600 outline-none focus:ring-2 focus:ring-emerald-500 text-sm"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fechas de Vigencia */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[var(--border)]">
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Vigencia Desde</label>
+                    <input
+                      type="date"
+                      required
+                      value={formData.vigencia_desde}
+                      onChange={(e) => setFormData({ ...formData, vigencia_desde: e.target.value })}
+                      className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Vigencia Hasta (Opcional)</label>
+                    <input
+                      type="date"
+                      value={formData.vigencia_hasta}
+                      onChange={(e) => setFormData({ ...formData, vigencia_hasta: e.target.value })}
+                      className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono"
+                    />
+                  </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-500 block mb-1">Vigencia Desde</label>
-                  <input
-                    type="date"
-                    required
-                    value={practicaForm.vigencia_desde}
-                    onChange={(e) => setPracticaForm({ ...practicaForm, vigencia_desde: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-500 block mb-1">Vigencia Hasta (Opcional)</label>
-                  <input
-                    type="date"
-                    value={practicaForm.vigencia_hasta}
-                    onChange={(e) => setPracticaForm({ ...practicaForm, vigencia_hasta: e.target.value })}
-                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-500 block mb-1">Categoría</label>
-                <input
-                  type="text"
-                  placeholder="ej: Consultas, Fertilidad, Diagnóstico"
-                  value={practicaForm.categoria}
-                  onChange={(e) => setPracticaForm({ ...practicaForm, categoria: e.target.value })}
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)]">
+              {/* Botones de Acción */}
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => setModalPracticaOpen(false)}
+                  onClick={() => setIsModalOpen(false)}
                   className="px-4 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancelar
                 </button>
+
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition shadow-sm"
+                  disabled={savingModal}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-sm disabled:opacity-50"
                 >
-                  Guardar Práctica
+                  {savingModal ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                  Guardar en el CRM
                 </button>
               </div>
             </form>
