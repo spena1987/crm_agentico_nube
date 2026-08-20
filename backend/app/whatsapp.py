@@ -300,6 +300,56 @@ class WhatsAppManager:
         except Exception as e:
             return {"error": str(e)}
 
+    def enviar_documento(
+        self,
+        telefono_o_jid: str,
+        filepath: str,
+        filename: str,
+        caption: str = "",
+        conversacion_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Envía un documento local (PDF de presupuesto, estudios, etc.) vía WhatsApp y lo registra en Supabase.
+        """
+        clean_phone = normalize_phone_number(telefono_o_jid)
+        try:
+            r = httpx.post(f"{self.service_url}/send-media", json={
+                "phone": clean_phone,
+                "file_path": filepath,
+                "media_type": "document",
+                "filename": filename,
+                "caption": caption
+            }, timeout=25.0)
+            
+            res_json = r.json() if r.status_code in [200, 201] else {}
+            msg_id = res_json.get("message_id")
+            
+            # Guardar en base de datos Supabase
+            if conversacion_id:
+                try:
+                    guardar_mensaje(
+                        conversacion_id=conversacion_id,
+                        emisor="operador",
+                        contenido=caption or f"[DOCUMENTO ENVIADO: {filename}]",
+                        whatsapp_message_id=msg_id,
+                        metadata_json={
+                            "documento": filename,
+                            "filepath": filepath,
+                            "delivery_status": "enviado"
+                        }
+                    )
+                except Exception as db_err:
+                    self.add_log("WARNING", f"Error guardando mensaje de documento en Supabase: {db_err}")
+                    
+            if r.status_code in [200, 201]:
+                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": clean_phone}
+            else:
+                err = res_json.get("error", "Error enviando documento")
+                return {"success": False, "error": err, "enviado_real": False}
+        except Exception as e:
+            self.add_log("ERROR", f"Error de conexión enviando documento: {e}")
+            return {"success": False, "error": str(e), "enviado_real": False}
+
     def desconectar_y_logout(self) -> bool:
         """
         Cierra sesión formal en WhatsApp y limpia los tokens locales.

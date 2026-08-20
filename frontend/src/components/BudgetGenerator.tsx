@@ -59,6 +59,8 @@ interface ModalSelectedMap {
   }
 }
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
+import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
+import { Send } from 'lucide-react'
 
 export default function BudgetGenerator() {
   const [pacientes, setPacientes] = useState<Paciente[]>([])
@@ -77,6 +79,7 @@ export default function BudgetGenerator() {
   const [creando, setCreando] = useState(false)
   const [presupuestoCreado, setPresupuestoCreado] = useState<any | null>(null)
   const [mensaje, setMensaje] = useState<{ tipo: 'error' | 'success'; texto: string } | null>(null)
+  const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false)
 
   // Cargar Pacientes
   const loadPacientes = async () => {
@@ -558,17 +561,28 @@ export default function BudgetGenerator() {
                 ¡Presupuesto Emitido con Éxito!
               </div>
 
-              {presupuestoCreado.pdf_url && (
-                <a
-                  href={`${API_BASE_URL}${presupuestoCreado.pdf_url}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full py-2 bg-white dark:bg-slate-800 hover:bg-emerald-100 border border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsWhatsAppModalOpen(true)}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
                 >
-                  <Download size={14} />
-                  Descargar Documento PDF
-                </a>
-              )}
+                  <Send size={13} />
+                  Enviar por WhatsApp
+                </button>
+
+                {presupuestoCreado.pdf_url && (
+                  <a
+                    href={`${API_BASE_URL}${presupuestoCreado.pdf_url}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 border border-[var(--border)] text-slate-700 dark:text-slate-200 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Download size={13} />
+                    Ver PDF
+                  </a>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -803,6 +817,23 @@ export default function BudgetGenerator() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal de Envío por WhatsApp */}
+      {presupuestoCreado && (
+        <ModalEnviarPresupuestoWhatsApp
+          isOpen={isWhatsAppModalOpen}
+          onClose={() => setIsWhatsAppModalOpen(false)}
+          presupuestoId={presupuestoCreado.id}
+          pacienteNombre={pacientes.find((p) => p.id === selectedPacienteId)?.nombre}
+          telefonoDefault={pacientes.find((p) => p.id === selectedPacienteId)?.telefono}
+          pdfUrl={presupuestoCreado.pdf_url}
+          totalArs={totalARS}
+          totalUsd={totalUSD}
+          onSuccess={() => {
+            setMensaje({ tipo: 'success', texto: '¡Presupuesto y PDF enviados por WhatsApp exitosamente!' })
+          }}
+        />
       )}
     </div>
   )

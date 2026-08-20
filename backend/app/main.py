@@ -68,7 +68,9 @@ from app.db import (
     enriquecer_practicas_geclisa_con_crm,
     guardar_practica_crm_con_arancel,
     listar_catalogo_completo_crm,
-    eliminar_practica_crm
+    eliminar_practica_crm,
+    generar_mensaje_ameno_presupuesto,
+    enviar_presupuesto_por_whatsapp
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -2419,6 +2421,91 @@ def emitir_presupuesto_rapido(payload: Dict[str, Any] = Body(...)):
         }
     except Exception as e:
         logger.error(f"Error al emitir presupuesto rápido: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/presupuestos")
+def listar_todos_presupuestos_api():
+    """
+    Retorna la lista completa de presupuestos con totales discriminados en ARS y USD,
+    datos del paciente e ítems asociados.
+    """
+    try:
+        if not supabase:
+            return {"success": False, "presupuestos": []}
+        resp = supabase.table("presupuestos")\
+            .select("id, paciente_id, asesoria_id, estado, total, total_ars, total_usd, pdf_url, created_at, pacientes(id, nombre, telefono, dni), items_presupuesto(id, cantidad, precio_unitario, subtotal, servicios_precios(id, codigo, nombre_prestacion))")\
+            .order("created_at", desc=True)\
+            .execute()
+        return {"success": True, "presupuestos": resp.data or []}
+    except Exception as e:
+        logger.error(f"Error al listar presupuestos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/presupuestos/{presupuesto_id}/mensaje-sugerido")
+def obtener_mensaje_sugerido_presupuesto_api(presupuesto_id: str):
+    """
+    Genera el borrador de texto ameno de WhatsApp para un presupuesto específico.
+    """
+    try:
+        p_resp = supabase.table("presupuestos")\
+            .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
+            .eq("id", presupuesto_id)\
+            .execute()
+            
+        if not p_resp.data:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
+            
+        presupuesto = p_resp.data[0]
+        paciente = presupuesto.get("pacientes") or {}
+        items_raw = presupuesto.get("items_presupuesto") or []
+        
+        items = []
+        for it in items_raw:
+            srv = it.get("servicios_precios") or {}
+            items.append({
+                "codigo": srv.get("codigo") or "",
+                "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+                "precio_unitario": float(it.get("precio_unitario") or 0.0),
+                "cantidad": int(it.get("cantidad") or 1),
+                "subtotal": float(it.get("subtotal") or 0.0),
+                "moneda": "USD" if float(presupuesto.get("total_usd") or 0) > 0 and float(presupuesto.get("total_ars") or 0) == 0 else "ARS"
+            })
+            
+        mensaje = generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
+        
+        return {
+            "success": True,
+            "presupuesto_id": presupuesto_id,
+            "paciente_nombre": paciente.get("nombre"),
+            "telefono": paciente.get("telefono"),
+            "total_ars": float(presupuesto.get("total_ars") or 0.0),
+            "total_usd": float(presupuesto.get("total_usd") or 0.0),
+            "pdf_url": presupuesto.get("pdf_url"),
+            "mensaje_sugerido": mensaje
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al generar mensaje sugerido para presupuesto {presupuesto_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/presupuestos/{presupuesto_id}/enviar-whatsapp")
+def enviar_presupuesto_whatsapp_api(presupuesto_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Envía el PDF del presupuesto por WhatsApp junto con el mensaje personalizado o ameno al paciente.
+    """
+    try:
+        telefono_override = payload.get("telefono")
+        mensaje_custom = payload.get("mensaje")
+        
+        res = enviar_presupuesto_por_whatsapp(
+            presupuesto_id=presupuesto_id,
+            telefono_override=telefono_override,
+            mensaje_custom=mensaje_custom
+        )
+        return res
+    except Exception as e:
+        logger.error(f"Error al enviar presupuesto {presupuesto_id} por WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/presupuestos/{presupuesto_id}/pdf")

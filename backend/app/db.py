@@ -1707,8 +1707,9 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         servicios_resp = supabase.table("servicios_precios").select("id, nombre_prestacion").limit(1).execute()
         default_servicio_id = servicios_resp.data[0]["id"] if servicios_resp.data else None
         
-        # 3. Calcular total e ítems normalizados
-        total_acumulado = 0.0
+        # 3. Calcular totales independientes por moneda (cero mezcla ARS + USD)
+        total_ars = 0.0
+        total_usd = 0.0
         items_db = []
         items_para_pdf = []
         
@@ -1716,11 +1717,17 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             cant = int(item.get("cantidad", 1))
             pu = float(item.get("precio_unitario", 0.0))
             sub = cant * pu
-            total_acumulado += sub
+            item_moneda = str(item.get("moneda") or moneda).upper()
+            
+            if item_moneda == "USD":
+                total_usd += sub
+            else:
+                total_ars += sub
             
             # Usar default_servicio_id para evitar violación de foreign key si el ID viene de nomenclador_practicas
             srv_id = default_servicio_id
             nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
+            codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or "").strip().upper()
             
             items_db.append({
                 "servicio_id": srv_id,
@@ -1730,20 +1737,25 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             })
             
             items_para_pdf.append({
+                "codigo": codigo_item,
                 "nombre": nombre_item,
+                "nombre_prestacion": nombre_item,
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
-                "moneda": moneda
+                "moneda": item_moneda
             })
             
         presupuesto_id = str(uuid.uuid4())
+        total_escalar = total_ars if total_ars > 0 else total_usd
         
-        # 4. Generar PDF membretado oficial del CRM
+        # 4. Generar PDF membretado oficial del CRM con totales discriminados
         pdf_dict = {
             "id": presupuesto_id,
-            "total": total_acumulado,
-            "moneda": moneda,
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
+            "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
             "created_at": "now()"
         }
         pdf_filename = generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
@@ -1755,7 +1767,9 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             "paciente_id": paciente_id,
             "asesoria_id": asesoria_id or None,
             "estado": payload.get("estado", "enviado"),
-            "total": total_acumulado,
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
             "pdf_url": pdf_url
         }
         p_ins = supabase.table("presupuestos").insert(pres_data).execute()
@@ -1776,8 +1790,9 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             supabase.table("asesorias_quirurgicas") \
                 .update({
                     "presupuesto_id": presupuesto_id,
-                    "monto_extra": total_acumulado,
-                    "moneda_extra": moneda,
+                    "monto_extra": total_escalar,
+                    "moneda_extra": "USD" if total_usd > 0 else "ARS",
+                    "etapa": "presupuesto_enviado",
                     "updated_at": "now()"
                 }) \
                 .eq("id", asesoria_id) \
@@ -1788,14 +1803,168 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             "paciente_id": paciente_id,
             "asesoria_id": asesoria_id,
             "estado": pres_data["estado"],
-            "total": total_acumulado,
-            "moneda": moneda,
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
             "pdf_url": pdf_url,
             "items": items_para_pdf
         }
     except Exception as e:
         logger.error(f"Error al crear presupuesto rápido: {e}")
         raise
+
+def generar_mensaje_ameno_presupuesto(
+    presupuesto: dict, 
+    paciente: dict, 
+    items: list, 
+    clinica_config: Optional[dict] = None
+) -> str:
+    """
+    Construye un mensaje de WhatsApp empático, cordial y estructurado con el resumen del presupuesto.
+    """
+    from app.services.config_service import load_settings
+    settings = load_settings()
+    plantilla = settings.get("plantilla_presupuesto", {})
+    clinica = settings.get("clinica", {})
+    
+    nombre_paciente = (paciente.get("nombre") or "Estimado/a").strip().title()
+    nombre_clinica = plantilla.get("nombre_institucion") or clinica.get("nombre") or "Centro Médico Nube"
+    validez_dias = plantilla.get("validez_dias", 30)
+    
+    # Calcular totales
+    total_ars = float(presupuesto.get("total_ars") or sum(float(it.get("subtotal") or 0.0) for it in items if it.get("moneda") == "ARS"))
+    total_usd = float(presupuesto.get("total_usd") or sum(float(it.get("subtotal") or 0.0) for it in items if it.get("moneda") == "USD"))
+    
+    # Armar lista de prestaciones
+    lineas_items = []
+    for it in items:
+        nom = it.get("nombre") or it.get("nombre_prestacion") or "Prestación Médica"
+        cod = it.get("codigo") or it.get("codigo_servicio") or ""
+        mon = it.get("moneda") or "ARS"
+        sub = float(it.get("subtotal") or 0.0)
+        sub_str = f"USD {sub:,.2f}" if mon == "USD" else f"${sub:,.2f}"
+        if cod:
+            lineas_items.append(f"• *{cod}* - {nom}: {sub_str}")
+        else:
+            lineas_items.append(f"• {nom}: {sub_str}")
+            
+    items_texto = "\n".join(lineas_items) if lineas_items else "• Prestaciones médicas detalladas en el archivo adjunto"
+    
+    # Armar sección de totales
+    totales_lineas = []
+    if total_ars > 0 and total_usd > 0:
+        totales_lineas.append(f"🇦🇷 *Total en Pesos:* ${total_ars:,.2f} ARS")
+        totales_lineas.append(f"🇺🇸 *Total en Dólares:* USD {total_usd:,.2f}")
+    elif total_usd > 0:
+        totales_lineas.append(f"🇺🇸 *Total en Dólares:* USD {total_usd:,.2f}")
+    else:
+        totales_lineas.append(f"🇦🇷 *Total en Pesos:* ${total_ars:,.2f} ARS")
+        
+    totales_texto = "\n".join(totales_lineas)
+    
+    mensaje = f"""¡Hola {nombre_paciente}! 👋 Esperamos que te encuentres muy bien.
+
+Te compartimos adjunto tu *Presupuesto Médico Oficial* emitido por *{nombre_clinica}*.
+
+📋 *Detalle de Prestaciones Cotizadas:*
+{items_texto}
+
+💰 *Monto Total Estimado:*
+{totales_texto}
+
+⏳ *Validez del presupuesto:* {validez_dias} días corridos.
+💳 *Medios de pago:* Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración.
+
+Quedamos a tu entera disposición para resolver cualquier duda sobre el tratamiento o coordinar la reserva de tu turno/intervención. 🩺✨"""
+
+    return mensaje.strip()
+
+def enviar_presupuesto_por_whatsapp(
+    presupuesto_id: str, 
+    telefono_override: Optional[str] = None, 
+    mensaje_custom: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Envía el PDF de un presupuesto generado por WhatsApp junto con el mensaje protocolar ameno.
+    Actualiza el estado del presupuesto a 'enviado' y sincroniza el pipeline quirúrgico.
+    """
+    import os
+    from app.whatsapp import whatsapp_manager
+    from app.services.phone_normalizer import normalize_phone_number
+    from app.services.pdf_service import PDF_DIR
+    
+    # 1. Obtener presupuesto
+    p_resp = supabase.table("presupuestos")\
+        .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
+        .eq("id", presupuesto_id)\
+        .execute()
+        
+    if not p_resp.data:
+        raise ValueError(f"Presupuesto con ID {presupuesto_id} no encontrado.")
+        
+    presupuesto = p_resp.data[0]
+    paciente = presupuesto.get("pacientes") or {}
+    items_raw = presupuesto.get("items_presupuesto") or []
+    
+    items = []
+    for it in items_raw:
+        srv = it.get("servicios_precios") or {}
+        items.append({
+            "codigo": srv.get("codigo") or "",
+            "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+            "precio_unitario": float(it.get("precio_unitario") or 0.0),
+            "cantidad": int(it.get("cantidad") or 1),
+            "subtotal": float(it.get("subtotal") or 0.0),
+            "moneda": "USD" if float(presupuesto.get("total_usd") or 0) > 0 and float(presupuesto.get("total_ars") or 0) == 0 else "ARS"
+        })
+        
+    # 2. Resolver teléfono y mensaje
+    raw_tel = telefono_override or paciente.get("telefono") or ""
+    clean_phone = normalize_phone_number(raw_tel)
+    if not clean_phone:
+        raise ValueError("El paciente no tiene un número de teléfono válido registrado para WhatsApp.")
+        
+    mensaje_final = mensaje_custom or generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
+    
+    # 3. Localizar archivo PDF
+    pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
+    pdf_path = os.path.join(PDF_DIR, pdf_filename)
+    if not os.path.exists(pdf_path):
+        # Generar si no existe en disco
+        from app.services.pdf_service import generar_pdf_presupuesto
+        generar_pdf_presupuesto(presupuesto, paciente, items)
+        
+    # 4. Obtener o crear conversación en Supabase
+    conv = get_or_create_conversacion(paciente.get("id"))
+    conv_id = conv.get("id") if conv else None
+    
+    # 5. Enviar documento vía WhatsApp
+    w_res = whatsapp_manager.enviar_documento(
+        telefono_o_jid=clean_phone,
+        filepath=pdf_path,
+        filename=pdf_filename,
+        caption=mensaje_final,
+        conversacion_id=conv_id
+    )
+    
+    # 6. Actualizar estado del presupuesto a 'enviado'
+    supabase.table("presupuestos").update({"estado": "enviado"}).eq("id", presupuesto_id).execute()
+    
+    # 7. Sincronizar asesoría quirúrgica si existe
+    if presupuesto.get("asesoria_id"):
+        supabase.table("asesorias_quirurgicas") \
+            .update({"etapa": "presupuesto_enviado", "updated_at": "now()"}) \
+            .eq("id", presupuesto["asesoria_id"]) \
+            .execute()
+            
+    return {
+        "success": True,
+        "mensaje": "Presupuesto y PDF enviados exitosamente por WhatsApp.",
+        "whatsapp_result": w_res,
+        "telefono": clean_phone,
+        "caption": mensaje_final
+    }
+
 
 # ====================================================================
 # BITÁCORA Y EVOLUCIONES DE ASESORAMIENTO QUIRÚRGICO

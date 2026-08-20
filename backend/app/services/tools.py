@@ -176,14 +176,27 @@ def crear_borrador_presupuesto(paciente_id: str, items: list[ItemPresupuesto]) -
             item_info["subtotal"] = subtotal
             items_creados.append(item_info)
 
-        # 4. Actualizar total en la cabecera del presupuesto
-        supabase.table("presupuestos").update({"total": total_acumulado}).eq("id", presupuesto_id).execute()
+        # 4. Calcular totales independientes por moneda (cero mezcla ARS + USD)
+        total_ars = float(sum(it["subtotal"] for it in items_creados if it.get("moneda") == "ARS"))
+        total_usd = float(sum(it["subtotal"] for it in items_creados if it.get("moneda") == "USD"))
+        
+        # Valor de fallback escalar para compatibilidad con código anterior
+        total_escalar = total_ars if total_ars > 0 else total_usd
+        
+        update_data = {
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd
+        }
+        supabase.table("presupuestos").update(update_data).eq("id", presupuesto_id).execute()
         
         presupuesto_actualizado_resp = supabase.table("presupuestos").select("*").eq("id", presupuesto_id).execute()
-        presupuesto_actualizado = presupuesto_actualizado_resp.data[0]
-        presupuesto_actualizado["total"] = total_acumulado
+        presupuesto_actualizado = presupuesto_actualizado_resp.data[0] if presupuesto_actualizado_resp.data else {}
+        presupuesto_actualizado["total"] = total_escalar
+        presupuesto_actualizado["total_ars"] = total_ars
+        presupuesto_actualizado["total_usd"] = total_usd
 
-        # 5. Generar PDF profesional
+        # 5. Generar PDF profesional con desglose independiente de monedas
         pdf_filename = generar_pdf_presupuesto(presupuesto_actualizado, paciente, items_creados)
         pdf_url = f"/static/{pdf_filename}"
 

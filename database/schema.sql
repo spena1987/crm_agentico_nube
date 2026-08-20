@@ -78,7 +78,9 @@ create table public.presupuestos (
     paciente_id uuid references public.pacientes(id) on delete cascade not null,
     asesoria_id uuid references public.asesorias_quirurgicas(id) on delete set null,
     estado varchar default 'borrador' not null check (estado in ('borrador', 'enviado', 'aprobado', 'rechazado')),
-    total numeric(10, 2) default 0.00 not null check (total >= 0),
+    total numeric(12, 2) default 0.00 not null check (total >= 0),
+    total_ars numeric(12, 2) default 0.00 not null check (total_ars >= 0),
+    total_usd numeric(12, 2) default 0.00 not null check (total_usd >= 0),
     pdf_url varchar,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
