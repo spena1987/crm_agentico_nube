@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -18,13 +19,18 @@ import {
   User,
   Scissors,
   CheckCircle2,
-  X
+  X,
+  Check
 } from 'lucide-react'
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import { BACKEND_URL } from '@/lib/api'
 
-export default function ProgramacionQuirurgicaPage() {
+function ProgramacionQuirurgicaContent() {
+  const searchParams = useSearchParams()
+  const paramAsesoriaId = searchParams.get('asesoria_id') || ''
+  const paramPacienteId = searchParams.get('paciente_id') || ''
+
   const [modoVista, setModoVista] = useState<'dia' | 'semana'>('dia')
   const [fechaSeleccionada, setFechaSeleccionada] = useState(new Date().toISOString().slice(0, 10))
   const [quirofanoSeleccionadoId, setQuirofanoSeleccionadoId] = useState<string>('')
@@ -47,7 +53,7 @@ export default function ProgramacionQuirurgicaPage() {
   // Cálculo de fechas de la semana (Lunes a Domingo)
   const calcularDiasSemana = (fechaBaseStr: string) => {
     const base = new Date(fechaBaseStr + 'T12:00:00')
-    const day = base.getDay() // 0 es Domingo, 1 Lunes...
+    const day = base.getDay()
     const diffToMonday = day === 0 ? -6 : 1 - day
 
     const monday = new Date(base)
@@ -64,7 +70,7 @@ export default function ProgramacionQuirurgicaPage() {
       dias.push({
         fecha: fechaIso,
         nombreDia: nombresDias[i],
-        numeroDia: i + 1, // 1=Lunes ... 7=Domingo
+        numeroDia: i + 1,
         esHoy: fechaIso === hoyStr
       })
     }
@@ -82,12 +88,13 @@ export default function ProgramacionQuirurgicaPage() {
       const fDesde = modoVista === 'dia' ? fechaSeleccionada : fechaDesdeSemana
       const fHasta = modoVista === 'dia' ? fechaSeleccionada : fechaHastaSemana
 
-      const [resQ, resT, resB, resBM, resCasos] = await Promise.all([
+      const [resQ, resT, resB, resBM, resCasos, resPipe] = await Promise.all([
         fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`),
         fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
         fetch(`${BACKEND_URL}/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
         fetch(`${BACKEND_URL}/api/quirofanos/bloques-medicos`),
-        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`)
+        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
+        fetch(`${BACKEND_URL}/api/pipeline-quirurgico`)
       ])
 
       const dataQ = await resQ.json()
@@ -95,6 +102,7 @@ export default function ProgramacionQuirurgicaPage() {
       const dataB = await resB.json()
       const dataBM = await resBM.json()
       const dataCasos = await resCasos.json()
+      const dataPipe = await resPipe.json()
 
       if (dataQ.success) {
         setQuirofanos(dataQ.quirofanos || [])
@@ -105,7 +113,25 @@ export default function ProgramacionQuirurgicaPage() {
       if (dataT.success) setTurnos(dataT.turnos || [])
       if (dataB.success) setBloqueos(dataB.bloqueos || [])
       if (dataBM.success) setBloquesMedicos(dataBM.bloques || [])
-      if (dataCasos.success) setCasosConfirmados(dataCasos.casos || [])
+
+      let listaConfirmados: any[] = []
+      if (dataCasos.success && Array.isArray(dataCasos.casos) && dataCasos.casos.length > 0) {
+        listaConfirmados = dataCasos.casos
+      } else if (dataPipe.success && dataPipe.etapas?.confirmado) {
+        listaConfirmados = dataPipe.etapas.confirmado
+      }
+      setCasosConfirmados(listaConfirmados)
+
+      // Si viene por parámetro de URL con asesoria_id, abrir directamente el modal
+      if (paramAsesoriaId && !modalAbierto) {
+        const caso = listaConfirmados.find((c) => c.id === paramAsesoriaId)
+        if (caso) {
+          setCasoConfirmadoSeleccionado(caso)
+          setModalAbierto(true)
+        } else {
+          setModalAbierto(true)
+        }
+      }
     } catch (err) {
       console.error('Error cargando turnero quirúrgico:', err)
     } finally {
@@ -115,7 +141,7 @@ export default function ProgramacionQuirurgicaPage() {
 
   useEffect(() => {
     fetchDatos()
-  }, [fechaSeleccionada, modoVista, quirofanoSeleccionadoId])
+  }, [fechaSeleccionada, modoVista, quirofanoSeleccionadoId, paramAsesoriaId])
 
   const cambiarSemana = (delta: number) => {
     const base = new Date(fechaSeleccionada + 'T12:00:00')
@@ -407,6 +433,8 @@ export default function ProgramacionQuirurgicaPage() {
       {modalAbierto && (
         <FichaTurnoModal
           turno={turnoSeleccionado}
+          asesoriaIdInicial={paramAsesoriaId}
+          pacienteIdInicial={paramPacienteId}
           casoConfirmadoInicial={casoConfirmadoSeleccionado}
           quirofanos={quirofanos}
           quirofanoDefectoId={slotClickData?.quirofanoId || quirofanoSeleccionadoId}
@@ -422,5 +450,17 @@ export default function ProgramacionQuirurgicaPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function ProgramacionQuirurgicaPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-16 flex items-center justify-center min-h-[400px]">
+        <Loader2 className="animate-spin text-blue-600" size={36} />
+      </div>
+    }>
+      <ProgramacionQuirurgicaContent />
+    </Suspense>
   )
 }

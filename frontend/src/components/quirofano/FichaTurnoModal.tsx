@@ -20,12 +20,16 @@ import {
   Link2,
   CheckCircle2,
   Search,
-  Timer
+  Timer,
+  Check,
+  UserCheck
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
 interface FichaTurnoModalProps {
   turno?: any
+  asesoriaIdInicial?: string
+  pacienteIdInicial?: string
   casoConfirmadoInicial?: any
   quirofanos: any[]
   quirofanoDefectoId?: string
@@ -37,6 +41,8 @@ interface FichaTurnoModalProps {
 
 export default function FichaTurnoModal({
   turno,
+  asesoriaIdInicial,
+  pacienteIdInicial,
   casoConfirmadoInicial,
   quirofanos,
   quirofanoDefectoId,
@@ -50,11 +56,12 @@ export default function FichaTurnoModal({
   // Casos confirmados desde Asesoramiento Quirúrgico
   const [casosConfirmados, setCasosConfirmados] = useState<any[]>([])
   const [cargandoCasos, setCargandoCasos] = useState(false)
-  const [casoSeleccionadoId, setCasoSeleccionadoId] = useState<string>('')
+  const [casoSeleccionadoId, setCasoSeleccionadoId] = useState<string>(
+    turno?.asesoria_id || asesoriaIdInicial || ''
+  )
   const [modoCarga, setModoCarga] = useState<'asesoria' | 'manual'>('asesoria')
-  const [busquedaCaso, setBusquedaCaso] = useState('')
 
-  // Lista de Cirugías con duración configurada
+  // Catálogo de Cirugías con duración
   const [catalogoPracticas, setCatalogoPracticas] = useState<{ id: string; nombre: string; minutos: number }[]>([
     { id: 'inyeccion', nombre: 'Inyección Intravítrea (Antiangiogénico)', minutos: 10 },
     { id: 'catarata_faco', nombre: 'Catarata con Facoemulsificación Estándar', minutos: 20 },
@@ -65,8 +72,8 @@ export default function FichaTurnoModal({
 
   // Formulario de Turno Quirúrgico
   const [formData, setFormData] = useState({
-    asesoria_id: turno?.asesoria_id || '',
-    paciente_id: turno?.paciente_id || '',
+    asesoria_id: turno?.asesoria_id || asesoriaIdInicial || '',
+    paciente_id: turno?.paciente_id || pacienteIdInicial || '',
     paciente_nombre: turno?.pacientes?.nombre || '',
     paciente_dni: turno?.pacientes?.dni || '',
     paciente_telefono: turno?.pacientes?.telefono || '',
@@ -97,53 +104,6 @@ export default function FichaTurnoModal({
   const [enviandoWA, setEnviandoWA] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
-
-  // Cargar catálogo de cirugías y asesorías confirmadas
-  useEffect(() => {
-    const cargarDatos = async () => {
-      try {
-        setCargandoCasos(true)
-        const [resCasos, resConf] = await Promise.all([
-          fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
-          fetch(`${BACKEND_URL}/api/configuracion-quirofano`)
-        ])
-
-        const dataCasos = await resCasos.json()
-        const dataConf = await resConf.json()
-
-        if (dataCasos.success && dataCasos.casos) {
-          setCasosConfirmados(dataCasos.casos)
-        }
-
-        if (dataConf.success && dataConf.configuracion?.duraciones_prestaciones) {
-          const dur = dataConf.configuracion.duraciones_prestaciones
-          if (Array.isArray(dur)) {
-            setCatalogoPracticas(dur)
-          } else {
-            const items = Object.entries(dur).map(([k, v]) => ({
-              id: k,
-              nombre: k.replace(/_/g, ' ').toUpperCase(),
-              minutos: Number(v) || 20
-            }))
-            if (items.length > 0) setCatalogoPracticas(items)
-          }
-        }
-      } catch (err) {
-        console.error('Error cargando casos confirmados:', err)
-      } finally {
-        setCargandoCasos(false)
-      }
-    }
-
-    cargarDatos()
-  }, [])
-
-  // Si se pasa un caso confirmado inicial (por ejemplo desde el panel de pendientes)
-  useEffect(() => {
-    if (casoConfirmadoInicial) {
-      aplicarCasoConfirmado(casoConfirmadoInicial)
-    }
-  }, [casoConfirmadoInicial])
 
   // Aplicar datos heredados desde la asesoría quirúrgica confirmada
   const aplicarCasoConfirmado = (caso: any) => {
@@ -183,6 +143,63 @@ export default function FichaTurnoModal({
     setTimeout(() => setMensajeExito(null), 3000)
   }
 
+  // Cargar catálogo de cirugías y asesorías confirmadas
+  useEffect(() => {
+    const cargarDatos = async () => {
+      try {
+        setCargandoCasos(true)
+        
+        // Consultar endpoint de pendientes y fallback a pipeline
+        const [resCasos, resPipeline, resConf] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
+          fetch(`${BACKEND_URL}/api/pipeline-quirurgico`),
+          fetch(`${BACKEND_URL}/api/configuracion-quirofano`)
+        ])
+
+        const dataCasos = await resCasos.json()
+        const dataPipe = await resPipeline.json()
+        const dataConf = await resConf.json()
+
+        let listaCasos: any[] = []
+        if (dataCasos.success && Array.isArray(dataCasos.casos) && dataCasos.casos.length > 0) {
+          listaCasos = dataCasos.casos
+        } else if (dataPipe.success && dataPipe.etapas?.confirmado) {
+          listaCasos = dataPipe.etapas.confirmado
+        }
+
+        setCasosConfirmados(listaCasos)
+
+        // Si se pasó un caso inicial o id por URL, aplicarlo de inmediato
+        if (casoConfirmadoInicial) {
+          aplicarCasoConfirmado(casoConfirmadoInicial)
+        } else if (asesoriaIdInicial) {
+          const match = listaCasos.find((c) => c.id === asesoriaIdInicial)
+          if (match) aplicarCasoConfirmado(match)
+        }
+
+        if (dataConf.success && dataConf.configuracion?.duraciones_prestaciones) {
+          const dur = dataConf.configuracion.duraciones_prestaciones
+          if (Array.isArray(dur)) {
+            setCatalogoPracticas(dur)
+          } else {
+            const items = Object.entries(dur).map(([k, v]) => ({
+              id: k,
+              nombre: k.replace(/_/g, ' ').toUpperCase(),
+              minutos: Number(v) || 20
+            }))
+            if (items.length > 0) setCatalogoPracticas(items)
+          }
+        }
+      } catch (err) {
+        console.error('Error cargando casos confirmados:', err)
+      } finally {
+        setCargandoCasos(false)
+      }
+    }
+
+    cargarDatos()
+  }, [asesoriaIdInicial, casoConfirmadoInicial])
+
   // Calcular hora de fin estimada
   const calcularHoraFin = () => {
     if (!formData.hora_inicio) return ''
@@ -206,7 +223,7 @@ export default function FichaTurnoModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.paciente_nombre.trim()) {
-      setError('Debe especificar el paciente o vincular un caso confirmado.')
+      setError('Debe especificar el paciente o seleccionar un caso confirmado.')
       return
     }
 
@@ -262,15 +279,7 @@ export default function FichaTurnoModal({
     }
   }
 
-  // Filtrado de casos confirmados para el buscador
-  const casosFiltrados = casosConfirmados.filter((c) => {
-    const q = busquedaCaso.toLowerCase()
-    const pac = c.pacientes?.nombre?.toLowerCase() || ''
-    const dni = c.pacientes?.dni || ''
-    const cir = c.medico_cirujano_nombre?.toLowerCase() || ''
-    const prac = c.practica_nombre?.toLowerCase() || ''
-    return pac.includes(q) || dni.includes(q) || cir.includes(q) || prac.includes(q)
-  })
+  const casoSeleccionadoActual = casosConfirmados.find((c) => c.id === casoSeleccionadoId)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
@@ -286,12 +295,12 @@ export default function FichaTurnoModal({
                 <span>{esEdicion ? 'Ficha de Turno Quirúrgico' : 'Programar Cirugía en Quirófano'}</span>
                 {formData.asesoria_id && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-300/40 flex items-center gap-1">
-                    <Link2 size={10} /> Vinculado a Asesoramiento
+                    <Link2 size={10} /> Sincronizado con Asesoramiento
                   </span>
                 )}
               </h3>
               <p className="text-xs text-[var(--secondary)]">
-                Gestione sala, horarios, equipo quirúrgico y sincronice en tiempo real con la ficha del paciente.
+                Complete o edite los datos de sala, horario y equipo. Se mantendrán sincronizados con la ficha del paciente.
               </p>
             </div>
           </div>
@@ -303,7 +312,7 @@ export default function FichaTurnoModal({
           </button>
         </div>
 
-        {/* Notificaciones de Error / Éxito */}
+        {/* Notificaciones */}
         {error && (
           <div className="m-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
             <AlertCircle size={16} className="shrink-0" />
@@ -317,16 +326,16 @@ export default function FichaTurnoModal({
           </div>
         )}
 
-        {/* Contenido Principal con Scroll */}
+        {/* Formulario con Scroll */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
           
-          {/* BANDEJA REACTIVA: VINCULAR CASO CONFIRMADO DE ASESORAMIENTO */}
+          {/* BANNER PRINCIPAL: SELECTOR DE CASOS CONFIRMADOS */}
           {!esEdicion && (
-            <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/50 space-y-3">
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-purple-500/10 border-2 border-blue-500/40 space-y-3 shadow-sm">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-xs font-bold text-blue-700 dark:text-blue-300">
                   <Sparkles size={16} className="text-blue-600 animate-pulse" />
-                  <span>Vincular Caso Confirmado desde Asesoramiento Quirúrgico</span>
+                  <span>Casos Confirmados desde Asesoramiento Quirúrgico</span>
                 </div>
 
                 <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-[var(--border)] text-[11px]">
@@ -339,7 +348,7 @@ export default function FichaTurnoModal({
                         : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
                     }`}
                   >
-                    ⚡ Casos Confirmados ({casosConfirmados.length})
+                    ⚡ Seleccionar de Asesoría ({casosConfirmados.length})
                   </button>
                   <button
                     type="button"
@@ -359,62 +368,54 @@ export default function FichaTurnoModal({
               </div>
 
               {modoCarga === 'asesoria' && (
-                <div className="space-y-2 pt-1">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
-                    <input
-                      type="text"
-                      value={busquedaCaso}
-                      onChange={(e) => setBusquedaCaso(e.target.value)}
-                      placeholder="Buscar por nombre de paciente, DNI o cirujano..."
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500 font-medium"
-                    />
-                  </div>
-
-                  {cargandoCasos ? (
-                    <div className="p-3 text-center text-xs text-[var(--secondary)] flex items-center justify-center gap-2">
-                      <Loader2 size={14} className="animate-spin text-blue-600" />
-                      <span>Cargando cirugías confirmadas...</span>
-                    </div>
-                  ) : casosFiltrados.length === 0 ? (
-                    <p className="text-xs text-[var(--secondary)] italic py-2 text-center bg-[var(--card)] rounded-xl border border-[var(--border)]">
-                      No hay casos confirmados que coincidan con la búsqueda.
-                    </p>
-                  ) : (
-                    <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
-                      {casosFiltrados.map((c) => {
+                <div className="space-y-3 pt-1">
+                  {/* Select Principal Desplegable */}
+                  <div>
+                    <label className="text-[11px] font-bold text-[var(--foreground)] block mb-1">
+                      Seleccione el paciente confirmado a programar:
+                    </label>
+                    <select
+                      value={casoSeleccionadoId}
+                      onChange={(e) => {
+                        const cid = e.target.value
+                        setCasoSeleccionadoId(cid)
+                        const match = casosConfirmados.find((c) => c.id === cid)
+                        if (match) aplicarCasoConfirmado(match)
+                      }}
+                      className="w-full p-2.5 rounded-xl bg-[var(--card)] border-2 border-blue-500/50 text-xs font-bold text-blue-600 dark:text-blue-400 outline-none focus:border-blue-600 shadow-sm"
+                    >
+                      <option value="">-- Seleccionar de la lista ({casosConfirmados.length} cirugías confirmadas) --</option>
+                      {casosConfirmados.map((c) => {
                         const pac = c.pacientes || {}
-                        const isSelected = casoSeleccionadoId === c.id
                         return (
-                          <div
-                            key={c.id}
-                            onClick={() => aplicarCasoConfirmado(c)}
-                            className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between text-xs ${
-                              isSelected
-                                ? 'bg-blue-600 text-white border-blue-600 shadow-md font-bold'
-                                : 'bg-[var(--card)] border-[var(--border)] hover:border-blue-400 text-[var(--foreground)]'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5 truncate">
-                              <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-white/20' : 'bg-blue-100 dark:bg-blue-900/40 text-blue-600'}`}>
-                                <User size={14} />
-                              </div>
-                              <div className="truncate">
-                                <p className="font-bold truncate">{pac.nombre || 'Paciente sin nombre'}</p>
-                                <p className={`text-[10px] truncate ${isSelected ? 'text-white/80' : 'text-[var(--secondary)]'}`}>
-                                  DNI: {pac.dni || 'S/D'} • {c.practica_nombre || 'Cirugía'} • {c.medico_cirujano_nombre || 'Cirujano'}
-                                </p>
-                              </div>
-                            </div>
-
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono shrink-0 ${
-                              isSelected ? 'bg-white/30 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                            }`}>
-                              {isSelected ? '✓ Seleccionado' : 'Seleccionar'}
-                            </span>
-                          </div>
+                          <option key={c.id} value={c.id}>
+                            {pac.nombre || 'Paciente'} (DNI: {pac.dni || 'S/D'}) — {c.practica_nombre} — Cirujano: {c.medico_cirujano_nombre || 'Sin cirujano'}
+                          </option>
                         )
                       })}
+                    </select>
+                  </div>
+
+                  {/* Resumen Visual del Caso Seleccionado */}
+                  {casoSeleccionadoActual && (
+                    <div className="p-3 rounded-xl bg-blue-600 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-lg bg-white/20">
+                          <UserCheck size={20} />
+                        </div>
+                        <div>
+                          <p className="font-bold text-xs">
+                            {casoSeleccionadoActual.pacientes?.nombre || 'Paciente'}
+                          </p>
+                          <p className="text-[11px] text-white/80">
+                            DNI: {casoSeleccionadoActual.pacientes?.dni || 'S/D'} • Tel: {casoSeleccionadoActual.pacientes?.telefono || 'S/D'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right text-[11px] text-white/90">
+                        <p className="font-semibold">{casoSeleccionadoActual.practica_nombre}</p>
+                        <p className="text-white/80">Cirujano: {casoSeleccionadoActual.medico_cirujano_nombre || 'A designar'}</p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -422,7 +423,7 @@ export default function FichaTurnoModal({
             </div>
           )}
 
-          {/* BANNER DINÁMICO DE FRANJA OCUPADA EN QUIRÓFANO */}
+          {/* BANNER DINÁMICO DE FRANJA HORARIA */}
           <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-500/20 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2">
               <Clock size={16} className="text-blue-600 shrink-0" />
@@ -690,7 +691,7 @@ export default function FichaTurnoModal({
                     type="text"
                     value={formData.lente_tipo}
                     onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
-                    placeholder="Modelo (ej: Alcon SN60WF)"
+                    placeholder="Modelo (ej: SN60WF)"
                     className="w-1/2 px-2.5 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-medium"
                   />
                   <input
