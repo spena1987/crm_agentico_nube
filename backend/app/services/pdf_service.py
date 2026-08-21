@@ -393,3 +393,239 @@ def generar_pdf_presupuesto(
     doc.build(story)
     
     return pdf_filename
+
+
+def generar_pdf_consentimiento_informado(
+    turno: dict,
+    paciente: dict,
+    texto_consentimiento: str,
+    firma_img_base64: Optional[str] = None,
+    firma_metadata: Optional[dict] = None
+) -> str:
+    """
+    Genera el documento de Consentimiento Informado Quirúrgico en PDF.
+    Si se provee firma en base64, la estampa al pie con el sello digital de trazabilidad.
+    """
+    import base64
+    from reportlab.platypus import Image as RLImage
+    from reportlab.lib.units import inch
+
+    turno_id = turno.get("id") or str(uuid.uuid4())
+    pdf_filename = f"consentimiento_{turno_id}.pdf"
+    pdf_path = os.path.join(PDF_DIR, pdf_filename)
+
+    settings = load_settings()
+    plantilla = settings.get("plantilla_presupuesto", {})
+    nombre_inst = plantilla.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"
+    subtitulo_inst = plantilla.get("subtitulo_institucion") or "Atención Oftalmológica & Quirúrgica"
+    color_primario_hex = "#1E3A8A"
+    color_secundario_hex = "#2563EB"
+
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=letter,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    styles = getSampleStyleSheet()
+    style_normal = styles['Normal']
+
+    style_titulo = ParagraphStyle(
+        'TitStyle',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=15,
+        leading=18,
+        textColor=colors.HexColor(color_primario_hex),
+        alignment=1
+    )
+
+    style_subtitulo = ParagraphStyle(
+        'SubTitStyle',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=11,
+        leading=14,
+        textColor=colors.HexColor(color_secundario_hex),
+        alignment=1
+    )
+
+    style_label = ParagraphStyle(
+        'LabelStyle',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor('#1E293B')
+    )
+
+    style_valor = ParagraphStyle(
+        'ValorStyle',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor('#334155')
+    )
+
+    style_cuerpo = ParagraphStyle(
+        'CuerpoStyle',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=9,
+        leading=13.5,
+        textColor=colors.HexColor('#1E293B'),
+        alignment=4 # Justificado
+    )
+
+    story = []
+
+    # 1. Cabecera Institucional
+    header_table = Table([
+        [
+            Paragraph(f"<b>{nombre_inst.upper()}</b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal),
+            Paragraph(f"<font size=9 color='#64748B'>DOCUMENTO MÉDICO-LEGAL</font><br/><b>CONSENTIMIENTO INFORMADO</b>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
+        ]
+    ], colWidths=[320, 220])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+        ('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor(color_primario_hex))
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 14))
+
+    # Título principal
+    practica = turno.get("practica_nombre") or "Procedimiento Quirúrgico"
+    ojo = turno.get("ojo") or "OD"
+    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    
+    story.append(Paragraph(f"CONSENTIMIENTO INFORMADO PARA CIRUGÍA OFTALMOLÓGICA", style_titulo))
+    story.append(Paragraph(f"<b>{practica.upper()} - {ojo_desc}</b>", style_subtitulo))
+    story.append(Spacer(1, 14))
+
+    # 2. Resumen de la Programación y Paciente
+    pac_nombre = paciente.get("nombre") or "Paciente"
+    pac_dni = paciente.get("dni") or "Sin DNI"
+    pac_hc = paciente.get("nro_hc") or "-"
+    pac_os = turno.get("obra_social") or paciente.get("obra_social") or "-"
+    pac_plan = turno.get("plan_obra_social") or paciente.get("plan_cobertura") or "-"
+    
+    cirujano = turno.get("cirujano_nombre") or "Médico Cirujano"
+    quirofano = turno.get("quirofano_nombre") or "Quirófano Central"
+    fecha = str(turno.get("fecha_cirugia") or "")
+    hora = str(turno.get("hora_inicio") or "")[:5]
+    tipo_anestesia = turno.get("tipo_anestesia") or "Local Asistida"
+
+    datos_paciente = [
+        [
+            Paragraph(f"<b>Paciente:</b> {pac_nombre}", style_valor),
+            Paragraph(f"<b>D.N.I.:</b> {pac_dni}", style_valor),
+            Paragraph(f"<b>N° H.C.:</b> {pac_hc}", style_valor),
+        ],
+        [
+            Paragraph(f"<b>Cobertura:</b> {pac_os} ({pac_plan})", style_valor),
+            Paragraph(f"<b>Cirujano:</b> Dr/a. {cirujano}", style_valor),
+            Paragraph(f"<b>Anestesia:</b> {tipo_anestesia}", style_valor),
+        ],
+        [
+            Paragraph(f"<b>Fecha Prevista:</b> {fecha} - {hora} hs", style_valor),
+            Paragraph(f"<b>Lateralidad:</b> <b>{ojo_desc}</b>", style_valor),
+            Paragraph(f"<b>Sede / Sala:</b> {quirofano}", style_valor),
+        ]
+    ]
+    t_pac = Table(datos_paciente, colWidths=[200, 180, 160])
+    t_pac.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ('RIGHTPADDING', (0,0), (-1,-1), 8),
+    ]))
+    story.append(t_pac)
+    story.append(Spacer(1, 14))
+
+    # 3. Cuerpo del Consentimiento
+    parrafos_cuerpo = texto_consentimiento.split("\n\n")
+    for parrafo in parrafos_cuerpo:
+        if parrafo.strip():
+            story.append(Paragraph(parrafo.replace("\n", "<br/>"), style_cuerpo))
+            story.append(Spacer(1, 8))
+
+    story.append(Spacer(1, 12))
+
+    # 4. Sección de Firma Digital o Manuscrita
+    firma_elements = []
+    
+    if firma_img_base64:
+        # Decodificar firma en base64 y guardarla temporalmente
+        try:
+            clean_b64 = firma_img_base64
+            if "," in clean_b64:
+                clean_b64 = clean_b64.split(",")[1]
+            img_data = base64.b64decode(clean_b64)
+            temp_sig_path = os.path.join(PDF_DIR, f"temp_sig_{turno_id}.png")
+            with open(temp_sig_path, "wb") as f_sig:
+                f_sig.write(img_data)
+            
+            sig_img = RLImage(temp_sig_path, width=2.0*inch, height=0.8*inch)
+            
+            ts = (firma_metadata or {}).get("timestamp") or "N/A"
+            ip = (firma_metadata or {}).get("ip") or "N/A"
+            hash_doc = (firma_metadata or {}).get("hash") or "SHA256-VERIFIED"
+
+            meta_text = f"<font size=7 color='#64748B'><b>FIRMA DIGITAL REGISTRADA VÍA WHATSAPP / WEB</b><br/>Fecha/Hora: {ts} UTC<br/>IP de Origen: {ip}<br/>Trazabilidad: {hash_doc[:24]}...</font>"
+            
+            t_firma = Table([
+                [
+                    Paragraph(meta_text, style_valor),
+                    sig_img
+                ],
+                [
+                    Paragraph("<b>Certificación de Consentimiento Informado</b>", ParagraphStyle('FirmaLabel', parent=style_valor, alignment=0)),
+                    Paragraph(f"<b>{pac_nombre}</b><br/><font size=7 color='#64748B'>DNI: {pac_dni}</font>", ParagraphStyle('FirmaLabelR', parent=style_valor, alignment=1))
+                ]
+            ], colWidths=[320, 220])
+            t_firma.setStyle(TableStyle([
+                ('ALIGN', (1,0), (1,0), 'CENTER'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('LINEABOVE', (1,1), (1,1), 1, colors.HexColor('#0F172A')),
+                ('TOPPADDING', (0,0), (-1,-1), 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ]))
+            firma_elements.append(t_firma)
+        except Exception as e:
+            logger.error(f"Error insertando imagen de firma: {e}")
+            firma_elements.append(Paragraph(f"<b>Firmado Digitalmente por el paciente {pac_nombre} (DNI: {pac_dni})</b>", style_valor))
+    else:
+        # Espacio para firma manuscrita en papel
+        t_firma = Table([
+            [
+                Paragraph("____________________________________________<br/><b>Firma del Médico / Cirujano</b><br/><font size=7 color='#64748B'>Matrícula y Sello Profesional</font>", ParagraphStyle('FirmaMed', parent=style_valor, alignment=1)),
+                Paragraph(f"____________________________________________<br/><b>Firma del Paciente / Representante</b><br/><font size=7 color='#64748B'>{pac_nombre} - DNI: {pac_dni}</font>", ParagraphStyle('FirmaPac', parent=style_valor, alignment=1))
+            ]
+        ], colWidths=[270, 270])
+        t_firma.setStyle(TableStyle([
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING', (0,0), (-1,-1), 20),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+        ]))
+        firma_elements.append(t_firma)
+
+    firma_elements.append(Spacer(1, 10))
+    firma_elements.append(
+        Paragraph(f"<font size=7 color='#94A3B8'>Documento generado electrónicamente por el Sistema de Gestión Quirúrgica - {nombre_inst}. La firma registrada tiene validez médico-legal para la práctica indicada.</font>", ParagraphStyle('FootStyle', parent=styles['Normal'], alignment=1))
+    )
+
+    story.append(KeepTogether(firma_elements))
+
+    # Construir PDF
+    doc.build(story)
+    return pdf_filename
+

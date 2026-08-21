@@ -17,15 +17,16 @@ export default function AppLayoutWrapper({
   const router = useRouter()
 
   const isLoginPage = pathname === '/login'
+  const isPublicConsentPage = pathname?.startsWith('/consentimiento')
 
   useEffect(() => {
-    if (!loading && !user && !isLoginPage) {
+    if (!loading && !user && !isLoginPage && !isPublicConsentPage) {
       router.push('/login')
     }
-  }, [user, loading, isLoginPage, router])
+  }, [user, loading, isLoginPage, isPublicConsentPage, router])
 
-  // Si estamos en la página de login, renderizamos el contenido sin navegación
-  if (isLoginPage) {
+  // Si estamos en la página de login o de consentimiento público para pacientes, renderizamos sin navegación de CRM
+  if (isLoginPage || isPublicConsentPage) {
     return <>{children}</>
   }
 

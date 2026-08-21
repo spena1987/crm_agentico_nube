@@ -29,6 +29,7 @@ import {
   Phone,
   RotateCcw,
   CalendarDays,
+  CalendarClock,
   X
 } from 'lucide-react'
 import Link from 'next/link'
@@ -1079,6 +1080,18 @@ export default function PipelineQuirurgicoPage() {
                             </span>
 
                             <div className="flex items-center gap-1">
+                              {/* Botón Agendar en Quirófano si está Confirmado */}
+                              {caso.estado === 'confirmado' && (
+                                <Link
+                                  href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
+                                  className="px-2 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] flex items-center gap-1 shadow transition-colors"
+                                  title="Asignar fecha y sala en el Turnero de Quirófano"
+                                >
+                                  <CalendarClock size={12} />
+                                  <span>Agendar</span>
+                                </Link>
+                              )}
+
                               {/* Botón WhatsApp */}
                               <button
                                 type="button"

@@ -2285,4 +2285,379 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
         return {"etapas": {}, "metricas": {}}
 
 
+# ====================================================================
+# MÓDULO DE COORDINACIÓN, QUIRÓFANOS Y CONSENTIMIENTO INFORMADO
+# ====================================================================
+
+def get_configuracion_quirofano() -> Dict[str, Any]:
+    """Obtiene la configuración global de quirófanos y plantillas de consentimiento."""
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("configuracion_quirofano").select("*").eq("id", "default").limit(1).execute()
+        if resp.data and len(resp.data) > 0:
+            return resp.data[0]
+        # Crear default si no existe
+        nuevo = {
+            "id": "default",
+            "duraciones_prestaciones": {
+                "inyeccion": 10,
+                "catarata_faco": 20,
+                "catarata_compleja": 30,
+                "vitrectomia": 60,
+                "lasik": 15
+            },
+            "vigencia_enlace_horas": 72
+        }
+        res_ins = supabase.table("configuracion_quirofano").insert(nuevo).execute()
+        return res_ins.data[0] if res_ins.data else nuevo
+    except Exception as e:
+        logger.error(f"Error al obtener configuración de quirófano: {e}")
+        return {}
+
+def actualizar_configuracion_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
+    """Actualiza la configuración de quirófano, duraciones y plantillas."""
+    if not supabase:
+        return {}
+    try:
+        payload = {**datos, "updated_at": "now()"}
+        resp = supabase.table("configuracion_quirofano").update(payload).eq("id", "default").execute()
+        if resp.data and len(resp.data) > 0:
+            return resp.data[0]
+        return {}
+    except Exception as e:
+        logger.error(f"Error al actualizar configuración de quirófano: {e}")
+        return {}
+
+def get_quirofanos(solo_activos: bool = False) -> List[Dict[str, Any]]:
+    """Lista las salas de quirófano configuradas."""
+    if not supabase:
+        return []
+    try:
+        query = supabase.table("quirofanos").select("*").order("orden", desc=False)
+        if solo_activos:
+            query = query.eq("activo", True)
+        resp = query.execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al listar quirófanos: {e}")
+        return []
+
+def crear_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("quirofanos").insert(datos).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al crear quirófano: {e}")
+        return {}
+
+def actualizar_quirofano(quirofano_id: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("quirofanos").update(datos).eq("id", quirofano_id).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al actualizar quirófano: {e}")
+        return {}
+
+def eliminar_quirofano(quirofano_id: str) -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("quirofanos").delete().eq("id", quirofano_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar quirófano: {e}")
+        return False
+
+# Bloques Médicos
+def get_quirofano_bloques(quirofano_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("quirofano_bloques_medicos").select("*, quirofanos(nombre, codigo, color)")
+        if quirofano_id:
+            q = q.eq("quirofano_id", quirofano_id)
+        resp = q.execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener bloques de quirófano: {e}")
+        return []
+
+def crear_quirofano_bloque(datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("quirofano_bloques_medicos").insert(datos).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al crear bloque médico de quirófano: {e}")
+        return {}
+
+def eliminar_quirofano_bloque(bloque_id: str) -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("quirofano_bloques_medicos").delete().eq("id", bloque_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar bloque médico: {e}")
+        return False
+
+# Bloqueos de Horario ("No dar turno")
+def get_quirofano_bloqueos(fecha_desde: Optional[str] = None, fecha_hasta: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("quirofano_bloqueos").select("*, quirofanos(nombre, codigo, color)")
+        if fecha_desde:
+            q = q.gte("fecha", fecha_desde)
+        if fecha_hasta:
+            q = q.lte("fecha", fecha_hasta)
+        resp = q.order("fecha").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al listar bloqueos de quirófano: {e}")
+        return []
+
+def crear_quirofano_bloqueo(datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        return {}
+    try:
+        resp = supabase.table("quirofano_bloqueos").insert(datos).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al crear bloqueo de quirófano: {e}")
+        return {}
+
+def eliminar_quirofano_bloqueo(bloqueo_id: str) -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("quirofano_bloqueos").delete().eq("id", bloqueo_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar bloqueo de quirófano: {e}")
+        return False
+
+# Turnos Quirúrgicos
+def get_turnos_quirofano(
+    fecha_desde: Optional[str] = None, 
+    fecha_hasta: Optional[str] = None,
+    quirofano_id: Optional[str] = None,
+    cirujano_id: Optional[int] = None,
+    estado: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color)")
+        if fecha_desde:
+            q = q.gte("fecha_cirugia", fecha_desde)
+        if fecha_hasta:
+            q = q.lte("fecha_cirugia", fecha_hasta)
+        if quirofano_id:
+            q = q.eq("quirofano_id", quirofano_id)
+        if cirujano_id:
+            q = q.eq("cirujano_id", cirujano_id)
+        if estado:
+            q = q.eq("estado", estado)
+        
+        resp = q.order("fecha_cirugia").order("hora_inicio").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener turnos de quirófano: {e}")
+        return []
+
+def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
+    if not supabase or not turno_id:
+        return None
+    try:
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color)").eq("id", turno_id).limit(1).execute()
+        if resp.data and len(resp.data) > 0:
+            return resp.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error al obtener turno por ID {turno_id}: {e}")
+        return None
+
+def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Crea un turno de quirófano y genera automáticamente un token para consentimiento.
+    Si se indicó cirugía bilateral, puede crear ambos ojos enlazados.
+    """
+    if not supabase:
+        return {}
+    import secrets
+    try:
+        # Generar token seguro de consentimiento
+        token = secrets.token_urlsafe(24)
+        payload = {
+            **datos,
+            "consentimiento_token": token,
+            "consentimiento_estado": "pendiente_envio",
+            "created_at": "now()",
+            "updated_at": "now()"
+        }
+        
+        resp = supabase.table("turnos_quirofano").insert(payload).execute()
+        if not resp.data or len(resp.data) == 0:
+            return {}
+        
+        turno_creado = resp.data[0]
+        
+        # Si venía de una asesoría, actualizar fecha definitiva en la asesoría
+        if datos.get("asesoria_id"):
+            try:
+                supabase.table("asesorias_quirurgicas").update({
+                    "fecha_definitiva_cirugia": datos.get("fecha_cirugia"),
+                    "updated_at": "now()"
+                }).eq("id", datos.get("asesoria_id")).execute()
+            except Exception as err_asesoria:
+                logger.warning(f"No se pudo actualizar fecha en asesoría: {err_asesoria}")
+                
+        return turno_creado
+    except Exception as e:
+        logger.error(f"Error al crear turno de quirófano: {e}")
+        return {}
+
+def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase or not turno_id:
+        return {}
+    try:
+        payload = {**datos, "updated_at": "now()"}
+        resp = supabase.table("turnos_quirofano").update(payload).eq("id", turno_id).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al actualizar turno de quirófano: {e}")
+        return {}
+
+def eliminar_turno_quirofano(turno_id: str) -> bool:
+    if not supabase or not turno_id:
+        return False
+    try:
+        supabase.table("turnos_quirofano").delete().eq("id", turno_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar turno de quirófano: {e}")
+        return False
+
+def get_consentimiento_by_token(token: str) -> Optional[Dict[str, Any]]:
+    """Obtiene los datos del turno y paciente a través de su token público seguro."""
+    if not supabase or not token:
+        return None
+    try:
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("consentimiento_token", token).limit(1).execute()
+        if resp.data and len(resp.data) > 0:
+            return resp.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error al buscar consentimiento por token: {e}")
+        return None
+
+def registrar_firma_consentimiento(
+    token: str,
+    firma_base64: str,
+    ip_origen: str,
+    user_agent: str
+) -> Dict[str, Any]:
+    """
+    Registra la firma del paciente, genera el PDF definitivo y actualiza el turno a 'firmado_digital'.
+    """
+    import hashlib
+    from datetime import datetime, timezone
+    from app.services.pdf_service import generar_pdf_consentimiento_informado
+    
+    turno = get_consentimiento_by_token(token)
+    if not turno:
+        return {"success": False, "error": "Token de consentimiento inválido o expirado."}
+    
+    paciente = turno.get("pacientes") or {}
+    config = get_configuracion_quirofano()
+    plantillas = config.get("plantillas_consentimiento") or []
+    
+    # Determinar texto legal correspondiente
+    practica_nombre = (turno.get("practica_nombre") or "").lower()
+    plantilla_sel = None
+    for pl in plantillas:
+        if pl.get("id") in practica_nombre or pl.get("tipo") in practica_nombre:
+            plantilla_sel = pl
+            break
+    if not plantilla_sel and len(plantillas) > 0:
+        plantilla_sel = plantillas[0]
+        
+    cuerpo_template = (plantilla_sel.get("cuerpo") if plantilla_sel else "") or (
+        "Por medio de la presente, yo {paciente}, DNI {dni}, declaro que he sido debidamente informado "
+        "por el Dr. {cirujano} acerca de la intervención quirúrgica de {cirugia} a realizarse en mi "
+        "ojo {ojo_intervenido} en {quirofano}. He comprendido los beneficios, riesgos inherentes y cuidados postoperatorios, "
+        "otorgando mi consentimiento libre e informado."
+    )
+    
+    # Reemplazo de variables dinámicas
+    ojo = turno.get("ojo") or "OD"
+    ojo_desc = "DERECHO (OD)" if ojo == "OD" else "IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    cuerpo_final = cuerpo_template.format(
+        paciente=paciente.get("nombre") or "Paciente",
+        dni=paciente.get("dni") or "-",
+        cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
+        cirugia=turno.get("practica_nombre") or "Cirugía Oftalmológica",
+        ojo_intervenido=ojo_desc,
+        quirofano=(turno.get("quirofanos") or {}).get("nombre") or "Quirófano",
+        fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
+        hora_cirugia=str(turno.get("hora_inicio") or "")[:5]
+    )
+    
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    hash_payload = f"{token}:{paciente.get('dni')}:{now_utc}:{ip_origen}"
+    doc_hash = hashlib.sha256(hash_payload.encode()).hexdigest()
+    
+    metadata = {
+        "timestamp": now_utc,
+        "ip": ip_origen,
+        "user_agent": user_agent,
+        "hash": doc_hash
+    }
+    
+    try:
+        pdf_filename = generar_pdf_consentimiento_informado(
+            turno=turno,
+            paciente=paciente,
+            texto_consentimiento=cuerpo_final,
+            firma_img_base64=firma_base64,
+            firma_metadata=metadata
+        )
+        pdf_url = f"/static/{pdf_filename}"
+        
+        # Actualizar en Supabase
+        update_payload = {
+            "consentimiento_estado": "firmado_digital",
+            "consentimiento_firmado_at": "now()",
+            "consentimiento_firma_ip": ip_origen,
+            "consentimiento_firma_img": firma_base64[:150] + "...", # truncado para auditoría ligera
+            "consentimiento_pdf_url": pdf_url,
+            "updated_at": "now()"
+        }
+        
+        supabase.table("turnos_quirofano").update(update_payload).eq("id", turno["id"]).execute()
+        
+        return {
+            "success": True,
+            "pdf_url": pdf_url,
+            "hash": doc_hash,
+            "timestamp": now_utc,
+            "paciente_nombre": paciente.get("nombre"),
+            "fecha_cirugia": turno.get("fecha_cirugia"),
+            "hora_inicio": turno.get("hora_inicio"),
+            "practica_nombre": turno.get("practica_nombre"),
+            "ojo": turno.get("ojo")
+        }
+    except Exception as e:
+        logger.error(f"Error generando y registrando firma de consentimiento: {e}")
+        return {"success": False, "error": str(e)}
+
+
+
 

@@ -19,7 +19,8 @@ import {
   Menu,
   X,
   TrendingUp,
-  Stethoscope
+  Stethoscope,
+  CalendarCheck2
 } from 'lucide-react'
 
 import { BACKEND_URL } from '@/lib/api'
@@ -35,7 +36,8 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { code: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
-  { code: 'pipeline-quirurgico', label: 'Pipeline Quirúrgico', href: '/pipeline-quirurgico', icon: TrendingUp },
+  { code: 'pipeline-quirurgico', label: 'Pipeline Asesoría', href: '/pipeline-quirurgico', icon: TrendingUp },
+  { code: 'programacion-quirurgica', label: 'Turnero Quirófano', href: '/programacion-quirurgica', icon: CalendarCheck2 },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },

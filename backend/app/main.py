@@ -70,7 +70,26 @@ from app.db import (
     listar_catalogo_completo_crm,
     eliminar_practica_crm,
     generar_mensaje_ameno_presupuesto,
-    enviar_presupuesto_por_whatsapp
+    enviar_presupuesto_por_whatsapp,
+    get_configuracion_quirofano,
+    actualizar_configuracion_quirofano,
+    get_quirofanos,
+    crear_quirofano,
+    actualizar_quirofano,
+    eliminar_quirofano,
+    get_quirofano_bloques,
+    crear_quirofano_bloque,
+    eliminar_quirofano_bloque,
+    get_quirofano_bloqueos,
+    crear_quirofano_bloqueo,
+    eliminar_quirofano_bloqueo,
+    get_turnos_quirofano,
+    get_turno_quirofano_by_id,
+    crear_turno_quirofano,
+    actualizar_turno_quirofano,
+    eliminar_turno_quirofano,
+    get_consentimiento_by_token,
+    registrar_firma_consentimiento
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -2603,3 +2622,345 @@ def obtener_pipeline():
     except Exception as e:
         logger.error(f"Error al obtener pipeline quirúrgico: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: CONFIGURACIÓN DE QUIRÓFANOS Y CONSENTIMIENTOS
+# ====================================================================
+
+@app.get("/api/configuracion-quirofano")
+def obtener_config_quirofano():
+    try:
+        config = get_configuracion_quirofano()
+        return {"success": True, "configuracion": config}
+    except Exception as e:
+        logger.error(f"Error al obtener configuración de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/configuracion-quirofano")
+def guardar_config_quirofano(payload: Dict[str, Any] = Body(...)):
+    try:
+        config = actualizar_configuracion_quirofano(payload)
+        return {"success": True, "mensaje": "Configuración guardada correctamente.", "configuracion": config}
+    except Exception as e:
+        logger.error(f"Error al actualizar configuración de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Quirófanos / Salas
+@app.get("/api/quirofanos")
+def listar_quirofanos(solo_activos: bool = False):
+    try:
+        salas = get_quirofanos(solo_activos=solo_activos)
+        return {"success": True, "quirofanos": salas}
+    except Exception as e:
+        logger.error(f"Error al listar salas de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/quirofanos")
+def crear_sala_quirofano(payload: Dict[str, Any] = Body(...)):
+    try:
+        sala = crear_quirofano(payload)
+        return {"success": True, "quirofano": sala}
+    except Exception as e:
+        logger.error(f"Error al crear sala de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/quirofanos/{quirofano_id}")
+def actualizar_sala_quirofano(quirofano_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        sala = actualizar_quirofano(quirofano_id, payload)
+        return {"success": True, "quirofano": sala}
+    except Exception as e:
+        logger.error(f"Error al actualizar sala de quirófano {quirofano_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/quirofanos/{quirofano_id}")
+def eliminar_sala_quirofano(quirofano_id: str):
+    try:
+        ok = eliminar_quirofano(quirofano_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error al eliminar sala {quirofano_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Bloques Médicos
+@app.get("/api/quirofanos/bloques-medicos")
+def listar_bloques_medicos(quirofano_id: Optional[str] = None):
+    try:
+        bloques = get_quirofano_bloques(quirofano_id=quirofano_id)
+        return {"success": True, "bloques": bloques}
+    except Exception as e:
+        logger.error(f"Error al listar bloques de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/quirofanos/bloques-medicos")
+def crear_bloque_medico(payload: Dict[str, Any] = Body(...)):
+    try:
+        bloque = crear_quirofano_bloque(payload)
+        return {"success": True, "bloque": bloque}
+    except Exception as e:
+        logger.error(f"Error al crear bloque médico: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/quirofanos/bloques-medicos/{bloque_id}")
+def eliminar_bloque_medico(bloque_id: str):
+    try:
+        ok = eliminar_quirofano_bloque(bloque_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error al eliminar bloque médico {bloque_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Bloqueos de Horario ("No dar turno")
+@app.get("/api/quirofano-bloqueos")
+def listar_bloqueos(fecha_desde: Optional[str] = None, fecha_hasta: Optional[str] = None):
+    try:
+        bloqueos = get_quirofano_bloqueos(fecha_desde=fecha_desde, fecha_hasta=fecha_hasta)
+        return {"success": True, "bloqueos": bloqueos}
+    except Exception as e:
+        logger.error(f"Error al listar bloqueos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/quirofano-bloqueos")
+def crear_bloqueo(payload: Dict[str, Any] = Body(...)):
+    try:
+        bloqueo = crear_quirofano_bloqueo(payload)
+        return {"success": True, "bloqueo": bloqueo}
+    except Exception as e:
+        logger.error(f"Error al crear bloqueo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/quirofano-bloqueos/{bloqueo_id}")
+def eliminar_bloqueo(bloqueo_id: str):
+    try:
+        ok = eliminar_quirofano_bloqueo(bloqueo_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error al eliminar bloqueo {bloqueo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Turnos Quirúrgicos
+@app.get("/api/turnos-quirofano")
+def listar_turnos_quirofano(
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    quirofano_id: Optional[str] = None,
+    cirujano_id: Optional[int] = None,
+    estado: Optional[str] = None
+):
+    try:
+        turnos = get_turnos_quirofano(
+            fecha_desde=fecha_desde,
+            fecha_hasta=fecha_hasta,
+            quirofano_id=quirofano_id,
+            cirujano_id=cirujano_id,
+            estado=estado
+        )
+        return {"success": True, "turnos": turnos}
+    except Exception as e:
+        logger.error(f"Error al listar turnos de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/turnos-quirofano")
+def crear_turno(payload: Dict[str, Any] = Body(...)):
+    try:
+        turno = crear_turno_quirofano(payload)
+        return {"success": True, "turno": turno}
+    except Exception as e:
+        logger.error(f"Error al crear turno de quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/turnos-quirofano/{turno_id}")
+def actualizar_turno(turno_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        turno = actualizar_turno_quirofano(turno_id, payload)
+        return {"success": True, "turno": turno}
+    except Exception as e:
+        logger.error(f"Error al actualizar turno de quirófano {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/turnos-quirofano/{turno_id}")
+def eliminar_turno(turno_id: str):
+    try:
+        ok = eliminar_turno_quirofano(turno_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error al eliminar turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Disparo de Consentimiento por WhatsApp
+@app.post("/api/turnos-quirofano/{turno_id}/enviar-consentimiento-wa")
+async def enviar_consentimiento_whatsapp(turno_id: str):
+    try:
+        turno = get_turno_quirofano_by_id(turno_id)
+        if not turno:
+            raise HTTPException(status_code=404, detail="Turno no encontrado")
+            
+        paciente = turno.get("pacientes") or {}
+        telefono = paciente.get("telefono")
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El paciente no tiene teléfono registrado")
+            
+        config = get_configuracion_quirofano()
+        plantilla_msg = config.get("whatsapp_mensaje_envio") or (
+            "Hola {paciente}, confirmamos tu turno de cirugía de {cirugia} ({ojo_intervenido}) para el día {fecha_cirugia} a las {hora_cirugia} hs con el Dr. {cirujano}. "
+            "Por favor, revisá y firmá tu Consentimiento Informado en tu celular desde el siguiente enlace seguro: {enlace_firma}"
+        )
+        
+        token = turno.get("consentimiento_token")
+        if not token:
+            import secrets
+            token = secrets.token_urlsafe(24)
+            actualizar_turno_quirofano(turno_id, {"consentimiento_token": token})
+            
+        # Determinar base URL pública o del frontend
+        base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "http://localhost:3000"
+        enlace_firma = f"{base_app_url}/consentimiento/{token}"
+        
+        ojo = turno.get("ojo") or "OD"
+        ojo_desc = "Ojo Derecho" if ojo == "OD" else "Ojo Izquierdo" if ojo == "OI" else "Ambos Ojos"
+        
+        mensaje_final = plantilla_msg.format(
+            paciente=paciente.get("nombre") or "Paciente",
+            cirugia=turno.get("practica_nombre") or "Cirugía",
+            ojo_intervenido=ojo_desc,
+            fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
+            hora_cirugia=str(turno.get("hora_inicio") or "")[:5],
+            cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
+            enlace_firma=enlace_firma
+        )
+        
+        # Enviar mensaje vía WhatsApp
+        jid = telefono if "@" in telefono else f"{telefono}@s.whatsapp.net"
+        res_wa = await whatsapp_manager.enviar_mensaje(jid, mensaje_final)
+        
+        # Actualizar estado de envío en BD
+        actualizar_turno_quirofano(turno_id, {
+            "consentimiento_estado": "enviado_whatsapp",
+            "consentimiento_enviado_at": "now()"
+        })
+        
+        return {
+            "success": True, 
+            "mensaje": "Consentimiento enviado por WhatsApp exitosamente.",
+            "enlace_firma": enlace_firma,
+            "resultado_wa": res_wa
+        }
+    except Exception as e:
+        logger.error(f"Error al enviar consentimiento por WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Endpoint Público para la pantalla de firma del paciente
+@app.get("/api/consentimiento-publico/{token}")
+def obtener_datos_consentimiento_publico(token: str):
+    try:
+        turno = get_consentimiento_by_token(token)
+        if not turno:
+            raise HTTPException(status_code=404, detail="El enlace de consentimiento no es válido o ha caducado.")
+            
+        paciente = turno.get("pacientes") or {}
+        config = get_configuracion_quirofano()
+        plantillas = config.get("plantillas_consentimiento") or []
+        
+        # Buscar plantilla adecuada
+        practica_nombre = (turno.get("practica_nombre") or "").lower()
+        plantilla_sel = None
+        for pl in plantillas:
+            if pl.get("id") in practica_nombre or pl.get("tipo") in practica_nombre:
+                plantilla_sel = pl
+                break
+        if not plantilla_sel and len(plantillas) > 0:
+            plantilla_sel = plantillas[0]
+            
+        ojo = turno.get("ojo") or "OD"
+        ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+        
+        cuerpo_template = (plantilla_sel.get("cuerpo") if plantilla_sel else "") or (
+            "Por medio de la presente, yo {paciente}, DNI {dni}, declaro que he sido debidamente informado "
+            "por el Dr. {cirujano} acerca de la intervención de {cirugia} en mi {ojo_intervenido} en {quirofano}. "
+            "Comprendo y acepto los riesgos, beneficios y cuidados médicos indicados."
+        )
+        
+        cuerpo_renderizado = cuerpo_template.format(
+            paciente=paciente.get("nombre") or "Paciente",
+            dni=paciente.get("dni") or "-",
+            cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
+            cirugia=turno.get("practica_nombre") or "Cirugía",
+            ojo_intervenido=ojo_desc,
+            quirofano=(turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
+            fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
+            hora_cirugia=str(turno.get("hora_inicio") or "")[:5]
+        )
+        
+        return {
+            "success": True,
+            "turno": {
+                "id": turno.get("id"),
+                "fecha_cirugia": turno.get("fecha_cirugia"),
+                "hora_inicio": turno.get("hora_inicio"),
+                "practica_nombre": turno.get("practica_nombre"),
+                "ojo": turno.get("ojo"),
+                "ojo_desc": ojo_desc,
+                "cirujano_nombre": turno.get("cirujano_nombre"),
+                "quirofano_nombre": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano",
+                "tipo_anestesia": turno.get("tipo_anestesia"),
+                "consentimiento_estado": turno.get("consentimiento_estado"),
+                "consentimiento_pdf_url": turno.get("consentimiento_pdf_url")
+            },
+            "paciente": {
+                "nombre": paciente.get("nombre"),
+                "dni": paciente.get("dni"),
+                "nro_hc": paciente.get("nro_hc"),
+                "obra_social": paciente.get("obra_social")
+            },
+            "consentimiento": {
+                "titulo": plantilla_sel.get("titulo") if plantilla_sel else "Consentimiento Informado Quirúrgico",
+                "cuerpo": cuerpo_renderizado
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener consentimiento público: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class FirmaPayload(BaseModel):
+    firma_base64: str
+    ip_origen: Optional[str] = "127.0.0.1"
+    user_agent: Optional[str] = "Mobile-Web"
+
+@app.post("/api/consentimiento-publico/{token}/firmar")
+async def firmar_consentimiento_publico(token: str, payload: FirmaPayload):
+    try:
+        res = registrar_firma_consentimiento(
+            token=token,
+            firma_base64=payload.firma_base64,
+            ip_origen=payload.ip_origen or "Web-Client",
+            user_agent=payload.user_agent or "Browser"
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al registrar la firma")
+            
+        # Opcional: Enviar confirmación por WhatsApp
+        turno = get_consentimiento_by_token(token)
+        if turno:
+            paciente = turno.get("pacientes") or {}
+            tel = paciente.get("telefono")
+            if tel:
+                config = get_configuracion_quirofano()
+                conf_msg = config.get("whatsapp_mensaje_confirmacion") or (
+                    "¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}. "
+                    "Recordá concurrir con 8 horas de ayuno total."
+                )
+                msg_ok = conf_msg.format(
+                    paciente=paciente.get("nombre") or "Paciente",
+                    fecha_cirugia=str(turno.get("fecha_cirugia") or "")
+                )
+                jid = tel if "@" in tel else f"{tel}@s.whatsapp.net"
+                try:
+                    await whatsapp_manager.enviar_mensaje(jid, msg_ok)
+                except Exception as err_w:
+                    logger.warning(f"No se pudo enviar confirmación por WhatsApp tras firma: {err_w}")
+                    
+        return res
+    except Exception as e:
+        logger.error(f"Error al firmar consentimiento: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
