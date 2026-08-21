@@ -21,7 +21,8 @@ import {
   ExternalLink,
   ChevronRight,
   Sparkles,
-  Search
+  Search,
+  Timer
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -34,6 +35,16 @@ interface FichaTurnoModalProps {
   duracionesConfig: Record<string, number>
   onSaved: () => void
 }
+
+const PRACTICAS_PREDEFINIDAS = [
+  { nombre: 'Catarata con Facoemulsificación', codigo: '34031', key: 'catarata_faco', defMin: 20 },
+  { nombre: 'Catarata Compleja / Combinada', codigo: '34032', key: 'catarata_compleja', defMin: 30 },
+  { nombre: 'Inyección Intravítrea (Antiangiogénico)', codigo: '34025', key: 'inyeccion', defMin: 10 },
+  { nombre: 'Vitrectomía Posterior / Retina', codigo: '34045', key: 'vitrectomia', defMin: 60 },
+  { nombre: 'Cirugía Refractiva LASIK / PRK', codigo: '34015', key: 'lasik', defMin: 15 },
+  { nombre: 'Glaucoma Trabeculectomía / Válvula', codigo: '34050', key: 'catarata_compleja', defMin: 30 },
+  { nombre: 'Pterigión con Autoinjerto', codigo: '34010', key: 'catarata_faco', defMin: 20 }
+]
 
 export default function FichaTurnoModal({
   isOpen,
@@ -89,16 +100,28 @@ export default function FichaTurnoModal({
   const [mensajeWA, setMensajeWA] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Búsqueda rápida de pacientes si es nuevo turno
+  // Búsqueda rápida de pacientes
   const [busquedaPac, setBusquedaPac] = useState('')
   const [pacientesResultados, setPacientesResultados] = useState<any[]>([])
   const [buscandoPac, setBuscandoPac] = useState(false)
+
+  // Calcular Hora Fin Estimada
+  const calcularHoraFin = (inicio: string, minutos: number) => {
+    if (!inicio) return ''
+    const [hh, mm] = inicio.split(':').map(Number)
+    const fecha = new Date()
+    fecha.setHours(hh, mm + minutos, 0, 0)
+    const hStr = fecha.getHours().toString().padStart(2, '0')
+    const mStr = fecha.getMinutes().toString().padStart(2, '0')
+    return `${hStr}:${mStr}`
+  }
+
+  const horaFinEstimada = calcularHoraFin(formData.hora_inicio || '09:00', formData.duracion_minutos || 20)
 
   useEffect(() => {
     if (!isOpen) return
 
     if (turnoId) {
-      // Cargar turno existente
       const fetchTurno = async () => {
         try {
           setCargando(true)
@@ -119,7 +142,6 @@ export default function FichaTurnoModal({
       }
       fetchTurno()
     } else if (initialData) {
-      // Precarga desde Asesoría o celda del turnero
       setFormData((prev: any) => ({
         ...prev,
         ...initialData,
@@ -128,7 +150,6 @@ export default function FichaTurnoModal({
       if (initialData.pacientes) {
         setPacienteInfo(initialData.pacientes)
       } else if (initialData.paciente_id) {
-        // Cargar paciente por ID
         fetch(`${BACKEND_URL}/api/pacientes/${initialData.paciente_id}`)
           .then((r) => r.json())
           .then((d) => {
@@ -186,6 +207,22 @@ export default function FichaTurnoModal({
     setBusquedaPac('')
   }
 
+  // Cambio de práctica predefinida: ajusta automáticamente la duración
+  const handleSeleccionarPracticaPredefinida = (nombre: string) => {
+    const encontrada = PRACTICAS_PREDEFINIDAS.find((p) => p.nombre === nombre)
+    if (encontrada) {
+      const dur = duracionesConfig[encontrada.key] || encontrada.defMin
+      setFormData((prev: any) => ({
+        ...prev,
+        practica_nombre: encontrada.nombre,
+        practica_codigo: encontrada.codigo,
+        duracion_minutos: dur
+      }))
+    } else {
+      setFormData((prev: any) => ({ ...prev, practica_nombre: nombre }))
+    }
+  }
+
   // Guardar Turno
   const handleGuardar = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -216,7 +253,6 @@ export default function FichaTurnoModal({
         throw new Error(data.detail || 'Error al guardar turno de quirófano.')
       }
 
-      // Si se indicó bilateral escalonada y es nuevo turno, crear 2° turno
       if (!turnoId && formData.es_bilateral_escalonada && formData.fecha_segundo_ojo) {
         const ojo2 = formData.ojo === 'OD' ? 'OI' : 'OD'
         const payloadOjo2 = {
@@ -291,7 +327,7 @@ export default function FichaTurnoModal({
                 {turnoId ? 'Ficha de Turno Quirúrgico' : 'Nueva Programación de Quirófano'}
               </h2>
               <p className="text-xs text-[var(--secondary)]">
-                Gestión integral de datos de cirugía, insumos, equipo médico y consentimiento.
+                Gestión integral de datos de cirugía, ocupación de tiempo, equipo y consentimiento.
               </p>
             </div>
           </div>
@@ -402,10 +438,10 @@ export default function FichaTurnoModal({
             )}
           </div>
 
-          {/* SECCIÓN 2: QUIRÓFANO, FECHA & LATERALIDAD */}
+          {/* SECCIÓN 2: HORARIO, OCUPACIÓN & LATERALIDAD */}
           <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-800/30 border border-[var(--border)] space-y-3">
             <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-              <Clock size={14} /> 2. Programación de Quirófano & Lateralidad
+              <Clock size={14} /> 2. Horario, Ocupación de Quirófano & Lateralidad
             </span>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -448,20 +484,36 @@ export default function FichaTurnoModal({
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Duración Estimada</label>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Duración de la Práctica</label>
                 <select
                   value={formData.duracion_minutos}
                   onChange={(e) => setFormData({ ...formData, duracion_minutos: parseInt(e.target.value) })}
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
                 >
                   <option value={10}>10 min (Inyección / Láser)</option>
-                  <option value={15}>15 min (LASIK)</option>
+                  <option value={15}>15 min (LASIK / Refractiva)</option>
                   <option value={20}>20 min (Catarata Estándar)</option>
                   <option value={30}>30 min (Catarata Compleja)</option>
                   <option value={45}>45 min (Cirugía Combinada)</option>
-                  <option value={60}>60 min (Vitrectomía)</option>
+                  <option value={60}>60 min (Vitrectomía / Retina)</option>
                 </select>
               </div>
+            </div>
+
+            {/* Banner Dinámico de Franja Horaria Ocupada */}
+            <div className="p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/40 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs">
+                <Timer size={16} className="text-blue-600 shrink-0" />
+                <span className="font-semibold text-blue-950 dark:text-blue-200">
+                  Franja ocupada en quirófano:
+                </span>
+                <span className="font-mono font-bold px-2 py-0.5 rounded-lg bg-blue-600 text-white text-xs">
+                  {formData.hora_inicio} - {horaFinEstimada} hs
+                </span>
+              </div>
+              <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">
+                {formData.duracion_minutos} minutos continuos
+              </span>
             </div>
 
             {/* Selector de Lateralidad / Ojo */}
@@ -530,11 +582,19 @@ export default function FichaTurnoModal({
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Práctica Nomenclador *</label>
                 <input
                   type="text"
+                  list="practicas-sugeridas"
                   value={formData.practica_nombre}
-                  onChange={(e) => setFormData({ ...formData, practica_nombre: e.target.value })}
+                  onChange={(e) => handleSeleccionarPracticaPredefinida(e.target.value)}
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold"
                   required
                 />
+                <datalist id="practicas-sugeridas">
+                  {PRACTICAS_PREDEFINIDAS.map((p) => (
+                    <option key={p.codigo} value={p.nombre}>
+                      {p.codigo} ({p.defMin} min)
+                    </option>
+                  ))}
+                </datalist>
               </div>
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Código Nomenclador</label>
