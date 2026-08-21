@@ -2974,3 +2974,45 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload):
         logger.error(f"Error al firmar consentimiento: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+
+# ====================================================================
+# ENDPOINTS: PRESTADORES (INSTRUMENTADORES, ANESTESISTAS)
+# ====================================================================
+
+@app.get("/api/prestadores")
+def listar_prestadores_endpoint(rol: Optional[str] = None, solo_activos: bool = False):
+    try:
+        items = get_prestadores(rol=rol, solo_activos=solo_activos)
+        return {"success": True, "prestadores": items}
+    except Exception as e:
+        logger.error(f"Error listando prestadores: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/prestadores")
+def crear_prestador_endpoint(payload: Dict[str, Any] = Body(...)):
+    try:
+        nuevo = crear_prestador(payload)
+        return {"success": True, "prestador": nuevo}
+    except Exception as e:
+        logger.error(f"Error creando prestador: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/prestadores/{prestador_id}")
+def actualizar_prestador_endpoint(prestador_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        act = actualizar_prestador(prestador_id, payload)
+        return {"success": True, "prestador": act}
+    except Exception as e:
+        logger.error(f"Error actualizando prestador {prestador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/prestadores/{prestador_id}")
+def eliminar_prestador_endpoint(prestador_id: str):
+    try:
+        ok = eliminar_prestador(prestador_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error eliminando prestador {prestador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck, ShieldCheck, Stethoscope, CalendarClock } from 'lucide-react'
+import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck, ShieldCheck, Stethoscope, CalendarClock, Users } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
@@ -11,8 +11,9 @@ import BudgetTemplateDesignerCard from '@/components/settings/BudgetTemplateDesi
 import SecuritySettingsCard from '@/components/settings/SecuritySettingsCard'
 import SurgicalSettingsCard from '@/components/settings/SurgicalSettingsCard'
 import QuirofanoSettingsCard from '@/components/settings/QuirofanoSettingsCard'
+import PrestadoresSettingsCard from '@/components/settings/PrestadoresSettingsCard'
 
-type TabType = 'whatsapp' | 'bot' | 'quirurgicos_turnos' | 'quirurgico' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'seguridad' | 'logs'
+type TabType = 'whatsapp' | 'bot' | 'quirurgicos_turnos' | 'prestadores' | 'quirurgico' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'seguridad' | 'logs'
 
 export default function AjustesPage() {
   const [activeTab, setActiveTab] = useState<TabType>('whatsapp')
@@ -21,6 +22,7 @@ export default function AjustesPage() {
     { id: 'whatsapp' as TabType, label: 'WhatsApp & QR', icon: QrCode, description: 'Sincronización multidispositivo' },
     { id: 'bot' as TabType, label: 'Agente IA', icon: Bot, description: 'Directivas y escalamiento' },
     { id: 'quirurgicos_turnos' as TabType, label: 'Quirófano & Consent.', icon: CalendarClock, description: 'Salas, slots y WhatsApp' },
+    { id: 'prestadores' as TabType, label: 'Prestadores', icon: Users, description: 'Instrumentadores y Anestesistas' },
     { id: 'quirurgico' as TabType, label: 'Asesoría & Lead', icon: Stethoscope, description: 'SLA y seguimiento lead' },
     { id: 'clinica' as TabType, label: 'Perfil Clínica', icon: Building2, description: 'Datos del consultorio' },
     { id: 'nomenclador' as TabType, label: 'Nomencladores', icon: BookOpen, description: 'Aranceles y catálogo' },
@@ -32,7 +34,7 @@ export default function AjustesPage() {
   return (
     <div className="w-full max-w-7xl mx-auto p-3 sm:p-5 md:p-6 space-y-5 min-w-0 animate-fade-in pb-12">
       {/* Selector de Sub-Pestañas de Configuración */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-[var(--border)] shrink-0">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10 gap-2 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-2xl border border-[var(--border)] shrink-0">
         {tabs.map((t) => {
           const Icon = t.icon
           const isActive = activeTab === t.id
@@ -63,6 +65,7 @@ export default function AjustesPage() {
         {activeTab === 'whatsapp' && <WhatsAppConfigCard />}
         {activeTab === 'bot' && <BotSettingsCard />}
         {activeTab === 'quirurgicos_turnos' && <QuirofanoSettingsCard />}
+        {activeTab === 'prestadores' && <PrestadoresSettingsCard />}
         {activeTab === 'quirurgico' && <SurgicalSettingsCard />}
         {activeTab === 'clinica' && <ClinicProfileCard />}
         {activeTab === 'nomenclador' && <NomencladorSettingsCard />}
