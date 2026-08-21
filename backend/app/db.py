@@ -2639,15 +2639,7 @@ def eliminar_turno_quirofano(turno_id: str) -> bool:
         logger.error(f"Error al eliminar turno de quirófano: {e}")
         return False
 
-def eliminar_turno_quirofano(turno_id: str) -> bool:
-    if not supabase or not turno_id:
-        return False
-    try:
-        supabase.table("turnos_quirofano").delete().eq("id", turno_id).execute()
-        return True
-    except Exception as e:
-        logger.error(f"Error al eliminar turno de quirófano: {e}")
-        return False
+
 
 def get_consentimiento_by_token(token: str) -> Optional[Dict[str, Any]]:
     """Obtiene los datos del turno y paciente a través de su token público seguro."""
