@@ -231,6 +231,14 @@ export default function FichaTurnoModal({
       setGuardando(true)
       setError(null)
 
+      const payload = {
+        ...formData,
+        obra_social: formData.obra_social?.trim() || 'Particular',
+        duracion_minutos: Number(formData.duracion_minutos) || 20,
+        fecha_cirugia: formData.fecha_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
+        hora_inicio: (formData.hora_inicio || horaDefecto || '08:30').slice(0, 5)
+      }
+
       const url = esEdicion
         ? `${BACKEND_URL}/api/turnos-quirofano/${turno.id}`
         : `${BACKEND_URL}/api/turnos-quirofano`
@@ -239,7 +247,7 @@ export default function FichaTurnoModal({
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       })
 
       const data = await res.json()
