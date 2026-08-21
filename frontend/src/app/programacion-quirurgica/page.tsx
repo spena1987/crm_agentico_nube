@@ -31,7 +31,7 @@ function ProgramacionQuirurgicaContent() {
   const paramAsesoriaId = searchParams.get('asesoria_id') || ''
   const paramPacienteId = searchParams.get('paciente_id') || ''
 
-  const [modoVista, setModoVista] = useState<'dia' | 'semana'>('dia')
+  const [modoVista, setModoVista] = useState<'dia' | 'semana'>('semana')
   const [fechaSeleccionada, setFechaSeleccionada] = useState(new Date().toISOString().slice(0, 10))
   const [quirofanoSeleccionadoId, setQuirofanoSeleccionadoId] = useState<string>('')
 
