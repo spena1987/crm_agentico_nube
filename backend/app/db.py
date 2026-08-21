@@ -2455,7 +2455,7 @@ def get_turnos_quirofano(
     if not supabase:
         return []
     try:
-        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color)")
+        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)")
         if fecha_desde:
             q = q.gte("fecha_cirugia", fecha_desde)
         if fecha_hasta:
@@ -2477,7 +2477,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
     if not supabase or not turno_id:
         return None
     try:
-        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color)").eq("id", turno_id).limit(1).execute()
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)").eq("id", turno_id).limit(1).execute()
         if resp.data and len(resp.data) > 0:
             return resp.data[0]
         return None
@@ -2563,11 +2563,19 @@ def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
         payload["created_at"] = "now()"
         payload["updated_at"] = "now()"
         
-        # Si paciente_id no vino pero hay asesoría, buscar paciente_id de la asesoría
-        if not payload.get("paciente_id") and payload.get("asesoria_id"):
-            res_as = supabase.table("asesorias_quirurgicas").select("paciente_id").eq("id", payload["asesoria_id"]).limit(1).execute()
+        # Si hay asesoría, completar datos faltantes (paciente_id, medico_derivador_nombre, practica_nombre, etc.)
+        if payload.get("asesoria_id"):
+            res_as = supabase.table("asesorias_quirurgicas").select("paciente_id, medico_derivador_nombre, practica_nombre, practica_codigo, cobertura_obra_social").eq("id", payload["asesoria_id"]).limit(1).execute()
             if res_as.data:
-                payload["paciente_id"] = res_as.data[0].get("paciente_id")
+                as_data = res_as.data[0]
+                if not payload.get("paciente_id"):
+                    payload["paciente_id"] = as_data.get("paciente_id")
+                if not payload.get("medico_derivador_nombre") and as_data.get("medico_derivador_nombre"):
+                    payload["medico_derivador_nombre"] = as_data.get("medico_derivador_nombre")
+                if not payload.get("practica_nombre") and as_data.get("practica_nombre"):
+                    payload["practica_nombre"] = as_data.get("practica_nombre")
+                if not payload.get("practica_codigo") and as_data.get("practica_codigo"):
+                    payload["practica_codigo"] = as_data.get("practica_codigo")
         
         resp = supabase.table("turnos_quirofano").insert(payload).execute()
         if not resp.data or len(resp.data) == 0:
