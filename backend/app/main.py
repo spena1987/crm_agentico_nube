@@ -89,7 +89,11 @@ from app.db import (
     actualizar_turno_quirofano,
     eliminar_turno_quirofano,
     get_consentimiento_by_token,
-    registrar_firma_consentimiento
+    registrar_firma_consentimiento,
+    get_prestadores,
+    crear_prestador,
+    actualizar_prestador,
+    eliminar_prestador
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
