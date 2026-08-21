@@ -3,235 +3,210 @@
 import React, { useState, useEffect } from 'react'
 import {
   X,
-  Save,
-  Loader2,
   Calendar,
   Clock,
   User,
-  Shield,
-  FileText,
-  Eye,
-  Activity,
-  MessageSquare,
+  Scissors,
   FileCheck2,
-  AlertCircle,
-  CheckCircle2,
   Send,
-  Printer,
-  ExternalLink,
-  ChevronRight,
+  Loader2,
+  Building2,
+  AlertCircle,
+  Eye,
+  CreditCard,
+  ShieldCheck,
+  Stethoscope,
   Sparkles,
+  Link2,
+  CheckCircle2,
   Search,
   Timer
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
 interface FichaTurnoModalProps {
-  isOpen: boolean
-  onClose: () => void
-  turnoId?: string | null
-  initialData?: any
+  turno?: any
+  casoConfirmadoInicial?: any
   quirofanos: any[]
-  duracionesConfig: Record<string, number>
+  quirofanoDefectoId?: string
+  fechaDefecto?: string
+  horaDefecto?: string
+  onClose: () => void
   onSaved: () => void
 }
 
-const PRACTICAS_PREDEFINIDAS = [
-  { nombre: 'Catarata con Facoemulsificación', codigo: '34031', key: 'catarata_faco', defMin: 20 },
-  { nombre: 'Catarata Compleja / Combinada', codigo: '34032', key: 'catarata_compleja', defMin: 30 },
-  { nombre: 'Inyección Intravítrea (Antiangiogénico)', codigo: '34025', key: 'inyeccion', defMin: 10 },
-  { nombre: 'Vitrectomía Posterior / Retina', codigo: '34045', key: 'vitrectomia', defMin: 60 },
-  { nombre: 'Cirugía Refractiva LASIK / PRK', codigo: '34015', key: 'lasik', defMin: 15 },
-  { nombre: 'Glaucoma Trabeculectomía / Válvula', codigo: '34050', key: 'catarata_compleja', defMin: 30 },
-  { nombre: 'Pterigión con Autoinjerto', codigo: '34010', key: 'catarata_faco', defMin: 20 }
-]
-
 export default function FichaTurnoModal({
-  isOpen,
-  onClose,
-  turnoId,
-  initialData,
+  turno,
+  casoConfirmadoInicial,
   quirofanos,
-  duracionesConfig,
+  quirofanoDefectoId,
+  fechaDefecto,
+  horaDefecto,
+  onClose,
   onSaved
 }: FichaTurnoModalProps) {
-  const [formData, setFormData] = useState<any>({
-    paciente_id: '',
-    asesoria_id: null,
-    quirofano_id: '',
-    fecha_cirugia: new Date().toISOString().split('T')[0],
-    hora_inicio: '09:00',
-    duracion_minutos: 20,
-    ojo: 'OD',
-    es_bilateral_escalonada: false,
-    fecha_segundo_ojo: '',
-    hora_segundo_ojo: '09:00',
-    cirujano_id: 6162,
-    cirujano_nombre: 'Dr. Bonanno, Pablo Antonio',
-    ayudante_nombre: '',
-    anestesiologo_nombre: '',
-    medico_derivador_nombre: '',
-    practica_codigo: '34031',
-    practica_nombre: 'Catarata con Facoemulsificación',
-    codigo_obra_social: '020167',
-    obra_social: 'OSDE',
-    plan_obra_social: 'OBLIGATORIO',
-    token_autorizacion: '',
-    lente_tipo: 'Monofocal OS',
-    lente_dioptria: '+21.50',
-    lente_lote: '',
-    tipo_anestesia: 'Local Asistida',
-    checks_adicionales: {
-      ficha_prequirurgica: true,
-      monitoreo: true,
-      tratamiento_dolor: false,
-      biopsia: false,
-      arco_en_c: false,
-      uti: false
-    },
-    estado: 'programado',
-    observaciones: ''
+  const esEdicion = !!turno?.id
+
+  // Casos confirmados desde Asesoramiento Quirúrgico
+  const [casosConfirmados, setCasosConfirmados] = useState<any[]>([])
+  const [cargandoCasos, setCargandoCasos] = useState(false)
+  const [casoSeleccionadoId, setCasoSeleccionadoId] = useState<string>('')
+  const [modoCarga, setModoCarga] = useState<'asesoria' | 'manual'>('asesoria')
+  const [busquedaCaso, setBusquedaCaso] = useState('')
+
+  // Lista de Cirugías con duración configurada
+  const [catalogoPracticas, setCatalogoPracticas] = useState<{ id: string; nombre: string; minutos: number }[]>([
+    { id: 'inyeccion', nombre: 'Inyección Intravítrea (Antiangiogénico)', minutos: 10 },
+    { id: 'catarata_faco', nombre: 'Catarata con Facoemulsificación Estándar', minutos: 20 },
+    { id: 'catarata_compleja', nombre: 'Catarata Compleja / Combinada', minutos: 30 },
+    { id: 'vitrectomia', nombre: 'Vitrectomía Posterior / Retina', minutos: 60 },
+    { id: 'lasik', nombre: 'Cirugía Refractiva LASIK / PRK', minutos: 15 }
+  ])
+
+  // Formulario de Turno Quirúrgico
+  const [formData, setFormData] = useState({
+    asesoria_id: turno?.asesoria_id || '',
+    paciente_id: turno?.paciente_id || '',
+    paciente_nombre: turno?.pacientes?.nombre || '',
+    paciente_dni: turno?.pacientes?.dni || '',
+    paciente_telefono: turno?.pacientes?.telefono || '',
+    quirofano_id: turno?.quirofano_id || quirofanoDefectoId || quirofanos[0]?.id || '',
+    fecha_cirugia: turno?.fecha_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
+    hora_inicio: (turno?.hora_inicio || horaDefecto || '08:30').slice(0, 5),
+    duracion_minutos: turno?.duracion_minutos || 20,
+    ojo: turno?.ojo || 'OD',
+    es_bilateral_escalonada: turno?.es_bilateral_escalonada || false,
+    cirujano_id: turno?.cirujano_id || 6162,
+    cirujano_nombre: turno?.cirujano_nombre || 'Dr. Bonanno, Pablo Antonio',
+    ayudante_nombre: turno?.ayudante_nombre || '',
+    anestesiologo_nombre: turno?.anestesiologo_nombre || '',
+    practica_codigo: turno?.practica_codigo || 'OFT-01',
+    practica_nombre: turno?.practica_nombre || 'Catarata con Facoemulsificación Estándar',
+    obra_social: turno?.obra_social || '',
+    plan_obra_social: turno?.plan_obra_social || '',
+    token_autorizacion: turno?.token_autorizacion || '',
+    lente_tipo: turno?.lente_tipo || '',
+    lente_dioptria: turno?.lente_dioptria || '',
+    lente_lote: turno?.lente_lote || '',
+    tipo_anestesia: turno?.tipo_anestesia || 'Tópica + Sedación',
+    observaciones: turno?.observaciones || '',
+    estado: turno?.estado || 'programado'
   })
 
-  const [pacienteInfo, setPacienteInfo] = useState<any>(null)
-  const [cargando, setCargando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [enviandoWA, setEnviandoWA] = useState(false)
-  const [mensajeWA, setMensajeWA] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
-  // Búsqueda rápida de pacientes
-  const [busquedaPac, setBusquedaPac] = useState('')
-  const [pacientesResultados, setPacientesResultados] = useState<any[]>([])
-  const [buscandoPac, setBuscandoPac] = useState(false)
-
-  // Calcular Hora Fin Estimada
-  const calcularHoraFin = (inicio: string, minutos: number) => {
-    if (!inicio) return ''
-    const [hh, mm] = inicio.split(':').map(Number)
-    const fecha = new Date()
-    fecha.setHours(hh, mm + minutos, 0, 0)
-    const hStr = fecha.getHours().toString().padStart(2, '0')
-    const mStr = fecha.getMinutes().toString().padStart(2, '0')
-    return `${hStr}:${mStr}`
-  }
-
-  const horaFinEstimada = calcularHoraFin(formData.hora_inicio || '09:00', formData.duracion_minutos || 20)
-
+  // Cargar catálogo de cirugías y asesorías confirmadas
   useEffect(() => {
-    if (!isOpen) return
-
-    if (turnoId) {
-      const fetchTurno = async () => {
-        try {
-          setCargando(true)
-          const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano`)
-          const data = await res.json()
-          if (data.success && data.turnos) {
-            const encontrado = data.turnos.find((t: any) => t.id === turnoId)
-            if (encontrado) {
-              setFormData(encontrado)
-              setPacienteInfo(encontrado.pacientes || null)
-            }
-          }
-        } catch (e) {
-          console.error(e)
-        } finally {
-          setCargando(false)
-        }
-      }
-      fetchTurno()
-    } else if (initialData) {
-      setFormData((prev: any) => ({
-        ...prev,
-        ...initialData,
-        quirofano_id: initialData.quirofano_id || (quirofanos[0]?.id || '')
-      }))
-      if (initialData.pacientes) {
-        setPacienteInfo(initialData.pacientes)
-      } else if (initialData.paciente_id) {
-        fetch(`${BACKEND_URL}/api/pacientes/${initialData.paciente_id}`)
-          .then((r) => r.json())
-          .then((d) => {
-            if (d.success && d.paciente) {
-              setPacienteInfo(d.paciente)
-              setFormData((prev: any) => ({
-                ...prev,
-                obra_social: d.paciente.obra_social || prev.obra_social,
-                plan_obra_social: d.paciente.plan_cobertura || prev.plan_obra_social
-              }))
-            }
-          })
-          .catch((e) => console.error(e))
-      }
-    } else if (quirofanos.length > 0) {
-      setFormData((prev: any) => ({
-        ...prev,
-        quirofano_id: prev.quirofano_id || quirofanos[0].id
-      }))
-    }
-  }, [isOpen, turnoId, initialData, quirofanos])
-
-  // Búsqueda dinámica de paciente
-  useEffect(() => {
-    if (!busquedaPac || busquedaPac.length < 2 || turnoId) {
-      setPacientesResultados([])
-      return
-    }
-    const timer = setTimeout(async () => {
+    const cargarDatos = async () => {
       try {
-        setBuscandoPac(true)
-        const res = await fetch(`${BACKEND_URL}/api/pacientes?q=${encodeURIComponent(busquedaPac)}`)
-        const data = await res.json()
-        if (data.success && data.pacientes) {
-          setPacientesResultados(data.pacientes)
+        setCargandoCasos(true)
+        const [resCasos, resConf] = await Promise.all([
+          fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
+          fetch(`${BACKEND_URL}/api/configuracion-quirofano`)
+        ])
+
+        const dataCasos = await resCasos.json()
+        const dataConf = await resConf.json()
+
+        if (dataCasos.success && dataCasos.casos) {
+          setCasosConfirmados(dataCasos.casos)
         }
-      } catch (e) {
-        console.error(e)
+
+        if (dataConf.success && dataConf.configuracion?.duraciones_prestaciones) {
+          const dur = dataConf.configuracion.duraciones_prestaciones
+          if (Array.isArray(dur)) {
+            setCatalogoPracticas(dur)
+          } else {
+            const items = Object.entries(dur).map(([k, v]) => ({
+              id: k,
+              nombre: k.replace(/_/g, ' ').toUpperCase(),
+              minutos: Number(v) || 20
+            }))
+            if (items.length > 0) setCatalogoPracticas(items)
+          }
+        }
+      } catch (err) {
+        console.error('Error cargando casos confirmados:', err)
       } finally {
-        setBuscandoPac(false)
+        setCargandoCasos(false)
       }
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [busquedaPac, turnoId])
+    }
 
-  const handleSelectPaciente = (p: any) => {
-    setPacienteInfo(p)
-    setFormData((prev: any) => ({
+    cargarDatos()
+  }, [])
+
+  // Si se pasa un caso confirmado inicial (por ejemplo desde el panel de pendientes)
+  useEffect(() => {
+    if (casoConfirmadoInicial) {
+      aplicarCasoConfirmado(casoConfirmadoInicial)
+    }
+  }, [casoConfirmadoInicial])
+
+  // Aplicar datos heredados desde la asesoría quirúrgica confirmada
+  const aplicarCasoConfirmado = (caso: any) => {
+    if (!caso) return
+    const pac = caso.pacientes || {}
+
+    // Buscar si la práctica tiene duración configurada
+    let duracionSugerida = 20
+    const practicaMatch = catalogoPracticas.find(
+      (p) => p.nombre.toLowerCase().includes((caso.practica_nombre || '').toLowerCase()) ||
+             (caso.practica_nombre || '').toLowerCase().includes(p.nombre.toLowerCase())
+    )
+    if (practicaMatch) {
+      duracionSugerida = practicaMatch.minutos
+    }
+
+    setFormData((prev) => ({
       ...prev,
-      paciente_id: p.id,
-      obra_social: p.obra_social || prev.obra_social,
-      plan_obra_social: p.plan_cobertura || prev.plan_obra_social
+      asesoria_id: caso.id,
+      paciente_id: caso.paciente_id || pac.id || '',
+      paciente_nombre: pac.nombre || '',
+      paciente_dni: pac.dni || '',
+      paciente_telefono: pac.telefono || '',
+      practica_nombre: caso.practica_nombre || prev.practica_nombre,
+      practica_codigo: caso.practica_codigo || prev.practica_codigo,
+      cirujano_nombre: caso.medico_cirujano_nombre || prev.cirujano_nombre,
+      cirujano_id: caso.medico_cirujano_id || prev.cirujano_id,
+      obra_social: caso.cobertura_obra_social || pac.obra_social || '',
+      plan_obra_social: pac.plan_obra_social || '',
+      ojo: caso.ojo || prev.ojo || 'OD',
+      duracion_minutos: duracionSugerida,
+      fecha_cirugia: caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || prev.fecha_cirugia
     }))
-    setPacientesResultados([])
-    setBusquedaPac('')
+
+    setCasoSeleccionadoId(caso.id)
+    setMensajeExito(`✓ Datos heredados de la asesoría de ${pac.nombre || 'Paciente'}`)
+    setTimeout(() => setMensajeExito(null), 3000)
   }
 
-  // Cambio de práctica predefinida: ajusta automáticamente la duración
-  const handleSeleccionarPracticaPredefinida = (nombre: string) => {
-    const encontrada = PRACTICAS_PREDEFINIDAS.find((p) => p.nombre === nombre)
-    if (encontrada) {
-      const dur = duracionesConfig[encontrada.key] || encontrada.defMin
-      setFormData((prev: any) => ({
-        ...prev,
-        practica_nombre: encontrada.nombre,
-        practica_codigo: encontrada.codigo,
-        duracion_minutos: dur
-      }))
-    } else {
-      setFormData((prev: any) => ({ ...prev, practica_nombre: nombre }))
-    }
+  // Calcular hora de fin estimada
+  const calcularHoraFin = () => {
+    if (!formData.hora_inicio) return ''
+    const [h, m] = formData.hora_inicio.split(':').map(Number)
+    const dur = Number(formData.duracion_minutos) || 20
+    const totalMin = h * 60 + m + dur
+    const hFin = Math.floor(totalMin / 60) % 24
+    const mFin = totalMin % 60
+    return `${hFin.toString().padStart(2, '0')}:${mFin.toString().padStart(2, '0')}`
   }
 
-  // Guardar Turno
-  const handleGuardar = async (e: React.FormEvent) => {
+  const handleSeleccionarPractica = (practica: { nombre: string; minutos: number; id: string }) => {
+    setFormData({
+      ...formData,
+      practica_nombre: practica.nombre,
+      practica_codigo: practica.id,
+      duracion_minutos: practica.minutos
+    })
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.paciente_id) {
-      setError('Debe seleccionar un paciente.')
-      return
-    }
-    if (!formData.quirofano_id) {
-      setError('Debe asignar una sala de quirófano.')
+    if (!formData.paciente_nombre.trim()) {
+      setError('Debe especificar el paciente o vincular un caso confirmado.')
       return
     }
 
@@ -239,223 +214,327 @@ export default function FichaTurnoModal({
       setGuardando(true)
       setError(null)
 
-      const url = turnoId ? `${BACKEND_URL}/api/turnos-quirofano/${turnoId}` : `${BACKEND_URL}/api/turnos-quirofano`
-      const method = turnoId ? 'PUT' : 'POST'
+      const url = esEdicion
+        ? `${BACKEND_URL}/api/turnos-quirofano/${turno.id}`
+        : `${BACKEND_URL}/api/turnos-quirofano`
+      const method = esEdicion ? 'PUT' : 'POST'
 
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       })
+
       const data = await res.json()
-
       if (!res.ok || !data.success) {
-        throw new Error(data.detail || 'Error al guardar turno de quirófano.')
-      }
-
-      if (!turnoId && formData.es_bilateral_escalonada && formData.fecha_segundo_ojo) {
-        const ojo2 = formData.ojo === 'OD' ? 'OI' : 'OD'
-        const payloadOjo2 = {
-          ...formData,
-          ojo: ojo2,
-          fecha_cirugia: formData.fecha_segundo_ojo,
-          hora_inicio: formData.hora_segundo_ojo || formData.hora_inicio,
-          es_bilateral_escalonada: true,
-          turno_par_id: data.turno?.id,
-          observaciones: `2° Ojo (${ojo2}) - Vinculado a turno 1° Ojo.`
-        }
-        await fetch(`${BACKEND_URL}/api/turnos-quirofano`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payloadOjo2)
-        })
+        throw new Error(data.detail || 'Error al guardar el turno de quirófano')
       }
 
       onSaved()
       onClose()
     } catch (err: any) {
-      setError(err.message || 'Error al guardar turno')
+      console.error('Error guardando turno:', err)
+      setError(err.message || 'Error al guardar')
     } finally {
       setGuardando(false)
     }
   }
 
-  // Disparo de Consentimiento por WhatsApp
   const handleEnviarConsentimientoWA = async () => {
-    if (!formData.id && !turnoId) {
-      setError('Primero guarde el turno antes de enviar el consentimiento.')
-      return
-    }
-    const idTarget = formData.id || turnoId
-
+    if (!turno?.id) return
     try {
       setEnviandoWA(true)
-      setMensajeWA(null)
       setError(null)
-
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${idTarget}/enviar-consentimiento-wa`, {
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/enviar-consentimiento-wa`, {
         method: 'POST'
       })
       const data = await res.json()
       if (!res.ok || !data.success) {
-        throw new Error(data.detail || 'No se pudo enviar el consentimiento por WhatsApp.')
+        throw new Error(data.detail || 'Error enviando WhatsApp')
       }
-
-      setMensajeWA('✔ Mensaje de WhatsApp enviado con éxito al paciente con el enlace seguro.')
-      setFormData((prev: any) => ({ ...prev, consentimiento_estado: 'enviado_whatsapp' }))
-      setTimeout(() => setMensajeWA(null), 4000)
+      setMensajeExito('✔ Consentimiento enviado al WhatsApp del paciente.')
+      onSaved()
+      setTimeout(() => setMensajeExito(null), 3500)
     } catch (err: any) {
-      setError(err.message || 'Error enviando WhatsApp')
+      setError(err.message || 'Error al enviar WhatsApp')
     } finally {
       setEnviandoWA(false)
     }
   }
 
-  if (!isOpen) return null
+  // Filtrado de casos confirmados para el buscador
+  const casosFiltrados = casosConfirmados.filter((c) => {
+    const q = busquedaCaso.toLowerCase()
+    const pac = c.pacientes?.nombre?.toLowerCase() || ''
+    const dni = c.pacientes?.dni || ''
+    const cir = c.medico_cirujano_nombre?.toLowerCase() || ''
+    const prac = c.practica_nombre?.toLowerCase() || ''
+    return pac.includes(q) || dni.includes(q) || cir.includes(q) || prac.includes(q)
+  })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-      <div className="bg-[var(--card)] w-full max-w-4xl max-h-[92vh] rounded-2xl border border-[var(--border)] shadow-2xl flex flex-col overflow-hidden">
-        {/* Modal Header */}
-        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between bg-slate-50 dark:bg-slate-800/40">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
+      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+        {/* Cabecera del Modal */}
+        <div className="p-4 md:p-5 border-b border-[var(--border)] flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-blue-600/10 text-blue-600 rounded-xl border border-blue-600/20">
-              <Calendar size={20} />
+            <div className="p-2.5 bg-blue-500/10 text-blue-600 rounded-xl border border-blue-500/20">
+              <Scissors size={20} />
             </div>
             <div>
-              <h2 className="text-base font-bold text-[var(--foreground)]">
-                {turnoId ? 'Ficha de Turno Quirúrgico' : 'Nueva Programación de Quirófano'}
-              </h2>
+              <h3 className="text-base font-bold text-[var(--foreground)] flex items-center gap-2">
+                <span>{esEdicion ? 'Ficha de Turno Quirúrgico' : 'Programar Cirugía en Quirófano'}</span>
+                {formData.asesoria_id && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-300/40 flex items-center gap-1">
+                    <Link2 size={10} /> Vinculado a Asesoramiento
+                  </span>
+                )}
+              </h3>
               <p className="text-xs text-[var(--secondary)]">
-                Gestión integral de datos de cirugía, ocupación de tiempo, equipo y consentimiento.
+                Gestione sala, horarios, equipo quirúrgico y sincronice en tiempo real con la ficha del paciente.
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all"
+            className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white rounded-xl transition-colors"
           >
             <X size={20} />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <form onSubmit={handleGuardar} className="flex-1 overflow-y-auto p-5 space-y-5">
-          {error && (
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
-              <AlertCircle size={16} className="shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-          {mensajeWA && (
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
-              <CheckCircle2 size={16} className="shrink-0" />
-              <span>{mensajeWA}</span>
-            </div>
-          )}
+        {/* Notificaciones de Error / Éxito */}
+        {error && (
+          <div className="m-4 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+        {mensajeExito && (
+          <div className="m-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
+            <CheckCircle2 size={16} className="shrink-0" />
+            <span>{mensajeExito}</span>
+          </div>
+        )}
 
-          {/* SECCIÓN 1: PACIENTE & COBERTURA */}
-          <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-800/30 border border-[var(--border)] space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-                <User size={14} /> 1. Paciente & Cobertura Médica
-              </span>
-              {pacienteInfo && (
-                <span className="text-[11px] font-mono font-bold text-slate-500">
-                  HC: {pacienteInfo.nro_hc || 'N/D'} | DNI: {pacienteInfo.dni || 'S/D'}
-                </span>
-              )}
-            </div>
+        {/* Contenido Principal con Scroll */}
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+          
+          {/* BANDEJA REACTIVA: VINCULAR CASO CONFIRMADO DE ASESORAMIENTO */}
+          {!esEdicion && (
+            <div className="p-4 rounded-2xl bg-blue-50/60 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/50 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-blue-700 dark:text-blue-300">
+                  <Sparkles size={16} className="text-blue-600 animate-pulse" />
+                  <span>Vincular Caso Confirmado desde Asesoramiento Quirúrgico</span>
+                </div>
 
-            {!pacienteInfo ? (
-              <div className="relative">
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                <div className="flex items-center gap-1 bg-white dark:bg-slate-900 p-1 rounded-xl border border-[var(--border)] text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => setModoCarga('asesoria')}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                      modoCarga === 'asesoria'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                    }`}
+                  >
+                    ⚡ Casos Confirmados ({casosConfirmados.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModoCarga('manual')
+                      setCasoSeleccionadoId('')
+                    }}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all ${
+                      modoCarga === 'manual'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                    }`}
+                  >
+                    ✍ Carga Manual
+                  </button>
+                </div>
+              </div>
+
+              {modoCarga === 'asesoria' && (
+                <div className="space-y-2 pt-1">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 text-slate-400" size={14} />
                     <input
                       type="text"
-                      value={busquedaPac}
-                      onChange={(e) => setBusquedaPac(e.target.value)}
-                      placeholder="Buscar paciente por Nombre, DNI o N° de Historia Clínica..."
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
+                      value={busquedaCaso}
+                      onChange={(e) => setBusquedaCaso(e.target.value)}
+                      placeholder="Buscar por nombre de paciente, DNI o cirujano..."
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500 font-medium"
                     />
                   </div>
-                </div>
 
-                {pacientesResultados.length > 0 && (
-                  <div className="absolute top-full left-0 right-0 z-20 mt-1 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-xl max-h-48 overflow-y-auto">
-                    {pacientesResultados.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => handleSelectPaciente(p)}
-                        className="w-full p-2.5 text-left text-xs hover:bg-blue-50 dark:hover:bg-blue-900/30 flex items-center justify-between border-b border-[var(--border)] last:border-0"
-                      >
-                        <div>
-                          <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
-                          <p className="text-[10px] text-[var(--secondary)]">
-                            DNI: {p.dni || '-'} | Tel: {p.telefono}
-                          </p>
-                        </div>
-                        <span className="text-[10px] font-semibold text-blue-600">{p.obra_social || 'Particular'}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-[var(--card)] p-3 rounded-xl border border-[var(--border)]">
-                <div>
-                  <p className="text-[10px] text-[var(--secondary)] font-semibold">Nombre Completo</p>
-                  <p className="text-xs font-bold text-[var(--foreground)] truncate">{pacienteInfo.nombre}</p>
+                  {cargandoCasos ? (
+                    <div className="p-3 text-center text-xs text-[var(--secondary)] flex items-center justify-center gap-2">
+                      <Loader2 size={14} className="animate-spin text-blue-600" />
+                      <span>Cargando cirugías confirmadas...</span>
+                    </div>
+                  ) : casosFiltrados.length === 0 ? (
+                    <p className="text-xs text-[var(--secondary)] italic py-2 text-center bg-[var(--card)] rounded-xl border border-[var(--border)]">
+                      No hay casos confirmados que coincidan con la búsqueda.
+                    </p>
+                  ) : (
+                    <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                      {casosFiltrados.map((c) => {
+                        const pac = c.pacientes || {}
+                        const isSelected = casoSeleccionadoId === c.id
+                        return (
+                          <div
+                            key={c.id}
+                            onClick={() => aplicarCasoConfirmado(c)}
+                            className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between text-xs ${
+                              isSelected
+                                ? 'bg-blue-600 text-white border-blue-600 shadow-md font-bold'
+                                : 'bg-[var(--card)] border-[var(--border)] hover:border-blue-400 text-[var(--foreground)]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 truncate">
+                              <div className={`p-1.5 rounded-lg ${isSelected ? 'bg-white/20' : 'bg-blue-100 dark:bg-blue-900/40 text-blue-600'}`}>
+                                <User size={14} />
+                              </div>
+                              <div className="truncate">
+                                <p className="font-bold truncate">{pac.nombre || 'Paciente sin nombre'}</p>
+                                <p className={`text-[10px] truncate ${isSelected ? 'text-white/80' : 'text-[var(--secondary)]'}`}>
+                                  DNI: {pac.dni || 'S/D'} • {c.practica_nombre || 'Cirugía'} • {c.medico_cirujano_nombre || 'Cirujano'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono shrink-0 ${
+                              isSelected ? 'bg-white/30 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}>
+                              {isSelected ? '✓ Seleccionado' : 'Seleccionar'}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <p className="text-[10px] text-[var(--secondary)] font-semibold">Teléfono / WhatsApp</p>
-                  <p className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                    {pacienteInfo.telefono}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-[var(--secondary)] font-semibold">Obra Social / Financiador</p>
-                  <input
-                    type="text"
-                    value={formData.obra_social}
-                    onChange={(e) => setFormData({ ...formData, obra_social: e.target.value })}
-                    className="w-full mt-0.5 px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-[var(--border)] text-xs font-bold"
-                  />
-                </div>
-                <div>
-                  <p className="text-[10px] text-[var(--secondary)] font-semibold">Token / N° Autorización</p>
-                  <input
-                    type="text"
-                    value={formData.token_autorizacion || ''}
-                    onChange={(e) => setFormData({ ...formData, token_autorizacion: e.target.value })}
-                    placeholder="Ej: 849201"
-                    className="w-full mt-0.5 px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-[var(--border)] text-xs font-mono font-bold"
-                  />
-                </div>
-              </div>
-            )}
+              )}
+            </div>
+          )}
+
+          {/* BANNER DINÁMICO DE FRANJA OCUPADA EN QUIRÓFANO */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-500/20 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <Clock size={16} className="text-blue-600 shrink-0" />
+              <span className="font-bold text-[var(--foreground)]">
+                Horario Quirúrgico Asignado:{' '}
+                <span className="font-mono text-blue-600 font-extrabold text-sm">
+                  {formData.hora_inicio} hs ➔ {calcularHoraFin()} hs
+                </span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2 font-semibold text-[var(--secondary)]">
+              <Timer size={14} className="text-purple-500" />
+              <span>Duración: <b className="text-purple-600 dark:text-purple-400 font-mono">{formData.duracion_minutos} min</b></span>
+            </div>
           </div>
 
-          {/* SECCIÓN 2: HORARIO, OCUPACIÓN & LATERALIDAD */}
-          <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-800/30 border border-[var(--border)] space-y-3">
-            <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-              <Clock size={14} /> 2. Horario, Ocupación de Quirófano & Lateralidad
-            </span>
+          {/* SECCIÓN 1: DATOS DEL PACIENTE & COBERTURA */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
+              <User size={15} />
+              <span>1. Identificación del Paciente & Cobertura</span>
+            </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <div className="sm:col-span-1">
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Nombre del Paciente *</label>
+                <input
+                  type="text"
+                  value={formData.paciente_nombre}
+                  onChange={(e) => setFormData({ ...formData, paciente_nombre: e.target.value })}
+                  placeholder="Ej: Pérez, Juan Carlos"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
+                  required
+                />
+              </div>
+
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Sala de Quirófano *</label>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">DNI / Documento</label>
+                <input
+                  type="text"
+                  value={formData.paciente_dni}
+                  onChange={(e) => setFormData({ ...formData, paciente_dni: e.target.value })}
+                  placeholder="Ej: 30123456"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Teléfono WhatsApp</label>
+                <input
+                  type="text"
+                  value={formData.paciente_telefono}
+                  onChange={(e) => setFormData({ ...formData, paciente_telefono: e.target.value })}
+                  placeholder="Ej: +5491123456789"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Financiador / Obra Social</label>
+                <input
+                  type="text"
+                  value={formData.obra_social}
+                  onChange={(e) => setFormData({ ...formData, obra_social: e.target.value })}
+                  placeholder="Ej: OSDE, Swiss Medical, Particular..."
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Plan / Afiliado</label>
+                <input
+                  type="text"
+                  value={formData.plan_obra_social}
+                  onChange={(e) => setFormData({ ...formData, plan_obra_social: e.target.value })}
+                  placeholder="Ej: 210, Premium"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Token / N° Autorización OS</label>
+                <input
+                  type="text"
+                  value={formData.token_autorizacion}
+                  onChange={(e) => setFormData({ ...formData, token_autorizacion: e.target.value })}
+                  placeholder="Ej: 8943210 (Validado)"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* SECCIÓN 2: ASIGNACIÓN DE SALA, FECHA Y DURACIÓN */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
+              <Building2 size={15} />
+              <span>2. Sala de Quirófano, Horario & Duración</span>
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Quirófano / Sala *</label>
                 <select
                   value={formData.quirofano_id}
                   onChange={(e) => setFormData({ ...formData, quirofano_id: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
                   required
                 >
                   {quirofanos.map((q) => (
                     <option key={q.id} value={q.id}>
-                      {q.nombre} ({q.codigo})
+                      {q.nombre} ({q.codigo}) - {q.duracion_slot_minutos || 15}m
                     </option>
                   ))}
                 </select>
@@ -467,323 +546,220 @@ export default function FichaTurnoModal({
                   type="date"
                   value={formData.fecha_cirugia}
                   onChange={(e) => setFormData({ ...formData, fecha_cirugia: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono font-bold outline-none focus:border-blue-500"
                   required
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Hora de Inicio</label>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Hora de Inicio *</label>
                 <input
                   type="time"
                   value={formData.hora_inicio}
                   onChange={(e) => setFormData({ ...formData, hora_inicio: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono font-bold text-[var(--foreground)]"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono font-bold outline-none focus:border-blue-500"
                   required
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Duración de la Práctica</label>
-                <select
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Duración en Minutos *</label>
+                <input
+                  type="number"
+                  min={5}
+                  step={5}
                   value={formData.duracion_minutos}
-                  onChange={(e) => setFormData({ ...formData, duracion_minutos: parseInt(e.target.value) })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
-                >
-                  <option value={10}>10 min (Inyección / Láser)</option>
-                  <option value={15}>15 min (LASIK / Refractiva)</option>
-                  <option value={20}>20 min (Catarata Estándar)</option>
-                  <option value={30}>30 min (Catarata Compleja)</option>
-                  <option value={45}>45 min (Cirugía Combinada)</option>
-                  <option value={60}>60 min (Vitrectomía / Retina)</option>
-                </select>
+                  onChange={(e) => setFormData({ ...formData, duracion_minutos: parseInt(e.target.value) || 20 })}
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 font-bold font-mono outline-none focus:border-blue-500"
+                  required
+                />
               </div>
             </div>
 
-            {/* Banner Dinámico de Franja Horaria Ocupada */}
-            <div className="p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/40 flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs">
-                <Timer size={16} className="text-blue-600 shrink-0" />
-                <span className="font-semibold text-blue-950 dark:text-blue-200">
-                  Franja ocupada en quirófano:
-                </span>
-                <span className="font-mono font-bold px-2 py-0.5 rounded-lg bg-blue-600 text-white text-xs">
-                  {formData.hora_inicio} - {horaFinEstimada} hs
-                </span>
-              </div>
-              <span className="text-[11px] font-bold text-blue-700 dark:text-blue-300">
-                {formData.duracion_minutos} minutos continuos
-              </span>
-            </div>
-
-            {/* Selector de Lateralidad / Ojo */}
-            <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <label className="text-[11px] font-bold text-[var(--foreground)] block mb-1">
-                  Ojo a Intervenir (Lateralidad) *
-                </label>
-                <div className="inline-flex rounded-xl bg-slate-200 dark:bg-slate-800 p-1 gap-1">
-                  {[
-                    { id: 'OD', label: 'Ojo Derecho (OD)' },
-                    { id: 'OI', label: 'Ojo Izquierdo (OI)' },
-                    { id: 'AO', label: 'Ambos Ojos (AO)' }
-                  ].map((o) => (
+            {/* Accesos rápidos de cirugías */}
+            <div className="pt-1">
+              <label className="text-[10px] text-[var(--secondary)] font-semibold block mb-1.5">
+                Sugerencias de Prácticas Quirúrgicas con Duración Asignada:
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {catalogoPracticas.map((p) => {
+                  const isSelected = formData.practica_nombre === p.nombre
+                  return (
                     <button
-                      key={o.id}
+                      key={p.id}
                       type="button"
-                      onClick={() => setFormData({ ...formData, ojo: o.id })}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                        formData.ojo === o.id
-                          ? 'bg-blue-600 text-white shadow'
-                          : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                      onClick={() => handleSeleccionarPractica(p)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border ${
+                        isSelected
+                          ? 'bg-blue-600 text-white border-blue-600 shadow'
+                          : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] border-transparent hover:bg-slate-200 dark:hover:bg-slate-700'
                       }`}
                     >
-                      {o.label}
+                      {p.nombre.slice(0, 24)}... <span className="font-mono opacity-80">({p.minutos}m)</span>
                     </button>
-                  ))}
-                </div>
+                  )
+                })}
               </div>
-
-              {/* Cirugía Bilateral Escalonada Toggle */}
-              {!turnoId && (
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-[var(--foreground)]">
-                    <input
-                      type="checkbox"
-                      checked={formData.es_bilateral_escalonada}
-                      onChange={(e) => setFormData({ ...formData, es_bilateral_escalonada: e.target.checked })}
-                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>¿Programar 2° Ojo Escalonado?</span>
-                  </label>
-                  {formData.es_bilateral_escalonada && (
-                    <input
-                      type="date"
-                      value={formData.fecha_segundo_ojo}
-                      onChange={(e) => setFormData({ ...formData, fecha_segundo_ojo: e.target.value })}
-                      className="px-2.5 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold"
-                      placeholder="Fecha 2° ojo"
-                      required
-                    />
-                  )}
-                </div>
-              )}
             </div>
           </div>
 
-          {/* SECCIÓN 3: PROCEDIMIENTO, EQUIPO & LENTE (LIO) */}
-          <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-800/30 border border-[var(--border)] space-y-3">
-            <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-              <Eye size={14} /> 3. Procedimiento, Equipo Quirúrgico & Lente (LIO)
-            </span>
+          {/* SECCIÓN 3: ACTO QUIRÚRGICO, CIRUJANO, OJO Y LIO */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
+              <Stethoscope size={15} />
+              <span>3. Equipo Médico, Lateralidad & Lente Intraocular</span>
+            </h4>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Práctica Nomenclador *</label>
-                <input
-                  type="text"
-                  list="practicas-sugeridas"
-                  value={formData.practica_nombre}
-                  onChange={(e) => handleSeleccionarPracticaPredefinida(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold"
-                  required
-                />
-                <datalist id="practicas-sugeridas">
-                  {PRACTICAS_PREDEFINIDAS.map((p) => (
-                    <option key={p.codigo} value={p.nombre}>
-                      {p.codigo} ({p.defMin} min)
-                    </option>
-                  ))}
-                </datalist>
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Código Nomenclador</label>
-                <input
-                  type="text"
-                  value={formData.practica_codigo}
-                  onChange={(e) => setFormData({ ...formData, practica_codigo: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Código Obra Social</label>
-                <input
-                  type="text"
-                  value={formData.codigo_obra_social}
-                  onChange={(e) => setFormData({ ...formData, codigo_obra_social: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Cirujano Principal *</label>
                 <input
                   type="text"
                   value={formData.cirujano_nombre}
                   onChange={(e) => setFormData({ ...formData, cirujano_nombre: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-blue-600"
+                  placeholder="Dr. Bonanno, Pablo Antonio"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
                   required
                 />
               </div>
+
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">1° Ayudante</label>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Médico Ayudante / Instrumentador</label>
                 <input
                   type="text"
-                  value={formData.ayudante_nombre || ''}
+                  value={formData.ayudante_nombre}
                   onChange={(e) => setFormData({ ...formData, ayudante_nombre: e.target.value })}
-                  placeholder="Médico ayudante..."
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs"
+                  placeholder="Ej: Dra. Gómez / Lic. Martínez"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
                 />
               </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Médico Anestesiólogo</label>
+                <input
+                  type="text"
+                  value={formData.anestesiologo_nombre}
+                  onChange={(e) => setFormData({ ...formData, anestesiologo_nombre: e.target.value })}
+                  placeholder="Ej: Dr. Pérez Alarcón"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Ojo a Intervenir *</label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {[
+                    { id: 'OD', label: 'Ojo Derecho' },
+                    { id: 'OI', label: 'Ojo Izquierdo' },
+                    { id: 'AO', label: 'Ambos Ojos' }
+                  ].map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, ojo: o.id })}
+                      className={`py-2 rounded-xl text-xs font-bold border transition-all ${
+                        formData.ojo === o.id
+                          ? 'bg-blue-600 text-white border-blue-600 shadow'
+                          : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] border-transparent hover:bg-slate-200'
+                      }`}
+                    >
+                      {o.id}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Tipo de Anestesia</label>
                 <select
                   value={formData.tipo_anestesia}
                   onChange={(e) => setFormData({ ...formData, tipo_anestesia: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold"
+                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-medium"
                 >
-                  <option value="Local Asistida">Local Asistida</option>
-                  <option value="Tópica">Tópica</option>
-                  <option value="Sedación">Sedación</option>
+                  <option value="Tópica + Sedación">Tópica + Sedación (Catarata / Inyección)</option>
+                  <option value="Peribulbar / Retrobulbar">Peribulbar / Retrobulbar (Retina / Compleja)</option>
                   <option value="General">General</option>
+                  <option value="Local Pura">Local Pura</option>
                 </select>
               </div>
-            </div>
 
-            {/* Insumo LIO */}
-            <div className="p-3 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-500/20 grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="text-[11px] font-semibold text-blue-900 dark:text-blue-200">Tipo de Lente (LIO)</label>
-                <select
-                  value={formData.lente_tipo || 'Monofocal OS'}
-                  onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
-                  className="w-full mt-1 px-2.5 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold"
-                >
-                  <option value="Monofocal OS">Monofocal de Obra Social</option>
-                  <option value="Monofocal Premium">Monofocal Premium Asférica</option>
-                  <option value="Tórica">Tórica (Astigmatismo)</option>
-                  <option value="Multifocal">Multifocal / Trifocal</option>
-                  <option value="EDOF">EDOF (Rango Extendido)</option>
-                  <option value="No aplica">No aplica (Inyección / Vitrec)</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-blue-900 dark:text-blue-200">Dioptría / Poder Calculado</label>
-                <input
-                  type="text"
-                  value={formData.lente_dioptria || ''}
-                  onChange={(e) => setFormData({ ...formData, lente_dioptria: e.target.value })}
-                  placeholder="Ej: +21.50 D"
-                  className="w-full mt-1 px-2.5 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-mono font-bold"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] font-semibold text-blue-900 dark:text-blue-200">N° Lote / Serie LIO</label>
-                <input
-                  type="text"
-                  value={formData.lente_lote || ''}
-                  onChange={(e) => setFormData({ ...formData, lente_lote: e.target.value })}
-                  placeholder="Ej: LOT-994821"
-                  className="w-full mt-1 px-2.5 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-mono"
-                />
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Lente Intraocular / Dioptría / Lote</label>
+                <div className="flex gap-2 mt-1">
+                  <input
+                    type="text"
+                    value={formData.lente_tipo}
+                    onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
+                    placeholder="Modelo (ej: Alcon SN60WF)"
+                    className="w-1/2 px-2.5 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-medium"
+                  />
+                  <input
+                    type="text"
+                    value={formData.lente_dioptria}
+                    onChange={(e) => setFormData({ ...formData, lente_dioptria: e.target.value })}
+                    placeholder="Diop (+21.5)"
+                    className="w-1/4 px-2 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono text-center"
+                  />
+                  <input
+                    type="text"
+                    value={formData.lente_lote}
+                    onChange={(e) => setFormData({ ...formData, lente_lote: e.target.value })}
+                    placeholder="Lote"
+                    className="w-1/4 px-2 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono text-center"
+                  />
+                </div>
               </div>
             </div>
           </div>
 
-          {/* SECCIÓN 4: CONSENTIMIENTO INFORMADO POR WHATSAPP */}
-          <div className="p-4 rounded-xl bg-slate-50/70 dark:bg-slate-800/30 border border-[var(--border)] space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-                <FileCheck2 size={14} /> 4. Consentimiento Informado & Firma Digital
-              </span>
-              <span
-                className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
-                  formData.consentimiento_estado === 'firmado_digital'
-                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border-emerald-500/40'
-                    : formData.consentimiento_estado === 'enviado_whatsapp'
-                    ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-500/40'
-                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700'
-                }`}
-              >
-                {formData.consentimiento_estado === 'firmado_digital'
-                  ? '🟢 Firmado Digitalmente'
-                  : formData.consentimiento_estado === 'enviado_whatsapp'
-                  ? '🟡 Enviado por WhatsApp (Esperando firma)'
-                  : '⚪ Pendiente de Envío'}
-              </span>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleEnviarConsentimientoWA}
-                disabled={enviandoWA}
-                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow transition-all disabled:opacity-50"
-              >
-                {enviandoWA ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                <span>Enviar Consentimiento por WhatsApp</span>
-              </button>
-
-              {formData.consentimiento_token && (
-                <a
-                  href={`/consentimiento/${formData.consentimiento_token}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold hover:bg-slate-300 transition-all"
-                >
-                  <ExternalLink size={14} />
-                  <span>Probar Enlace Móvil Paciente</span>
-                </a>
-              )}
-
-              {formData.consentimiento_pdf_url && (
-                <a
-                  href={`${BACKEND_URL}${formData.consentimiento_pdf_url}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold hover:bg-blue-200 transition-all"
-                >
-                  <FileText size={14} />
-                  <span>Ver PDF Firmado</span>
-                </a>
-              )}
-            </div>
-          </div>
-
-          {/* SECCIÓN 5: OBSERVACIONES */}
+          {/* OBSERVACIONES */}
           <div>
-            <label className="text-[11px] font-semibold text-[var(--secondary)]">Observaciones y Notas de Quirófano</label>
+            <label className="text-[11px] font-semibold text-[var(--secondary)]">Observaciones y Notas Quirúrgicas</label>
             <textarea
               rows={2}
-              value={formData.observaciones || ''}
+              value={formData.observaciones}
               onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
-              placeholder="Notas quirúrgicas, derivador, instrucciones de ayuno..."
+              placeholder="Instrucciones de instrumental, insumos especiales o comentarios del cirujano..."
               className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
             />
           </div>
+        </form>
 
-          {/* Modal Footer */}
-          <div className="pt-4 border-t border-[var(--border)] flex items-center justify-between">
+        {/* Pie del Modal con Acciones */}
+        <div className="p-4 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/60">
+          <div className="flex items-center gap-2">
+            {esEdicion && (
+              <button
+                type="button"
+                onClick={handleEnviarConsentimientoWA}
+                disabled={enviandoWA || !formData.paciente_telefono}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+              >
+                {enviandoWA ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                <span>Enviar Consentimiento por WhatsApp</span>
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-all"
+              className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               Cancelar
             </button>
-
             <button
-              type="submit"
+              type="button"
+              onClick={handleSubmit}
               disabled={guardando}
-              className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all disabled:opacity-50"
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md transition-all disabled:opacity-50"
             >
-              {guardando ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-              <span>{turnoId ? 'Actualizar Programación' : 'Confirmar Turno en Quirófano'}</span>
+              {guardando ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              <span>{esEdicion ? 'Actualizar y Sincronizar' : 'Guardar y Agendar Turno'}</span>
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   )

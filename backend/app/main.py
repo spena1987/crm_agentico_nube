@@ -2739,6 +2739,16 @@ def eliminar_bloqueo(bloqueo_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # Turnos Quirúrgicos
+# Casos de Asesoramiento Quirúrgico Confirmados Pendientes de Quirófano
+@app.get("/api/asesorias-quirurgicas/pendientes-quirofano")
+def listar_asesorias_confirmadas():
+    try:
+        casos = get_asesorias_confirmadas_pendientes()
+        return {"success": True, "casos": casos}
+    except Exception as e:
+        logger.error(f"Error al listar asesorías confirmadas para quirófano: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/turnos-quirofano")
 def listar_turnos_quirofano(
     fecha_desde: Optional[str] = None,
