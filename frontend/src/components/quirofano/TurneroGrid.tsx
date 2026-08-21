@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Lock, FileCheck2, Send, Clock, User, Eye, UserCheck, Timer } from 'lucide-react'
+import { Lock, FileCheck2, Send, Clock, User, Eye, UserCheck, Timer, CalendarX } from 'lucide-react'
 
 interface TurneroGridProps {
   modo: 'dia' | 'semana'
@@ -31,6 +31,13 @@ const minutosAHora = (min: number) => {
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
+// Obtener número de día de la semana (1=Lunes ... 7=Domingo) para una fecha YYYY-MM-DD
+const getNumeroDiaSemana = (fechaStr: string) => {
+  const d = new Date(fechaStr + 'T12:00:00')
+  const day = d.getDay()
+  return day === 0 ? 7 : day
+}
+
 export default function TurneroGrid({
   modo,
   quirofanos,
@@ -46,23 +53,25 @@ export default function TurneroGrid({
 }: TurneroGridProps) {
   const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
 
-  // Calcular rango y paso de slots según configuración
+  // Paso de slots
   const pasoMinutos = modo === 'semana' && quirofanoActual?.duracion_slot_minutos
     ? quirofanoActual.duracion_slot_minutos
-    : 10 // Intervalo base para permitir fraccionamiento preciso
+    : 10
 
-  // Horario de inicio y fin
+  // Horarios
   const horaInicioMin = modo === 'semana' && quirofanoActual?.hora_inicio
     ? horaAMinutos(quirofanoActual.hora_inicio)
-    : 8 * 60 // 08:00
+    : 8 * 60
   const horaFinMin = modo === 'semana' && quirofanoActual?.hora_fin
     ? horaAMinutos(quirofanoActual.hora_fin)
-    : 14 * 60 + 30 // 14:30
+    : 14 * 60 + 30
 
   const slots: string[] = []
   for (let m = horaInicioMin; m <= horaFinMin; m += pasoMinutos) {
     slots.push(minutosAHora(m))
   }
+
+  const numDiaHoy = getNumeroDiaSemana(fechaSeleccionada)
 
   return (
     <div className="w-full overflow-x-auto bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm">
@@ -75,24 +84,38 @@ export default function TurneroGrid({
             </th>
 
             {modo === 'dia' ? (
-              quirofanos.map((q) => (
-                <th key={q.id} className="p-3 text-xs font-bold text-[var(--foreground)] border-r border-[var(--border)] last:border-0">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
-                      <span className="truncate">{q.nombre}</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
-                        {q.codigo}
-                      </span>
+              quirofanos.map((q) => {
+                const diasOp = q.dias_operativos || [1, 2, 3, 4, 5]
+                const estaOperativoHoy = diasOp.includes(numDiaHoy)
+
+                return (
+                  <th key={q.id} className="p-3 text-xs font-bold text-[var(--foreground)] border-r border-[var(--border)] last:border-0">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
+                        <span className="truncate">{q.nombre}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
+                          {q.codigo}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-blue-600 bg-blue-50 dark:bg-blue-950 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 shrink-0">
+                          ⏱ {q.duracion_slot_minutos || 15}m
+                        </span>
+                        {!estaOperativoHoy && (
+                          <span className="text-[9px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded">
+                            Cerrado Hoy
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <span className="text-[10px] font-mono text-blue-600 bg-blue-50 dark:bg-blue-950 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 shrink-0">
-                      ⏱ {q.duracion_slot_minutos || 15}m
-                    </span>
-                  </div>
-                </th>
-              ))
+                  </th>
+                )
+              })
             ) : (
               diasSemana.map((d) => {
+                const diasOp = quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5]
+                const estaOperativoEsteDia = diasOp.includes(d.numeroDia)
                 const bloqueMed = bloquesMedicos.find(
                   (b) => b.quirofano_id === quirofanoActual?.id && b.dia_semana === d.numeroDia
                 )
@@ -101,15 +124,26 @@ export default function TurneroGrid({
                   <th
                     key={d.fecha}
                     className={`p-3 text-xs font-bold border-r border-[var(--border)] last:border-0 ${
-                      d.esHoy ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'text-[var(--foreground)]'
+                      !estaOperativoEsteDia
+                        ? 'bg-slate-200/50 dark:bg-slate-800/40 text-slate-400'
+                        : d.esHoy
+                        ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                        : 'text-[var(--foreground)]'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="uppercase text-[11px] font-bold">{d.nombreDia}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="uppercase text-[11px] font-bold">{d.nombreDia}</p>
+                          {!estaOperativoEsteDia && (
+                            <span className="text-[9px] px-1 py-0.2 rounded bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-normal">
+                              No opera
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] font-mono opacity-80">{d.fecha.slice(5)}</p>
                       </div>
-                      {bloqueMed && (
+                      {bloqueMed && estaOperativoEsteDia && (
                         <span
                           className="text-[9px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-semibold truncate max-w-[110px]"
                           title={`${bloqueMed.medico_nombre} (${bloqueMed.hora_desde.slice(0, 5)}-${bloqueMed.hora_hasta.slice(0, 5)})`}
@@ -125,14 +159,14 @@ export default function TurneroGrid({
           </tr>
         </thead>
 
-        {/* Cuerpo de Slots con Duración Dinámica */}
+        {/* Cuerpo */}
         <tbody>
           {slots.map((horaSlot) => {
             const slotMin = horaAMinutos(horaSlot)
 
             return (
               <tr key={horaSlot} className="border-b border-[var(--border)]/60 hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors">
-                {/* Celda de Hora */}
+                {/* Hora */}
                 <td className="p-2 text-center font-mono text-[11px] font-bold text-[var(--secondary)] bg-slate-50/50 dark:bg-slate-900/30 border-r border-[var(--border)] sticky left-0 z-10">
                   {horaSlot}
                 </td>
@@ -140,6 +174,20 @@ export default function TurneroGrid({
                 {modo === 'dia' ? (
                   // VISTA DÍA
                   quirofanos.map((q) => {
+                    const diasOp = q.dias_operativos || [1, 2, 3, 4, 5]
+                    const estaOperativoHoy = diasOp.includes(numDiaHoy)
+
+                    if (!estaOperativoHoy) {
+                      return (
+                        <td
+                          key={q.id}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
+                        >
+                          <span className="text-[9px] text-slate-400 italic">No operativo</span>
+                        </td>
+                      )
+                    }
+
                     const turnoInicio = turnos.find(
                       (t) =>
                         t.quirofano_id === q.id &&
@@ -284,6 +332,19 @@ export default function TurneroGrid({
                   // VISTA SEMANAL
                   diasSemana.map((d) => {
                     const qId = quirofanoActual?.id
+                    const diasOp = quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5]
+                    const estaOperativoEsteDia = diasOp.includes(d.numeroDia)
+
+                    if (!estaOperativoEsteDia) {
+                      return (
+                        <td
+                          key={d.fecha}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
+                        >
+                          <span className="text-[9px] text-slate-400 italic">Cerrado</span>
+                        </td>
+                      )
+                    }
 
                     const turnoInicio = turnos.find(
                       (t) =>

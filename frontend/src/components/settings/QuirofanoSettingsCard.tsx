@@ -18,7 +18,8 @@ import {
   UserCheck,
   Edit2,
   Sliders,
-  Timer
+  Timer,
+  CalendarDays
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -30,6 +31,7 @@ interface Quirofano {
   duracion_slot_minutos?: number
   hora_inicio?: string
   hora_fin?: string
+  dias_operativos?: number[] // [1, 2, 3, 4, 5] donde 1=Lunes, 7=Domingo
   activo: boolean
   orden: number
 }
@@ -60,13 +62,13 @@ interface PracticaDuracionItem {
 }
 
 const DIAS_SEMANA = [
-  { id: 1, label: 'Lunes' },
-  { id: 2, label: 'Martes' },
-  { id: 3, label: 'Miércoles' },
-  { id: 4, label: 'Jueves' },
-  { id: 5, label: 'Viernes' },
-  { id: 6, label: 'Sábado' },
-  { id: 7, label: 'Domingo' }
+  { id: 1, label: 'Lunes', short: 'Lun' },
+  { id: 2, label: 'Martes', short: 'Mar' },
+  { id: 3, label: 'Miércoles', short: 'Mié' },
+  { id: 4, label: 'Jueves', short: 'Jue' },
+  { id: 5, label: 'Viernes', short: 'Vie' },
+  { id: 6, label: 'Sábado', short: 'Sáb' },
+  { id: 7, label: 'Domingo', short: 'Dom' }
 ]
 
 const PALETA_COLORES = [
@@ -232,6 +234,19 @@ export default function QuirofanoSettingsCard() {
     }
   }
 
+  // Toggle de un día operativo en la sala en edición
+  const handleToggleDiaOperativo = (diaId: number) => {
+    if (!salaEnEdicion) return
+    const actual = salaEnEdicion.dias_operativos || [1, 2, 3, 4, 5]
+    let nuevos: number[]
+    if (actual.includes(diaId)) {
+      nuevos = actual.filter((d) => d !== diaId)
+    } else {
+      nuevos = [...actual, diaId].sort((a, b) => a - b)
+    }
+    setSalaEnEdicion({ ...salaEnEdicion, dias_operativos: nuevos })
+  }
+
   // Guardar Sala (Crear o Actualizar)
   const handleGuardarSala = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -253,7 +268,8 @@ export default function QuirofanoSettingsCard() {
           ...salaEnEdicion,
           duracion_slot_minutos: Number(salaEnEdicion.duracion_slot_minutos) || 15,
           hora_inicio: salaEnEdicion.hora_inicio || '08:00',
-          hora_fin: salaEnEdicion.hora_fin || '14:00'
+          hora_fin: salaEnEdicion.hora_fin || '14:00',
+          dias_operativos: salaEnEdicion.dias_operativos || [1, 2, 3, 4, 5]
         })
       })
       const data = await res.json()
@@ -378,7 +394,7 @@ export default function QuirofanoSettingsCard() {
               Quirófanos, Duración de Turnos & Consentimiento
             </h2>
             <p className="text-xs text-[var(--secondary)]">
-              Configure las salas, duración de slots parametrizables, horarios operativos y plantillas de WhatsApp.
+              Configure las salas, días operativos (Lunes a Domingo), duración de slots y plantillas de WhatsApp.
             </p>
           </div>
         </div>
@@ -410,7 +426,7 @@ export default function QuirofanoSettingsCard() {
       {/* Subpestañas */}
       <div className="flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/40 rounded-xl border border-[var(--border)]">
         {[
-          { id: 'salas', label: 'Salas de Quirófano & Duración', icon: Building2 },
+          { id: 'salas', label: 'Salas de Quirófano & Días', icon: Building2 },
           { id: 'duraciones', label: 'Duraciones por Práctica', icon: Timer },
           { id: 'bloques', label: 'Bloques de Cirujanos', icon: Scissors },
           { id: 'consentimientos', label: 'Textos de Consentimiento', icon: FileCheck2 },
@@ -435,14 +451,14 @@ export default function QuirofanoSettingsCard() {
         })}
       </div>
 
-      {/* SECCIÓN 1: SALAS DE QUIRÓFANO Y DURACIÓN PARAMETRIZABLE */}
+      {/* SECCIÓN 1: SALAS DE QUIRÓFANO, DÍAS OPERATIVOS Y DURACIÓN */}
       {activeSubSection === 'salas' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-bold text-[var(--foreground)]">Salas de Cirugía y Duración de Turnos</h3>
+              <h3 className="text-sm font-bold text-[var(--foreground)]">Salas de Cirugía, Días Operativos y Duración</h3>
               <p className="text-xs text-[var(--secondary)]">
-                Defina la duración de turno predeterminada de cada sala (en minutos) y sus horarios de apertura y cierre.
+                Defina qué días de la semana opera cada sala (Lunes a Domingo), su duración de slot y horarios.
               </p>
             </div>
             <button
@@ -455,6 +471,7 @@ export default function QuirofanoSettingsCard() {
                   duracion_slot_minutos: 20,
                   hora_inicio: '08:00',
                   hora_fin: '14:00',
+                  dias_operativos: [1, 2, 3, 4, 5],
                   activo: true,
                   orden: quirofanos.length + 1
                 })
@@ -467,7 +484,7 @@ export default function QuirofanoSettingsCard() {
             </button>
           </div>
 
-          {/* Formulario Modal / Card para Crear o Editar Sala */}
+          {/* Formulario Crear / Editar Sala */}
           {mostrandoFormSala && salaEnEdicion && (
             <form onSubmit={handleGuardarSala} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-blue-500/40 space-y-4 animate-fade-in shadow-md">
               <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
@@ -514,7 +531,7 @@ export default function QuirofanoSettingsCard() {
 
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--secondary)]">
-                    Duración Predeterminada del Turno (Minutos) *
+                    Duración del Turno / Slot (Minutos) *
                   </label>
                   <select
                     value={salaEnEdicion.duracion_slot_minutos || 20}
@@ -578,6 +595,63 @@ export default function QuirofanoSettingsCard() {
                 </div>
               </div>
 
+              {/* Selector de Días Operativos (Lunes a Domingo) */}
+              <div className="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                    <CalendarDays size={15} className="text-blue-600" />
+                    <span>Días Operativos de esta Sala (Lunes a Domingo) *</span>
+                  </label>
+                  <div className="flex items-center gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setSalaEnEdicion({ ...salaEnEdicion, dias_operativos: [1, 2, 3, 4, 5] })}
+                      className="text-blue-600 hover:underline font-semibold"
+                    >
+                      Lun a Vie
+                    </button>
+                    <span>•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSalaEnEdicion({ ...salaEnEdicion, dias_operativos: [1, 2, 3, 4, 5, 6] })}
+                      className="text-blue-600 hover:underline font-semibold"
+                    >
+                      Lun a Sáb
+                    </button>
+                    <span>•</span>
+                    <button
+                      type="button"
+                      onClick={() => setSalaEnEdicion({ ...salaEnEdicion, dias_operativos: [1, 2, 3, 4, 5, 6, 7] })}
+                      className="text-blue-600 hover:underline font-semibold"
+                    >
+                      Todos
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-7 gap-2 pt-1">
+                  {DIAS_SEMANA.map((d) => {
+                    const diasActivos = salaEnEdicion.dias_operativos || [1, 2, 3, 4, 5]
+                    const isSelected = diasActivos.includes(d.id)
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => handleToggleDiaOperativo(d.id)}
+                        className={`p-2 rounded-xl text-xs font-bold transition-all text-center border ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-600 shadow'
+                            : 'bg-slate-100 dark:bg-slate-800/80 text-[var(--secondary)] border-transparent hover:bg-slate-200'
+                        }`}
+                      >
+                        <p className="text-[11px]">{d.short}</p>
+                        <p className="text-[9px] opacity-80">{isSelected ? 'Activo' : 'Cerrado'}</p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
                 <button
                   type="button"
@@ -600,77 +674,102 @@ export default function QuirofanoSettingsCard() {
             </form>
           )}
 
-          {/* Listado de Salas con Parámetros Visibles */}
+          {/* Listado de Salas con Días y Parámetros */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {quirofanos.map((q) => (
-              <div
-                key={q.id || q.codigo}
-                className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex flex-col justify-between space-y-3 hover:border-blue-500/50 transition-all shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3.5 h-12 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-[var(--foreground)]">{q.nombre}</span>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
-                          {q.codigo}
-                        </span>
+            {quirofanos.map((q) => {
+              const dias = q.dias_operativos || [1, 2, 3, 4, 5]
+              return (
+                <div
+                  key={q.id || q.codigo}
+                  className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex flex-col justify-between space-y-3 hover:border-blue-500/50 transition-all shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-3">
+                      <div className="w-3.5 h-12 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-[var(--foreground)]">{q.nombre}</span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
+                            {q.codigo}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">● Activo en turnero</span>
                       </div>
-                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">● Activo en turnero</span>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSalaEnEdicion(q)
+                          setMostrandoFormSala(true)
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-all"
+                        title="Editar sala, días y duración"
+                      >
+                        <Edit2 size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleEliminarSala(q.id)}
+                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
+                        title="Eliminar sala"
+                      >
+                        <Trash2 size={15} />
+                      </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSalaEnEdicion(q)
-                        setMostrandoFormSala(true)
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-all"
-                      title="Editar sala y duración"
-                    >
-                      <Edit2 size={15} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleEliminarSala(q.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
-                      title="Eliminar sala"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* Parámetros de Duración y Horario de la Sala */}
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--border)]/60 text-xs">
-                  <div className="p-2 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-0.5">
-                    <span className="text-[10px] text-[var(--secondary)] font-semibold block flex items-center gap-1">
-                      <Timer size={11} className="text-blue-500" /> Slot del Turno:
-                    </span>
-                    <span className="font-bold text-blue-600 font-mono">
-                      {q.duracion_slot_minutos || 15} minutos
-                    </span>
+                  {/* Badges de Días Operativos */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-semibold text-[var(--secondary)]">Días Operativos:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {DIAS_SEMANA.map((d) => {
+                        const isOp = dias.includes(d.id)
+                        return (
+                          <span
+                            key={d.id}
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md font-mono ${
+                              isOp
+                                ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300/40'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-400 opacity-40'
+                            }`}
+                          >
+                            {d.short}
+                          </span>
+                        )
+                      })}
+                    </div>
                   </div>
 
-                  <div className="p-2 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-0.5">
-                    <span className="text-[10px] text-[var(--secondary)] font-semibold block flex items-center gap-1">
-                      <Clock size={11} className="text-purple-500" /> Operatividad:
-                    </span>
-                    <span className="font-bold text-[var(--foreground)] font-mono text-[11px]">
-                      {q.hora_inicio || '08:00'} - {q.hora_fin || '14:00'} hs
-                    </span>
+                  {/* Parámetros de Duración y Horario de la Sala */}
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--border)]/60 text-xs">
+                    <div className="p-2 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-0.5">
+                      <span className="text-[10px] text-[var(--secondary)] font-semibold block flex items-center gap-1">
+                        <Timer size={11} className="text-blue-500" /> Slot del Turno:
+                      </span>
+                      <span className="font-bold text-blue-600 font-mono">
+                        {q.duracion_slot_minutos || 15} minutos
+                      </span>
+                    </div>
+
+                    <div className="p-2 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-0.5">
+                      <span className="text-[10px] text-[var(--secondary)] font-semibold block flex items-center gap-1">
+                        <Clock size={11} className="text-purple-500" /> Operatividad:
+                      </span>
+                      <span className="font-bold text-[var(--foreground)] font-mono text-[11px]">
+                        {q.hora_inicio || '08:00'} - {q.hora_fin || '14:00'} hs
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}
 
-      {/* SECCIÓN 2: DURACIONES POR PRÁCTICA (TOTALMENTE DINÁMICO) */}
+      {/* SECCIÓN 2: DURACIONES POR PRÁCTICA */}
       {activeSubSection === 'duraciones' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
