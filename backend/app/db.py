@@ -2205,6 +2205,7 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
             "en_asesoramiento": [],
             "en_analisis": [],
             "confirmado": [],
+            "programado": [],
             "operado": [],
             "cancelado": []
         }
@@ -2484,29 +2485,43 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error al obtener turno por ID {turno_id}: {e}")
         return None
 
+COLUMN_KEYS_TURNOS_QUIROFANO = {
+    "asesoria_id", "paciente_id", "quirofano_id", "fecha_cirugia", "hora_inicio",
+    "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
+    "cirujano_nombre", "ayudante_nombre", "anestesiologo_nombre", "medico_derivador_nombre",
+    "practica_codigo", "practica_nombre", "codigo_obra_social", "obra_social", "plan_obra_social",
+    "token_autorizacion", "lente_tipo", "lente_dioptria", "lente_lote", "tipo_anestesia",
+    "checks_adicionales", "estado", "consentimiento_estado", "consentimiento_token",
+    "consentimiento_pdf_url", "consentimiento_enviado_at", "consentimiento_firmado_at",
+    "consentimiento_firma_ip", "consentimiento_firma_img", "observaciones", "usuario_alta"
+}
+
 def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
     """
     Retorna los casos de cirugías confirmadas desde asesoramiento quirúrgico con sus pacientes
-    para ser programadas o vinculadas en el turnero de quirófano.
+    que aún no han sido programadas en quirófano (estado = 'confirmado').
     """
     if not supabase:
         return []
     try:
-        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("estado", "confirmado").order("created_at", desc=True).execute()
+        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(id, nombre, dni, telefono, obra_social, email)").eq("estado", "confirmado").order("created_at", desc=True).execute()
         return resp.data or []
     except Exception as e:
         logger.error(f"Error al listar asesorías confirmadas para quirófano: {e}")
         return []
 
-def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str, Any]):
+def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str, Any], nuevo_estado: Optional[str] = "programado"):
     """
     Sincroniza atómicamente la ficha de asesoramiento quirúrgico (paciente)
-    cuando el personal de quirófano asigna o actualiza el turno.
+    cuando el personal de quirófano programa o actualiza el turno.
+    Pasa el caso a estado 'programado'.
     """
     if not supabase or not asesoria_id:
         return
     try:
         payload_asesoria: Dict[str, Any] = {"updated_at": "now()"}
+        if nuevo_estado:
+            payload_asesoria["estado"] = nuevo_estado
         if "fecha_cirugia" in datos_turno and datos_turno["fecha_cirugia"]:
             payload_asesoria["fecha_definitiva_cirugia"] = datos_turno["fecha_cirugia"]
         if "cirujano_nombre" in datos_turno and datos_turno["cirujano_nombre"]:
@@ -2524,37 +2539,45 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
 
         if payload_asesoria:
             supabase.table("asesorias_quirurgicas").update(payload_asesoria).eq("id", asesoria_id).execute()
-            logger.info(f"Sincronizada asesoría {asesoria_id} desde datos de quirófano con éxito.")
+            logger.info(f"Sincronizada asesoría {asesoria_id} a estado '{nuevo_estado}' con éxito.")
     except Exception as e:
         logger.error(f"Error sincronizando asesoría {asesoria_id} desde quirófano: {e}")
 
 def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Crea un turno de quirófano y genera automáticamente un token para consentimiento.
-    Sincroniza en tiempo real los datos con Asesoramiento Quirúrgico (paciente).
+    Crea un turno de quirófano sanitizando columnas y generando token de consentimiento.
+    Transiciona el caso en Asesoramiento Quirúrgico al estado 'programado'.
     """
     if not supabase:
         return {}
     import secrets
     try:
+        # Sanitizar payload para enviar solo columnas válidas de turnos_quirofano
+        payload = {k: v for k, v in datos.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None and v != ""}
+        
         token = secrets.token_urlsafe(24)
-        payload = {
-            **datos,
-            "consentimiento_token": token,
-            "consentimiento_estado": "pendiente_envio",
-            "created_at": "now()",
-            "updated_at": "now()"
-        }
+        payload["consentimiento_token"] = token
+        payload["consentimiento_estado"] = payload.get("consentimiento_estado") or "pendiente_envio"
+        payload["estado"] = payload.get("estado") or "programado"
+        payload["created_at"] = "now()"
+        payload["updated_at"] = "now()"
+        
+        # Si paciente_id no vino pero hay asesoría, buscar paciente_id de la asesoría
+        if not payload.get("paciente_id") and payload.get("asesoria_id"):
+            res_as = supabase.table("asesorias_quirurgicas").select("paciente_id").eq("id", payload["asesoria_id"]).limit(1).execute()
+            if res_as.data:
+                payload["paciente_id"] = res_as.data[0].get("paciente_id")
         
         resp = supabase.table("turnos_quirofano").insert(payload).execute()
         if not resp.data or len(resp.data) == 0:
+            logger.error(f"No se pudo insertar turno en BD: respuesta vacía.")
             return {}
         
         turno_creado = resp.data[0]
         
-        # Sincronización bidireccional inmediata con Asesoramiento Quirúrgico
-        if datos.get("asesoria_id"):
-            sincronizar_asesoria_desde_quirofano(datos["asesoria_id"], datos)
+        # Sincronización bidireccional y cambio de estado a 'programado'
+        if payload.get("asesoria_id"):
+            sincronizar_asesoria_desde_quirofano(payload["asesoria_id"], payload, nuevo_estado="programado")
                 
         return turno_creado
     except Exception as e:
@@ -2565,22 +2588,47 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
     if not supabase or not turno_id:
         return {}
     try:
-        payload = {**datos, "updated_at": "now()"}
+        payload = {k: v for k, v in datos.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
+        payload["updated_at"] = "now()"
+        
         resp = supabase.table("turnos_quirofano").update(payload).eq("id", turno_id).execute()
         if not resp.data or len(resp.data) == 0:
             return {}
         
         turno_actualizado = resp.data[0]
         
-        # Sincronización bidireccional si el turno tiene asesoría vinculada
-        asesoria_id = datos.get("asesoria_id") or turno_actualizado.get("asesoria_id")
+        asesoria_id = payload.get("asesoria_id") or turno_actualizado.get("asesoria_id")
         if asesoria_id:
-            sincronizar_asesoria_desde_quirofano(asesoria_id, datos)
+            sincronizar_asesoria_desde_quirofano(asesoria_id, payload, nuevo_estado="programado")
             
         return turno_actualizado
     except Exception as e:
         logger.error(f"Error al actualizar turno de quirófano: {e}")
         return {}
+
+def eliminar_turno_quirofano(turno_id: str) -> bool:
+    if not supabase or not turno_id:
+        return False
+    try:
+        # Obtener turno antes de borrar para saber si tenía asesoría vinculada
+        res_t = supabase.table("turnos_quirofano").select("asesoria_id").eq("id", turno_id).limit(1).execute()
+        asesoria_id = res_t.data[0].get("asesoria_id") if res_t.data else None
+
+        supabase.table("turnos_quirofano").delete().eq("id", turno_id).execute()
+
+        # Si tenía asesoría, revertir su estado a 'confirmado' y limpiar fecha
+        if asesoria_id:
+            supabase.table("asesorias_quirurgicas").update({
+                "estado": "confirmado",
+                "fecha_definitiva_cirugia": None,
+                "updated_at": "now()"
+            }).eq("id", asesoria_id).execute()
+            logger.info(f"Asesoría {asesoria_id} revertida a 'confirmado' tras eliminar turno.")
+
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar turno de quirófano: {e}")
+        return False
 
 def eliminar_turno_quirofano(turno_id: str) -> bool:
     if not supabase or not turno_id:

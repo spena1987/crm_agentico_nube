@@ -87,7 +87,7 @@ interface MetricasPipeline {
   sla_dias_critico: number
 }
 
-// 4 Columnas para casos ABIERTOS / EN GESTIÓN
+// 5 Columnas para casos ABIERTOS / EN GESTIÓN
 const ETAPAS_COLUMNAS_ACTIVAS = [
   {
     id: 'derivado',
@@ -113,9 +113,16 @@ const ETAPAS_COLUMNAS_ACTIVAS = [
   {
     id: 'confirmado',
     titulo: '4. Confirmados',
-    subtitulo: 'Fecha de quirófano coordinada',
+    subtitulo: 'Cirugía confirmada (Pendiente Qx)',
     colorHeader: 'bg-emerald-600/10 text-emerald-300 border-emerald-500/30',
     colorDot: 'bg-emerald-400'
+  },
+  {
+    id: 'programado',
+    titulo: '5. Programados Qx',
+    subtitulo: 'Fecha y sala de quirófano asignada',
+    colorHeader: 'bg-cyan-600/10 text-cyan-300 border-cyan-500/30',
+    colorDot: 'bg-cyan-400'
   }
 ]
 
@@ -898,7 +905,7 @@ export default function PipelineQuirurgicoPage() {
       {/* 5A. TABLERO KANBAN DE ETAPAS ABIERTAS / ACTIVAS (4 COLUMNAS) */}
       {/* ==================================================================== */}
       {vistaActual === 'activos' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3.5 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 items-start">
           {ETAPAS_COLUMNAS_ACTIVAS.map((col) => {
             const casosColumna = etapasActivasFiltradas[col.id] || []
             const montoTotalColumna = casosColumna.reduce(
