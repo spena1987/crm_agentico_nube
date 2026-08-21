@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from 'react'
 import {
   X,
+  CalendarClock,
+  CalendarX,
+  Trash2,
   Calendar,
   Clock,
   User,
@@ -107,6 +110,7 @@ export default function FichaTurnoModal({
   })
 
   const [guardando, setGuardando] = useState(false)
+  const [cancelando, setCancelando] = useState(false)
   const [enviandoWA, setEnviandoWA] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
@@ -266,6 +270,36 @@ export default function FichaTurnoModal({
       setError(err.message || 'Error al guardar')
     } finally {
       setGuardando(false)
+    }
+  }
+
+  const handleCancelarTurno = async () => {
+    if (!turno?.id) return
+    const confirmacion = confirm(
+      '¿Está seguro de que desea cancelar este turno quirúrgico?\n\n' +
+      '• El paciente saldrá del turnero de quirófano.\n' +
+      '• El estado volverá automáticamente a "Caso Confirmado" en Asesoramiento Quirúrgico.\n' +
+      '• Podrá volver a asignarle una nueva fecha y sala en cualquier momento.'
+    )
+    if (!confirmacion) return
+
+    try {
+      setCancelando(true)
+      setError(null)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || 'Error al cancelar el turno de quirófano')
+      }
+      onSaved()
+      onClose()
+    } catch (err: any) {
+      console.error('Error cancelando turno:', err)
+      setError(err.message || 'Error al cancelar el turno')
+    } finally {
+      setCancelando(false)
     }
   }
 
@@ -751,17 +785,32 @@ export default function FichaTurnoModal({
 
         {/* Pie del Modal con Acciones */}
         <div className="p-4 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-3 bg-slate-50 dark:bg-slate-800/60">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {esEdicion && (
-              <button
-                type="button"
-                onClick={handleEnviarConsentimientoWA}
-                disabled={enviandoWA || !formData.paciente_telefono}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
-              >
-                {enviandoWA ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                <span>Enviar Consentimiento por WhatsApp</span>
-              </button>
+              <>
+                {/* Botón Cancelar Turno (Devuelve a Confirmado en Asesoramiento) */}
+                <button
+                  type="button"
+                  onClick={handleCancelarTurno}
+                  disabled={cancelando || guardando}
+                  className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  title="Eliminar este turno y devolver el caso a 'Confirmado' en Asesoramiento Quirúrgico"
+                >
+                  {cancelando ? <Loader2 size={14} className="animate-spin" /> : <CalendarX size={14} />}
+                  <span>Cancelar Turno</span>
+                </button>
+
+                {/* Botón Enviar Consentimiento */}
+                <button
+                  type="button"
+                  onClick={handleEnviarConsentimientoWA}
+                  disabled={enviandoWA || !formData.paciente_telefono || cancelando}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+                >
+                  {enviandoWA ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  <span>Enviar Consentimiento WA</span>
+                </button>
+              </>
             )}
           </div>
 
@@ -769,18 +818,29 @@ export default function FichaTurnoModal({
             <button
               type="button"
               onClick={onClose}
+              disabled={guardando || cancelando}
               className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
-              Cancelar
+              Cerrar
             </button>
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={guardando}
-              className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md transition-all disabled:opacity-50"
+              disabled={guardando || cancelando}
+              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md transition-all disabled:opacity-50"
             >
-              {guardando ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-              <span>{esEdicion ? 'Actualizar y Sincronizar' : 'Guardar y Agendar Turno'}</span>
+              {guardando ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : esEdicion ? (
+                <CalendarClock size={16} />
+              ) : (
+                <CheckCircle2 size={16} />
+              )}
+              <span>
+                {esEdicion
+                  ? 'Reprogramar / Guardar Cambios'
+                  : 'Guardar y Agendar Turno'}
+              </span>
             </button>
           </div>
         </div>
