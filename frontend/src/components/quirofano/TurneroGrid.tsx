@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Lock, FileCheck2, Send, Clock, User, Eye, UserCheck } from 'lucide-react'
+import { Lock, FileCheck2, Send, Clock, User, Eye, UserCheck, Timer } from 'lucide-react'
 
 interface TurneroGridProps {
   modo: 'dia' | 'semana'
@@ -17,24 +17,18 @@ interface TurneroGridProps {
   onEliminarBloqueo: (bloqueoId: string) => void
 }
 
-const GENERAR_SLOTS_HORARIOS = () => {
-  const slots: string[] = []
-  for (let h = 8; h <= 14; h++) {
-    for (let m = 0; m < 60; m += 10) {
-      if (h === 14 && m > 30) break
-      const hh = h.toString().padStart(2, '0')
-      const mm = m.toString().padStart(2, '0')
-      slots.push(`${hh}:${mm}`)
-    }
-  }
-  return slots
-}
-
 // Convertir "HH:MM" a minutos desde las 00:00
 const horaAMinutos = (hora: string) => {
   if (!hora) return 0
   const [h, m] = hora.slice(0, 5).split(':').map(Number)
   return h * 60 + m
+}
+
+// Convertir minutos a "HH:MM"
+const minutosAHora = (min: number) => {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
 }
 
 export default function TurneroGrid({
@@ -50,12 +44,25 @@ export default function TurneroGrid({
   onTurnoClick,
   onEliminarBloqueo
 }: TurneroGridProps) {
-  const slots = GENERAR_SLOTS_HORARIOS()
-
-  // Columnas a renderizar según el modo:
-  // - En modo "dia": Columnas son las salas de Quirófano
-  // - En modo "semana": Columnas son los 7 días de la semana
   const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
+
+  // Calcular rango y paso de slots según configuración
+  const pasoMinutos = modo === 'semana' && quirofanoActual?.duracion_slot_minutos
+    ? quirofanoActual.duracion_slot_minutos
+    : 10 // Intervalo base para permitir fraccionamiento preciso
+
+  // Horario de inicio y fin
+  const horaInicioMin = modo === 'semana' && quirofanoActual?.hora_inicio
+    ? horaAMinutos(quirofanoActual.hora_inicio)
+    : 8 * 60 // 08:00
+  const horaFinMin = modo === 'semana' && quirofanoActual?.hora_fin
+    ? horaAMinutos(quirofanoActual.hora_fin)
+    : 14 * 60 + 30 // 14:30
+
+  const slots: string[] = []
+  for (let m = horaInicioMin; m <= horaFinMin; m += pasoMinutos) {
+    slots.push(minutosAHora(m))
+  }
 
   return (
     <div className="w-full overflow-x-auto bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm">
@@ -63,25 +70,29 @@ export default function TurneroGrid({
         {/* Cabecera */}
         <thead>
           <tr className="bg-slate-100 dark:bg-slate-800/80 border-b border-[var(--border)]">
-            <th className="p-3 text-xs font-bold text-[var(--secondary)] w-20 border-r border-[var(--border)] text-center sticky left-0 bg-slate-100 dark:bg-slate-800 z-10">
+            <th className="p-3 text-xs font-bold text-[var(--secondary)] w-24 border-r border-[var(--border)] text-center sticky left-0 bg-slate-100 dark:bg-slate-800 z-10">
               Hora
             </th>
 
             {modo === 'dia' ? (
               quirofanos.map((q) => (
                 <th key={q.id} className="p-3 text-xs font-bold text-[var(--foreground)] border-r border-[var(--border)] last:border-0">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
-                    <span className="truncate">{q.nombre}</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                      {q.codigo}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
+                      <span className="truncate">{q.nombre}</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
+                        {q.codigo}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-blue-600 bg-blue-50 dark:bg-blue-950 px-1.5 py-0.5 rounded border border-blue-200 dark:border-blue-800 shrink-0">
+                      ⏱ {q.duracion_slot_minutos || 15}m
                     </span>
                   </div>
                 </th>
               ))
             ) : (
               diasSemana.map((d) => {
-                // Bloque médico asignado a este día para este quirófano
                 const bloqueMed = bloquesMedicos.find(
                   (b) => b.quirofano_id === quirofanoActual?.id && b.dia_semana === d.numeroDia
                 )
@@ -100,7 +111,7 @@ export default function TurneroGrid({
                       </div>
                       {bloqueMed && (
                         <span
-                          className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-semibold truncate max-w-[110px]"
+                          className="text-[9px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-semibold truncate max-w-[110px]"
                           title={`${bloqueMed.medico_nombre} (${bloqueMed.hora_desde.slice(0, 5)}-${bloqueMed.hora_hasta.slice(0, 5)})`}
                         >
                           {bloqueMed.medico_nombre.split(',')[0]}
@@ -114,22 +125,21 @@ export default function TurneroGrid({
           </tr>
         </thead>
 
-        {/* Cuerpo con Ocupación Dinámica */}
+        {/* Cuerpo de Slots con Duración Dinámica */}
         <tbody>
           {slots.map((horaSlot) => {
             const slotMin = horaAMinutos(horaSlot)
 
             return (
               <tr key={horaSlot} className="border-b border-[var(--border)]/60 hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors">
-                {/* Columna de Hora */}
+                {/* Celda de Hora */}
                 <td className="p-2 text-center font-mono text-[11px] font-bold text-[var(--secondary)] bg-slate-50/50 dark:bg-slate-900/30 border-r border-[var(--border)] sticky left-0 z-10">
                   {horaSlot}
                 </td>
 
                 {modo === 'dia' ? (
-                  // MODO DÍA: COLUMNAS = QUIROFANOS
+                  // VISTA DÍA
                   quirofanos.map((q) => {
-                    // 1. Verificar si hay un turno que inicia exactamente en este slot
                     const turnoInicio = turnos.find(
                       (t) =>
                         t.quirofano_id === q.id &&
@@ -137,16 +147,14 @@ export default function TurneroGrid({
                         (t.hora_inicio || '').slice(0, 5) === horaSlot
                     )
 
-                    // 2. Verificar si este slot está cubierto por un turno anterior (ocupación continua)
                     const turnoCubriendo = turnos.find((t) => {
                       if (t.quirofano_id !== q.id || t.fecha_cirugia !== fechaSeleccionada) return false
                       const tInicioMin = horaAMinutos(t.hora_inicio)
-                      const dur = t.duracion_minutos || 20
+                      const dur = t.duracion_minutos || q.duracion_slot_minutos || 20
                       const tFinMin = tInicioMin + dur
                       return slotMin > tInicioMin && slotMin < tFinMin
                     })
 
-                    // 3. Verificar si hay un bloqueo en esta hora
                     const bloqueo = bloqueos.find((b) => {
                       if (b.quirofano_id !== q.id || b.fecha !== fechaSeleccionada) return false
                       const desde = horaAMinutos(b.hora_desde)
@@ -155,13 +163,12 @@ export default function TurneroGrid({
                     })
 
                     if (turnoCubriendo) {
-                      // Slot ocupado por la cirugía en curso: no mostrar nada (la tarjeta principal abarca el tiempo)
                       return (
                         <td
                           key={q.id}
                           className="p-1 border-r border-[var(--border)] last:border-0 bg-blue-50/20 dark:bg-blue-950/10 border-dashed"
                         >
-                          <div className="h-6 flex items-center justify-center">
+                          <div className="h-5 flex items-center justify-center">
                             <span className="text-[9px] font-mono text-blue-400 opacity-60">
                               ▲ Ocupado ({turnoCubriendo.practica_nombre?.slice(0, 18)}...)
                             </span>
@@ -185,7 +192,7 @@ export default function TurneroGrid({
                               onClick={() => onEliminarBloqueo(bloqueo.id)}
                               className="text-[10px] text-red-500 hover:underline"
                             >
-                              Desbloquear
+                              ✕
                             </button>
                           </div>
                         </td>
@@ -198,7 +205,7 @@ export default function TurneroGrid({
                       const ojoBadge = ojo === 'OD' ? 'Ojo Der' : ojo === 'OI' ? 'Ojo Izq' : 'Ambos'
                       const isFirmado = turnoInicio.consentimiento_estado === 'firmado_digital'
                       const isEnviado = turnoInicio.consentimiento_estado === 'enviado_whatsapp'
-                      const duracion = turnoInicio.duracion_minutos || 20
+                      const duracion = turnoInicio.duracion_minutos || q.duracion_slot_minutos || 20
 
                       return (
                         <td key={q.id} className="p-1.5 border-r border-[var(--border)] last:border-0">
@@ -261,7 +268,6 @@ export default function TurneroGrid({
                       )
                     }
 
-                    // Slot Vacío Clickeable
                     return (
                       <td
                         key={q.id}
@@ -275,11 +281,10 @@ export default function TurneroGrid({
                     )
                   })
                 ) : (
-                  // MODO SEMANA: COLUMNAS = 7 DÍAS DE LA SEMANA (PARA EL QUIROFANO SELECCIONADO)
+                  // VISTA SEMANAL
                   diasSemana.map((d) => {
                     const qId = quirofanoActual?.id
 
-                    // 1. Turno inicio en este día y hora
                     const turnoInicio = turnos.find(
                       (t) =>
                         t.quirofano_id === qId &&
@@ -287,16 +292,14 @@ export default function TurneroGrid({
                         (t.hora_inicio || '').slice(0, 5) === horaSlot
                     )
 
-                    // 2. Turno cubriendo slot
                     const turnoCubriendo = turnos.find((t) => {
                       if (t.quirofano_id !== qId || t.fecha_cirugia !== d.fecha) return false
                       const tInicioMin = horaAMinutos(t.hora_inicio)
-                      const dur = t.duracion_minutos || 20
+                      const dur = t.duracion_minutos || quirofanoActual?.duracion_slot_minutos || 20
                       const tFinMin = tInicioMin + dur
                       return slotMin > tInicioMin && slotMin < tFinMin
                     })
 
-                    // 3. Bloqueo
                     const bloqueo = bloqueos.find((b) => {
                       if (b.quirofano_id !== qId || b.fecha !== d.fecha) return false
                       const desde = horaAMinutos(b.hora_desde)
@@ -304,7 +307,6 @@ export default function TurneroGrid({
                       return slotMin >= desde && slotMin < hasta
                     })
 
-                    // 4. Bloque médico asignado de fondo
                     const bloqueMed = bloquesMedicos.find(
                       (b) =>
                         b.quirofano_id === qId &&
@@ -319,7 +321,7 @@ export default function TurneroGrid({
                           key={d.fecha}
                           className="p-1 border-r border-[var(--border)] last:border-0 bg-blue-50/20 dark:bg-blue-950/10 border-dashed"
                         >
-                          <div className="h-6 flex items-center justify-center">
+                          <div className="h-5 flex items-center justify-center">
                             <span className="text-[9px] font-mono text-blue-400 opacity-60">
                               ▲ Ocupado ({turnoCubriendo.practica_nombre?.slice(0, 15)}...)
                             </span>
@@ -356,7 +358,7 @@ export default function TurneroGrid({
                       const ojoBadge = ojo === 'OD' ? 'OD' : ojo === 'OI' ? 'OI' : 'AO'
                       const isFirmado = turnoInicio.consentimiento_estado === 'firmado_digital'
                       const isEnviado = turnoInicio.consentimiento_estado === 'enviado_whatsapp'
-                      const duracion = turnoInicio.duracion_minutos || 20
+                      const duracion = turnoInicio.duracion_minutos || quirofanoActual?.duracion_slot_minutos || 20
 
                       return (
                         <td key={d.fecha} className="p-1.5 border-r border-[var(--border)] last:border-0">
@@ -404,7 +406,6 @@ export default function TurneroGrid({
                       )
                     }
 
-                    // Slot Vacío (resaltado si pertenece a un bloque médico de este doctor)
                     return (
                       <td
                         key={d.fecha}

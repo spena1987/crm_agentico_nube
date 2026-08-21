@@ -15,7 +15,10 @@ import {
   FileCheck2,
   MessageSquare,
   Scissors,
-  UserCheck
+  UserCheck,
+  Edit2,
+  Sliders,
+  Timer
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -24,6 +27,9 @@ interface Quirofano {
   nombre: string
   codigo: string
   color: string
+  duracion_slot_minutos?: number
+  hora_inicio?: string
+  hora_fin?: string
   activo: boolean
   orden: number
 }
@@ -45,6 +51,12 @@ interface PlantillaConsentimiento {
   tipo: string
   titulo: string
   cuerpo: string
+}
+
+interface PracticaDuracionItem {
+  id: string
+  nombre: string
+  minutos: number
 }
 
 const DIAS_SEMANA = [
@@ -72,13 +84,21 @@ export default function QuirofanoSettingsCard() {
 
   const [quirofanos, setQuirofanos] = useState<Quirofano[]>([])
   const [bloques, setBloques] = useState<BloqueMedico[]>([])
-  const [duraciones, setDuraciones] = useState<Record<string, number>>({
-    inyeccion: 10,
-    catarata_faco: 20,
-    catarata_compleja: 30,
-    vitrectomia: 60,
-    lasik: 15
-  })
+  
+  // Lista de duraciones dinámicas por práctica
+  const [practicasLista, setPracticasLista] = useState<PracticaDuracionItem[]>([
+    { id: 'inyeccion', nombre: 'Inyección Intravítrea (Antiangiogénico)', minutos: 10 },
+    { id: 'catarata_faco', nombre: 'Catarata con Facoemulsificación Estándar', minutos: 20 },
+    { id: 'catarata_compleja', nombre: 'Catarata Compleja / Combinada', minutos: 30 },
+    { id: 'vitrectomia', nombre: 'Vitrectomía Posterior / Retina', minutos: 60 },
+    { id: 'lasik', nombre: 'Cirugía Refractiva LASIK / PRK', minutos: 15 }
+  ])
+
+  // Parámetros Generales de la Grilla
+  const [horaAperturaGeneral, setHoraAperturaGeneral] = useState('08:00')
+  const [horaCierreGeneral, setHoraCierreGeneral] = useState('15:00')
+  const [slotIntervaloGeneral, setSlotIntervaloGeneral] = useState(10)
+
   const [plantillasConsentimiento, setPlantillasConsentimiento] = useState<PlantillaConsentimiento[]>([])
   const [waMensajeEnvio, setWaMensajeEnvio] = useState('')
   const [waMensajeConfirmacion, setWaMensajeConfirmacion] = useState('')
@@ -89,15 +109,16 @@ export default function QuirofanoSettingsCard() {
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
-  const [nuevaSala, setNuevaSala] = useState<Quirofano>({
-    nombre: '',
-    codigo: '',
-    color: '#3B82F6',
-    activo: true,
-    orden: 1
-  })
+  // Estado para Crear / Editar Sala
+  const [salaEnEdicion, setSalaEnEdicion] = useState<Quirofano | null>(null)
   const [mostrandoFormSala, setMostrandoFormSala] = useState(false)
 
+  // Nueva Práctica
+  const [nuevaPracticaNombre, setNuevaPracticaNombre] = useState('')
+  const [nuevaPracticaMinutos, setNuevaPracticaMinutos] = useState(20)
+  const [mostrandoFormPractica, setMostrandoFormPractica] = useState(false)
+
+  // Nuevo Bloque
   const [nuevoBloque, setNuevoBloque] = useState({
     quirofano_id: '',
     medico_id: 6162,
@@ -125,7 +146,22 @@ export default function QuirofanoSettingsCard() {
 
       if (dataConf.success && dataConf.configuracion) {
         const c = dataConf.configuracion
-        setDuraciones(c.duraciones_prestaciones || {})
+        if (c.duraciones_prestaciones) {
+          if (Array.isArray(c.duraciones_prestaciones)) {
+            setPracticasLista(c.duraciones_prestaciones)
+          } else {
+            const items: PracticaDuracionItem[] = Object.entries(c.duraciones_prestaciones).map(([k, v]) => ({
+              id: k,
+              nombre: k.replace(/_/g, ' ').toUpperCase(),
+              minutos: Number(v) || 20
+            }))
+            if (items.length > 0) setPracticasLista(items)
+          }
+        }
+        if (c.hora_apertura_general) setHoraAperturaGeneral(c.hora_apertura_general)
+        if (c.hora_cierre_general) setHoraCierreGeneral(c.hora_cierre_general)
+        if (c.slot_intervalo_general) setSlotIntervaloGeneral(c.slot_intervalo_general)
+
         setPlantillasConsentimiento(c.plantillas_consentimiento || [])
         setWaMensajeEnvio(c.whatsapp_mensaje_envio || '')
         setWaMensajeConfirmacion(c.whatsapp_mensaje_confirmacion || '')
@@ -143,7 +179,7 @@ export default function QuirofanoSettingsCard() {
         setBloques(dataBloques.bloques)
       }
     } catch (err: any) {
-      console.error('Error cargando configuración de quirófano:', err)
+      console.error('Error cargando configuración:', err)
       setError('No se pudo conectar con el servidor para cargar las configuraciones.')
     } finally {
       setCargando(false)
@@ -159,8 +195,16 @@ export default function QuirofanoSettingsCard() {
       setGuardando(true)
       setError(null)
 
+      const dictDuraciones: Record<string, number> = {}
+      practicasLista.forEach((p) => {
+        dictDuraciones[p.id || p.nombre.toLowerCase().replace(/\s+/g, '_')] = p.minutos
+      })
+
       const payload = {
-        duraciones_prestaciones: duraciones,
+        duraciones_prestaciones: dictDuraciones,
+        hora_apertura_general: horaAperturaGeneral,
+        hora_cierre_general: horaCierreGeneral,
+        slot_intervalo_general: Number(slotIntervaloGeneral) || 10,
         plantillas_consentimiento: plantillasConsentimiento,
         whatsapp_mensaje_envio: waMensajeEnvio,
         whatsapp_mensaje_confirmacion: waMensajeConfirmacion,
@@ -188,29 +232,44 @@ export default function QuirofanoSettingsCard() {
     }
   }
 
-  const handleCrearSala = async (e: React.FormEvent) => {
+  // Guardar Sala (Crear o Actualizar)
+  const handleGuardarSala = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!nuevaSala.nombre.trim() || !nuevaSala.codigo.trim()) {
+    if (!salaEnEdicion?.nombre.trim() || !salaEnEdicion?.codigo.trim()) {
       setError('Debe completar el nombre y código de la sala.')
       return
     }
 
     try {
       setGuardando(true)
-      const res = await fetch(`${BACKEND_URL}/api/quirofanos`, {
-        method: 'POST',
+      const esEdicion = !!salaEnEdicion.id
+      const url = esEdicion ? `${BACKEND_URL}/api/quirofanos/${salaEnEdicion.id}` : `${BACKEND_URL}/api/quirofanos`
+      const method = esEdicion ? 'PUT' : 'POST'
+
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(nuevaSala)
+        body: JSON.stringify({
+          ...salaEnEdicion,
+          duracion_slot_minutos: Number(salaEnEdicion.duracion_slot_minutos) || 15,
+          hora_inicio: salaEnEdicion.hora_inicio || '08:00',
+          hora_fin: salaEnEdicion.hora_fin || '14:00'
+        })
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        setQuirofanos((prev) => [...prev, data.quirofano])
-        setNuevaSala({ nombre: '', codigo: '', color: '#3B82F6', activo: true, orden: quirofanos.length + 1 })
+        if (esEdicion) {
+          setQuirofanos((prev) => prev.map((q) => (q.id === data.quirofano.id ? data.quirofano : q)))
+          setMensajeExito('✔ Sala actualizada con éxito.')
+        } else {
+          setQuirofanos((prev) => [...prev, data.quirofano])
+          setMensajeExito('✔ Nueva sala de quirófano creada.')
+        }
         setMostrandoFormSala(false)
-        setMensajeExito('✔ Sala de quirófano creada.')
+        setSalaEnEdicion(null)
         setTimeout(() => setMensajeExito(null), 3000)
       } else {
-        throw new Error(data.detail || 'Error al crear sala')
+        throw new Error(data.detail || 'Error al guardar sala')
       }
     } catch (err: any) {
       setError(err.message)
@@ -234,6 +293,25 @@ export default function QuirofanoSettingsCard() {
     }
   }
 
+  // Agregar Nueva Práctica Dinámica
+  const handleAgregarPractica = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!nuevaPracticaNombre.trim()) return
+    const idKey = nuevaPracticaNombre.toLowerCase().trim().replace(/\s+/g, '_')
+    setPracticasLista((prev) => [
+      ...prev,
+      { id: idKey, nombre: nuevaPracticaNombre.trim(), minutos: Number(nuevaPracticaMinutos) || 20 }
+    ])
+    setNuevaPracticaNombre('')
+    setNuevaPracticaMinutos(20)
+    setMostrandoFormPractica(false)
+  }
+
+  const handleEliminarPractica = (index: number) => {
+    setPracticasLista((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  // Bloques Médicos
   const handleCrearBloque = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nuevoBloque.quirofano_id || !nuevoBloque.medico_nombre) {
@@ -297,10 +375,10 @@ export default function QuirofanoSettingsCard() {
           </div>
           <div>
             <h2 className="text-lg font-bold text-[var(--foreground)]">
-              Quirófanos, Programación & Consentimiento Digital
+              Quirófanos, Duración de Turnos & Consentimiento
             </h2>
             <p className="text-xs text-[var(--secondary)]">
-              Configure las salas de cirugía, duraciones de slots, bloques de cirujanos y plantillas de consentimiento por WhatsApp.
+              Configure las salas, duración de slots parametrizables, horarios operativos y plantillas de WhatsApp.
             </p>
           </div>
         </div>
@@ -329,10 +407,11 @@ export default function QuirofanoSettingsCard() {
         </div>
       )}
 
+      {/* Subpestañas */}
       <div className="flex flex-wrap gap-2 p-1.5 bg-slate-100 dark:bg-slate-800/40 rounded-xl border border-[var(--border)]">
         {[
-          { id: 'salas', label: 'Salas de Quirófano', icon: Building2 },
-          { id: 'duraciones', label: 'Duraciones por Cirugía', icon: Clock },
+          { id: 'salas', label: 'Salas de Quirófano & Duración', icon: Building2 },
+          { id: 'duraciones', label: 'Duraciones por Práctica', icon: Timer },
           { id: 'bloques', label: 'Bloques de Cirujanos', icon: Scissors },
           { id: 'consentimientos', label: 'Textos de Consentimiento', icon: FileCheck2 },
           { id: 'whatsapp', label: 'Mensajes WhatsApp', icon: MessageSquare }
@@ -356,59 +435,140 @@ export default function QuirofanoSettingsCard() {
         })}
       </div>
 
+      {/* SECCIÓN 1: SALAS DE QUIRÓFANO Y DURACIÓN PARAMETRIZABLE */}
       {activeSubSection === 'salas' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-bold text-[var(--foreground)]">Catálogo de Salas y Quirófanos</h3>
-              <p className="text-xs text-[var(--secondary)]">Salas disponibles para asignación en el turnero.</p>
+              <h3 className="text-sm font-bold text-[var(--foreground)]">Salas de Cirugía y Duración de Turnos</h3>
+              <p className="text-xs text-[var(--secondary)]">
+                Defina la duración de turno predeterminada de cada sala (en minutos) y sus horarios de apertura y cierre.
+              </p>
             </div>
             <button
               type="button"
-              onClick={() => setMostrandoFormSala(!mostrandoFormSala)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-bold hover:bg-blue-100 transition-all"
+              onClick={() => {
+                setSalaEnEdicion({
+                  nombre: '',
+                  codigo: '',
+                  color: '#3B82F6',
+                  duracion_slot_minutos: 20,
+                  hora_inicio: '08:00',
+                  hora_fin: '14:00',
+                  activo: true,
+                  orden: quirofanos.length + 1
+                })
+                setMostrandoFormSala(true)
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow transition-all"
             >
               <Plus size={14} />
-              <span>{mostrandoFormSala ? 'Cancelar' : 'Nueva Sala'}</span>
+              <span>Nueva Sala</span>
             </button>
           </div>
 
-          {mostrandoFormSala && (
-            <form onSubmit={handleCrearSala} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-blue-500/30 space-y-3">
-              <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider">Crear Nueva Sala</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Formulario Modal / Card para Crear o Editar Sala */}
+          {mostrandoFormSala && salaEnEdicion && (
+            <form onSubmit={handleGuardarSala} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-blue-500/40 space-y-4 animate-fade-in shadow-md">
+              <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
+                <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
+                  <Building2 size={15} />
+                  <span>{salaEnEdicion.id ? 'Editar Sala de Quirófano' : 'Nueva Sala de Quirófano'}</span>
+                </h4>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMostrandoFormSala(false)
+                    setSalaEnEdicion(null)
+                  }}
+                  className="text-xs text-slate-400 hover:text-slate-600"
+                >
+                  ✕ Cerrar
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--secondary)]">Nombre de la Sala *</label>
                   <input
                     type="text"
-                    value={nuevaSala.nombre}
-                    onChange={(e) => setNuevaSala({ ...nuevaSala, nombre: e.target.value })}
-                    placeholder="Ej: Quirófano 1 - Principal"
-                    className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
+                    value={salaEnEdicion.nombre}
+                    onChange={(e) => setSalaEnEdicion({ ...salaEnEdicion, nombre: e.target.value })}
+                    placeholder="Ej: Quirófano 1 - Principal / Cataratas"
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500 font-bold"
                     required
                   />
                 </div>
+
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--secondary)]">Código Identificador *</label>
                   <input
                     type="text"
-                    value={nuevaSala.codigo}
-                    onChange={(e) => setNuevaSala({ ...nuevaSala, codigo: e.target.value.toUpperCase() })}
+                    value={salaEnEdicion.codigo}
+                    onChange={(e) => setSalaEnEdicion({ ...salaEnEdicion, codigo: e.target.value.toUpperCase() })}
                     placeholder="Ej: Q01, SALA_INJ"
-                    className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] uppercase outline-none focus:border-blue-500"
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] uppercase outline-none focus:border-blue-500 font-mono font-bold"
                     required
                   />
                 </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-[var(--secondary)]">
+                    Duración Predeterminada del Turno (Minutos) *
+                  </label>
+                  <select
+                    value={salaEnEdicion.duracion_slot_minutos || 20}
+                    onChange={(e) =>
+                      setSalaEnEdicion({
+                        ...salaEnEdicion,
+                        duracion_slot_minutos: parseInt(e.target.value) || 20
+                      })
+                    }
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-blue-600"
+                  >
+                    <option value={5}>5 minutos (Láser / Curación rápida)</option>
+                    <option value={10}>10 minutos (Inyección Intravítrea)</option>
+                    <option value={15}>15 minutos (Cirugía Refractiva / LASIK)</option>
+                    <option value={20}>20 minutos (Catarata Estándar)</option>
+                    <option value={30}>30 minutos (Catarata Compleja / Glaucoma)</option>
+                    <option value={45}>45 minutos (Cirugías Combinadas)</option>
+                    <option value={60}>60 minutos (Vitrectomía / Retina)</option>
+                    <option value={90}>90 minutos (Procedimientos Mayores)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-[var(--secondary)]">Hora de Apertura / Inicio</label>
+                  <input
+                    type="time"
+                    value={salaEnEdicion.hora_inicio || '08:00'}
+                    onChange={(e) => setSalaEnEdicion({ ...salaEnEdicion, hora_inicio: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-semibold text-[var(--secondary)]">Hora de Cierre / Fin</label>
+                  <input
+                    type="time"
+                    value={salaEnEdicion.hora_fin || '14:00'}
+                    onChange={(e) => setSalaEnEdicion({ ...salaEnEdicion, hora_fin: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-bold font-mono"
+                  />
+                </div>
+
                 <div>
                   <label className="text-[11px] font-semibold text-[var(--secondary)]">Color Identificador</label>
-                  <div className="flex items-center gap-1.5 mt-1.5">
+                  <div className="flex items-center gap-2 mt-2">
                     {PALETA_COLORES.map((c) => (
                       <button
                         key={c.hex}
                         type="button"
-                        onClick={() => setNuevaSala({ ...nuevaSala, color: c.hex })}
+                        onClick={() => setSalaEnEdicion({ ...salaEnEdicion, color: c.hex })}
                         className={`w-6 h-6 rounded-full border-2 transition-transform ${
-                          nuevaSala.color === c.hex ? 'scale-110 border-slate-900 dark:border-white' : 'border-transparent'
+                          salaEnEdicion.color === c.hex
+                            ? 'scale-125 border-slate-900 dark:border-white shadow'
+                            : 'border-transparent'
                         }`}
                         style={{ backgroundColor: c.hex }}
                         title={c.label}
@@ -417,138 +577,202 @@ export default function QuirofanoSettingsCard() {
                   </div>
                 </div>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMostrandoFormSala(false)
+                    setSalaEnEdicion(null)
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl border border-[var(--border)] text-xs font-bold"
+                >
+                  Cancelar
+                </button>
                 <button
                   type="submit"
                   disabled={guardando}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow transition-all"
+                  className="px-5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow"
                 >
-                  Guardar Sala
+                  {guardando ? 'Guardando...' : 'Guardar Parámetros de Sala'}
                 </button>
               </div>
             </form>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {/* Listado de Salas con Parámetros Visibles */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {quirofanos.map((q) => (
               <div
                 key={q.id || q.codigo}
-                className="p-4 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between hover:border-slate-400 dark:hover:border-slate-600 transition-all"
+                className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex flex-col justify-between space-y-3 hover:border-blue-500/50 transition-all shadow-sm"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-3.5 h-10 rounded-full" style={{ backgroundColor: q.color }} />
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-[var(--foreground)]">{q.nombre}</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
-                        {q.codigo}
-                      </span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-3.5 h-12 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[var(--foreground)]">{q.nombre}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold">
+                          {q.codigo}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">● Activo en turnero</span>
                     </div>
-                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">● Activo en turnero</span>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSalaEnEdicion(q)
+                        setMostrandoFormSala(true)
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-all"
+                      title="Editar sala y duración"
+                    >
+                      <Edit2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleEliminarSala(q.id)}
+                      className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
+                      title="Eliminar sala"
+                    >
+                      <Trash2 size={15} />
+                    </button>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleEliminarSala(q.id)}
-                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 rounded-lg transition-all"
-                  title="Eliminar sala"
-                >
-                  <Trash2 size={16} />
-                </button>
+
+                {/* Parámetros de Duración y Horario de la Sala */}
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[var(--border)]/60 text-xs">
+                  <div className="p-2 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-0.5">
+                    <span className="text-[10px] text-[var(--secondary)] font-semibold block flex items-center gap-1">
+                      <Timer size={11} className="text-blue-500" /> Slot del Turno:
+                    </span>
+                    <span className="font-bold text-blue-600 font-mono">
+                      {q.duracion_slot_minutos || 15} minutos
+                    </span>
+                  </div>
+
+                  <div className="p-2 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-0.5">
+                    <span className="text-[10px] text-[var(--secondary)] font-semibold block flex items-center gap-1">
+                      <Clock size={11} className="text-purple-500" /> Operatividad:
+                    </span>
+                    <span className="font-bold text-[var(--foreground)] font-mono text-[11px]">
+                      {q.hora_inicio || '08:00'} - {q.hora_fin || '14:00'} hs
+                    </span>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
 
+      {/* SECCIÓN 2: DURACIONES POR PRÁCTICA (TOTALMENTE DINÁMICO) */}
       {activeSubSection === 'duraciones' && (
         <div className="space-y-4">
-          <div>
-            <h3 className="text-sm font-bold text-[var(--foreground)]">Duraciones Predeterminadas (Slots en Minutos)</h3>
-            <p className="text-xs text-[var(--secondary)]">
-              Define cuántos minutos ocupa automáticamente cada tipo de cirugía al agendarse en el turnero.
-            </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-[var(--foreground)]">Duraciones Predeterminadas por Práctica</h3>
+              <p className="text-xs text-[var(--secondary)]">
+                Personalice los minutos que ocupa cada cirugía. Puede agregar nuevas prácticas, editar duraciones o eliminar.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMostrandoFormPractica(!mostrandoFormPractica)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg text-xs font-bold hover:bg-blue-100 transition-all"
+            >
+              <Plus size={14} />
+              <span>{mostrandoFormPractica ? 'Cancelar' : 'Nueva Práctica'}</span>
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5">
-              <label className="text-xs font-bold text-[var(--foreground)]">Inyección Intravítrea (Avastin/Eylea)</label>
-              <div className="flex items-center gap-2">
+          {mostrandoFormPractica && (
+            <form onSubmit={handleAgregarPractica} className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-blue-500/30 flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[200px]">
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Nombre de la Práctica / Cirugía *</label>
+                <input
+                  type="text"
+                  value={nuevaPracticaNombre}
+                  onChange={(e) => setNuevaPracticaNombre(e.target.value)}
+                  placeholder="Ej: Glaucoma Trabeculectomía, Capsulotomía YAG..."
+                  className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold"
+                  required
+                />
+              </div>
+              <div className="w-36">
+                <label className="text-[11px] font-semibold text-[var(--secondary)]">Minutos Ocupados *</label>
                 <input
                   type="number"
                   min={5}
                   step={5}
-                  value={duraciones.inyeccion || 10}
-                  onChange={(e) => setDuraciones({ ...duraciones, inyeccion: parseInt(e.target.value) || 10 })}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
+                  value={nuevaPracticaMinutos}
+                  onChange={(e) => setNuevaPracticaMinutos(parseInt(e.target.value) || 20)}
+                  className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-blue-600"
+                  required
                 />
-                <span className="text-xs text-[var(--secondary)]">minutos</span>
               </div>
-            </div>
+              <button
+                type="submit"
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow"
+              >
+                Agregar
+              </button>
+            </form>
+          )}
 
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5">
-              <label className="text-xs font-bold text-[var(--foreground)]">Catarata Facoemulsificación Estándar</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={10}
-                  step={5}
-                  value={duraciones.catarata_faco || 20}
-                  onChange={(e) => setDuraciones({ ...duraciones, catarata_faco: parseInt(e.target.value) || 20 })}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
-                />
-                <span className="text-xs text-[var(--secondary)]">minutos</span>
-              </div>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {practicasLista.map((p, idx) => (
+              <div
+                key={p.id || idx}
+                className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between gap-2"
+              >
+                <div className="flex-1 min-w-0">
+                  <input
+                    type="text"
+                    value={p.nombre}
+                    onChange={(e) => {
+                      const copia = [...practicasLista]
+                      copia[idx].nombre = e.target.value
+                      setPracticasLista(copia)
+                    }}
+                    className="w-full bg-transparent border-0 text-xs font-bold text-[var(--foreground)] truncate focus:bg-[var(--card)] focus:border focus:border-[var(--border)] rounded px-1"
+                  />
+                </div>
 
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5">
-              <label className="text-xs font-bold text-[var(--foreground)]">Catarata Compleja / Combinada</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={15}
-                  step={5}
-                  value={duraciones.catarata_compleja || 30}
-                  onChange={(e) => setDuraciones({ ...duraciones, catarata_compleja: parseInt(e.target.value) || 30 })}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
-                />
-                <span className="text-xs text-[var(--secondary)]">minutos</span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <input
+                    type="number"
+                    min={5}
+                    step={5}
+                    value={p.minutos}
+                    onChange={(e) => {
+                      const copia = [...practicasLista]
+                      copia[idx].minutos = parseInt(e.target.value) || 20
+                      setPracticasLista(copia)
+                    }}
+                    className="w-16 px-2 py-1 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-blue-600 font-mono text-center"
+                  />
+                  <span className="text-[11px] text-[var(--secondary)]">min</span>
+                  <button
+                    type="button"
+                    onClick={() => handleEliminarPractica(idx)}
+                    className="p-1 text-slate-400 hover:text-red-500 rounded"
+                    title="Eliminar práctica"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5">
-              <label className="text-xs font-bold text-[var(--foreground)]">Vitrectomía Posterior / Retina</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={20}
-                  step={10}
-                  value={duraciones.vitrectomia || 60}
-                  onChange={(e) => setDuraciones({ ...duraciones, vitrectomia: parseInt(e.target.value) || 60 })}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
-                />
-                <span className="text-xs text-[var(--secondary)]">minutos</span>
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 space-y-1.5">
-              <label className="text-xs font-bold text-[var(--foreground)]">Cirugía Refractiva (LASIK / PRK)</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={10}
-                  step={5}
-                  value={duraciones.lasik || 15}
-                  onChange={(e) => setDuraciones({ ...duraciones, lasik: parseInt(e.target.value) || 15 })}
-                  className="w-24 px-3 py-1.5 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
-                />
-                <span className="text-xs text-[var(--secondary)]">minutos</span>
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       )}
 
+      {/* SECCIÓN 3: BLOQUES DE CIRUJANOS */}
       {activeSubSection === 'bloques' && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
@@ -577,7 +801,7 @@ export default function QuirofanoSettingsCard() {
                     value={nuevoBloque.medico_nombre}
                     onChange={(e) => setNuevoBloque({ ...nuevoBloque, medico_nombre: e.target.value })}
                     placeholder="Ej: Dr. Bonanno, Pablo Antonio"
-                    className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
+                    className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold"
                     required
                   />
                 </div>
@@ -586,7 +810,7 @@ export default function QuirofanoSettingsCard() {
                   <select
                     value={nuevoBloque.quirofano_id}
                     onChange={(e) => setNuevoBloque({ ...nuevoBloque, quirofano_id: e.target.value })}
-                    className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
+                    className="w-full mt-1 px-3 py-2 rounded-lg bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold"
                     required
                   >
                     {quirofanos.map((q) => (
@@ -688,6 +912,7 @@ export default function QuirofanoSettingsCard() {
         </div>
       )}
 
+      {/* SECCIÓN 4: TEXTOS DE CONSENTIMIENTO */}
       {activeSubSection === 'consentimientos' && (
         <div className="space-y-4">
           <div>
@@ -747,6 +972,7 @@ export default function QuirofanoSettingsCard() {
         </div>
       )}
 
+      {/* SECCIÓN 5: MENSAJES WHATSAPP */}
       {activeSubSection === 'whatsapp' && (
         <div className="space-y-4">
           <div>
