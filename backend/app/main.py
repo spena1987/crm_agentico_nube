@@ -2826,8 +2826,8 @@ async def enviar_consentimiento_whatsapp(turno_id: str):
             token = secrets.token_urlsafe(24)
             actualizar_turno_quirofano(turno_id, {"consentimiento_token": token})
             
-        # Determinar base URL pública o del frontend
-        base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "http://localhost:3000"
+        # Determinar base URL pública o del frontend (Vercel en producción)
+        base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or os.getenv("FRONTEND_URL") or "https://crm-agentico-nube-tn4d.vercel.app"
         enlace_firma = f"{base_app_url}/consentimiento/{token}"
         
         ojo = turno.get("ojo") or "OD"
@@ -2843,9 +2843,9 @@ async def enviar_consentimiento_whatsapp(turno_id: str):
             enlace_firma=enlace_firma
         )
         
-        # Enviar mensaje vía WhatsApp
+        # Enviar mensaje vía WhatsApp (función síncrona)
         jid = telefono if "@" in telefono else f"{telefono}@s.whatsapp.net"
-        res_wa = await whatsapp_manager.enviar_mensaje(jid, mensaje_final)
+        res_wa = whatsapp_manager.enviar_mensaje(jid, mensaje_final)
         
         # Actualizar estado de envío en BD
         actualizar_turno_quirofano(turno_id, {
