@@ -1247,6 +1247,117 @@ export default function FichaTurnoModal({
             </button>
           </div>
         </div>
+        {/* MODAL RÁPIDO PARA REGISTRAR / ADMINISTRAR MODELOS DE LIO */}
+        {mostrarModalConfigLio && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-scale-in">
+              <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-blue-600 text-white rounded-xl">
+                    <Eye size={16} />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold text-[var(--foreground)]">Administrar Modelos de LIO</h3>
+                    <p className="text-[10px] text-[var(--secondary)]">Agregue marcas y modelos para usarlos de inmediato en el turno.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalConfigLio(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form onSubmit={handleCrearModeloLioRapido} className="p-4 space-y-3.5">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-[var(--secondary)] uppercase">Laboratorio / Marca *</label>
+                    <input
+                      type="text"
+                      value={nuevoModeloLio.marca}
+                      onChange={(e) => setNuevoModeloLio({ ...nuevoModeloLio, marca: e.target.value })}
+                      placeholder="Ej: Alcon, J&J, Rayner..."
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--background)] border border-[var(--border)] text-xs font-bold outline-none focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-[var(--secondary)] uppercase">Nombre del Modelo *</label>
+                    <input
+                      type="text"
+                      value={nuevoModeloLio.modelo}
+                      onChange={(e) => setNuevoModeloLio({ ...nuevoModeloLio, modelo: e.target.value })}
+                      placeholder="Ej: AcrySof IQ SN60WF..."
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--background)] border border-[var(--border)] text-xs font-bold outline-none focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-[var(--secondary)] uppercase">Tipo de Óptica</label>
+                  <select
+                    value={nuevoModeloLio.tipo_optica}
+                    onChange={(e) => setNuevoModeloLio({ ...nuevoModeloLio, tipo_optica: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--background)] border border-[var(--border)] text-xs font-medium outline-none focus:border-blue-500"
+                  >
+                    <option value="Monofocal Asférico">Monofocal Asférico</option>
+                    <option value="Monofocal Esférico">Monofocal Esférico</option>
+                    <option value="Monofocal Plus">Monofocal Plus (Visión Intermedia)</option>
+                    <option value="Trifocal">Trifocal</option>
+                    <option value="EDOF (Rango Extendido)">EDOF (Rango Extendido)</option>
+                    <option value="Tórico Monofocal">Tórico Monofocal</option>
+                    <option value="Tórico Multifocal">Tórico Multifocal</option>
+                    <option value="Fáquico ICL">Fáquico ICL</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold text-[var(--secondary)] uppercase">Descripción / Detalles</label>
+                  <input
+                    type="text"
+                    value={nuevoModeloLio.descripcion}
+                    onChange={(e) => setNuevoModeloLio({ ...nuevoModeloLio, descripcion: e.target.value })}
+                    placeholder="Material, filtro UV, constante biométrica..."
+                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--background)] border border-[var(--border)] text-xs outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="pt-2 flex items-center justify-between border-t border-[var(--border)]">
+                  <a
+                    href="/ajustes?tab=quirurgicos_turnos&sub=ficha_turno"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-blue-600 hover:underline font-bold flex items-center gap-1"
+                  >
+                    <ExternalLink size={12} />
+                    <span>Ver Catálogo Completo en Ajustes</span>
+                  </a>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMostrarModalConfigLio(false)}
+                      className="px-3 py-1.5 rounded-xl border border-[var(--border)] text-xs font-bold"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={guardandoNuevoLio}
+                      className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-1.5"
+                    >
+                      {guardandoNuevoLio ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                      <span>Guardar y Usar</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
