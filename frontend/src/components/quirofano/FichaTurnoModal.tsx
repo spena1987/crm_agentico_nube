@@ -237,6 +237,11 @@ export default function FichaTurnoModal({
       return
     }
 
+    if (!esDiaOperativo(formData.fecha_cirugia, quirofanoActual)) {
+      setError(`La sala seleccionada (${quirofanoActual?.nombre}) no se encuentra operativa los ${diaSeleccionadoNombre}s. Por favor elija un día habilitado.`)
+      return
+    }
+
     try {
       setGuardando(true)
       setError(null)
@@ -327,7 +332,70 @@ export default function FichaTurnoModal({
     }
   }
 
-  const casoSeleccionadoActual = casosConfirmados.find((c) => c.id === casoSeleccionadoId)
+  // Quirófano actual seleccionado
+  const quirofanoActual = quirofanos.find((q) => q.id === formData.quirofano_id) || quirofanos[0]
+
+  // Generar slots de horario discretos configurados para la sala seleccionada
+  const generarSlotsHorarios = (q: any) => {
+    if (!q) return []
+    const horaIni = q.hora_inicio || '08:00'
+    const horaFin = q.hora_fin || '19:00'
+    const slotMin = Number(q.duracion_slot_minutos) || 15
+
+    const [hI, mI] = horaIni.split(':').map(Number)
+    const [hF, mF] = horaFin.split(':').map(Number)
+
+    const startMin = hI * 60 + mI
+    const endMin = hF * 60 + mF
+
+    const slots: string[] = []
+    for (let m = startMin; m < endMin; m += slotMin) {
+      const h = Math.floor(m / 60)
+      const min = m % 60
+      slots.push(`${h.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`)
+    }
+    return slots
+  }
+
+  const slotsDisponibles = generarSlotsHorarios(quirofanoActual)
+
+  // Nombres y validación de días operativos (1=Lun .. 7=Dom)
+  const nombresDiasMap: Record<number, string> = {
+    1: 'Lunes', 2: 'Martes', 3: 'Miércoles', 4: 'Jueves', 5: 'Viernes', 6: 'Sábado', 7: 'Domingo'
+  }
+
+  const getDiaSemanaNumero = (fechaStr: string) => {
+    if (!fechaStr) return 1
+    const d = new Date(fechaStr + 'T12:00:00')
+    const dow = d.getDay()
+    return dow === 0 ? 7 : dow
+  }
+
+  const esDiaOperativo = (fechaStr: string, q: any) => {
+    if (!fechaStr || !q) return true
+    const diasOp: number[] = q.dias_operativos || [1, 2, 3, 4, 5]
+    const numDia = getDiaSemanaNumero(fechaStr)
+    return diasOp.includes(numDia)
+  }
+
+  const fechaEsValida = esDiaOperativo(formData.fecha_cirugia, quirofanoActual)
+  const diaSeleccionadoNombre = nombresDiasMap[getDiaSemanaNumero(formData.fecha_cirugia)]
+
+  // Función para mover al próximo día operativo
+  const moverAProximoDiaOperativo = () => {
+    if (!formData.fecha_cirugia) return
+    let d = new Date(formData.fecha_cirugia + 'T12:00:00')
+    for (let i = 1; i <= 7; i++) {
+      d.setDate(d.getDate() + 1)
+      const iso = d.toISOString().slice(0, 10)
+      if (esDiaOperativo(iso, quirofanoActual)) {
+        setFormData({ ...formData, fecha_cirugia: iso })
+        break
+      }
+    }
+  }
+
+    const casoSeleccionadoActual = casosConfirmados.find((c) => c.id === casoSeleccionadoId)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
@@ -640,51 +708,99 @@ export default function FichaTurnoModal({
           </div>
 
           {/* SECCIÓN 2: ASIGNACIÓN DE SALA, FECHA Y DURACIÓN */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
-              <Building2 size={15} />
-              <span>2. Sala de Quirófano, Horario & Duración</span>
-            </h4>
+          <div className="space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
+                <Building2 size={15} />
+                <span>2. Sala de Quirófano, Fecha & Horario Asignado</span>
+              </h4>
+              <div className="text-[11px] text-[var(--secondary)] font-medium">
+                Días habilitados:{' '}
+                <span className="text-blue-600 dark:text-blue-400 font-bold">
+                  {(quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5])
+                    .map((d: number) => nombresDiasMap[d])
+                    .join(', ')}
+                </span>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+              {/* 1. Quirófano / Sala */}
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Quirófano / Sala *</label>
                 <select
                   value={formData.quirofano_id}
-                  onChange={(e) => setFormData({ ...formData, quirofano_id: e.target.value })}
+                  onChange={(e) => {
+                    const nuevoQId = e.target.value
+                    const nuevoQ = quirofanos.find((q) => q.id === nuevoQId)
+                    const nuevosSlots = generarSlotsHorarios(nuevoQ)
+                    setFormData({
+                      ...formData,
+                      quirofano_id: nuevoQId,
+                      hora_inicio: nuevosSlots.includes(formData.hora_inicio) ? formData.hora_inicio : (nuevosSlots[0] || '08:00')
+                    })
+                  }}
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
                   required
                 >
                   {quirofanos.map((q) => (
                     <option key={q.id} value={q.id}>
-                      {q.nombre} ({q.codigo}) - {q.duracion_slot_minutos || 15}m
+                      {q.nombre} ({q.codigo}) — {q.duracion_slot_minutos || 15}m
                     </option>
                   ))}
                 </select>
               </div>
 
+              {/* 2. Fecha de Cirugía con Validación de Días Operativos */}
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Fecha de Cirugía *</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-[var(--secondary)]">Fecha de Cirugía *</label>
+                  <span className={`text-[10px] font-bold ${fechaEsValida ? 'text-emerald-500' : 'text-red-500'}`}>
+                    {diaSeleccionadoNombre}
+                  </span>
+                </div>
                 <input
                   type="date"
                   value={formData.fecha_cirugia}
                   onChange={(e) => setFormData({ ...formData, fecha_cirugia: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono font-bold outline-none focus:border-blue-500"
+                  className={`w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border text-xs font-mono font-bold outline-none transition-all ${
+                    fechaEsValida
+                      ? 'border-[var(--border)] text-[var(--foreground)] focus:border-blue-500'
+                      : 'border-red-500 text-red-500 ring-2 ring-red-500/20'
+                  }`}
                   required
                 />
               </div>
 
+              {/* 3. Hora de Inicio: Menú Desplegable con Slots Configurados */}
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Hora de Inicio *</label>
-                <input
-                  type="time"
+                <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
+                  <span>Hora de Inicio *</span>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-mono">
+                    (Paso {quirofanoActual?.duracion_slot_minutos || 15}m)
+                  </span>
+                </label>
+                <select
                   value={formData.hora_inicio}
                   onChange={(e) => setFormData({ ...formData, hora_inicio: e.target.value })}
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono font-bold outline-none focus:border-blue-500"
                   required
-                />
+                >
+                  {slotsDisponibles.map((slot) => (
+                    <option key={slot} value={slot}>
+                      {slot} hs
+                    </option>
+                  ))}
+                  {/* Si el turno actual tiene un horario previo que no coincide con un slot, se mantiene como opción */}
+                  {formData.hora_inicio && !slotsDisponibles.includes(formData.hora_inicio) && (
+                    <option value={formData.hora_inicio}>
+                      {formData.hora_inicio} hs (Horario Asignado)
+                    </option>
+                  )}
+                </select>
               </div>
 
+              {/* 4. Duración en Minutos */}
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Duración en Minutos *</label>
                 <input
@@ -698,6 +814,28 @@ export default function FichaTurnoModal({
                 />
               </div>
             </div>
+
+            {/* Banner de Advertencia si se selecciona un día NO operativo */}
+            {!fechaEsValida && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 animate-fade-in">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>
+                    El <b>{quirofanoActual?.nombre}</b> no opera los <b>{diaSeleccionadoNombre}s</b>. Días habilitados:{' '}
+                    {(quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5])
+                      .map((d: number) => nombresDiasMap[d])
+                      .join(', ')}.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={moverAProximoDiaOperativo}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-bold shrink-0 shadow-sm transition-all"
+                >
+                  ➔ Mover a Próximo Día Hábil
+                </button>
+              </div>
+            )}
           </div>
 
           {/* SECCIÓN 3: EQUIPO MÉDICO (CIRUJANO, DERIVADOR, INSTRUMENTADOR Y ANESTESISTA) */}
