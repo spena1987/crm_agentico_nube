@@ -3132,7 +3132,9 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
         
         asesoria_id = payload.get("asesoria_id") or turno_actualizado.get("asesoria_id")
         if asesoria_id:
-            sincronizar_asesoria_desde_quirofano(asesoria_id, payload, nuevo_estado="programado")
+            # Preservar el estado existente o el provisto en el payload sin forzar 'programado'
+            estado_destino = payload.get("estado") or turno_actualizado.get("estado")
+            sincronizar_asesoria_desde_quirofano(asesoria_id, payload, nuevo_estado=estado_destino)
             
         return turno_actualizado
     except Exception as e:
@@ -3464,11 +3466,21 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         turno_modificado = t_upd.data[0] if t_upd.data else {}
         
         # 4. Sincronizar bidireccionalmente con asesorias_quirurgicas
+        if not asesoria_id and turno_actual.get("paciente_id"):
+            try:
+                res_a = supabase.table("asesorias_quirurgicas").select("id").eq("paciente_id", turno_actual["paciente_id"]).in_("estado", ["programado", "en_espera", "en_operacion", "confirmado"]).order("created_at", desc=True).limit(1).execute()
+                if res_a.data and len(res_a.data) > 0:
+                    asesoria_id = res_a.data[0]["id"]
+                    supabase.table("turnos_quirofano").update({"asesoria_id": asesoria_id}).eq("id", turno_id).execute()
+            except Exception as e_as:
+                logger.warning(f"No se pudo resolver asesoria_id para paciente {turno_actual.get('paciente_id')}: {e_as}")
+
         if asesoria_id:
             asesoria_payload: Dict[str, Any] = {"estado": nuevo_estado, "updated_at": "now()"}
             if nuevo_estado == "operado":
                 asesoria_payload["fecha_definitiva_cirugia"] = turno_actual.get("fecha_cirugia")
             supabase.table("asesorias_quirurgicas").update(asesoria_payload).eq("id", asesoria_id).execute()
+            logger.info(f"Asesoría {asesoria_id} sincronizada automáticamente al estado '{nuevo_estado}'.")
             
         return {"success": True, "turno": turno_modificado, "nuevo_estado": nuevo_estado}
     except Exception as e:

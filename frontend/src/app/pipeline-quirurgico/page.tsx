@@ -34,6 +34,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
@@ -189,6 +190,29 @@ export default function PipelineQuirurgicoPage() {
 
   useEffect(() => {
     fetchPipeline()
+
+    // Suscripción Realtime a asesorias_quirurgicas y turnos_quirofano
+    const channel = supabase
+      .channel('pipeline-quirurgico-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+        () => {
+          fetchPipeline()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'turnos_quirofano' },
+        () => {
+          fetchPipeline()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   // Mostrar mensaje de éxito temporal
