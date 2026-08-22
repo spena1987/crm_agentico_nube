@@ -310,9 +310,9 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             return (
               <div
                 key={t.id}
-                onDoubleClick={() => setTurnoModalDetalle(t)}
+                onClick={() => setTurnoModalDetalle(t)}
                 className={`p-4 rounded-2xl border transition-all duration-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer hover:border-blue-500/60 hover:shadow-md ${borderCls}`}
-                title="💡 Doble clic para abrir Ficha de Programación, Historia Clínica e Indicaciones Médicas de Geclisa"
+                title="💡 Clic para abrir Ficha de Programación, Historia Clínica e Indicaciones Médicas de Geclisa"
               >
                 {/* Bloque Izquierdo: Horario, Sala, Paciente y Cirugía */}
                 <div className="space-y-2.5 flex-1 min-w-0">
@@ -413,6 +413,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                           href={`${BACKEND_URL}${t.consentimiento_pdf_url || '/static/consentimiento_' + t.id + '.pdf'}`}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline"
                         >
                           <FileCheck2 size={12} />
@@ -454,7 +455,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         <button
                           type="button"
                           disabled={procesandoId === t.id}
-                          onClick={() => handleCambiarEstado(t.id, 'en_espera')}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleCambiarEstado(t.id, 'en_espera')
+                          }}
                           className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl text-[11px] font-bold transition-all"
                           title="Marcar llegada directamente en caso de emergencia"
                         >
@@ -468,7 +472,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       <button
                         type="button"
                         disabled={procesandoId === t.id}
-                        onClick={() => handleCambiarEstado(t.id, 'en_operacion')}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleCambiarEstado(t.id, 'en_operacion')
+                        }}
                         className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
                         title="El paciente ingresa al quirófano y comienza la intervención"
                       >
@@ -482,7 +489,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       <button
                         type="button"
                         disabled={procesandoId === t.id}
-                        onClick={() => handleCambiarEstado(t.id, 'operado')}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleCambiarEstado(t.id, 'operado')
+                        }}
                         className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
                         title="Finalizar cirugía, registrar egreso y archivar como operado"
                       >
@@ -503,7 +513,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     {onEditarTurno && (
                       <button
                         type="button"
-                        onClick={() => onEditarTurno(t)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onEditarTurno(t)
+                        }}
                         className="p-1.5 rounded-xl border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-[var(--foreground)] transition"
                         title="Ver / Editar ficha completa"
                       >
