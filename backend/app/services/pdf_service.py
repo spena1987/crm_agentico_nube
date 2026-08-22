@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from typing import Dict, Any, List, Optional
 from reportlab.lib.pagesizes import letter
@@ -11,6 +12,153 @@ from app.services.config_service import load_settings
 # Directorio local para guardar los archivos PDF generados
 PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 os.makedirs(PDF_DIR, exist_ok=True)
+
+def format_inline_markdown(text: str) -> str:
+    """
+    Convierte sintaxis Markdown inline a etiquetas soportadas por ReportLab (b, i, u, font).
+    Escapa primero caracteres XML problemáticos (&, <, >) que no formen parte de tags válidos.
+    """
+    if not text:
+        return ""
+        
+    s = text.replace("&", "&amp;")
+    
+    # Negrita **texto** o __texto__
+    s = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', s)
+    s = re.sub(r'__(.*?)__', r'<b>\1</b>', s)
+    
+    # Cursiva *texto* o _texto_
+    s = re.sub(r'(?<!\*)\*(?!\*)(.*?)(?<!\*)\*(?!\*)', r'<i>\1</i>', s)
+    s = re.sub(r'(?<!_)_(?!_)(.*?)(?<!_)_(?!_)', r'<i>\1</i>', s)
+    
+    return s
+
+def parse_markdown_to_pdf_flowables(markdown_text: str, custom_styles: dict) -> List[Any]:
+    """
+    Convierte texto con formato Markdown estructurado en una lista de Flowables de ReportLab:
+    - # Encabezados H1
+    - ## Encabezados H2
+    - ### Encabezados H3
+    - > Citas / Alertas médicas destacadas (en tablas con borde ámbar y fondo suave)
+    - - o * Listas con viñetas
+    - 1. Listas numeradas o a) incisos
+    - --- Separadores horizontales
+    - Párrafos estándar justificados
+    """
+    if not markdown_text:
+        return []
+        
+    flowables = []
+    lines = markdown_text.split("\n")
+    
+    style_h1 = custom_styles.get('h1')
+    style_h2 = custom_styles.get('h2')
+    style_h3 = custom_styles.get('h3')
+    style_cuerpo = custom_styles.get('cuerpo')
+    style_bullet = custom_styles.get('bullet')
+    style_quote = custom_styles.get('quote')
+    
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i]
+        line = raw_line.strip()
+        
+        if not line:
+            flowables.append(Spacer(1, 4))
+            i += 1
+            continue
+            
+        # 1. Separador horizontal --- o ***
+        if line in ('---', '***', '___'):
+            t_hr = Table([['']], colWidths=[540], rowHeights=[1])
+            t_hr.setStyle(TableStyle([
+                ('LINEBELOW', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+                ('TOPPADDING', (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ]))
+            flowables.append(Spacer(1, 4))
+            flowables.append(t_hr)
+            flowables.append(Spacer(1, 6))
+            i += 1
+            continue
+            
+        # 2. Encabezado H1: # Título
+        if line.startswith('# '):
+            content = format_inline_markdown(line[2:].strip())
+            flowables.append(Spacer(1, 6))
+            flowables.append(Paragraph(content, style_h1))
+            flowables.append(Spacer(1, 4))
+            i += 1
+            continue
+            
+        # 3. Encabezado H2: ## Sección
+        if line.startswith('## '):
+            content = format_inline_markdown(line[3:].strip())
+            flowables.append(Spacer(1, 6))
+            flowables.append(Paragraph(content, style_h2))
+            flowables.append(Spacer(1, 3))
+            i += 1
+            continue
+            
+        # 4. Encabezado H3: ### Subsección
+        if line.startswith('### '):
+            content = format_inline_markdown(line[4:].strip())
+            flowables.append(Spacer(1, 4))
+            flowables.append(Paragraph(content, style_h3))
+            flowables.append(Spacer(1, 2))
+            i += 1
+            continue
+            
+        # 5. Bloque de Cita / Alerta Médica: > Texto
+        if line.startswith('> '):
+            quote_lines = [line[2:].strip()]
+            while i + 1 < len(lines) and lines[i+1].strip().startswith('> '):
+                i += 1
+                quote_lines.append(lines[i].strip()[2:].strip())
+            
+            quote_text = "<br/>".join([format_inline_markdown(ql) for ql in quote_lines])
+            p_quote = Paragraph(quote_text, style_quote)
+            
+            t_quote = Table([[p_quote]], colWidths=[540])
+            t_quote.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FEF9C3')), # Fondo ámbar suave
+                ('LINEBEFORE', (0,0), (-1,-1), 3.0, colors.HexColor('#D97706')), # Borde ámbar
+                ('TOPPADDING', (0,0), (-1,-1), 5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                ('LEFTPADDING', (0,0), (-1,-1), 8),
+                ('RIGHTPADDING', (0,0), (-1,-1), 8),
+            ]))
+            flowables.append(Spacer(1, 4))
+            flowables.append(t_quote)
+            flowables.append(Spacer(1, 4))
+            i += 1
+            continue
+            
+        # 6. Lista con viñetas: - item o * item
+        if line.startswith('- ') or line.startswith('* '):
+            content = format_inline_markdown(line[2:].strip())
+            flowables.append(Paragraph(f"&bull;&nbsp;&nbsp;{content}", style_bullet))
+            flowables.append(Spacer(1, 2))
+            i += 1
+            continue
+            
+        # 7. Lista numerada o inciso: 1. item o a) item
+        num_match = re.match(r'^(\d+\.|\w\))\s+(.*)$', line)
+        if num_match:
+            prefix = num_match.group(1)
+            content = format_inline_markdown(num_match.group(2))
+            flowables.append(Paragraph(f"<b>{prefix}</b>&nbsp;&nbsp;{content}", style_bullet))
+            flowables.append(Spacer(1, 2))
+            i += 1
+            continue
+            
+        # 8. Párrafo estándar
+        content = format_inline_markdown(line)
+        flowables.append(Paragraph(content, style_cuerpo))
+        flowables.append(Spacer(1, 3))
+        i += 1
+        
+    return flowables
 
 def formatear_monto_moneda(monto: float, moneda: str = "ARS") -> str:
     """
@@ -475,11 +623,74 @@ def generar_pdf_consentimiento_informado(
         'CuerpoStyle',
         parent=style_normal,
         fontName='Helvetica',
-        fontSize=9,
-        leading=13.5,
+        fontSize=8.5,
+        leading=12.5,
         textColor=colors.HexColor('#1E293B'),
         alignment=4 # Justificado
     )
+
+    style_h1 = ParagraphStyle(
+        'MD_H1',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=11.5,
+        leading=14.5,
+        textColor=colors.HexColor(color_primario_hex),
+        spaceBefore=8,
+        spaceAfter=4
+    )
+
+    style_h2 = ParagraphStyle(
+        'MD_H2',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=10,
+        leading=13,
+        textColor=colors.HexColor('#1E3A8A'),
+        spaceBefore=6,
+        spaceAfter=3
+    )
+
+    style_h3 = ParagraphStyle(
+        'MD_H3',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor('#0F172A'),
+        spaceBefore=4,
+        spaceAfter=2
+    )
+
+    style_bullet = ParagraphStyle(
+        'MD_Bullet',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor('#1E293B'),
+        leftIndent=12,
+        spaceBefore=1,
+        spaceAfter=1
+    )
+
+    style_quote = ParagraphStyle(
+        'MD_Quote',
+        parent=style_normal,
+        fontName='Helvetica-Oblique',
+        fontSize=8,
+        leading=11.5,
+        textColor=colors.HexColor('#78350F')
+    )
+
+    custom_md_styles = {
+        'h1': style_h1,
+        'h2': style_h2,
+        'h3': style_h3,
+        'cuerpo': style_cuerpo,
+        'bullet': style_bullet,
+        'quote': style_quote
+    }
 
     story = []
 
@@ -550,12 +761,9 @@ def generar_pdf_consentimiento_informado(
     story.append(t_pac)
     story.append(Spacer(1, 14))
 
-    # 3. Cuerpo del Consentimiento
-    parrafos_cuerpo = texto_consentimiento.split("\n\n")
-    for parrafo in parrafos_cuerpo:
-        if parrafo.strip():
-            story.append(Paragraph(parrafo.replace("\n", "<br/>"), style_cuerpo))
-            story.append(Spacer(1, 8))
+    # 3. Cuerpo del Consentimiento con Soporte Markdown Completo
+    cuerpo_flowables = parse_markdown_to_pdf_flowables(texto_consentimiento, custom_md_styles)
+    story.extend(cuerpo_flowables)
 
     story.append(Spacer(1, 12))
 

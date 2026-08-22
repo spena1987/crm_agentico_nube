@@ -271,16 +271,48 @@ def servir_archivo_estatico(filename: str):
                     t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
                     if t_resp.data:
                         t_data = t_resp.data[0]
-                        pac = t_data.get("pacientes") or {}
-                        config = get_configuracion_quirofano()
-                        plantillas = config.get("plantillas_consentimiento") or []
-                        cuerpo = plantillas[0]["texto"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
+                        # Resolver texto desde el Nomenclador
+                        practica_cod = t_data.get("practica_codigo") or ""
+                        practica_id = t_data.get("practica_id") or ""
+                        practica_nombre = t_data.get("practica_nombre") or ""
+                        
+                        cuerpo_template = None
+                        resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+                        if resumen_practica and resumen_practica.get("habilitar_consentimiento") and resumen_practica.get("texto_consentimiento"):
+                            cuerpo_template = resumen_practica["texto_consentimiento"]
+                            
+                        if not cuerpo_template:
+                            config = get_configuracion_quirofano()
+                            plantillas = config.get("plantillas_consentimiento") or []
+                            cuerpo_template = plantillas[0]["cuerpo"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
+                            
+                        ojo = t_data.get("ojo") or "OD"
+                        ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+                        
+                        cuerpo_final = render_consent_template(
+                            cuerpo_template,
+                            {
+                                "paciente": pac.get("nombre") or "Paciente",
+                                "dni": pac.get("dni") or "-",
+                                "cirujano": t_data.get("cirujano_nombre") or "Médico Cirujano",
+                                "medico": t_data.get("cirujano_nombre") or "Médico Cirujano",
+                                "practica": t_data.get("practica_nombre") or "Cirugía Oftalmológica",
+                                "cirugia": t_data.get("practica_nombre") or "Cirugía Oftalmológica",
+                                "ojo_intervenido": ojo_desc,
+                                "ojo": ojo_desc,
+                                "quirofano": (t_data.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
+                                "fecha": str(t_data.get("fecha_cirugia") or ""),
+                                "fecha_cirugia": str(t_data.get("fecha_cirugia") or ""),
+                                "hora_cirugia": str(t_data.get("hora_inicio") or "")[:5],
+                                "hora_inicio": str(t_data.get("hora_inicio") or "")[:5]
+                            }
+                        )
                         
                         from app.services.pdf_service import generar_pdf_consentimiento_informado
                         generar_pdf_consentimiento_informado(
                             turno=t_data,
                             paciente=pac,
-                            texto_consentimiento=cuerpo,
+                            texto_consentimiento=cuerpo_final,
                             firma_img_base64=t_data.get("consentimiento_firma_img"),
                             firma_metadata={
                                 "fecha_hora": str(t_data.get("consentimiento_firmado_at") or ""),
