@@ -22,7 +22,8 @@ import {
   TrendingUp,
   Stethoscope,
   CalendarCheck2,
-  Building2
+  Building2,
+  UserCheck
 } from 'lucide-react'
 
 import { BACKEND_URL } from '@/lib/api'
@@ -45,7 +46,16 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { code: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
-  { code: 'pipeline-quirurgico', label: 'Pipeline Asesoría', href: '/pipeline-quirurgico', icon: TrendingUp },
+  {
+    code: 'pipeline-quirurgico',
+    label: 'Asesoramiento',
+    href: '/pipeline-quirurgico',
+    icon: Stethoscope,
+    subItems: [
+      { label: 'Pipeline', href: '/pipeline-quirurgico', icon: TrendingUp },
+      { label: 'Recepción del Día', href: '/asesoramiento-recepcion', icon: UserCheck }
+    ]
+  },
   {
     code: 'programacion-quirurgica',
     label: 'Quirófano',
@@ -74,6 +84,7 @@ export default function Navigation() {
   // Contador de chats con mensajes no leídos
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [quirofanoMenuOpen, setQuirofanoMenuOpen] = useState(true)
+  const [asesoriaMenuOpen, setAsesoriaMenuOpen] = useState(true)
 
   const fetchUnreadMetrics = async () => {
     try {
@@ -199,29 +210,40 @@ export default function Navigation() {
             const isChat = item.code === 'chat'
             const hasUnread = isChat && unreadChatCount > 0
 
+            const isAsesoria = item.code === 'pipeline-quirurgico'
+            const isAsesoriaActive = pathname === '/pipeline-quirurgico' || pathname === '/asesoramiento-recepcion'
+            
+            const isGroupActive = isQuirofano ? isQuirofanoActive : isAsesoria ? isAsesoriaActive : isActive
+
             if (item.subItems && !isCollapsed) {
+              const isMenuOpen = isQuirofano ? quirofanoMenuOpen : asesoriaMenuOpen
+              const toggleMenu = () => {
+                if (isQuirofano) setQuirofanoMenuOpen(!quirofanoMenuOpen)
+                else if (isAsesoria) setAsesoriaMenuOpen(!asesoriaMenuOpen)
+              }
+
               return (
                 <div key={item.code} className="flex flex-col gap-1">
                   <button
                     type="button"
-                    onClick={() => setQuirofanoMenuOpen(!quirofanoMenuOpen)}
+                    onClick={toggleMenu}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 group ${
-                      isActive
+                      isGroupActive
                         ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400 font-bold'
                         : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-[var(--foreground)]'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <Icon size={19} className={isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} />
+                      <Icon size={19} className={isGroupActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} />
                       <span className="truncate text-xs font-semibold tracking-tight">{item.label}</span>
                     </div>
                     <ChevronDown
                       size={14}
-                      className={`text-slate-400 transition-transform duration-200 ${quirofanoMenuOpen ? 'rotate-180 text-blue-600' : ''}`}
+                      className={`text-slate-400 transition-transform duration-200 ${isMenuOpen ? 'rotate-180 text-blue-600' : ''}`}
                     />
                   </button>
 
-                  {quirofanoMenuOpen && (
+                  {isMenuOpen && (
                     <div className="pl-6 pr-1 flex flex-col gap-1 py-1 border-l-2 border-slate-200 dark:border-slate-800 ml-4">
                       {item.subItems.map((sub) => {
                         const SubIcon = sub.icon || Activity

@@ -439,18 +439,24 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
                   {/* Acciones de Estado */}
                   <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
-                    {/* Botón 1: Marcar en Espera */}
+                    {/* Si está en Programado, avisar que aún no llegó a recepción */}
                     {t.estado === 'programado' && (
-                      <button
-                        type="button"
-                        disabled={procesandoId === t.id}
-                        onClick={() => handleCambiarEstado(t.id, 'en_espera')}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
-                        title="Registrar que el paciente se encuentra en sala de espera"
-                      >
-                        {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Activity size={13} />}
-                        <span>🟡 Paciente en Espera</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-semibold border border-[var(--border)] flex items-center gap-1.5">
+                          <Clock size={13} />
+                          <span>Citado (Pendiente Recepción)</span>
+                        </span>
+                        {/* Opción rápida de respaldo */}
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={() => handleCambiarEstado(t.id, 'en_espera')}
+                          className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 rounded-xl text-[11px] font-bold transition-all"
+                          title="Marcar llegada directamente en caso de emergencia"
+                        >
+                          <span>+ Recepcionar</span>
+                        </button>
+                      </div>
                     )}
 
                     {/* Botón 2: Iniciar Cirugía */}
