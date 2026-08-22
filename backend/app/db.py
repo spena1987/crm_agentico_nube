@@ -3029,7 +3029,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
     if not supabase:
         return []
     try:
-        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(id, nombre, dni, telefono, obra_social, email)").eq("estado", "confirmado").order("created_at", desc=True).execute()
+        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("estado", "confirmado").order("created_at", desc=True).execute()
         return resp.data or []
     except Exception as e:
         logger.error(f"Error al listar asesorías confirmadas para quirófano: {e}")

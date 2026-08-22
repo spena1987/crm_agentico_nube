@@ -1,8 +1,8 @@
-import Link from 'next/link'
 'use client'
 
 import React, { useState, useEffect, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import {
   Calendar as CalendarIcon,
   ChevronLeft,
@@ -21,13 +21,15 @@ import {
   Scissors,
   CheckCircle2,
   X,
-  Check
+  Check,
+  Radio,
+  RefreshCw
 } from 'lucide-react'
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
-import { Radio } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
 function ProgramacionQuirurgicaContent() {
   const searchParams = useSearchParams()
@@ -93,11 +95,11 @@ function ProgramacionQuirurgicaContent() {
       const fHasta = modoVista === 'dia' ? fechaSeleccionada : fechaHastaSemana
 
       const [resQ, resT, resB, resBM, resCasos] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`),
-        fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
-        fetch(`${BACKEND_URL}/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
-        fetch(`${BACKEND_URL}/api/quirofanos/bloques-medicos`),
-        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`)
+        fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`, { cache: 'no-store' }),
+        fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`, { cache: 'no-store' }),
+        fetch(`${BACKEND_URL}/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`, { cache: 'no-store' }),
+        fetch(`${BACKEND_URL}/api/quirofanos/bloques-medicos`, { cache: 'no-store' }),
+        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`, { cache: 'no-store' })
       ])
 
       const dataQ = await resQ.json()
@@ -116,7 +118,19 @@ function ProgramacionQuirurgicaContent() {
       if (dataB.success) setBloqueos(dataB.bloqueos || [])
       if (dataBM.success) setBloquesMedicos(dataBM.bloques || [])
 
-      const listaConfirmados: any[] = (dataCasos.success && Array.isArray(dataCasos.casos)) ? dataCasos.casos : []
+      let listaConfirmados: any[] = (dataCasos.success && Array.isArray(dataCasos.casos)) ? dataCasos.casos : []
+
+      // Si por alguna razón está vacío, fallback de respaldo con pipeline
+      if (listaConfirmados.length === 0) {
+        try {
+          const resPipe = await fetch(`${BACKEND_URL}/api/pipeline-quirurgico`, { cache: 'no-store' })
+          const dataPipe = await resPipe.json()
+          if (dataPipe.success && dataPipe.etapas?.confirmado) {
+            listaConfirmados = dataPipe.etapas.confirmado
+          }
+        } catch (e) {}
+      }
+
       setCasosConfirmados(listaConfirmados)
 
       // Si viene por parámetro de URL con asesoria_id, abrir directamente el modal
@@ -138,6 +152,29 @@ function ProgramacionQuirurgicaContent() {
 
   useEffect(() => {
     fetchDatos()
+
+    // Suscripción en tiempo real a cambios en asesorías confirmadas y turnos
+    const channel = supabase
+      .channel('programacion-quirurgica-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+        () => {
+          fetchDatos()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'turnos_quirofano' },
+        () => {
+          fetchDatos()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [fechaSeleccionada, modoVista, quirofanoSeleccionadoId, paramAsesoriaId])
 
   const cambiarSemana = (delta: number) => {
@@ -229,16 +266,27 @@ function ProgramacionQuirurgicaContent() {
 
           {/* Botón Bandeja de Casos Confirmados */}
           {vistaPrincipal === 'agenda' && (
-            <button
-              onClick={() => setDrawerCasosAbierto(true)}
-              className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 shadow-sm hover:bg-blue-100 transition-all"
-            >
-              <Sparkles size={15} className="text-blue-600" />
-              <span>Confirmados</span>
-              <span className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white font-mono text-[10px]">
-                {casosConfirmados.length}
-              </span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setDrawerCasosAbierto(true)}
+                className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 shadow-sm hover:bg-blue-100 transition-all"
+              >
+                <Sparkles size={15} className="text-blue-600" />
+                <span>Confirmados</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white font-mono text-[10px]">
+                  {casosConfirmados.length}
+                </span>
+              </button>
+
+              <button
+                onClick={fetchDatos}
+                disabled={cargando}
+                className="p-2 rounded-xl border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-[var(--foreground)] transition-all"
+                title="Refrescar agenda y casos confirmados"
+              >
+                <RefreshCw size={15} className={cargando ? 'animate-spin text-blue-600' : ''} />
+              </button>
+            </div>
           )}
 
           {/* Toggle Vista Día / Semana */}
