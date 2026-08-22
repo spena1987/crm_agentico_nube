@@ -162,6 +162,7 @@ export default function FichaTurnoModal({
     lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : 90,
     tipo_anestesia: turno?.tipo_anestesia || 'Tópica + Sedación',
     observaciones: turno?.observaciones || '',
+    observaciones_intraoperatorias: turno?.observaciones_intraoperatorias || '',
     estado: turno?.estado || 'programado'
   })
 
@@ -1173,16 +1174,28 @@ export default function FichaTurnoModal({
             </div>
           </div>
 
-          {/* OBSERVACIONES */}
-          <div>
-            <label className="text-[11px] font-semibold text-[var(--secondary)]">Observaciones y Notas Quirúrgicas</label>
-            <textarea
-              rows={2}
-              value={formData.observaciones}
-              onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
-              placeholder="Instrucciones de instrumental, insumos especiales o comentarios del cirujano..."
-              className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
-            />
+          {/* OBSERVACIONES PREQUIRÚRGICAS E INTRAOPERATORIAS */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            <div>
+              <label className="text-[11px] font-semibold text-[var(--secondary)]">Observaciones Prequirúrgicas</label>
+              <textarea
+                rows={2}
+                value={formData.observaciones}
+                onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
+                placeholder="Instrucciones previas, ayuno, dilatación, alergias..."
+                className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
+              />
+            </div>
+            <div>
+              <label className="text-[11px] font-semibold text-purple-600 dark:text-purple-400">Observaciones Intraoperatorias (Durante la Cirugía)</label>
+              <textarea
+                rows={2}
+                value={formData.observaciones_intraoperatorias}
+                onChange={(e) => setFormData({ ...formData, observaciones_intraoperatorias: e.target.value })}
+                placeholder="Evolución en mesa quirúrgica, técnica, hallazgos, incidentes, lente implantado..."
+                className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-purple-300 dark:border-purple-800/50 text-xs text-[var(--foreground)]"
+              />
+            </div>
           </div>
         </form>
 

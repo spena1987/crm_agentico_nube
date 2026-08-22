@@ -3010,7 +3010,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
 
 COLUMN_KEYS_TURNOS_QUIROFANO = {
     "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje", "llegada_at", "inicio_cirugia_at", "fin_cirugia_at",
-    "instrumentador_nombre", "medico_derivador_nombre",
+    "instrumentador_nombre", "medico_derivador_nombre", "observaciones_intraoperatorias",
     "asesoria_id", "paciente_id", "quirofano_id", "fecha_cirugia", "hora_inicio",
     "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
     "cirujano_nombre", "ayudante_nombre", "anestesiologo_nombre", "medico_derivador_nombre",

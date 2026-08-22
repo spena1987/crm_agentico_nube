@@ -90,7 +90,8 @@ export default function ModalDetalleCirugiaEnVivo({
     lente_torico_valor: 0,
     lente_torico_eje: 90,
     tipo_anestesia: 'Tópica + Sedación',
-    observaciones: ''
+    observaciones: '',
+    observaciones_intraoperatorias: ''
   })
   const [guardandoProg, setGuardandoProg] = useState(false)
   const [mensajeExitoProg, setMensajeExitoProg] = useState<string | null>(null)
@@ -118,7 +119,8 @@ export default function ModalDetalleCirugiaEnVivo({
         lente_torico_valor: turno.lente_torico_valor || 0,
         lente_torico_eje: turno.lente_torico_eje || 90,
         tipo_anestesia: turno.tipo_anestesia || 'Tópica + Sedación',
-        observaciones: turno.observaciones || ''
+        observaciones: turno.observaciones || '',
+        observaciones_intraoperatorias: turno.observaciones_intraoperatorias || ''
       })
     }
   }, [turno])
@@ -673,15 +675,35 @@ export default function ModalDetalleCirugiaEnVivo({
                   )}
                 </div>
 
-                <div>
-                  <label className="text-[11px] font-bold text-[var(--secondary)]">Observaciones Prequirúrgicas</label>
-                  <textarea
-                    rows={2}
-                    value={formData.observaciones}
-                    onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
-                    placeholder="Instrucciones especiales, ayuno, profilaxis, alergias..."
-                    className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  <div>
+                    <label className="text-[11px] font-bold text-[var(--secondary)] flex items-center gap-1.5">
+                      <span>Observaciones Prequirúrgicas</span>
+                      <span className="text-[10px] text-slate-400 font-normal">(Ayuno, dilatación, alergias)</span>
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={formData.observaciones}
+                      onChange={(e) => setFormData({ ...formData, observaciones: e.target.value })}
+                      placeholder="Instrucciones previas al ingreso a quirófano..."
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1.5">
+                      <Activity size={13} />
+                      <span>Observaciones / Comentarios Intraoperatorios</span>
+                      <span className="text-[10px] text-slate-400 font-normal">(Durante la Cirugía)</span>
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={formData.observaciones_intraoperatorias}
+                      onChange={(e) => setFormData({ ...formData, observaciones_intraoperatorias: e.target.value })}
+                      placeholder="Evolución en mesa quirúrgica, técnica, hallazgos, incidentes, lente implantado..."
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-purple-300 dark:border-purple-800/50 text-xs text-[var(--foreground)] outline-none focus:border-purple-500"
+                    />
+                  </div>
                 </div>
               </div>
 
