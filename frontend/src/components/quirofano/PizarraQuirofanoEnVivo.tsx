@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -42,6 +43,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [cargando, setCargando] = useState(true)
   const [procesandoId, setProcesandoId] = useState<string | null>(null)
   const [horaActual, setHoraActual] = useState(new Date())
+  const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
 
   // Ticker de hora actual para cronómetros cada 1 segundo
   useEffect(() => {
@@ -308,7 +310,9 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             return (
               <div
                 key={t.id}
-                className={`p-4 rounded-2xl border transition-all duration-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${borderCls}`}
+                onDoubleClick={() => setTurnoModalDetalle(t)}
+                className={`p-4 rounded-2xl border transition-all duration-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4 cursor-pointer hover:border-blue-500/60 hover:shadow-md ${borderCls}`}
+                title="💡 Doble clic para abrir Ficha de Programación, Historia Clínica e Indicaciones Médicas de Geclisa"
               >
                 {/* Bloque Izquierdo: Horario, Sala, Paciente y Cirugía */}
                 <div className="space-y-2.5 flex-1 min-w-0">
@@ -512,6 +516,22 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             )
           })}
         </div>
+      )}
+
+      {/* MODAL INTEGRAL AL DOBLE CLIC (PROGRAMACIÓN, HISTORIA CLÍNICA E INDICACIONES DE GECLISA) */}
+      {turnoModalDetalle && (
+        <ModalDetalleCirugiaEnVivo
+          isOpen={Boolean(turnoModalDetalle)}
+          onClose={() => setTurnoModalDetalle(null)}
+          turno={turnoModalDetalle}
+          quirofanos={quirofanos}
+          onEstadoCambiado={(tId, nEst, tAct) => {
+            setTurnos((prev) => prev.map((t) => (t.id === tId ? { ...t, estado: nEst, ...tAct } : t)))
+          }}
+          onTurnoGuardado={(tAct) => {
+            setTurnos((prev) => prev.map((t) => (t.id === tAct.id ? { ...t, ...tAct } : t)))
+          }}
+        />
       )}
     </div>
   )
