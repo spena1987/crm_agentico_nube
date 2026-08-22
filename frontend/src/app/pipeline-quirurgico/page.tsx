@@ -1102,6 +1102,39 @@ export default function PipelineQuirurgicoPage() {
                                 </Link>
                               )}
 
+                              {/* Badges de Estado Quirúrgico en Vivo */}
+                              {caso.estado === 'en_espera' && (
+                                <Link
+                                  href="/quirofano-en-vivo"
+                                  className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-amber-500/30 transition-colors"
+                                  title="Paciente en sala de espera prequirúrgica. Clic para ver Pizarra en Vivo."
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                                  <span>En Espera</span>
+                                </Link>
+                              )}
+
+                              {caso.estado === 'en_operacion' && (
+                                <Link
+                                  href="/quirofano-en-vivo"
+                                  className="px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-purple-500/30 transition-colors"
+                                  title="Paciente en quirófano / mesa quirúrgica. Clic para ver Pizarra en Vivo."
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                                  <span>En Quirófano</span>
+                                </Link>
+                              )}
+
+                              {caso.estado === 'programado' && (
+                                <Link
+                                  href="/quirofano-en-vivo"
+                                  className="px-2 py-0.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-blue-500/30 transition-colors"
+                                  title="Turno agendado en Quirófano"
+                                >
+                                  <span>Programado</span>
+                                </Link>
+                              )}
+
                               {/* Botón WhatsApp */}
                               <button
                                 type="button"

@@ -1,3 +1,4 @@
+import Link from 'next/link'
 'use client'
 
 import React, { useState, useEffect, Suspense } from 'react'
@@ -91,13 +92,12 @@ function ProgramacionQuirurgicaContent() {
       const fDesde = modoVista === 'dia' ? fechaSeleccionada : fechaDesdeSemana
       const fHasta = modoVista === 'dia' ? fechaSeleccionada : fechaHastaSemana
 
-      const [resQ, resT, resB, resBM, resCasos, resPipe] = await Promise.all([
+      const [resQ, resT, resB, resBM, resCasos] = await Promise.all([
         fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`),
         fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
         fetch(`${BACKEND_URL}/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
         fetch(`${BACKEND_URL}/api/quirofanos/bloques-medicos`),
-        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
-        fetch(`${BACKEND_URL}/api/pipeline-quirurgico`)
+        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`)
       ])
 
       const dataQ = await resQ.json()
@@ -105,7 +105,6 @@ function ProgramacionQuirurgicaContent() {
       const dataB = await resB.json()
       const dataBM = await resBM.json()
       const dataCasos = await resCasos.json()
-      const dataPipe = await resPipe.json()
 
       if (dataQ.success) {
         setQuirofanos(dataQ.quirofanos || [])
@@ -117,12 +116,7 @@ function ProgramacionQuirurgicaContent() {
       if (dataB.success) setBloqueos(dataB.bloqueos || [])
       if (dataBM.success) setBloquesMedicos(dataBM.bloques || [])
 
-      let listaConfirmados: any[] = []
-      if (dataCasos.success && Array.isArray(dataCasos.casos) && dataCasos.casos.length > 0) {
-        listaConfirmados = dataCasos.casos
-      } else if (dataPipe.success && dataPipe.etapas?.confirmado) {
-        listaConfirmados = dataPipe.etapas.confirmado
-      }
+      const listaConfirmados: any[] = (dataCasos.success && Array.isArray(dataCasos.casos)) ? dataCasos.casos : []
       setCasosConfirmados(listaConfirmados)
 
       // Si viene por parámetro de URL con asesoria_id, abrir directamente el modal

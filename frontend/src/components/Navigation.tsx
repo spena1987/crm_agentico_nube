@@ -16,28 +16,46 @@ import {
   ScrollText,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   Menu,
   X,
   TrendingUp,
   Stethoscope,
-  CalendarCheck2
+  CalendarCheck2,
+  Building2
 } from 'lucide-react'
 
 import { BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+
+interface SubNavItem {
+  label: string
+  href: string
+  icon?: any
+}
 
 interface NavItem {
   code: string
   label: string
   href: string
   icon: any
+  subItems?: SubNavItem[]
 }
 
 const allNavItems: NavItem[] = [
   { code: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
   { code: 'pipeline-quirurgico', label: 'Pipeline Asesoría', href: '/pipeline-quirurgico', icon: TrendingUp },
-  { code: 'programacion-quirurgica', label: 'Turnero Quirófano', href: '/programacion-quirurgica', icon: CalendarCheck2 },
+  {
+    code: 'programacion-quirurgica',
+    label: 'Quirófano',
+    href: '/programacion-quirurgica',
+    icon: Building2,
+    subItems: [
+      { label: 'Agenda & Slots', href: '/programacion-quirurgica', icon: CalendarCheck2 },
+      { label: 'Pizarra en Vivo', href: '/quirofano-en-vivo', icon: Activity }
+    ]
+  },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },
@@ -55,6 +73,7 @@ export default function Navigation() {
   const [mobileOpen, setMobileOpen] = useState(false)
   // Contador de chats con mensajes no leídos
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
+  const [quirofanoMenuOpen, setQuirofanoMenuOpen] = useState(true)
 
   const fetchUnreadMetrics = async () => {
     try {
@@ -168,11 +187,66 @@ export default function Navigation() {
         <nav className="p-3 flex flex-col gap-1 mt-2">
           {visibleNavItems.map((item) => {
             const Icon = item.icon
-            const isActive = item.href === '/' 
+            const isQuirofano = item.code === 'programacion-quirurgica'
+            const isQuirofanoActive = pathname === '/programacion-quirurgica' || pathname === '/quirofano-en-vivo'
+            
+            const isActive = isQuirofano 
+              ? isQuirofanoActive
+              : item.href === '/' 
               ? pathname === '/' 
               : pathname === item.href || pathname.startsWith(item.href + '/')
+              
             const isChat = item.code === 'chat'
             const hasUnread = isChat && unreadChatCount > 0
+
+            if (item.subItems && !isCollapsed) {
+              return (
+                <div key={item.code} className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setQuirofanoMenuOpen(!quirofanoMenuOpen)}
+                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 group ${
+                      isActive
+                        ? 'bg-blue-600/10 text-blue-600 dark:text-blue-400 font-bold'
+                        : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-[var(--foreground)]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Icon size={19} className={isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} />
+                      <span className="truncate text-xs font-semibold tracking-tight">{item.label}</span>
+                    </div>
+                    <ChevronDown
+                      size={14}
+                      className={`text-slate-400 transition-transform duration-200 ${quirofanoMenuOpen ? 'rotate-180 text-blue-600' : ''}`}
+                    />
+                  </button>
+
+                  {quirofanoMenuOpen && (
+                    <div className="pl-6 pr-1 flex flex-col gap-1 py-1 border-l-2 border-slate-200 dark:border-slate-800 ml-4">
+                      {item.subItems.map((sub) => {
+                        const SubIcon = sub.icon || Activity
+                        const isSubActive = pathname === sub.href
+                        return (
+                          <Link
+                            key={sub.href}
+                            href={sub.href}
+                            onClick={() => setMobileOpen(false)}
+                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                              isSubActive
+                                ? 'bg-blue-600 text-white font-bold shadow-sm'
+                                : 'text-[var(--secondary)] hover:text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800/60'
+                            }`}
+                          >
+                            <SubIcon size={14} className={isSubActive ? 'text-white' : 'text-slate-400'} />
+                            <span className="truncate">{sub.label}</span>
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            }
 
             return (
               <Link

@@ -2756,7 +2756,7 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
             monto = float(c.get("monto_extra") or 0.0)
             moneda = (c.get("moneda_extra") or "ARS").upper()
             
-            if est in ["derivado", "en_asesoramiento", "en_analisis", "confirmado"]:
+            if est in ["derivado", "en_asesoramiento", "en_analisis", "confirmado", "programado", "en_espera", "en_operacion"]:
                 casos_activos_count += 1
                 if moneda == "USD":
                     total_monto_usd += monto
@@ -2766,7 +2766,12 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
                 if c["es_critico"] or c["es_alerta"]:
                     casos_en_alerta_count += 1
                     
-            etapas_map[est].append(c)
+            # Mapear estados quirurgicos activos (en_espera, en_operacion) dentro de la columna programado
+            dest_etapa = "programado" if est in ["en_espera", "en_operacion"] else est
+            if dest_etapa in etapas_map:
+                etapas_map[dest_etapa].append(c)
+            else:
+                etapas_map[est] = etapas_map.get(est, []) + [c]
             
         casos_operados_count = len(etapas_map.get("operado", []))
         casos_cancelados_count = len(etapas_map.get("cancelado", []))
