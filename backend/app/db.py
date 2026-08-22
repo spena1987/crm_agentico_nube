@@ -3004,6 +3004,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 COLUMN_KEYS_TURNOS_QUIROFANO = {
+    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje",
     "instrumentador_nombre", "medico_derivador_nombre",
     "asesoria_id", "paciente_id", "quirofano_id", "fecha_cirugia", "hora_inicio",
     "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
@@ -3345,4 +3346,54 @@ def eliminar_prestador(prestador_id: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"Error al eliminar prestador {prestador_id}: {e}")
+        return False
+
+
+# ====================================================================
+# MODELOS DE LENTES INTRAOCULARES (LIO)
+# ====================================================================
+
+def get_modelos_lio(solo_activos: bool = False) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("modelos_lio").select("*")
+        if solo_activos:
+            q = q.eq("activo", True)
+        resp = q.order("marca").order("modelo").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al listar modelos de LIO: {e}")
+        return []
+
+def crear_modelo_lio(datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        return {}
+    try:
+        payload = {**datos, "created_at": "now()", "updated_at": "now()"}
+        resp = supabase.table("modelos_lio").insert(payload).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al crear modelo de LIO: {e}")
+        return {}
+
+def actualizar_modelo_lio(modelo_id: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase or not modelo_id:
+        return {}
+    try:
+        payload = {**datos, "updated_at": "now()"}
+        resp = supabase.table("modelos_lio").update(payload).eq("id", modelo_id).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al actualizar modelo de LIO {modelo_id}: {e}")
+        return {}
+
+def eliminar_modelo_lio(modelo_id: str) -> bool:
+    if not supabase or not modelo_id:
+        return False
+    try:
+        supabase.table("modelos_lio").delete().eq("id", modelo_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar modelo de LIO {modelo_id}: {e}")
         return False

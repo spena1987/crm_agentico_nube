@@ -68,6 +68,9 @@ export default function FichaTurnoModal({
   )
   const [modoCarga, setModoCarga] = useState<'asesoria' | 'manual'>('asesoria')
 
+  // Catálogo de Modelos de LIO cargados desde Ajustes
+  const [modelosLio, setModelosLio] = useState<any[]>([])
+
   // Prestadores cargados desde Ajustes (Instrumentadores y Anestesistas)
   const [instrumentadores, setInstrumentadores] = useState<any[]>([])
   const [anestesistas, setAnestesistas] = useState<any[]>([])
@@ -103,9 +106,17 @@ export default function FichaTurnoModal({
     practica_nombre: turno?.practica_nombre || turno?.asesorias_quirurgicas?.practica_nombre || '',
     obra_social: turno?.obra_social || '',
     plan_obra_social: turno?.plan_obra_social || '',
-    lente_tipo: turno?.lente_tipo || '',
-    lente_dioptria: turno?.lente_dioptria || '',
-    lente_lote: turno?.lente_lote || '',
+    lleva_lente: turno?.lleva_lente ?? (
+      (turno?.practica_nombre || '').toLowerCase().includes('catarata') ||
+      (turno?.practica_nombre || '').toLowerCase().includes('faco') ||
+      (turno?.practica_nombre || '').toLowerCase().includes('lio') ||
+      false
+    ),
+    lente_tipo: turno?.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
+    lente_dioptria: turno?.lente_dioptria !== undefined && turno?.lente_dioptria !== null ? turno.lente_dioptria : '+21.50',
+    es_torico: turno?.es_torico ?? false,
+    lente_torico_valor: turno?.lente_torico_valor !== undefined && turno?.lente_torico_valor !== null ? turno.lente_torico_valor : 0,
+    lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : 90,
     tipo_anestesia: turno?.tipo_anestesia || 'Tópica + Sedación',
     observaciones: turno?.observaciones || '',
     estado: turno?.estado || 'programado'
@@ -131,6 +142,9 @@ export default function FichaTurnoModal({
       duracionSugerida = practicaMatch.minutos
     }
 
+    const nomPractica = (caso.practica_nombre || '').toLowerCase()
+    const requiereLio = nomPractica.includes('catarata') || nomPractica.includes('faco') || nomPractica.includes('lio')
+
     setFormData((prev) => ({
       ...prev,
       asesoria_id: caso.id,
@@ -147,6 +161,7 @@ export default function FichaTurnoModal({
       plan_obra_social: pac.plan_obra_social || '',
       ojo: caso.ojo || prev.ojo || 'OD',
       duracion_minutos: duracionSugerida,
+      lleva_lente: requiereLio,
       fecha_cirugia: caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || prev.fecha_cirugia
     }))
 
@@ -161,19 +176,24 @@ export default function FichaTurnoModal({
       try {
         setCargandoCasos(true)
         
-        const [resCasos, resPipe, resPrestadores, resConf] = await Promise.all([
+        const [resCasos, resPipe, resPrestadores, resLio, resConf] = await Promise.all([
           fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
           fetch(`${BACKEND_URL}/api/pipeline-quirurgico`),
           fetch(`${BACKEND_URL}/api/prestadores?solo_activos=true`),
+          fetch(`${BACKEND_URL}/api/modelos-lio?solo_activos=true`),
           fetch(`${BACKEND_URL}/api/configuracion-quirofano`)
         ])
 
         const dataCasos = await resCasos.json()
         const dataPipe = await resPipe.json()
         const dataPrestadores = await resPrestadores.json()
+        const dataLio = await resLio.json()
         const dataConf = await resConf.json()
 
         // Prestadores por rol
+        if (dataLio.success && dataLio.modelos) {
+          setModelosLio(dataLio.modelos)
+        }
         if (dataPrestadores.success && dataPrestadores.prestadores) {
           const allPrestadores = dataPrestadores.prestadores
           setInstrumentadores(allPrestadores.filter((p: any) => p.rol === 'Instrumentador'))
@@ -251,7 +271,13 @@ export default function FichaTurnoModal({
         obra_social: formData.obra_social?.trim() || 'Particular',
         duracion_minutos: Number(formData.duracion_minutos) || 20,
         fecha_cirugia: formData.fecha_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
-        hora_inicio: (formData.hora_inicio || horaDefecto || '08:30').slice(0, 5)
+        hora_inicio: (formData.hora_inicio || horaDefecto || '08:30').slice(0, 5),
+        lleva_lente: !!formData.lleva_lente,
+        es_torico: !!formData.es_torico,
+        lente_torico_valor: formData.es_torico ? Number(formData.lente_torico_valor) || 0 : null,
+        lente_torico_eje: formData.es_torico ? Number(formData.lente_torico_eje) || 0 : null,
+        lente_dioptria: formData.lleva_lente ? formData.lente_dioptria : null,
+        lente_tipo: formData.lleva_lente ? formData.lente_tipo : null
       }
 
       const url = esEdicion
@@ -915,7 +941,7 @@ export default function FichaTurnoModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)]">Ojo a Intervenir *</label>
                 <div className="grid grid-cols-3 gap-2 mt-1">
@@ -953,33 +979,143 @@ export default function FichaTurnoModal({
                   <option value="Local Pura">Local Pura</option>
                 </select>
               </div>
+            </div>
 
-              <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Lente Intraocular / Dioptría / Lote</label>
-                <div className="flex gap-2 mt-1">
+            {/* SECCIÓN DETALLADA: LENTE INTRAOCULAR (LIO), TORICIDAD & DIOPTRÍA */}
+            <div className="p-4 rounded-2xl border bg-slate-50/50 dark:bg-slate-800/40 border-[var(--border)] space-y-3.5">
+              {/* Checkbox Principal: ¿Lleva Lente? */}
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
-                    type="text"
-                    value={formData.lente_tipo}
-                    onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
-                    placeholder="Modelo (ej: SN60WF)"
-                    className="w-1/2 px-2.5 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-medium"
+                    type="checkbox"
+                    checked={formData.lleva_lente}
+                    onChange={(e) => setFormData({ ...formData, lleva_lente: e.target.checked })}
+                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-[var(--border)]"
                   />
-                  <input
-                    type="text"
-                    value={formData.lente_dioptria}
-                    onChange={(e) => setFormData({ ...formData, lente_dioptria: e.target.value })}
-                    placeholder="Diop"
-                    className="w-1/4 px-2 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono text-center"
-                  />
-                  <input
-                    type="text"
-                    value={formData.lente_lote}
-                    onChange={(e) => setFormData({ ...formData, lente_lote: e.target.value })}
-                    placeholder="Lote"
-                    className="w-1/4 px-2 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono text-center"
-                  />
-                </div>
+                  <span className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                    <span>¿Lleva Lente Intraocular (LIO)?</span>
+                  </span>
+                </label>
+
+                {formData.lleva_lente && (
+                  <a
+                    href="/ajustes"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-blue-600 hover:text-blue-500 font-bold flex items-center gap-1 hover:underline"
+                    title="Administrar marcas y modelos en Ajustes de Quirófano"
+                  >
+                    <span>⚙ Configurar Modelos</span>
+                  </a>
+                )}
               </div>
+
+              {formData.lleva_lente ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5 pt-2 border-t border-[var(--border)] animate-fade-in">
+                  {/* 1. Modelo de LIO */}
+                  <div className="md:col-span-2">
+                    <label className="text-[11px] font-semibold text-[var(--secondary)]">Modelo de Lente Intraocular *</label>
+                    <select
+                      value={formData.lente_tipo}
+                      onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
+                    >
+                      <option value="">-- Seleccionar Modelo de LIO --</option>
+                      {modelosLio.length > 0 ? (
+                        modelosLio.map((m) => (
+                          <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                            {m.marca} - {m.modelo} ({m.tipo_optica})
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="AcrySof IQ SN60WF (Alcon)">Alcon - AcrySof IQ SN60WF (Monofocal)</option>
+                          <option value="Clareon CNA0T0 (Alcon)">Alcon - Clareon CNA0T0 (Monofocal Asférico)</option>
+                          <option value="PanOptix TFNT00 (Alcon)">Alcon - PanOptix TFNT00 (Trifocal)</option>
+                          <option value="TECNIS ZCB00 (J&J)">Johnson & Johnson - TECNIS ZCB00 (Monofocal)</option>
+                          <option value="TECNIS Eyhance ICB00 (J&J)">Johnson & Johnson - TECNIS Eyhance ICB00 (Monofocal Plus)</option>
+                          <option value="RayOne EMV (Rayner)">Rayner - RayOne EMV (EDOF)</option>
+                          <option value="AT LISA tri 839MP (Zeiss)">Zeiss - AT LISA tri 839MP (Trifocal)</option>
+                        </>
+                      )}
+                      {formData.lente_tipo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === formData.lente_tipo) && (
+                        <option value={formData.lente_tipo}>{formData.lente_tipo}</option>
+                      )}
+                    </select>
+                  </div>
+
+                  {/* 2. Dioptría Esférica (Saltos de 0.25) */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
+                      <span>Dioptría (Esfera) *</span>
+                      <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400">Paso 0.25 D</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.25"
+                      min="-15.00"
+                      max="45.00"
+                      value={formData.lente_dioptria}
+                      onChange={(e) => setFormData({ ...formData, lente_dioptria: e.target.value })}
+                      placeholder="+21.50"
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 dark:text-blue-400 font-mono font-extrabold text-center outline-none focus:border-blue-500"
+                      required={formData.lleva_lente}
+                    />
+                  </div>
+
+                  {/* 3. Tórico (Checkbox + Input Entero de Toricidad + Eje 0-180°) */}
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-[var(--secondary)]">
+                      <input
+                        type="checkbox"
+                        checked={formData.es_torico}
+                        onChange={(e) => setFormData({ ...formData, es_torico: e.target.checked })}
+                        className="w-3.5 h-3.5 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>¿Es Tórico?</span>
+                    </label>
+
+                    {formData.es_torico ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-1/2">
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="9"
+                            value={formData.lente_torico_valor}
+                            onChange={(e) => setFormData({ ...formData, lente_torico_valor: parseInt(e.target.value) || 0 })}
+                            placeholder="T3"
+                            className="w-full px-2 py-1.5 rounded-xl bg-[var(--card)] border border-blue-500/50 text-xs font-mono font-bold text-center outline-none"
+                            title="Valor tórico cilíndrico (salto discreto de 1)"
+                          />
+                        </div>
+                        <div className="w-1/2">
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="180"
+                            value={formData.lente_torico_eje}
+                            onChange={(e) => setFormData({ ...formData, lente_torico_eje: parseInt(e.target.value) || 0 })}
+                            placeholder="Eje 90°"
+                            className="w-full px-2 py-1.5 rounded-xl bg-[var(--card)] border border-purple-500/50 text-xs font-mono font-bold text-center outline-none"
+                            title="Eje de alineación tórica en grados (0° a 180°)"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-400 font-medium text-center">
+                        No Tórico
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 text-xs italic flex items-center gap-2">
+                  <span>ℹ Cirugía sin implante de Lente Intraocular.</span>
+                </div>
+              )}
             </div>
           </div>
 

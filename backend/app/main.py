@@ -110,7 +110,11 @@ from app.db import (
     get_prestadores,
     crear_prestador,
     actualizar_prestador,
-    eliminar_prestador
+    eliminar_prestador,
+    get_modelos_lio,
+    crear_modelo_lio,
+    actualizar_modelo_lio,
+    eliminar_modelo_lio
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -3326,3 +3330,45 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
     except Exception as e:
         logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
         return {"success": False, "error": str(e)}
+
+
+
+# ====================================================================
+# ENDPOINTS: MODELOS DE LENTES INTRAOCULARES (LIO)
+# ====================================================================
+
+@app.get("/api/modelos-lio")
+def listar_modelos_lio_endpoint(solo_activos: bool = False):
+    try:
+        items = get_modelos_lio(solo_activos=solo_activos)
+        return {"success": True, "modelos": items}
+    except Exception as e:
+        logger.error(f"Error listando modelos de LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/modelos-lio")
+def crear_modelo_lio_endpoint(payload: Dict[str, Any] = Body(...)):
+    try:
+        nuevo = crear_modelo_lio(payload)
+        return {"success": True, "modelo": nuevo}
+    except Exception as e:
+        logger.error(f"Error creando modelo de LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/modelos-lio/{modelo_id}")
+def actualizar_modelo_lio_endpoint(modelo_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        act = actualizar_modelo_lio(modelo_id, payload)
+        return {"success": True, "modelo": act}
+    except Exception as e:
+        logger.error(f"Error actualizando modelo de LIO {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/modelos-lio/{modelo_id}")
+def eliminar_modelo_lio_endpoint(modelo_id: str):
+    try:
+        ok = eliminar_modelo_lio(modelo_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error eliminando modelo de LIO {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

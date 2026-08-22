@@ -82,7 +82,86 @@ const PALETA_COLORES = [
 ]
 
 export default function QuirofanoSettingsCard() {
-  const [activeSubSection, setActiveSubSection] = useState<'salas' | 'duraciones' | 'bloques' | 'consentimientos' | 'whatsapp'>('salas')
+  const [activeSubSection, setActiveSubSection] = useState<'salas' | 'duraciones' | 'ficha_turno' | 'bloques' | 'consentimientos' | 'whatsapp'>('salas')
+
+  // ====================================================================
+  // GESTIÓN DE MODELOS DE LENTES INTRAOCULARES (LIO)
+  // ====================================================================
+  const [modelosLio, setModelosLio] = useState<any[]>([])
+  const [cargandoLio, setCargandoLio] = useState(false)
+  const [mostrandoFormLio, setMostrandoFormLio] = useState(false)
+  const [modeloEnEdicion, setModeloEnEdicion] = useState<any | null>(null)
+
+  const fetchModelosLio = async () => {
+    try {
+      setCargandoLio(true)
+      const res = await fetch(`${BACKEND_URL}/api/modelos-lio`)
+      const data = await res.json()
+      if (data.success && data.modelos) {
+        setModelosLio(data.modelos)
+      }
+    } catch (err) {
+      console.error('Error cargando modelos LIO:', err)
+    } finally {
+      setCargandoLio(false)
+    }
+  }
+
+  useEffect(() => {
+    if (activeSubSection === 'ficha_turno') {
+      fetchModelosLio()
+    }
+  }, [activeSubSection])
+
+  const handleGuardarModeloLio = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!modeloEnEdicion?.modelo?.trim() || !modeloEnEdicion?.marca?.trim()) {
+      setError('La marca y el nombre del modelo son obligatorios.')
+      return
+    }
+
+    try {
+      setGuardando(true)
+      setError(null)
+      const esEdit = !!modeloEnEdicion.id
+      const url = esEdit ? `${BACKEND_URL}/api/modelos-lio/${modeloEnEdicion.id}` : `${BACKEND_URL}/api/modelos-lio`
+      const method = esEdit ? 'PUT' : 'POST'
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(modeloEnEdicion)
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setMensajeExito(esEdit ? '✔ Modelo de LIO actualizado.' : '✔ Nuevo modelo de LIO registrado.')
+        setMostrandoFormLio(false)
+        setModeloEnEdicion(null)
+        fetchModelosLio()
+        setTimeout(() => setMensajeExito(null), 3000)
+      } else {
+        throw new Error(data.detail || 'Error al guardar modelo de LIO')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Error al guardar modelo')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  const handleEliminarModeloLio = async (id: string) => {
+    if (!confirm('¿Desea eliminar este modelo de lente intraocular?')) return
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/modelos-lio/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setModelosLio((prev) => prev.filter((m) => m.id !== id))
+        setMensajeExito('✔ Modelo eliminado.')
+        setTimeout(() => setMensajeExito(null), 3000)
+      }
+    } catch (err) {
+      setError('Error al eliminar modelo.')
+    }
+  }
 
   const [quirofanos, setQuirofanos] = useState<Quirofano[]>([])
   const [bloques, setBloques] = useState<BloqueMedico[]>([])

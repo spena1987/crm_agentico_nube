@@ -53,6 +53,7 @@ interface CrmPracticaConfigurada {
   categoria: string
   descripcion: string
   origen: 'GECLISA' | 'MANUAL'
+  requiere_lente?: boolean
   habilitar_arancel: boolean
   habilitar_preparacion: boolean
   preparacion_plantilla_id?: string | null
@@ -144,6 +145,7 @@ export default function NomencladorSettingsCard() {
     vigencia_hasta: '',
     arancel_id: '',
     habilitar_preparacion: false,
+    requiere_lente: false,
     modo_preparacion: 'plantilla' as 'plantilla' | 'custom',
     preparacion_plantilla_id: '',
     preparacion_custom_texto: '',
@@ -298,6 +300,7 @@ export default function NomencladorSettingsCard() {
       vigencia_hasta: item.vigencia_hasta || '',
       arancel_id: '',
       habilitar_preparacion: false,
+    requiere_lente: false,
       modo_preparacion: 'plantilla',
       preparacion_plantilla_id: plantillasPrep[0]?.id || '',
       preparacion_custom_texto: '',
@@ -333,6 +336,7 @@ export default function NomencladorSettingsCard() {
       vigencia_hasta: '',
       arancel_id: '',
       habilitar_preparacion: false,
+    requiere_lente: false,
       modo_preparacion: 'plantilla',
       preparacion_plantilla_id: plantillasPrep[0]?.id || '',
       preparacion_custom_texto: '',
@@ -364,6 +368,7 @@ export default function NomencladorSettingsCard() {
       vigencia_hasta: item.vigencia_hasta || '',
       arancel_id: item.arancel_id || '',
       habilitar_preparacion: item.habilitar_preparacion || false,
+      requiere_lente: item.requiere_lente || false,
       modo_preparacion: item.preparacion_custom_texto ? 'custom' : 'plantilla',
       preparacion_plantilla_id: item.preparacion_plantilla_id || plantillasPrep[0]?.id || '',
       preparacion_custom_texto: item.preparacion_custom_texto || '',
@@ -396,6 +401,7 @@ export default function NomencladorSettingsCard() {
         vigencia_hasta: formData.vigencia_hasta || null,
         arancel_id: formData.arancel_id || undefined,
         habilitar_preparacion: formData.habilitar_preparacion,
+        requiere_lente: !!formData.requiere_lente,
         preparacion_plantilla_id:
           formData.habilitar_preparacion && formData.modo_preparacion === 'plantilla'
             ? formData.preparacion_plantilla_id
