@@ -1211,14 +1211,14 @@ def listar_catalogo_completo_crm(
     q: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
-    Lista todas las prácticas configuradas en el CRM con su arancel vigente, moneda y origen.
+    Lista todas las prácticas configuradas en el CRM con su arancel vigente, moneda, origen y estado de módulos (preparación / consentimiento).
     """
     if not supabase:
         return []
         
     try:
         query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, nomencladores(id, nombre, codigo, moneda_default)")\
+            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
             .eq("activo", True)
             
         term = (q or "").strip().upper()
@@ -1232,16 +1232,19 @@ def listar_catalogo_completo_crm(
             
         p_ids = [p["id"] for p in practicas]
         
-        # Obtener los aranceles más recientes
+        # Obtener todos los aranceles ordenados por vigencia
         ar_resp = supabase.table("nomenclador_aranceles")\
             .select("*")\
             .in_("practica_id", p_ids)\
             .order("vigencia_desde", desc=True)\
             .execute()
             
+        ar_data = ar_resp.data or []
         ar_map = {}
-        for ar in (ar_resp.data or []):
+        ar_counts = {}
+        for ar in ar_data:
             pid = ar["practica_id"]
+            ar_counts[pid] = ar_counts.get(pid, 0) + 1
             if pid not in ar_map:
                 ar_map[pid] = ar
                 
@@ -1263,6 +1266,9 @@ def listar_catalogo_completo_crm(
             # Filtro por origen
             if filtro_origen and filtro_origen.upper() != "TODOS" and origen != filtro_origen.upper():
                 continue
+
+            prep_master = p.get("plantillas_preparaciones") or {}
+            cons_master = p.get("plantillas_consentimientos") or {}
                 
             resultados.append({
                 "id": p["id"],
@@ -1271,11 +1277,21 @@ def listar_catalogo_completo_crm(
                 "categoria": p.get("categoria", "General"),
                 "descripcion": desc.replace("[ORIGEN:MANUAL]", "").replace("[ORIGEN:GECLISA]", "").strip(),
                 "origen": origen,
+                "habilitar_arancel": p.get("habilitar_arancel", True),
+                "habilitar_preparacion": p.get("habilitar_preparacion", False),
+                "preparacion_plantilla_id": p.get("preparacion_plantilla_id"),
+                "preparacion_plantilla_titulo": prep_master.get("titulo") if isinstance(prep_master, dict) else None,
+                "preparacion_custom_texto": p.get("preparacion_custom_texto"),
+                "habilitar_consentimiento": p.get("habilitar_consentimiento", False),
+                "consentimiento_plantilla_id": p.get("consentimiento_plantilla_id"),
+                "consentimiento_plantilla_titulo": cons_master.get("titulo") if isinstance(cons_master, dict) else None,
+                "consentimiento_custom_texto": p.get("consentimiento_custom_texto"),
                 "precio": precio,
                 "moneda": moneda,
                 "vigencia_desde": ar.get("vigencia_desde") if ar else None,
                 "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
                 "arancel_id": ar.get("id") if ar else None,
+                "total_aranceles": ar_counts.get(p["id"], 0),
                 "activo": p.get("activo", True),
                 "created_at": p.get("created_at")
             })
@@ -1299,6 +1315,443 @@ def eliminar_practica_crm(practica_id: str) -> bool:
         logger.error(f"Error al eliminar práctica del CRM ({practica_id}): {e}")
         raise
 
+# ====================================================================
+# CRUD: PLANTILLAS MAESTRAS DE PREPARACIONES PREQUIRÚRGICAS
+# ====================================================================
+
+def get_plantillas_preparaciones(activo_only: bool = True) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("plantillas_preparaciones").select("*")
+        if activo_only:
+            q = q.eq("activo", True)
+        resp = q.order("titulo").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener plantillas de preparaciones: {e}")
+        return []
+
+def get_plantilla_preparacion_by_id(plantilla_id: str) -> Optional[Dict[str, Any]]:
+    if not supabase:
+        return None
+    try:
+        resp = supabase.table("plantillas_preparaciones").select("*").eq("id", plantilla_id).limit(1).execute()
+        return resp.data[0] if resp.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener plantilla de preparación {plantilla_id}: {e}")
+        return None
+
+def create_plantilla_preparacion(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+    try:
+        data = {
+            "titulo": payload.get("titulo"),
+            "categoria": payload.get("categoria", "Oftalmología"),
+            "texto_indicaciones": payload.get("texto_indicaciones", ""),
+            "ayuno_horas": int(payload.get("ayuno_horas", 8)),
+            "dias_previos_aviso": int(payload.get("dias_previos_aviso", 2)),
+            "observaciones": payload.get("observaciones"),
+            "activo": payload.get("activo", True)
+        }
+        resp = supabase.table("plantillas_preparaciones").insert(data).execute()
+        if not resp.data:
+            raise Exception("No se pudo crear la plantilla de preparación.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al crear plantilla de preparación: {e}")
+        raise
+
+def update_plantilla_preparacion(plantilla_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+    try:
+        data = {k: v for k, v in payload.items() if k in [
+            "titulo", "categoria", "texto_indicaciones", "ayuno_horas", "dias_previos_aviso", "observaciones", "activo"
+        ]}
+        data["updated_at"] = "now()"
+        resp = supabase.table("plantillas_preparaciones").update(data).eq("id", plantilla_id).execute()
+        if not resp.data:
+            raise Exception("No se pudo actualizar la plantilla de preparación.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al actualizar plantilla de preparación {plantilla_id}: {e}")
+        raise
+
+def delete_plantilla_preparacion(plantilla_id: str) -> bool:
+    if not supabase:
+        return False
+    try:
+        # Desvincular en prácticas primero
+        supabase.table("nomenclador_practicas").update({"preparacion_plantilla_id": None}).eq("preparacion_plantilla_id", plantilla_id).execute()
+        supabase.table("plantillas_preparaciones").delete().eq("id", plantilla_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar plantilla de preparación {plantilla_id}: {e}")
+        raise
+
+# ====================================================================
+# CRUD: PLANTILLAS MAESTRAS DE CONSENTIMIENTOS INFORMADOS
+# ====================================================================
+
+def get_plantillas_consentimientos(activo_only: bool = True) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("plantillas_consentimientos").select("*")
+        if activo_only:
+            q = q.eq("activo", True)
+        resp = q.order("titulo").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener plantillas de consentimientos: {e}")
+        return []
+
+def get_plantilla_consentimiento_by_id(plantilla_id: str) -> Optional[Dict[str, Any]]:
+    if not supabase:
+        return None
+    try:
+        resp = supabase.table("plantillas_consentimientos").select("*").eq("id", plantilla_id).limit(1).execute()
+        return resp.data[0] if resp.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener plantilla de consentimiento {plantilla_id}: {e}")
+        return None
+
+def create_plantilla_consentimiento(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+    try:
+        data = {
+            "titulo": payload.get("titulo"),
+            "especialidad": payload.get("especialidad", "Oftalmología"),
+            "cuerpo_legal": payload.get("cuerpo_legal", ""),
+            "version": payload.get("version", "1.0"),
+            "activo": payload.get("activo", True)
+        }
+        resp = supabase.table("plantillas_consentimientos").insert(data).execute()
+        if not resp.data:
+            raise Exception("No se pudo crear la plantilla de consentimiento.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al crear plantilla de consentimiento: {e}")
+        raise
+
+def update_plantilla_consentimiento(plantilla_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+    try:
+        data = {k: v for k, v in payload.items() if k in [
+            "titulo", "especialidad", "cuerpo_legal", "version", "activo"
+        ]}
+        data["updated_at"] = "now()"
+        resp = supabase.table("plantillas_consentimientos").update(data).eq("id", plantilla_id).execute()
+        if not resp.data:
+            raise Exception("No se pudo actualizar la plantilla de consentimiento.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al actualizar plantilla de consentimiento {plantilla_id}: {e}")
+        raise
+
+def delete_plantilla_consentimiento(plantilla_id: str) -> bool:
+    if not supabase:
+        return False
+    try:
+        # Desvincular en prácticas primero
+        supabase.table("nomenclador_practicas").update({"consentimiento_plantilla_id": None}).eq("consentimiento_plantilla_id", plantilla_id).execute()
+        supabase.table("plantillas_consentimientos").delete().eq("id", plantilla_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar plantilla de consentimiento {plantilla_id}: {e}")
+        raise
+
+# ====================================================================
+# CRUD: ARANCELES E HISTORIAL DE VIGENCIAS POR PRÁCTICA (1:N)
+# ====================================================================
+
+def get_aranceles_por_practica(practica_id: str) -> List[Dict[str, Any]]:
+    if not supabase:
+        return []
+    try:
+        resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .eq("practica_id", practica_id)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener aranceles de la práctica {practica_id}: {e}")
+        return []
+
+def crear_arancel_practica(practica_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+    from datetime import date
+    try:
+        today_str = date.today().isoformat()
+        data = {
+            "practica_id": practica_id,
+            "precio": float(payload.get("precio", 0.0)),
+            "moneda": str(payload.get("moneda", "ARS")).upper(),
+            "vigencia_desde": payload.get("vigencia_desde") or today_str,
+            "vigencia_hasta": payload.get("vigencia_hasta") or None,
+            "observaciones": payload.get("observaciones") or "Nueva tarifa",
+            "activo": payload.get("activo", True)
+        }
+        resp = supabase.table("nomenclador_aranceles").insert(data).execute()
+        if not resp.data:
+            raise Exception("No se pudo registrar el nuevo arancel.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al crear arancel para práctica {practica_id}: {e}")
+        raise
+
+def actualizar_arancel(arancel_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+    try:
+        data = {}
+        if "precio" in payload:
+            data["precio"] = float(payload["precio"])
+        if "moneda" in payload:
+            data["moneda"] = str(payload["moneda"]).upper()
+        if "vigencia_desde" in payload:
+            data["vigencia_desde"] = payload["vigencia_desde"]
+        if "vigencia_hasta" in payload:
+            data["vigencia_hasta"] = payload["vigencia_hasta"] or None
+        if "observaciones" in payload:
+            data["observaciones"] = payload["observaciones"]
+        if "activo" in payload:
+            data["activo"] = payload["activo"]
+            
+        resp = supabase.table("nomenclador_aranceles").update(data).eq("id", arancel_id).execute()
+        if not resp.data:
+            raise Exception("No se pudo actualizar el arancel.")
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error al actualizar arancel {arancel_id}: {e}")
+        raise
+
+def eliminar_arancel(arancel_id: str) -> bool:
+    if not supabase:
+        return False
+    try:
+        supabase.table("nomenclador_aranceles").delete().eq("id", arancel_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar arancel {arancel_id}: {e}")
+        raise
+
+# ====================================================================
+# GUARDADO INTEGRAL DE PRÁCTICA CON SUS 3 MÓDULOS MULTIDIMENSIONALES
+# ====================================================================
+
+def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Guarda o actualiza una práctica completa, sus flags de módulos,
+    asignaciones de plantillas maestras o textos custom, y su historial de aranceles.
+    """
+    if not supabase:
+        raise RuntimeError("No hay conexión a Supabase.")
+        
+    from datetime import date
+    today_str = date.today().isoformat()
+    
+    try:
+        practica_id = payload.get("id") or payload.get("crm_practica_id")
+        codigo = str(payload.get("codigo") or payload.get("nomCod") or "").strip().upper()
+        nombre = str(payload.get("nombre") or payload.get("practica") or "").strip()
+        categoria = str(payload.get("categoria") or "General").strip()
+        descripcion = str(payload.get("descripcion") or "").strip()
+        origen = str(payload.get("origen") or "GECLISA").upper()
+        
+        # Flags y Reglas
+        habilitar_arancel = bool(payload.get("habilitar_arancel", True))
+        habilitar_preparacion = bool(payload.get("habilitar_preparacion", False))
+        preparacion_plantilla_id = payload.get("preparacion_plantilla_id") or None
+        preparacion_custom_texto = payload.get("preparacion_custom_texto") or None
+        
+        habilitar_consentimiento = bool(payload.get("habilitar_consentimiento", False))
+        consentimiento_plantilla_id = payload.get("consentimiento_plantilla_id") or None
+        consentimiento_custom_texto = payload.get("consentimiento_custom_texto") or None
+        
+        # Datos de Arancel
+        precio = float(payload.get("precio", 0.0) or 0.0)
+        moneda = str(payload.get("moneda") or "ARS").upper()
+        vig_desde = payload.get("vigencia_desde") or today_str
+        vig_hasta = payload.get("vigencia_hasta") or None
+        
+        # Resolver Nomenclador ARS/USD
+        nom_codigo = "NOM_USD" if moneda == "USD" else "NOM_ARS"
+        nom_resp = supabase.table("nomencladores").select("id").eq("codigo", nom_codigo).limit(1).execute()
+        if nom_resp.data:
+            nomenclador_id = nom_resp.data[0]["id"]
+        else:
+            nom_any = supabase.table("nomencladores").select("id").limit(1).execute()
+            nomenclador_id = nom_any.data[0]["id"] if nom_any.data else None
+            
+        p_data = {
+            "nomenclador_id": nomenclador_id,
+            "codigo": codigo,
+            "nombre": nombre,
+            "categoria": categoria,
+            "descripcion": f"[ORIGEN:{origen}] {descripcion}".strip(),
+            "habilitar_arancel": habilitar_arancel,
+            "habilitar_preparacion": habilitar_preparacion,
+            "preparacion_plantilla_id": preparacion_plantilla_id,
+            "preparacion_custom_texto": preparacion_custom_texto,
+            "habilitar_consentimiento": habilitar_consentimiento,
+            "consentimiento_plantilla_id": consentimiento_plantilla_id,
+            "consentimiento_custom_texto": consentimiento_custom_texto,
+            "activo": True
+        }
+        
+        if practica_id:
+            # Actualizar existente
+            p_resp = supabase.table("nomenclador_practicas").update(p_data).eq("id", practica_id).execute()
+        else:
+            # Upsert por nomenclador_id y codigo
+            p_resp = supabase.table("nomenclador_practicas").upsert(
+                p_data,
+                on_conflict="nomenclador_id,codigo"
+            ).execute()
+            
+        if not p_resp.data:
+            raise Exception("No se pudo persistir la práctica en Supabase.")
+            
+        practica_guardada = p_resp.data[0]
+        practica_final_id = practica_guardada["id"]
+        
+        # Registrar o actualizar arancel si está habilitado y se proveyó precio
+        arancel_res = None
+        if habilitar_arancel:
+            ar_id = payload.get("arancel_id")
+            if ar_id:
+                # Actualizar el arancel vigente
+                ar_data = {
+                    "precio": precio,
+                    "moneda": moneda,
+                    "vigencia_desde": vig_desde,
+                    "vigencia_hasta": vig_hasta,
+                    "observaciones": f"Actualizado vía CRM ({origen})",
+                    "activo": True
+                }
+                ar_resp = supabase.table("nomenclador_aranceles").update(ar_data).eq("id", ar_id).execute()
+                arancel_res = ar_resp.data[0] if ar_resp.data else None
+            else:
+                # Verificar si ya existe un arancel idéntico o crear uno nuevo
+                existentes = get_aranceles_por_practica(practica_final_id)
+                if not existentes or precio > 0:
+                    ar_data = {
+                        "practica_id": practica_final_id,
+                        "precio": precio,
+                        "moneda": moneda,
+                        "vigencia_desde": vig_desde,
+                        "vigencia_hasta": vig_hasta,
+                        "observaciones": f"Configurado vía CRM ({origen})",
+                        "activo": True
+                    }
+                    ar_resp = supabase.table("nomenclador_aranceles").insert(ar_data).execute()
+                    arancel_res = ar_resp.data[0] if ar_resp.data else None
+                    
+        return {
+            "success": True,
+            "practica": practica_guardada,
+            "arancel": arancel_res
+        }
+    except Exception as e:
+        logger.error(f"Error en guardar_practica_crm_integral: {e}")
+        raise
+
+def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Obtiene la resolución completa de una práctica para uso en Presupuestos, Turnero, Asesoría y WhatsApp.
+    Resuelve el arancel vigente para la fecha dada, y el texto exacto de preparación y consentimiento.
+    """
+    if not supabase or not practica_id_or_codigo:
+        return None
+        
+    from datetime import date
+    fecha_ref = fecha_consulta or date.today().isoformat()
+    
+    try:
+        # Buscar por ID o por Código
+        q = supabase.table("nomenclador_practicas")\
+            .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")
+            
+        if is_valid_uuid(practica_id_or_codigo):
+            q = q.eq("id", practica_id_or_codigo)
+        else:
+            q = q.eq("codigo", str(practica_id_or_codigo).strip().upper())
+            
+        p_resp = q.limit(1).execute()
+        if not p_resp.data:
+            return None
+            
+        practica = p_resp.data[0]
+        practica_id = practica["id"]
+        
+        # Resolver arancel para la fecha
+        ar_resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .eq("practica_id", practica_id)\
+            .lte("vigencia_desde", fecha_ref)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+            
+        ar_vigente = None
+        for ar in (ar_resp.data or []):
+            v_hasta = ar.get("vigencia_hasta")
+            if not v_hasta or v_hasta >= fecha_ref:
+                ar_vigente = ar
+                break
+                
+        # Resolver texto de preparación
+        texto_preparacion = None
+        ayuno_horas = 8
+        dias_aviso = 2
+        if practica.get("habilitar_preparacion"):
+            if practica.get("preparacion_custom_texto"):
+                texto_preparacion = practica.get("preparacion_custom_texto")
+            elif practica.get("plantillas_preparaciones"):
+                pl = practica["plantillas_preparaciones"]
+                texto_preparacion = pl.get("texto_indicaciones")
+                ayuno_horas = pl.get("ayuno_horas", 8)
+                dias_aviso = pl.get("dias_previos_aviso", 2)
+                
+        # Resolver texto de consentimiento
+        texto_consentimiento = None
+        version_consentimiento = "1.0"
+        if practica.get("habilitar_consentimiento"):
+            if practica.get("consentimiento_custom_texto"):
+                texto_consentimiento = practica.get("consentimiento_custom_texto")
+            elif practica.get("plantillas_consentimientos"):
+                pl = practica["plantillas_consentimientos"]
+                texto_consentimiento = pl.get("cuerpo_legal")
+                version_consentimiento = pl.get("version", "1.0")
+                
+        return {
+            "id": practica["id"],
+            "codigo": practica["codigo"],
+            "nombre": practica["nombre"],
+            "categoria": practica.get("categoria"),
+            "habilitar_arancel": practica.get("habilitar_arancel", True),
+            "precio": float(ar_vigente.get("precio", 0.0)) if ar_vigente else 0.0,
+            "moneda": ar_vigente.get("moneda", "ARS") if ar_vigente else "ARS",
+            "vigencia_desde": ar_vigente.get("vigencia_desde") if ar_vigente else None,
+            "vigencia_hasta": ar_vigente.get("vigencia_hasta") if ar_vigente else None,
+            "habilitar_preparacion": practica.get("habilitar_preparacion", False),
+            "texto_preparacion": texto_preparacion,
+            "ayuno_horas": ayuno_horas,
+            "dias_aviso": dias_aviso,
+            "habilitar_consentimiento": practica.get("habilitar_consentimiento", False),
+            "texto_consentimiento": texto_consentimiento,
+            "version_consentimiento": version_consentimiento
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener resumen operativo de la práctica {practica_id_or_codigo}: {e}")
+        return None
+
 
 # ====================================================================
 # BÚSQUEDA RÁPIDA PARA MODAL DE PRESUPUESTOS (NATIVO CRM)
@@ -1318,7 +1771,7 @@ def buscar_practicas_presupuesto(q: str = "", fecha_consulta: Optional[str] = No
     
     try:
         query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
+            .select("id, codigo, nombre, categoria, descripcion, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
             .eq("activo", True)
             
         if term:
@@ -1356,7 +1809,8 @@ def buscar_practicas_presupuesto(q: str = "", fecha_consulta: Optional[str] = No
             moneda_default = nom_info.get("moneda_default", "ARS")
             ar = arancel_map.get(p["id"])
             
-            precio = float(ar["precio"]) if ar else 0.0
+            hab_arancel = p.get("habilitar_arancel", True)
+            precio = float(ar["precio"]) if (ar and hab_arancel) else 0.0
             moneda = ar.get("moneda", moneda_default) if ar else moneda_default
             
             resultados.append({
@@ -1367,11 +1821,14 @@ def buscar_practicas_presupuesto(q: str = "", fecha_consulta: Optional[str] = No
                 "nomenclador_id": p["nomenclador_id"],
                 "nomenclador_nombre": nom_info.get("nombre", "General"),
                 "nomenclador_codigo": nom_info.get("codigo", "GEN"),
+                "habilitar_arancel": hab_arancel,
+                "habilitar_preparacion": p.get("habilitar_preparacion", False),
+                "habilitar_consentimiento": p.get("habilitar_consentimiento", False),
                 "precio": precio,
                 "moneda": moneda,
                 "vigencia_desde": ar.get("vigencia_desde") if ar else None,
                 "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
-                "tiene_precio": precio > 0
+                "tiene_precio": precio > 0 and hab_arancel
             })
             
         return resultados
@@ -2676,21 +3133,32 @@ def registrar_firma_consentimiento(
     plantillas = config.get("plantillas_consentimiento") or []
     
     # Determinar texto legal correspondiente
-    practica_nombre = (turno.get("practica_nombre") or "").lower()
-    plantilla_sel = None
-    for pl in plantillas:
-        if pl.get("id") in practica_nombre or pl.get("tipo") in practica_nombre:
-            plantilla_sel = pl
-            break
-    if not plantilla_sel and len(plantillas) > 0:
-        plantilla_sel = plantillas[0]
+    practica_nombre = turno.get("practica_nombre") or ""
+    practica_cod = turno.get("practica_codigo") or ""
+    practica_id = turno.get("practica_id") or ""
+    
+    # 1. Intentar resolver desde las reglas del Nomenclador
+    cuerpo_template = None
+    resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+    if resumen_practica and resumen_practica.get("habilitar_consentimiento") and resumen_practica.get("texto_consentimiento"):
+        cuerpo_template = resumen_practica["texto_consentimiento"]
         
-    cuerpo_template = (plantilla_sel.get("cuerpo") if plantilla_sel else "") or (
-        "Por medio de la presente, yo {paciente}, DNI {dni}, declaro que he sido debidamente informado "
-        "por el Dr. {cirujano} acerca de la intervención quirúrgica de {cirugia} a realizarse en mi "
-        "ojo {ojo_intervenido} en {quirofano}. He comprendido los beneficios, riesgos inherentes y cuidados postoperatorios, "
-        "otorgando mi consentimiento libre e informado."
-    )
+    # 2. Fallback a plantillas de quirófano general
+    if not cuerpo_template:
+        plantilla_sel = None
+        for pl in plantillas:
+            if pl.get("id") in practica_nombre.lower() or pl.get("tipo") in practica_nombre.lower():
+                plantilla_sel = pl
+                break
+        if not plantilla_sel and len(plantillas) > 0:
+            plantilla_sel = plantillas[0]
+            
+        cuerpo_template = (plantilla_sel.get("cuerpo") if plantilla_sel else "") or (
+            "Por medio de la presente, yo {paciente}, DNI {dni}, declaro que he sido debidamente informado "
+            "por el Dr. {cirujano} acerca de la intervención quirúrgica de {cirugia} a realizarse en mi "
+            "ojo {ojo_intervenido} en {quirofano}. He comprendido los beneficios, riesgos inherentes y cuidados postoperatorios, "
+            "otorgando mi consentimiento libre e informado."
+        )
     
     # Reemplazo de variables dinámicas
     ojo = turno.get("ojo") or "OD"

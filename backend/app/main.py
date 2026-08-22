@@ -67,8 +67,24 @@ from app.db import (
     get_pipeline_quirurgico,
     enriquecer_practicas_geclisa_con_crm,
     guardar_practica_crm_con_arancel,
+    guardar_practica_crm_integral,
     listar_catalogo_completo_crm,
     eliminar_practica_crm,
+    get_plantillas_preparaciones,
+    get_plantilla_preparacion_by_id,
+    create_plantilla_preparacion,
+    update_plantilla_preparacion,
+    delete_plantilla_preparacion,
+    get_plantillas_consentimientos,
+    get_plantilla_consentimiento_by_id,
+    create_plantilla_consentimiento,
+    update_plantilla_consentimiento,
+    delete_plantilla_consentimiento,
+    get_aranceles_por_practica,
+    crear_arancel_practica,
+    actualizar_arancel,
+    eliminar_arancel,
+    get_practica_resumen_operativo,
     generar_mensaje_ameno_presupuesto,
     enviar_presupuesto_por_whatsapp,
     get_configuracion_quirofano,
@@ -1895,6 +1911,184 @@ def eliminar_practica_crm_api(practica_id: str):
         return {"success": ok, "mensaje": "Práctica eliminada del catálogo del CRM."}
     except Exception as e:
         logger.error(f"Error al eliminar práctica {practica_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# GUARDADO INTEGRAL Y RESUMEN OPERATIVO MULTIDIMENSIONAL
+# ====================================================================
+
+@app.post("/api/nomenclador/guardar-practica-integral")
+def guardar_practica_integral_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Guarda o actualiza una práctica de manera integral con sus reglas multidimensionales:
+    Aranceles temporales, Preparación (Plantilla o Custom), Consentimiento (Plantilla o Custom).
+    """
+    try:
+        if not payload.get("codigo") or not payload.get("nombre"):
+            raise HTTPException(status_code=400, detail="El código y nombre de la práctica son obligatorios.")
+        res = guardar_practica_crm_integral(payload)
+        return {
+            "success": True,
+            "mensaje": f"Práctica {payload.get('codigo')} guardada y configurada exitosamente.",
+            "resultado": res
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al guardar práctica integral: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/nomenclador/practica/{practica_id_or_codigo}/resumen-operativo")
+def get_resumen_operativo_api(practica_id_or_codigo: str, fecha: Optional[str] = None):
+    """
+    Resuelve todos los aspectos operativos de una práctica para la fecha dada
+    (arancel vigente, preparación resuelta y consentimiento resuelto).
+    """
+    try:
+        res = get_practica_resumen_operativo(practica_id_or_codigo, fecha_consulta=fecha)
+        if not res:
+            raise HTTPException(status_code=404, detail="Práctica no encontrada en el CRM.")
+        return {"success": True, "practica": res}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al obtener resumen operativo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: PLANTILLAS MAESTRAS DE PREPARACIONES
+# ====================================================================
+
+@app.get("/api/nomenclador/plantillas/preparaciones")
+def list_plantillas_preparaciones_api():
+    try:
+        data = get_plantillas_preparaciones()
+        return {"success": True, "total": len(data), "plantillas": data}
+    except Exception as e:
+        logger.error(f"Error listando plantillas de preparaciones: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/plantillas/preparaciones")
+def create_plantilla_preparacion_api(payload: Dict[str, Any] = Body(...)):
+    try:
+        if not payload.get("titulo") or not payload.get("texto_indicaciones"):
+            raise HTTPException(status_code=400, detail="El título y las indicaciones son obligatorios.")
+        item = create_plantilla_preparacion(payload)
+        return {"success": True, "mensaje": "Plantilla de preparación creada con éxito.", "plantilla": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creando plantilla de preparación: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/nomenclador/plantillas/preparaciones/{plantilla_id}")
+def update_plantilla_preparacion_api(plantilla_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        item = update_plantilla_preparacion(plantilla_id, payload)
+        return {"success": True, "mensaje": "Plantilla de preparación actualizada.", "plantilla": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error actualizando plantilla de preparación: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/nomenclador/plantillas/preparaciones/{plantilla_id}")
+def delete_plantilla_preparacion_api(plantilla_id: str):
+    try:
+        ok = delete_plantilla_preparacion(plantilla_id)
+        return {"success": ok, "mensaje": "Plantilla de preparación eliminada."}
+    except Exception as e:
+        logger.error(f"Error eliminando plantilla de preparación: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: PLANTILLAS MAESTRAS DE CONSENTIMIENTOS INFORMADOS
+# ====================================================================
+
+@app.get("/api/nomenclador/plantillas/consentimientos")
+def list_plantillas_consentimientos_api():
+    try:
+        data = get_plantillas_consentimientos()
+        return {"success": True, "total": len(data), "plantillas": data}
+    except Exception as e:
+        logger.error(f"Error listando plantillas de consentimientos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/plantillas/consentimientos")
+def create_plantilla_consentimiento_api(payload: Dict[str, Any] = Body(...)):
+    try:
+        if not payload.get("titulo") or not payload.get("cuerpo_legal"):
+            raise HTTPException(status_code=400, detail="El título y el cuerpo legal son obligatorios.")
+        item = create_plantilla_consentimiento(payload)
+        return {"success": True, "mensaje": "Plantilla de consentimiento creada con éxito.", "plantilla": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creando plantilla de consentimiento: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/nomenclador/plantillas/consentimientos/{plantilla_id}")
+def update_plantilla_consentimiento_api(plantilla_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        item = update_plantilla_consentimiento(plantilla_id, payload)
+        return {"success": True, "mensaje": "Plantilla de consentimiento actualizada.", "plantilla": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error actualizando plantilla de consentimiento: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/nomenclador/plantillas/consentimientos/{plantilla_id}")
+def delete_plantilla_consentimiento_api(plantilla_id: str):
+    try:
+        ok = delete_plantilla_consentimiento(plantilla_id)
+        return {"success": ok, "mensaje": "Plantilla de consentimiento eliminada."}
+    except Exception as e:
+        logger.error(f"Error eliminando plantilla de consentimiento: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: HISTORIAL Y CRUD DE ARANCELES (1:N) POR PRÁCTICA
+# ====================================================================
+
+@app.get("/api/nomenclador/practicas/{practica_id}/aranceles")
+def get_aranceles_practica_api(practica_id: str):
+    try:
+        data = get_aranceles_por_practica(practica_id)
+        return {"success": True, "total": len(data), "aranceles": data}
+    except Exception as e:
+        logger.error(f"Error al obtener aranceles de la práctica {practica_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/practicas/{practica_id}/aranceles")
+def crear_arancel_practica_api(practica_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        item = crear_arancel_practica(practica_id, payload)
+        return {"success": True, "mensaje": "Tarifa agregada al historial con éxito.", "arancel": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al crear arancel para práctica {practica_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/nomenclador/aranceles/{arancel_id}")
+def actualizar_arancel_api(arancel_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        item = actualizar_arancel(arancel_id, payload)
+        return {"success": True, "mensaje": "Tarifa actualizada con éxito.", "arancel": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al actualizar arancel {arancel_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/nomenclador/aranceles/{arancel_id}")
+def eliminar_arancel_api(arancel_id: str):
+    try:
+        ok = eliminar_arancel(arancel_id)
+        return {"success": ok, "mensaje": "Tarifa eliminada del historial."}
+    except Exception as e:
+        logger.error(f"Error al eliminar arancel {arancel_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/nomencladores")
