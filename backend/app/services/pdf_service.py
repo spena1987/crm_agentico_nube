@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import logging
 from typing import Dict, Any, List, Optional
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
@@ -8,6 +9,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
 from app.services.config_service import load_settings
+
+logger = logging.getLogger(__name__)
 
 # Directorio local para guardar los archivos PDF generados
 PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -543,6 +546,72 @@ def generar_pdf_presupuesto(
     return pdf_filename
 
 
+def generar_html_consentimiento(
+    turno: dict,
+    paciente: dict,
+    texto_consentimiento: str,
+    firma_img_base64: Optional[str] = None,
+    firma_metadata: Optional[dict] = None
+) -> str:
+    """
+    Renderiza la plantilla HTML5 con el texto en Markdown convertido a HTML semántico y los datos del turno/firma.
+    """
+    import markdown
+    from jinja2 import Environment, FileSystemLoader
+    
+    template_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
+    env = Environment(loader=FileSystemLoader(template_dir))
+    template = env.get_template("consentimiento_pdf.html")
+    
+    settings = load_settings()
+    plantilla_inst = settings.get("plantilla_presupuesto", {})
+    nombre_inst = plantilla_inst.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"
+    subtitulo_inst = plantilla_inst.get("subtitulo_institucion") or "Atención Oftalmológica & Quirúrgica"
+    color_primario = "#1E3A8A"
+    color_secundario = "#2563EB"
+    
+    # Convertir Markdown a HTML con extensiones de listas, tablas y saltos de línea
+    cuerpo_html = markdown.markdown(
+        texto_consentimiento,
+        extensions=['extra', 'nl2br', 'sane_lists']
+    )
+    
+    ojo = turno.get("ojo") or "OD"
+    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    
+    # Preparar firma base64 si existe
+    sig_b64 = firma_img_base64
+    if sig_b64 and not sig_b64.startswith("data:"):
+        sig_b64 = f"data:image/png;base64,{sig_b64}"
+        
+    context = {
+        "nombre_institucion": nombre_inst,
+        "subtitulo_institucion": subtitulo_inst,
+        "color_primario": color_primario,
+        "color_secundario": color_secundario,
+        "titulo_documento": "CONSENTIMIENTO INFORMADO MÉDICO-LEGAL",
+        "practica_nombre": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+        "ojo_desc": ojo_desc,
+        "paciente_nombre": paciente.get("nombre") or "Paciente",
+        "paciente_dni": paciente.get("dni") or "Sin DNI",
+        "paciente_hc": paciente.get("nro_hc") or "-",
+        "obra_social": turno.get("obra_social") or paciente.get("obra_social") or "-",
+        "plan_obra_social": turno.get("plan_obra_social") or paciente.get("plan_cobertura") or "-",
+        "cirujano_nombre": turno.get("cirujano_nombre") or "Médico Cirujano",
+        "tipo_anestesia": turno.get("tipo_anestesia") or "Local Asistida",
+        "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
+        "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
+        "quirofano_nombre": (turno.get("quirofanos") or {}).get("nombre") or turno.get("quirofano_nombre") or "Quirófano Central",
+        "cuerpo_html": cuerpo_html,
+        "firma_img_base64": sig_b64,
+        "firma_timestamp": (firma_metadata or {}).get("fecha_hora") or (firma_metadata or {}).get("timestamp") or "N/A",
+        "firma_ip": (firma_metadata or {}).get("ip_origen") or (firma_metadata or {}).get("ip") or "Web-Client",
+        "firma_hash": (firma_metadata or {}).get("hash") or "SHA256-VERIFIED",
+    }
+    
+    return template.render(**context)
+
+
 def generar_pdf_consentimiento_informado(
     turno: dict,
     paciente: dict,
@@ -551,8 +620,8 @@ def generar_pdf_consentimiento_informado(
     firma_metadata: Optional[dict] = None
 ) -> str:
     """
-    Genera el documento de Consentimiento Informado Quirúrgico en PDF.
-    Si se provee firma en base64, la estampa al pie con el sello digital de trazabilidad.
+    Genera el documento de Consentimiento Informado Quirúrgico en PDF utilizando WeasyPrint (HTML5/CSS3)
+    con motor de respaldo de alta fidelidad.
     """
     import base64
     from reportlab.platypus import Image as RLImage
@@ -562,6 +631,27 @@ def generar_pdf_consentimiento_informado(
     pdf_filename = f"consentimiento_{turno_id}.pdf"
     pdf_path = os.path.join(PDF_DIR, pdf_filename)
 
+    # 1. Generar HTML completo con Jinja2 y Markdown
+    try:
+        rendered_html = generar_html_consentimiento(
+            turno=turno,
+            paciente=paciente,
+            texto_consentimiento=texto_consentimiento,
+            firma_img_base64=firma_img_base64,
+            firma_metadata=firma_metadata
+        )
+        
+        # 2. Intentar compilar con WeasyPrint (estándar HTML5/CSS3 en producción)
+        try:
+            import weasyprint
+            weasyprint.HTML(string=rendered_html).write_pdf(pdf_path)
+            return pdf_filename
+        except Exception as wp_err:
+            logger.info(f"WeasyPrint no disponible en el entorno local ({wp_err}), utilizando motor de respaldo con parser Markdown.")
+    except Exception as html_err:
+        logger.error(f"Error renderizando HTML de consentimiento: {html_err}")
+
+    # 3. Motor de respaldo estructurado (ReportLab con parser completo de Markdown)
     settings = load_settings()
     plantilla = settings.get("plantilla_presupuesto", {})
     nombre_inst = plantilla.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"

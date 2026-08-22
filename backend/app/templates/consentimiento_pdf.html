@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ titulo_documento or 'Consentimiento Informado Quirúrgico' }}</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 15mm 20mm 15mm;
+      @bottom-right {
+        content: "Página " counter(page) " de " counter(pages);
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 7.5pt;
+        color: #94a3b8;
+      }
+      @bottom-left {
+        content: "{{ nombre_institucion }} • Documento Médico-Legal con Firma Digital";
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 7.5pt;
+        color: #94a3b8;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 1.45;
+      color: #1e293b;
+      background-color: #ffffff;
+    }
+
+    /* 1. Header Institucional */
+    .header-table {
+      width: 100%;
+      border-collapse: collapse;
+      border-bottom: 2px solid {{ color_primario or '#1e3a8a' }};
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+    }
+
+    .header-table td {
+      vertical-align: middle;
+    }
+
+    .inst-title {
+      font-size: 13pt;
+      font-weight: 800;
+      color: {{ color_primario or '#1e3a8a' }};
+      letter-spacing: 0.5px;
+    }
+
+    .inst-subtitle {
+      font-size: 8pt;
+      color: #64748b;
+      font-weight: 500;
+      margin-top: 2px;
+    }
+
+    .doc-badge {
+      text-align: right;
+    }
+
+    .doc-badge-tag {
+      display: inline-block;
+      font-size: 7.5pt;
+      font-weight: 700;
+      color: #475569;
+      background-color: #f1f5f9;
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid #cbd5e1;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .doc-title-right {
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: {{ color_secundario or '#2563eb' }};
+      margin-top: 3px;
+    }
+
+    /* 2. Banner Título Principal */
+    .banner-title {
+      text-align: center;
+      margin-bottom: 12px;
+    }
+
+    .banner-title h1 {
+      font-size: 12pt;
+      font-weight: 800;
+      color: {{ color_primario or '#1e3a8a' }};
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .banner-title .sub {
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: {{ color_secundario or '#2563eb' }};
+      margin-top: 3px;
+    }
+
+    /* 3. Ficha del Paciente y Turno */
+    .patient-table {
+      width: 100%;
+      border-collapse: collapse;
+      background-color: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      margin-bottom: 14px;
+    }
+
+    .patient-table td {
+      padding: 5px 8px;
+      font-size: 8pt;
+      border: 0.5px solid #e2e8f0;
+      vertical-align: middle;
+    }
+
+    .patient-table strong {
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    /* 4. Cuerpo Legal del Consentimiento (Renderizado desde Markdown) */
+    .consent-body {
+      text-align: justify;
+      font-size: 8.5pt;
+      line-height: 1.45;
+      color: #1e293b;
+    }
+
+    .consent-body h1 {
+      font-size: 11pt;
+      font-weight: 800;
+      color: {{ color_primario or '#1e3a8a' }};
+      margin-top: 14px;
+      margin-bottom: 6px;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 3px;
+    }
+
+    .consent-body h2 {
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: {{ color_secundario or '#2563eb' }};
+      margin-top: 12px;
+      margin-bottom: 4px;
+      page-break-after: avoid;
+    }
+
+    .consent-body h3 {
+      font-size: 8.5pt;
+      font-weight: 700;
+      color: #0f172a;
+      margin-top: 8px;
+      margin-bottom: 3px;
+      page-break-after: avoid;
+    }
+
+    .consent-body p {
+      margin-bottom: 6px;
+    }
+
+    .consent-body strong {
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .consent-body em {
+      font-style: italic;
+    }
+
+    .consent-body ul, .consent-body ol {
+      margin: 4px 0 8px 18px;
+    }
+
+    .consent-body li {
+      margin-bottom: 3px;
+    }
+
+    .consent-body blockquote {
+      background-color: #fef9c3;
+      border-left: 3.5px solid #d97706;
+      padding: 6px 10px;
+      margin: 8px 0;
+      border-radius: 0 6px 6px 0;
+      font-size: 8pt;
+      line-height: 1.35;
+      color: #78350f;
+    }
+
+    .consent-body hr {
+      border: 0;
+      border-top: 1px solid #cbd5e1;
+      margin: 12px 0;
+    }
+
+    /* 5. Bloque de Firma Digital */
+    .signature-container {
+      page-break-inside: avoid;
+      margin-top: 16px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background-color: #f8fafc;
+      padding: 10px 14px;
+    }
+
+    .signature-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .signature-table td {
+      vertical-align: middle;
+    }
+
+    .sig-meta {
+      font-size: 7.5pt;
+      line-height: 1.3;
+      color: #475569;
+    }
+
+    .sig-meta strong {
+      color: #0f172a;
+    }
+
+    .sig-img-container {
+      text-align: center;
+    }
+
+    .sig-img-container img {
+      max-height: 55px;
+      max-width: 160px;
+      display: inline-block;
+    }
+
+    .sig-line {
+      border-top: 1px solid #0f172a;
+      margin-top: 4px;
+      padding-top: 3px;
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-align: center;
+      color: #0f172a;
+    }
+
+    .disclaimer-foot {
+      margin-top: 8px;
+      font-size: 6.5pt;
+      color: #94a3b8;
+      text-align: center;
+      line-height: 1.2;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 1. Cabecera Institucional -->
+  <table class="header-table">
+    <tr>
+      <td style="width: 60%;">
+        <div class="inst-title">{{ nombre_institucion | upper }}</div>
+        <div class="inst-subtitle">{{ subtitulo_institucion }}</div>
+      </td>
+      <td style="width: 40%;" class="doc-badge">
+        <div class="doc-badge-tag">Documento Médico-Legal</div>
+        <div class="doc-title-right">Consentimiento Informado</div>
+      </td>
+    </tr>
+  </table>
+
+  <!-- 2. Título de la Cirugía -->
+  <div class="banner-title">
+    <h1>Consentimiento Informado para Cirugía Oftalmológica</h1>
+    <div class="sub">{{ practica_nombre | upper }} — {{ ojo_desc }}</div>
+  </div>
+
+  <!-- 3. Ficha de Datos del Paciente y Turno -->
+  <table class="patient-table">
+    <tr>
+      <td style="width: 35%;"><strong>Paciente:</strong> {{ paciente_nombre }}</td>
+      <td style="width: 33%;"><strong>D.N.I.:</strong> {{ paciente_dni }}</td>
+      <td style="width: 32%;"><strong>N° H.C.:</strong> {{ paciente_hc }}</td>
+    </tr>
+    <tr>
+      <td><strong>Cobertura:</strong> {{ obra_social }} ({{ plan_obra_social }})</td>
+      <td><strong>Cirujano:</strong> Dr/a. {{ cirujano_nombre }}</td>
+      <td><strong>Anestesia:</strong> {{ tipo_anestesia }}</td>
+    </tr>
+    <tr>
+      <td><strong>Fecha Prevista:</strong> {{ fecha_cirugia }} - {{ hora_cirugia }} hs</td>
+      <td><strong>Lateralidad:</strong> <strong>{{ ojo_desc }}</strong></td>
+      <td><strong>Sede / Quirófano:</strong> {{ quirofano_nombre }}</td>
+    </tr>
+  </table>
+
+  <!-- 4. Cuerpo del Consentimiento Formateado desde Markdown -->
+  <div class="consent-body">
+    {{ cuerpo_html | safe }}
+  </div>
+
+  <!-- 5. Bloque de Firma Digital o Manuscrita -->
+  <div class="signature-container">
+    <table class="signature-table">
+      <tr>
+        {% if firma_img_base64 %}
+          <td style="width: 62%;" class="sig-meta">
+            <strong style="color: #1e3a8a;">CERTIFICACIÓN DE FIRMA DIGITAL (LEY 25.506)</strong><br>
+            <strong>Titular:</strong> {{ paciente_nombre }} (DNI: {{ paciente_dni }})<br>
+            <strong>Fecha/Hora:</strong> {{ firma_timestamp }} UTC<br>
+            <strong>IP de Origen:</strong> {{ firma_ip }}<br>
+            <strong>Trazabilidad SHA-256:</strong> <span style="font-family: monospace; font-size: 6.5pt;">{{ firma_hash }}</span>
+          </td>
+          <td style="width: 38%;" class="sig-img-container">
+            <img src="{{ firma_img_base64 }}" alt="Firma Digital">
+            <div class="sig-line">Firma del Paciente / Representante</div>
+          </td>
+        {% else %}
+          <td style="width: 50%; text-align: center; padding: 25px 15px 5px 15px;">
+            ____________________________________________<br>
+            <strong style="font-size: 7.5pt;">Firma del Médico / Cirujano</strong><br>
+            <span style="font-size: 6.5pt; color: #64748b;">Matrícula y Sello Profesional</span>
+          </td>
+          <td style="width: 50%; text-align: center; padding: 25px 15px 5px 15px;">
+            ____________________________________________<br>
+            <strong style="font-size: 7.5pt;">Firma del Paciente / Representante</strong><br>
+            <span style="font-size: 6.5pt; color: #64748b;">{{ paciente_nombre }} — DNI: {{ paciente_dni }}</span>
+          </td>
+        {% endif %}
+      </tr>
+    </table>
+    <div class="disclaimer-foot">
+      Documento generado electrónicamente por el Sistema de Gestión Quirúrgica • {{ nombre_institucion }}. La firma registrada certifica la comprensión y aceptación de las cláusulas informadas.
+    </div>
+  </div>
+
+</body>
+</html>
