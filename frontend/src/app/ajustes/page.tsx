@@ -13,6 +13,7 @@ import {
   Stethoscope, 
   CalendarClock, 
   Users, 
+  Eye,
   Loader2,
   Search,
   ChevronRight,
@@ -30,12 +31,14 @@ import SecuritySettingsCard from '@/components/settings/SecuritySettingsCard'
 import SurgicalSettingsCard from '@/components/settings/SurgicalSettingsCard'
 import QuirofanoSettingsCard from '@/components/settings/QuirofanoSettingsCard'
 import PrestadoresSettingsCard from '@/components/settings/PrestadoresSettingsCard'
+import LioSettingsCard from '@/components/settings/LioSettingsCard'
 
 type TabType = 
   | 'whatsapp' 
   | 'bot' 
   | 'quirurgicos_turnos' 
   | 'prestadores' 
+  | 'lios'
   | 'quirurgico' 
   | 'clinica' 
   | 'nomenclador' 
@@ -75,6 +78,7 @@ const tabCategories: TabCategory[] = [
     items: [
       { id: 'quirurgicos_turnos', label: 'Quirófano & Consentimientos', icon: CalendarClock, description: 'Salas, slots y confirmaciones' },
       { id: 'prestadores', label: 'Equipo & Prestadores', icon: Users, description: 'Instrumentadores y Anestesistas' },
+      { id: 'lios', label: 'Lentes Intraoculares (LIO)', icon: Eye, description: 'Catálogo de marcas, modelos y ópticas' },
       { id: 'quirurgico', label: 'Asesoría & Lead-to-Surgery', icon: Stethoscope, description: 'SLA, alertas y checklist quirúrgico' },
     ]
   },
@@ -157,7 +161,7 @@ function AjustesContent() {
                 <span>Módulos de Ajustes</span>
               </div>
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 border border-blue-200 dark:border-blue-800/40">
-                10 secciones
+                11 secciones
               </span>
             </div>
 
@@ -294,6 +298,7 @@ function AjustesContent() {
             {activeTab === 'bot' && <BotSettingsCard />}
             {activeTab === 'quirurgicos_turnos' && <QuirofanoSettingsCard initialSubSection={subParam} />}
             {activeTab === 'prestadores' && <PrestadoresSettingsCard />}
+            {activeTab === 'lios' && <LioSettingsCard />}
             {activeTab === 'quirurgico' && <SurgicalSettingsCard />}
             {activeTab === 'clinica' && <ClinicProfileCard />}
             {activeTab === 'nomenclador' && <NomencladorSettingsCard />}

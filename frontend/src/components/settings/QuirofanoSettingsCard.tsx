@@ -19,7 +19,8 @@ import {
   Edit2,
   Sliders,
   Timer,
-  CalendarDays
+  CalendarDays,
+  Eye
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -520,6 +521,7 @@ export default function QuirofanoSettingsCard({
           { id: 'salas', label: 'Salas de Quirófano & Días', icon: Building2 },
           { id: 'duraciones', label: 'Duraciones por Práctica', icon: Timer },
           { id: 'bloques', label: 'Bloques de Cirujanos', icon: Scissors },
+          { id: 'ficha_turno', label: 'Modelos de LIO (Lentes)', icon: Eye },
           { id: 'consentimientos', label: 'Textos de Consentimiento', icon: FileCheck2 },
           { id: 'whatsapp', label: 'Mensajes WhatsApp', icon: MessageSquare }
         ].map((sub) => {
