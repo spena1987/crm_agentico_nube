@@ -5,7 +5,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
