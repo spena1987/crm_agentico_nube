@@ -24,6 +24,7 @@ import {
   PenTool
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
+import { RichConsentEditor } from './RichConsentEditor'
 
 interface GeclisaTipoNomenclador {
   nomId: number
@@ -1653,21 +1654,13 @@ export default function NomencladorSettingsCard() {
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          <label className="font-bold text-slate-500 block mb-1">Texto del Consentimiento Legal</label>
-                          <textarea
-                            rows={6}
-                            value={formData.consentimiento_custom_texto}
-                            onChange={(e) => setFormData({ ...formData, consentimiento_custom_texto: e.target.value })}
-                            placeholder="Por el presente documento, yo {paciente}, DNI {dni}, autorizo..."
-                            className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-xs outline-none focus:ring-2 focus:ring-purple-500"
+                          <label className="font-bold text-slate-500 block mb-1">Texto del Consentimiento Legal Enriquecido</label>
+                          <RichConsentEditor
+                            value={formData.consentimiento_custom_texto || ''}
+                            onChange={(val) => setFormData({ ...formData, consentimiento_custom_texto: val })}
+                            placeholder="Por el presente documento, yo {paciente}, DNI {dni}, autorizo al Dr/a. {cirujano}..."
+                            minHeight="280px"
                           />
-                          <p className="text-[10px] text-slate-400">
-                            Variables disponibles: <code className="text-purple-500">{'{paciente}'}</code>,{' '}
-                            <code className="text-purple-500">{'{dni}'}</code>,{' '}
-                            <code className="text-purple-500">{'{cirujano}'}</code>,{' '}
-                            <code className="text-purple-500">{'{cirugia}'}</code>,{' '}
-                            <code className="text-purple-500">{'{ojo_intervenido}'}</code>
-                          </p>
                         </div>
                       )}
                     </div>
@@ -1790,79 +1783,90 @@ export default function NomencladorSettingsCard() {
       {/* MODAL CREAR/EDITAR PLANTILLA DE CONSENTIMIENTO */}
       {/* ==================================================================== */}
       {isConsentModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-scale-in">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-5xl w-full p-5 sm:p-6 shadow-2xl space-y-4 animate-scale-in max-h-[92vh] flex flex-col">
+            {/* Header del Modal */}
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <h3 className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
-                <PenTool className="text-purple-600" size={20} />
-                {editingConsent ? 'Editar Consentimiento Informado' : 'Nueva Plantilla de Consentimiento'}
-              </h3>
-              <button onClick={() => setIsConsentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={18} />
+              <div>
+                <h3 className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                  <PenTool className="text-purple-600" size={20} />
+                  {editingConsent ? 'Editar Plantilla de Consentimiento Informado' : 'Nueva Plantilla de Consentimiento Informado'}
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Editor médico-legal con soporte de formato enriquecido, variables dinámicas y vista previa en tiempo real.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsConsentModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+              >
+                <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveConsent} className="space-y-3 text-xs">
-              <div>
-                <label className="font-bold text-slate-500 block mb-1">Título del Consentimiento</label>
-                <input
-                  type="text"
-                  required
-                  value={consentForm.titulo}
-                  onChange={(e) => setConsentForm({ ...consentForm, titulo: e.target.value })}
-                  placeholder="ej: Consentimiento Cirugía de Cataratas y LIO"
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
+            {/* Formulario Scrolleable */}
+            <form onSubmit={handleSaveConsent} className="space-y-4 text-xs overflow-y-auto flex-1 pr-1">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-6">
+                  <label className="font-bold text-slate-500 block mb-1">Título del Consentimiento</label>
+                  <input
+                    type="text"
+                    required
+                    value={consentForm.titulo}
+                    onChange={(e) => setConsentForm({ ...consentForm, titulo: e.target.value })}
+                    placeholder="ej: Consentimiento Cirugía de Cataratas y LIO"
+                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+                <div className="sm:col-span-3">
                   <label className="font-bold text-slate-500 block mb-1">Especialidad</label>
                   <input
                     type="text"
                     value={consentForm.especialidad}
                     onChange={(e) => setConsentForm({ ...consentForm, especialidad: e.target.value })}
                     placeholder="Oftalmología"
-                    className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)]"
+                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-purple-500"
                   />
                 </div>
 
-                <div>
+                <div className="sm:col-span-3">
                   <label className="font-bold text-slate-500 block mb-1">Versión</label>
                   <input
                     type="text"
                     value={consentForm.version}
                     onChange={(e) => setConsentForm({ ...consentForm, version: e.target.value })}
-                    placeholder="1.0"
-                    className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono"
+                    placeholder="2.0 (CAO Oficial)"
+                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono font-bold outline-none focus:ring-2 focus:ring-purple-500"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="font-bold text-slate-500 block mb-1">Cuerpo Legal / Cláusulas</label>
-                <textarea
-                  rows={6}
-                  required
+                <label className="font-bold text-slate-500 block mb-1.5 flex items-center justify-between">
+                  <span>Cuerpo Legal & Cláusulas Médicas (Editor Enriquecido)</span>
+                </label>
+                <RichConsentEditor
                   value={consentForm.cuerpo_legal}
-                  onChange={(e) => setConsentForm({ ...consentForm, cuerpo_legal: e.target.value })}
+                  onChange={(val) => setConsentForm({ ...consentForm, cuerpo_legal: val })}
                   placeholder="Por el presente documento, yo {paciente}, DNI {dni}..."
-                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-xs outline-none focus:ring-2 focus:ring-purple-500"
+                  minHeight="380px"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--border)]">
                 <button
                   type="button"
                   onClick={() => setIsConsentModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800"
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold hover:bg-slate-100 dark:hover:bg-slate-800 transition"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold"
+                  className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-sm"
                 >
+                  <CheckCircle2 size={16} />
                   Guardar Consentimiento
                 </button>
               </div>

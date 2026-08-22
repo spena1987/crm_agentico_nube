@@ -153,6 +153,69 @@ export default function ConsentimientoPublicoPage() {
     }
   }
 
+  const formatInline = (text: string) => {
+    let formatted = text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/__(.*?)__/g, '<strong>$1</strong>')
+      .replace(/_(.*?)_/g, '<em>$1</em>')
+    return <span dangerouslySetInnerHTML={{ __html: formatted }} />
+  }
+
+  const renderFormattedBody = (content: string) => {
+    if (!content) return null
+    const lines = content.split('\n')
+    return (
+      <div className="space-y-2 text-xs leading-relaxed text-slate-800">
+        {lines.map((line, idx) => {
+          const trimmed = line.trim()
+          if (trimmed === '---' || trimmed === '***' || trimmed === '___') {
+            return <hr key={idx} className="my-3 border-slate-200" />
+          }
+          if (trimmed.startsWith('# ')) {
+            return (
+              <h1 key={idx} className="text-sm font-extrabold text-slate-900 pt-2 pb-1 border-b border-slate-200">
+                {formatInline(trimmed.substring(2))}
+              </h1>
+            )
+          }
+          if (trimmed.startsWith('## ')) {
+            return (
+              <h2 key={idx} className="text-xs font-bold text-blue-900 pt-1.5">
+                {formatInline(trimmed.substring(3))}
+              </h2>
+            )
+          }
+          if (trimmed.startsWith('### ')) {
+            return (
+              <h3 key={idx} className="text-xs font-semibold text-slate-900">
+                {formatInline(trimmed.substring(4))}
+              </h3>
+            )
+          }
+          if (trimmed.startsWith('> ')) {
+            return (
+              <div key={idx} className="p-2 bg-amber-50 border-l-4 border-amber-500 rounded-r text-amber-900 text-[11px] my-1 font-medium">
+                {formatInline(trimmed.substring(2))}
+              </div>
+            )
+          }
+          if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+            return (
+              <li key={idx} className="ml-4 list-disc text-slate-700">
+                {formatInline(trimmed.substring(2))}
+              </li>
+            )
+          }
+          if (!trimmed) {
+            return <div key={idx} className="h-1.5" />
+          }
+          return <p key={idx}>{formatInline(line)}</p>
+        })}
+      </div>
+    )
+  }
+
   if (cargando) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -270,9 +333,11 @@ export default function ConsentimientoPublicoPage() {
           </div>
 
           {/* Texto Legal */}
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-800 leading-relaxed max-h-60 overflow-y-auto space-y-2.5">
-            <p className="font-semibold text-slate-900">DECLARACIÓN DEL PACIENTE / REPRESENTANTE:</p>
-            <p>{consentimiento?.cuerpo}</p>
+          <div className="p-4 sm:p-5 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-800 leading-relaxed max-h-96 overflow-y-auto space-y-2.5">
+            <p className="font-bold text-slate-900 uppercase tracking-wider text-[11px] border-b border-slate-200 pb-1">
+              DECLARACIÓN Y CLÁUSULAS DEL CONSENTIMIENTO INFORMADO:
+            </p>
+            {renderFormattedBody(consentimiento?.cuerpo || '')}
           </div>
 
           {/* Checkbox de Conformidad */}
