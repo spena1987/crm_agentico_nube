@@ -196,6 +196,29 @@ export default function ItemCasoQuirurgicoAcordeon({
   onCasoEliminado
 }: ItemCasoQuirurgicoAcordeonProps) {
   const [guardando, setGuardando] = useState(false)
+  // Estado de Consentimiento Informado vinculado
+  const [consentimientoInfo, setConsentimientoInfo] = useState<any>(null)
+  const [cargandoConsentimiento, setCargandoConsentimiento] = useState(false)
+
+  const fetchConsentimientoAsesoria = async () => {
+    if (!caso?.id) return
+    try {
+      setCargandoConsentimiento(true)
+      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}/consentimiento`)
+      const data = await res.json()
+      if (data.success && data.consentimiento) {
+        setConsentimientoInfo(data.consentimiento)
+      }
+    } catch (err) {
+      console.error('Error cargando consentimiento de asesoría:', err)
+    } finally {
+      setCargandoConsentimiento(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchConsentimientoAsesoria()
+  }, [caso.id, caso.estado])
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -1400,6 +1423,83 @@ export default function ItemCasoQuirurgicoAcordeon({
                   disabled={false}
                   onChange={(nuevo) => setChecklistPrequirurgico(nuevo)}
                 />
+              </div>
+
+              {/* 5. SEGMENTO DE CONSENTIMIENTO INFORMADO QUIRÚRGICO */}
+              <div className={`p-4 rounded-xl border transition-all space-y-3 shadow-sm ${
+                consentimientoInfo?.estado === 'firmado_digital'
+                  ? 'bg-emerald-950/20 border-emerald-500/40'
+                  : consentimientoInfo?.estado === 'enviado_whatsapp'
+                  ? 'bg-amber-950/20 border-amber-500/40'
+                  : 'bg-neutral-900/60 border-neutral-800'
+              }`}>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className={`p-1.5 rounded-lg ${
+                      consentimientoInfo?.estado === 'firmado_digital'
+                        ? 'bg-emerald-600 text-white'
+                        : consentimientoInfo?.estado === 'enviado_whatsapp'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-blue-600 text-white'
+                    }`}>
+                      <FileCheck2 size={16} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-200 flex items-center gap-2">
+                        <span>Consentimiento Informado Digital</span>
+                        {consentimientoInfo?.estado === 'firmado_digital' ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 border border-emerald-500/40 font-bold">
+                            ✔ Firmado Digitalmente
+                          </span>
+                        ) : consentimientoInfo?.estado === 'enviado_whatsapp' ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-500/40 font-bold">
+                            ⏳ Enviado por WhatsApp (Pendiente Firma)
+                          </span>
+                        ) : (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-gray-400 font-semibold">
+                            Sin Enviar
+                          </span>
+                        )}
+                      </h4>
+                      <p className="text-[11px] text-gray-400">
+                        Documento legal y prequirúrgico rubricado por el paciente desde su dispositivo móvil.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Acciones de Descarga y Visualización */}
+                  <div className="flex items-center gap-2">
+                    {consentimientoInfo?.estado === 'firmado_digital' && (
+                      <a
+                        href={`${BACKEND_URL}${consentimientoInfo.pdf_url || '/static/consentimiento_' + consentimientoInfo.turno_id + '.pdf'}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                      >
+                        <Download size={13} />
+                        <span>Descargar PDF Firmado</span>
+                      </a>
+                    )}
+                    {consentimientoInfo?.token && (
+                      <a
+                        href={`/consentimiento/${consentimientoInfo.token}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1 border border-neutral-700 transition-all"
+                      >
+                        <ExternalLink size={12} />
+                        <span>Portal del Paciente</span>
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {consentimientoInfo?.firmado_at && (
+                  <div className="pt-2 border-t border-emerald-500/20 text-[11px] font-mono text-emerald-400 flex flex-wrap items-center gap-4">
+                    <span>📅 Rubricado: {new Date(consentimientoInfo.firmado_at).toLocaleString('es-AR')}</span>
+                    <span>📱 Dispositivo/IP: {consentimientoInfo.firma_ip || 'Móvil'}</span>
+                  </div>
+                )}
               </div>
 
               {/* 4. PRÓXIMA ACCIÓN PROGRAMADA & SEGUIMIENTO PROACTIVO */}

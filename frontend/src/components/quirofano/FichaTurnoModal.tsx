@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react'
 import {
   X,
+  Download,
+  FileCheck,
   CalendarClock,
   CalendarX,
   Trash2,
@@ -464,6 +466,79 @@ export default function FichaTurnoModal({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* SECCIÓN ESTADO DE CONSENTIMIENTO INFORMADO */}
+          {esEdicion && turno && (
+            <div className={`p-4 rounded-2xl border transition-all space-y-2 shadow-sm ${
+              turno.consentimiento_estado === 'firmado_digital'
+                ? 'bg-emerald-500/10 border-emerald-500/30'
+                : turno.consentimiento_estado === 'enviado_whatsapp'
+                ? 'bg-amber-500/10 border-amber-500/30'
+                : 'bg-slate-500/10 border-slate-500/20'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className={`p-2 rounded-xl ${
+                    turno.consentimiento_estado === 'firmado_digital'
+                      ? 'bg-emerald-600 text-white'
+                      : turno.consentimiento_estado === 'enviado_whatsapp'
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-slate-600 text-white'
+                  }`}>
+                    {turno.consentimiento_estado === 'firmado_digital' ? <ShieldCheck size={18} /> : <FileCheck2 size={18} />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-[var(--foreground)]">Consentimiento Informado:</span>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        turno.consentimiento_estado === 'firmado_digital'
+                          ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                          : turno.consentimiento_estado === 'enviado_whatsapp'
+                          ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                      }`}>
+                        {turno.consentimiento_estado === 'firmado_digital'
+                          ? '✔ Firmado Digitalmente'
+                          : turno.consentimiento_estado === 'enviado_whatsapp'
+                          ? '⏳ Enviado por WhatsApp (Pendiente Firma)'
+                          : '⚪ Pendiente de Envío'}
+                      </span>
+                    </div>
+                    {turno.consentimiento_firmado_at && (
+                      <p className="text-[11px] text-[var(--secondary)] font-mono mt-0.5">
+                        Firmado el: {new Date(turno.consentimiento_firmado_at).toLocaleString('es-AR')} • IP/Dispositivo: {turno.consentimiento_firma_ip || 'Móvil'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {turno.consentimiento_estado === 'firmado_digital' && (
+                    <a
+                      href={`${BACKEND_URL}${turno.consentimiento_pdf_url || '/static/consentimiento_' + turno.id + '.pdf'}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                    >
+                      <Download size={14} />
+                      <span>Descargar PDF Firmado</span>
+                    </a>
+                  )}
+                  {turno.consentimiento_token && (
+                    <a
+                      href={`/consentimiento/${turno.consentimiento_token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 border border-[var(--border)] transition-all"
+                    >
+                      <Eye size={13} />
+                      <span>Ver Portal</span>
+                    </a>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

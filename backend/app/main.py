@@ -247,6 +247,31 @@ def servir_archivo_estatico(filename: str):
                         generar_pdf_presupuesto(p_data, paciente, items_db)
             except Exception as e:
                 logger.error(f"Error regenerando PDF de presupuesto on-demand ({safe_filename}): {e}")
+        elif safe_filename.startswith("consentimiento_") and safe_filename.endswith(".pdf"):
+            turno_id = safe_filename.replace("consentimiento_", "").replace(".pdf", "")
+            try:
+                if supabase:
+                    t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
+                    if t_resp.data:
+                        t_data = t_resp.data[0]
+                        pac = t_data.get("pacientes") or {}
+                        config = get_configuracion_quirofano()
+                        plantillas = config.get("plantillas_consentimiento") or []
+                        cuerpo = plantillas[0]["texto"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
+                        
+                        from app.services.pdf_service import generar_pdf_consentimiento_informado
+                        generar_pdf_consentimiento_informado(
+                            turno=t_data,
+                            paciente=pac,
+                            texto_consentimiento=cuerpo,
+                            firma_img_base64=t_data.get("consentimiento_firma_img"),
+                            firma_metadata={
+                                "fecha_hora": str(t_data.get("consentimiento_firmado_at") or ""),
+                                "ip_origen": str(t_data.get("consentimiento_firma_ip") or "Web-Client")
+                            }
+                        )
+            except Exception as e:
+                logger.error(f"Error regenerando PDF de consentimiento on-demand ({safe_filename}): {e}")
 
     # 3. Si aún no existe, devolver 404
     if not os.path.exists(file_path):
@@ -3020,3 +3045,33 @@ def eliminar_prestador_endpoint(prestador_id: str):
     except Exception as e:
         logger.error(f"Error eliminando prestador {prestador_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/api/asesorias-quirurgicas/{asesoria_id}/consentimiento")
+def obtener_consentimiento_asesoria(asesoria_id: str):
+    if not supabase:
+        return {"success": False, "consentimiento": None}
+    try:
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*)").eq("asesoria_id", asesoria_id).order("created_at", desc=True).limit(1).execute()
+        if not resp.data:
+            return {"success": False, "consentimiento": None}
+        t = resp.data[0]
+        return {
+            "success": True,
+            "consentimiento": {
+                "turno_id": t.get("id"),
+                "estado": t.get("consentimiento_estado"),
+                "token": t.get("consentimiento_token"),
+                "pdf_url": t.get("consentimiento_pdf_url"),
+                "firmado_at": t.get("consentimiento_firmado_at"),
+                "firma_ip": t.get("consentimiento_firma_ip"),
+                "fecha_cirugia": t.get("fecha_cirugia"),
+                "hora_inicio": t.get("hora_inicio"),
+                "practica_nombre": t.get("practica_nombre"),
+                "cirujano_nombre": t.get("cirujano_nombre")
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
+        return {"success": False, "error": str(e)}
