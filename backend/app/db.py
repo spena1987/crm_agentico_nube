@@ -1663,28 +1663,85 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Error en guardar_practica_crm_integral: {e}")
         raise
 
+def render_consent_template(template_str: str, context: Dict[str, Any]) -> str:
+    """
+    Reemplaza de forma segura y robusta las variables del CRM dentro del texto del consentimiento.
+    """
+    if not template_str:
+        return ""
+    rendered = str(template_str)
+    
+    paciente_val = str(context.get("paciente") or "Paciente")
+    dni_val = str(context.get("dni") or "-")
+    cirujano_val = str(context.get("cirujano") or context.get("medico") or "Médico Cirujano")
+    practica_val = str(context.get("practica") or context.get("cirugia") or "Cirugía Oftalmológica")
+    ojo_desc = str(context.get("ojo_intervenido") or context.get("ojo_desc") or "Ojo Correspondiente")
+    quirofano_val = str(context.get("quirofano") or "Quirófano Central")
+    fecha_val = str(context.get("fecha") or context.get("fecha_cirugia") or "")
+    hora_val = str(context.get("hora_cirugia") or context.get("hora_inicio") or "")[:5]
+    
+    replacements = {
+        "{paciente}": paciente_val,
+        "{dni}": dni_val,
+        "{cirujano}": cirujano_val,
+        "{medico}": cirujano_val,
+        "{practica}": practica_val,
+        "{cirugia}": practica_val,
+        "{ojo_intervenido}": ojo_desc,
+        "{ojo}": ojo_desc,
+        "{quirofano}": quirofano_val,
+        "{fecha}": fecha_val,
+        "{fecha_cirugia}": fecha_val,
+        "{hora_cirugia}": hora_val,
+        "{hora_inicio}": hora_val,
+    }
+    
+    for tag, val in replacements.items():
+        rendered = rendered.replace(tag, val)
+        
+    return rendered
+
 def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Obtiene la resolución completa de una práctica para uso en Presupuestos, Turnero, Asesoría y WhatsApp.
     Resuelve el arancel vigente para la fecha dada, y el texto exacto de preparación y consentimiento.
+    Búsqueda inteligente por ID, código o nombre.
     """
     if not supabase or not practica_id_or_codigo:
         return None
         
     from datetime import date
     fecha_ref = fecha_consulta or date.today().isoformat()
+    val_clean = str(practica_id_or_codigo).strip()
     
     try:
-        # Buscar por ID o por Código
         q = supabase.table("nomenclador_practicas")\
             .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")
             
-        if is_valid_uuid(practica_id_or_codigo):
-            q = q.eq("id", practica_id_or_codigo)
+        if is_valid_uuid(val_clean):
+            p_resp = q.eq("id", val_clean).limit(1).execute()
         else:
-            q = q.eq("codigo", str(practica_id_or_codigo).strip().upper())
+            # 1. Buscar por código exacto
+            p_resp = q.eq("codigo", val_clean.upper()).limit(1).execute()
             
-        p_resp = q.limit(1).execute()
+            # 2. Si no encuentra por código exacto, buscar por nombre o código con OR
+            if not p_resp.data:
+                p_resp = supabase.table("nomenclador_practicas")\
+                    .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")\
+                    .or_(f"codigo.eq.{val_clean},nombre.eq.{val_clean},nombre.ilike.%{val_clean}%")\
+                    .limit(1)\
+                    .execute()
+                    
+            # 3. Si aún no encuentra y son varias palabras (ej: "CATARATA CON FACOEMULSIFICACION"), buscar por la primera palabra relevante
+            if not p_resp.data and len(val_clean) >= 4:
+                first_keyword = val_clean.split()[0].replace(",", "").replace(".", "")
+                if len(first_keyword) >= 4:
+                    p_resp = supabase.table("nomenclador_practicas")\
+                        .select("*, plantillas_preparaciones(*), plantillas_consentimientos(*)")\
+                        .ilike("nombre", f"%{first_keyword}%")\
+                        .limit(1)\
+                        .execute()
+            
         if not p_resp.data:
             return None
             
@@ -1721,13 +1778,16 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
                 
         # Resolver texto de consentimiento
         texto_consentimiento = None
+        titulo_consentimiento = "Consentimiento Informado Quirúrgico"
         version_consentimiento = "1.0"
         if practica.get("habilitar_consentimiento"):
             if practica.get("consentimiento_custom_texto"):
                 texto_consentimiento = practica.get("consentimiento_custom_texto")
+                titulo_consentimiento = f"Consentimiento - {practica.get('nombre', 'Cirugía')}"
             elif practica.get("plantillas_consentimientos"):
                 pl = practica["plantillas_consentimientos"]
                 texto_consentimiento = pl.get("cuerpo_legal")
+                titulo_consentimiento = pl.get("titulo", "Consentimiento Informado")
                 version_consentimiento = pl.get("version", "1.0")
                 
         return {
@@ -1746,6 +1806,7 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
             "dias_aviso": dias_aviso,
             "habilitar_consentimiento": practica.get("habilitar_consentimiento", False),
             "texto_consentimiento": texto_consentimiento,
+            "titulo_consentimiento": titulo_consentimiento,
             "version_consentimiento": version_consentimiento
         }
     except Exception as e:
@@ -3160,18 +3221,26 @@ def registrar_firma_consentimiento(
             "otorgando mi consentimiento libre e informado."
         )
     
-    # Reemplazo de variables dinámicas
+    # Reemplazo seguro de variables dinámicas
     ojo = turno.get("ojo") or "OD"
-    ojo_desc = "DERECHO (OD)" if ojo == "OD" else "IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
-    cuerpo_final = cuerpo_template.format(
-        paciente=paciente.get("nombre") or "Paciente",
-        dni=paciente.get("dni") or "-",
-        cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
-        cirugia=turno.get("practica_nombre") or "Cirugía Oftalmológica",
-        ojo_intervenido=ojo_desc,
-        quirofano=(turno.get("quirofanos") or {}).get("nombre") or "Quirófano",
-        fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
-        hora_cirugia=str(turno.get("hora_inicio") or "")[:5]
+    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    cuerpo_final = render_consent_template(
+        cuerpo_template,
+        {
+            "paciente": paciente.get("nombre") or "Paciente",
+            "dni": paciente.get("dni") or "-",
+            "cirujano": turno.get("cirujano_nombre") or "Médico Cirujano",
+            "medico": turno.get("cirujano_nombre") or "Médico Cirujano",
+            "practica": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+            "cirugia": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+            "ojo_intervenido": ojo_desc,
+            "ojo": ojo_desc,
+            "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano",
+            "fecha": str(turno.get("fecha_cirugia") or ""),
+            "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
+            "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
+            "hora_inicio": str(turno.get("hora_inicio") or "")[:5],
+        }
     )
     
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

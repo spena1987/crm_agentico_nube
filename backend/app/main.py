@@ -85,6 +85,7 @@ from app.db import (
     actualizar_arancel,
     eliminar_arancel,
     get_practica_resumen_operativo,
+    render_consent_template,
     generar_mensaje_ameno_presupuesto,
     enviar_presupuesto_por_whatsapp,
     get_configuracion_quirofano,
@@ -3091,37 +3092,61 @@ def obtener_datos_consentimiento_publico(token: str):
             raise HTTPException(status_code=404, detail="El enlace de consentimiento no es válido o ha caducado.")
             
         paciente = turno.get("pacientes") or {}
-        config = get_configuracion_quirofano()
-        plantillas = config.get("plantillas_consentimiento") or []
+        # 1. Intentar resolver el texto legal desde el Nomenclador Multidimensional
+        practica_cod = turno.get("practica_codigo") or ""
+        practica_id = turno.get("practica_id") or ""
+        practica_nombre = turno.get("practica_nombre") or ""
         
-        # Buscar plantilla adecuada
-        practica_nombre = (turno.get("practica_nombre") or "").lower()
-        plantilla_sel = None
-        for pl in plantillas:
-            if pl.get("id") in practica_nombre or pl.get("tipo") in practica_nombre:
-                plantilla_sel = pl
-                break
-        if not plantilla_sel and len(plantillas) > 0:
-            plantilla_sel = plantillas[0]
+        cuerpo_template = None
+        titulo_consentimiento = "Consentimiento Informado Quirúrgico"
+        
+        resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+        if resumen_practica and resumen_practica.get("habilitar_consentimiento") and resumen_practica.get("texto_consentimiento"):
+            cuerpo_template = resumen_practica["texto_consentimiento"]
+            titulo_consentimiento = resumen_practica.get("titulo_consentimiento") or "Consentimiento Informado Quirúrgico"
+            
+        # 2. Fallback a configuración de quirófano general si la práctica no tiene plantilla asignada
+        if not cuerpo_template:
+            config = get_configuracion_quirofano()
+            plantillas = config.get("plantillas_consentimiento") or []
+            plantilla_sel = None
+            for pl in plantillas:
+                if pl.get("id") in practica_nombre.lower() or pl.get("tipo") in practica_nombre.lower():
+                    plantilla_sel = pl
+                    break
+            if not plantilla_sel and len(plantillas) > 0:
+                plantilla_sel = plantillas[0]
+                
+            if plantilla_sel:
+                cuerpo_template = plantilla_sel.get("cuerpo")
+                titulo_consentimiento = plantilla_sel.get("titulo") or titulo_consentimiento
+            else:
+                cuerpo_template = (
+                    "Por medio de la presente, yo {paciente}, DNI {dni}, declaro que he sido debidamente informado "
+                    "por el Dr. {cirujano} acerca de la intervención de {cirugia} en mi {ojo_intervenido} en {quirofano}. "
+                    "Comprendo y acepto los riesgos, beneficios y cuidados médicos indicados."
+                )
             
         ojo = turno.get("ojo") or "OD"
         ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
         
-        cuerpo_template = (plantilla_sel.get("cuerpo") if plantilla_sel else "") or (
-            "Por medio de la presente, yo {paciente}, DNI {dni}, declaro que he sido debidamente informado "
-            "por el Dr. {cirujano} acerca de la intervención de {cirugia} en mi {ojo_intervenido} en {quirofano}. "
-            "Comprendo y acepto los riesgos, beneficios y cuidados médicos indicados."
-        )
-        
-        cuerpo_renderizado = cuerpo_template.format(
-            paciente=paciente.get("nombre") or "Paciente",
-            dni=paciente.get("dni") or "-",
-            cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
-            cirugia=turno.get("practica_nombre") or "Cirugía",
-            ojo_intervenido=ojo_desc,
-            quirofano=(turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
-            fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
-            hora_cirugia=str(turno.get("hora_inicio") or "")[:5]
+        cuerpo_renderizado = render_consent_template(
+            cuerpo_template,
+            {
+                "paciente": paciente.get("nombre") or "Paciente",
+                "dni": paciente.get("dni") or "-",
+                "cirujano": turno.get("cirujano_nombre") or "Médico Cirujano",
+                "medico": turno.get("cirujano_nombre") or "Médico Cirujano",
+                "practica": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+                "cirugia": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+                "ojo_intervenido": ojo_desc,
+                "ojo": ojo_desc,
+                "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
+                "fecha": str(turno.get("fecha_cirugia") or ""),
+                "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
+                "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
+                "hora_inicio": str(turno.get("hora_inicio") or "")[:5]
+            }
         )
         
         return {
@@ -3146,7 +3171,7 @@ def obtener_datos_consentimiento_publico(token: str):
                 "obra_social": paciente.get("obra_social")
             },
             "consentimiento": {
-                "titulo": plantilla_sel.get("titulo") if plantilla_sel else "Consentimiento Informado Quirúrgico",
+                "titulo": titulo_consentimiento,
                 "cuerpo": cuerpo_renderizado
             }
         }
