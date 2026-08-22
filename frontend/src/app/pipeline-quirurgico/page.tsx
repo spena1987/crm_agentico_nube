@@ -36,6 +36,8 @@ import Link from 'next/link'
 import { BACKEND_URL } from '@/lib/api'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
+import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
+import { Radio, Users } from 'lucide-react'
 
 interface PacienteData {
   id: string
@@ -127,6 +129,7 @@ const ETAPAS_COLUMNAS_ACTIVAS = [
 ]
 
 export default function PipelineQuirurgicoPage() {
+  const [modoVistaPipeline, setModoVistaPipeline] = useState<'kanban' | 'recepcion_hoy'>('kanban')
   const [etapas, setEtapas] = useState<Record<string, AsesoriaCasoPipeline[]>>({})
   const [metricas, setMetricas] = useState<MetricasPipeline | null>(null)
   const [cargando, setCargando] = useState(true)

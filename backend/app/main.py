@@ -114,7 +114,9 @@ from app.db import (
     get_modelos_lio,
     crear_modelo_lio,
     actualizar_modelo_lio,
-    eliminar_modelo_lio
+    eliminar_modelo_lio,
+    get_turnos_dia_ejecucion,
+    cambiar_estado_turno_quirofano
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -3371,4 +3373,38 @@ def eliminar_modelo_lio_endpoint(modelo_id: str):
         return {"success": ok}
     except Exception as e:
         logger.error(f"Error eliminando modelo de LIO {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# ====================================================================
+# ENDPOINTS: CONTROL DE QUIRÓFANO EN VIVO & RECEPCIÓN DEL DÍA
+# ====================================================================
+
+@app.get("/api/turnos-quirofano-dia")
+def listar_turnos_dia_endpoint(
+    fecha: str = Query(..., description="Fecha en formato YYYY-MM-DD"),
+    quirofano_id: Optional[str] = Query(None)
+):
+    try:
+        items = get_turnos_dia_ejecucion(fecha=fecha, quirofano_id=quirofano_id)
+        return {"success": True, "turnos": items, "fecha": fecha}
+    except Exception as e:
+        logger.error(f"Error listando turnos del día ({fecha}): {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class CambiarEstadoPayload(BaseModel):
+    estado: str
+
+@app.put("/api/turnos-quirofano/{turno_id}/cambiar-estado")
+def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
+    try:
+        res = cambiar_estado_turno_quirofano(turno_id=turno_id, nuevo_estado=payload.estado)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al actualizar estado")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint cambiar estado {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

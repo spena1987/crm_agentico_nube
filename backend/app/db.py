@@ -3004,7 +3004,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 COLUMN_KEYS_TURNOS_QUIROFANO = {
-    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje",
+    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje", "llegada_at", "inicio_cirugia_at", "fin_cirugia_at",
     "instrumentador_nombre", "medico_derivador_nombre",
     "asesoria_id", "paciente_id", "quirofano_id", "fecha_cirugia", "hora_inicio",
     "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
@@ -3397,3 +3397,75 @@ def eliminar_modelo_lio(modelo_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error al eliminar modelo de LIO {modelo_id}: {e}")
         return False
+
+
+# ====================================================================
+# EJECUCIÓN QUIRÚRGICA EN VIVO & SINCRONIZACIÓN DE ESTADOS
+# ====================================================================
+
+def get_turnos_dia_ejecucion(fecha: str, quirofano_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Obtiene los turnos programados para una fecha específica con todos sus joins."""
+    if not supabase or not fecha:
+        return []
+    try:
+        q = supabase.table("turnos_quirofano") \
+            .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos), asesorias_quirurgicas(*)") \
+            .eq("fecha_cirugia", fecha)
+            
+        if quirofano_id and quirofano_id != "todos":
+            q = q.eq("quirofano_id", quirofano_id)
+            
+        resp = q.order("hora_inicio").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener turnos del día ({fecha}): {e}")
+        return []
+
+def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str, Any]:
+    """
+    Cambia el estado de un turno quirúrgico ('programado', 'en_espera', 'en_operacion', 'operado', 'cancelado')
+    estampando los timestamps correspondientes y sincronizando automáticamente con asesorias_quirurgicas.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "No database connection"}
+        
+    try:
+        # 1. Obtener turno actual
+        t_resp = supabase.table("turnos_quirofano").select("*").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            return {"success": False, "error": "Turno no encontrado"}
+            
+        turno_actual = t_resp.data[0]
+        asesoria_id = turno_actual.get("asesoria_id")
+        
+        # 2. Preparar payload de actualización con timestamps
+        update_payload: Dict[str, Any] = {
+            "estado": nuevo_estado,
+            "updated_at": "now()"
+        }
+        
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        
+        if nuevo_estado == "en_espera":
+            update_payload["llegada_at"] = ahora_iso
+        elif nuevo_estado == "en_operacion":
+            update_payload["inicio_cirugia_at"] = ahora_iso
+        elif nuevo_estado == "operado":
+            update_payload["fin_cirugia_at"] = ahora_iso
+            
+        # 3. Actualizar turnos_quirofano
+        t_upd = supabase.table("turnos_quirofano").update(update_payload).eq("id", turno_id).execute()
+        turno_modificado = t_upd.data[0] if t_upd.data else {}
+        
+        # 4. Sincronizar bidireccionalmente con asesorias_quirurgicas
+        if asesoria_id:
+            asesoria_payload: Dict[str, Any] = {"estado": nuevo_estado, "updated_at": "now()"}
+            if nuevo_estado == "operado":
+                asesoria_payload["fecha_definitiva_cirugia"] = turno_actual.get("fecha_cirugia")
+            supabase.table("asesorias_quirurgicas").update(asesoria_payload).eq("id", asesoria_id).execute()
+            
+        return {"success": True, "turno": turno_modificado, "nuevo_estado": nuevo_estado}
+    except Exception as e:
+        logger.error(f"Error al cambiar estado de turno {turno_id} a {nuevo_estado}: {e}")
+        return {"success": False, "error": str(e)}

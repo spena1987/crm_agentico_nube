@@ -24,6 +24,8 @@ import {
 } from 'lucide-react'
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
+import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
+import { Radio } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
 function ProgramacionQuirurgicaContent() {
@@ -31,6 +33,7 @@ function ProgramacionQuirurgicaContent() {
   const paramAsesoriaId = searchParams.get('asesoria_id') || ''
   const paramPacienteId = searchParams.get('paciente_id') || ''
 
+  const [vistaPrincipal, setVistaPrincipal] = useState<'agenda' | 'en_vivo'>('agenda')
   const [modoVista, setModoVista] = useState<'dia' | 'semana'>('semana')
   const [fechaSeleccionada, setFechaSeleccionada] = useState(new Date().toISOString().slice(0, 10))
   const [quirofanoSeleccionadoId, setQuirofanoSeleccionadoId] = useState<string>('')
@@ -203,19 +206,46 @@ function ProgramacionQuirurgicaContent() {
           </p>
         </div>
 
-        {/* Botones de Acción y Bandeja de Confirmados */}
+        {/* Selector de Modo Principal: Agenda vs Control en Vivo */}
         <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-2xl border border-[var(--border)] shadow-sm">
+            <button
+              onClick={() => setVistaPrincipal('agenda')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                vistaPrincipal === 'agenda'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <CalendarDays size={15} />
+              <span>Agenda & Slots</span>
+            </button>
+            <button
+              onClick={() => setVistaPrincipal('en_vivo')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                vistaPrincipal === 'en_vivo'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <Radio size={15} className={vistaPrincipal === 'en_vivo' ? 'animate-pulse text-emerald-300' : 'text-slate-400'} />
+              <span>⚡ Pizarra en Vivo (Hoy)</span>
+            </button>
+          </div>
+
           {/* Botón Bandeja de Casos Confirmados */}
-          <button
-            onClick={() => setDrawerCasosAbierto(true)}
-            className="px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 shadow-sm hover:bg-blue-100 transition-all"
-          >
-            <Sparkles size={16} className="text-blue-600 animate-bounce" />
-            <span>Casos Confirmados</span>
-            <span className="px-2 py-0.5 rounded-full bg-blue-600 text-white font-mono text-[11px]">
-              {casosConfirmados.length}
-            </span>
-          </button>
+          {vistaPrincipal === 'agenda' && (
+            <button
+              onClick={() => setDrawerCasosAbierto(true)}
+              className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-800 shadow-sm hover:bg-blue-100 transition-all"
+            >
+              <Sparkles size={15} className="text-blue-600" />
+              <span>Confirmados</span>
+              <span className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white font-mono text-[10px]">
+                {casosConfirmados.length}
+              </span>
+            </button>
+          )}
 
           {/* Toggle Vista Día / Semana */}
           <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-[var(--border)]">
