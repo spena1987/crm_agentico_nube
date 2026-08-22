@@ -81,8 +81,20 @@ const PALETA_COLORES = [
   { hex: '#6366F1', label: 'Índigo' }
 ]
 
-export default function QuirofanoSettingsCard() {
-  const [activeSubSection, setActiveSubSection] = useState<'salas' | 'duraciones' | 'ficha_turno' | 'bloques' | 'consentimientos' | 'whatsapp'>('salas')
+export default function QuirofanoSettingsCard({
+  initialSubSection
+}: {
+  initialSubSection?: 'salas' | 'duraciones' | 'ficha_turno' | 'bloques' | 'consentimientos' | 'whatsapp'
+}) {
+  const [activeSubSection, setActiveSubSection] = useState<'salas' | 'duraciones' | 'ficha_turno' | 'bloques' | 'consentimientos' | 'whatsapp'>(
+    initialSubSection || 'salas'
+  )
+
+  useEffect(() => {
+    if (initialSubSection) {
+      setActiveSubSection(initialSubSection)
+    }
+  }, [initialSubSection])
 
   // ====================================================================
   // GESTIÓN DE MODELOS DE LENTES INTRAOCULARES (LIO)

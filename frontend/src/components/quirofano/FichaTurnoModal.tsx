@@ -29,7 +29,10 @@ import {
   Check,
   UserCheck,
   Syringe,
-  FileText
+  FileText,
+  Plus,
+  ExternalLink,
+  Save
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -70,6 +73,46 @@ export default function FichaTurnoModal({
 
   // Catálogo de Modelos de LIO cargados desde Ajustes
   const [modelosLio, setModelosLio] = useState<any[]>([])
+  // Modal flotante para Administrar Modelos de LIO sin salir de la ficha
+  const [mostrarModalConfigLio, setMostrarModalConfigLio] = useState(false)
+  const [nuevoModeloLio, setNuevoModeloLio] = useState({
+    marca: '',
+    modelo: '',
+    tipo_optica: 'Monofocal Asférico',
+    descripcion: ''
+  })
+  const [guardandoNuevoLio, setGuardandoNuevoLio] = useState(false)
+
+  const handleCrearModeloLioRapido = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!nuevoModeloLio.marca.trim() || !nuevoModeloLio.modelo.trim()) {
+      setError('Marca y modelo de LIO son obligatorios.')
+      return
+    }
+    try {
+      setGuardandoNuevoLio(true)
+      const res = await fetch(`${BACKEND_URL}/api/modelos-lio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...nuevoModeloLio, activo: true })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        const itemCreado = data.modelo
+        setModelosLio((prev) => [itemCreado, ...prev])
+        setFormData((prev) => ({ ...prev, lente_tipo: `${itemCreado.modelo} (${itemCreado.marca})` }))
+        setNuevoModeloLio({ marca: '', modelo: '', tipo_optica: 'Monofocal Asférico', descripcion: '' })
+        setMostrarModalConfigLio(false)
+      } else {
+        throw new Error(data.detail || 'Error al guardar modelo de LIO')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Error al registrar modelo')
+    } finally {
+      setGuardandoNuevoLio(false)
+    }
+  }
+
 
   // Prestadores cargados desde Ajustes (Instrumentadores y Anestesistas)
   const [instrumentadores, setInstrumentadores] = useState<any[]>([])
@@ -998,15 +1041,26 @@ export default function FichaTurnoModal({
                 </label>
 
                 {formData.lleva_lente && (
-                  <a
-                    href="/ajustes"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] text-blue-600 hover:text-blue-500 font-bold flex items-center gap-1 hover:underline"
-                    title="Administrar marcas y modelos en Ajustes de Quirófano"
-                  >
-                    <span>⚙ Configurar Modelos</span>
-                  </a>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMostrarModalConfigLio(true)}
+                      className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-sm transition-all"
+                    >
+                      <Plus size={11} />
+                      <span>+ Crear / Gestionar LIO</span>
+                    </button>
+                    <a
+                      href="/ajustes?tab=quirurgicos_turnos&sub=ficha_turno"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-[var(--secondary)] hover:text-blue-600 font-semibold flex items-center gap-0.5 hover:underline"
+                      title="Abrir panel completo de Ajustes de Quirófano en nueva pestaña"
+                    >
+                      <ExternalLink size={10} />
+                      <span>Ajustes</span>
+                    </a>
+                  </div>
                 )}
               </div>
 

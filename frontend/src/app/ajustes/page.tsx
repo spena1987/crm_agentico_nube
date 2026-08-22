@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useState } from 'react'
-import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck, ShieldCheck, Stethoscope, CalendarClock, Users } from 'lucide-react'
+import React, { useState, useEffect, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { QrCode, Bot, Building2, Terminal, BookOpen, FileCheck, ShieldCheck, Stethoscope, CalendarClock, Users, Loader2 } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
@@ -15,8 +16,18 @@ import PrestadoresSettingsCard from '@/components/settings/PrestadoresSettingsCa
 
 type TabType = 'whatsapp' | 'bot' | 'quirurgicos_turnos' | 'prestadores' | 'quirurgico' | 'clinica' | 'nomenclador' | 'plantilla_presupuesto' | 'seguridad' | 'logs'
 
-export default function AjustesPage() {
-  const [activeTab, setActiveTab] = useState<TabType>('whatsapp')
+function AjustesContent() {
+  const searchParams = useSearchParams()
+  const tabParam = searchParams.get('tab') as TabType | null
+  const subParam = searchParams.get('sub') as any
+
+  const [activeTab, setActiveTab] = useState<TabType>(tabParam || 'whatsapp')
+
+  useEffect(() => {
+    if (tabParam) {
+      setActiveTab(tabParam)
+    }
+  }, [tabParam])
 
   const tabs = [
     { id: 'whatsapp' as TabType, label: 'WhatsApp & QR', icon: QrCode, description: 'Sincronización multidispositivo' },
@@ -64,7 +75,7 @@ export default function AjustesPage() {
       <div className="transition-all duration-300">
         {activeTab === 'whatsapp' && <WhatsAppConfigCard />}
         {activeTab === 'bot' && <BotSettingsCard />}
-        {activeTab === 'quirurgicos_turnos' && <QuirofanoSettingsCard />}
+        {activeTab === 'quirurgicos_turnos' && <QuirofanoSettingsCard initialSubSection={subParam} />}
         {activeTab === 'prestadores' && <PrestadoresSettingsCard />}
         {activeTab === 'quirurgico' && <SurgicalSettingsCard />}
         {activeTab === 'clinica' && <ClinicProfileCard />}
@@ -74,5 +85,18 @@ export default function AjustesPage() {
         {activeTab === 'logs' && <SystemLogsCard />}
       </div>
     </div>
+  )
+}
+
+export default function AjustesPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-12 text-center text-xs text-[var(--secondary)] flex items-center justify-center gap-2">
+        <Loader2 size={20} className="animate-spin text-blue-600" />
+        <span>Cargando panel de configuración...</span>
+      </div>
+    }>
+      <AjustesContent />
+    </Suspense>
   )
 }
