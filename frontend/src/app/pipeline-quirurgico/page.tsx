@@ -935,10 +935,12 @@ export default function PipelineQuirurgicoPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 items-start">
           {ETAPAS_COLUMNAS_ACTIVAS.map((col) => {
             const casosColumna = etapasActivasFiltradas[col.id] || []
-            const montoTotalColumna = casosColumna.reduce(
-              (acc, c) => acc + Number(c.monto_extra || 0),
-              0
-            )
+            const montoARSColumna = casosColumna
+              .filter((c) => c.moneda_extra !== 'USD')
+              .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
+            const montoUSDColumna = casosColumna
+              .filter((c) => c.moneda_extra === 'USD')
+              .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
 
             return (
               <div
@@ -981,13 +983,20 @@ export default function PipelineQuirurgicoPage() {
                       {casosColumna.length}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] opacity-80">
+                  <div className="flex items-center justify-between text-[10px] opacity-80 pt-0.5">
                     <span className="truncate">{col.subtitulo}</span>
-                    {montoTotalColumna > 0 && (
-                      <span className="font-mono font-bold shrink-0">
-                        $ {montoTotalColumna.toLocaleString('es-AR')}
-                      </span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                      {montoARSColumna > 0 && (
+                        <span className="font-mono font-bold text-emerald-400">
+                          ${montoARSColumna.toLocaleString('es-AR')}
+                        </span>
+                      )}
+                      {montoUSDColumna > 0 && (
+                        <span className="font-mono font-bold text-amber-400">
+                          USD {montoUSDColumna.toLocaleString('es-AR')}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1107,10 +1116,16 @@ export default function PipelineQuirurgicoPage() {
                           <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-1.5">
                             
                             {/* Monto de la Cirugía */}
-                            <span className="text-[11px] font-mono font-bold text-amber-300 truncate">
-                              {Number(caso.monto_extra || 0) > 0
-                                ? `$ ${Number(caso.monto_extra).toLocaleString()} ${caso.moneda_extra || 'ARS'}`
-                                : 'Sin cotizar'}
+                            <span className="text-[11px] font-mono font-bold truncate">
+                              {Number(caso.monto_extra || 0) > 0 ? (
+                                caso.moneda_extra === 'USD' ? (
+                                  <span className="text-amber-400">USD {Number(caso.monto_extra).toLocaleString('es-AR')}</span>
+                                ) : (
+                                  <span className="text-emerald-400">${Number(caso.monto_extra).toLocaleString('es-AR')} ARS</span>
+                                )
+                              ) : (
+                                <span className="text-gray-500 font-normal">Sin cotizar</span>
+                              )}
                             </span>
 
                             <div className="flex items-center gap-1">

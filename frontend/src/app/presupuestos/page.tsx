@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import BudgetGenerator from '@/components/BudgetGenerator'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
+import ModalVisorPdfPresupuesto from '@/components/ModalVisorPdfPresupuesto'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import {
@@ -17,10 +18,14 @@ import {
   Clock,
   AlertCircle,
   Sparkles,
-  User
+  User,
+  Copy,
+  Eye,
+  MessageSquareHeart
 } from 'lucide-react'
 
 interface Paciente {
+  id?: string
   nombre: string
   telefono: string
 }
@@ -41,10 +46,15 @@ export default function PresupuestosPage() {
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('create')
   const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [loading, setLoading] = useState(false)
+  const [presupuestoParaClonar, setPresupuestoParaClonar] = useState<any | null>(null)
 
   // Estado para el modal de WhatsApp
   const [selectedPresupuestoWhatsApp, setSelectedPresupuestoWhatsApp] = useState<Presupuesto | null>(null)
   const [isWhatsAppModalOpen, setIsWhatsAppModalOpen] = useState(false)
+
+  // Estado para el visor de PDF integrado
+  const [selectedPresupuestoVisor, setSelectedPresupuestoVisor] = useState<Presupuesto | null>(null)
+  const [isVisorModalOpen, setIsVisorModalOpen] = useState(false)
 
   const fetchPresupuestos = async () => {
     try {
@@ -61,6 +71,7 @@ export default function PresupuestosPage() {
           pdf_url,
           created_at,
           pacientes (
+            id,
             nombre,
             telefono
           )
@@ -130,6 +141,32 @@ export default function PresupuestosPage() {
     setIsWhatsAppModalOpen(true)
   }
 
+  // Abrir visor de PDF
+  const handleOpenVisor = (pres: Presupuesto) => {
+    setSelectedPresupuestoVisor(pres)
+    setIsVisorModalOpen(true)
+  }
+
+  // Duplicar / Re-cotizar presupuesto
+  const handleDuplicarPresupuesto = async (pres: Presupuesto) => {
+    try {
+      setLoading(true)
+      const res = await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/duplicar`)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPresupuestoParaClonar(data)
+        setActiveTab('create')
+      } else {
+        alert('No se pudieron obtener los datos para duplicar el presupuesto.')
+      }
+    } catch (err) {
+      console.error('Error al clonar presupuesto:', err)
+      alert('Error de conexión al duplicar.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Eliminar presupuesto
   const deletePresupuesto = async (id: string) => {
     if (!confirm('¿Estás seguro de que deseas eliminar este presupuesto?')) return
@@ -165,11 +202,11 @@ export default function PresupuestosPage() {
     if (estado === 'aprobado' || estado === 'rechazado') return null
     const diffDays = Math.floor((new Date().getTime() - new Date(createdAt).getTime()) / (1000 * 3600 * 24))
     if (diffDays <= 2) {
-      return { label: `${diffDays === 0 ? 'Hoy' : `${diffDays}d`} • Reciente`, color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200' }
+      return { tipo: 'reciente', label: `${diffDays === 0 ? 'Hoy' : `${diffDays}d`} • Reciente`, color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200' }
     } else if (diffDays <= 7) {
-      return { label: `${diffDays}d • Seguimiento`, color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200' }
+      return { tipo: 'seguimiento', label: `${diffDays}d • Requiere Seguimiento`, color: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200' }
     } else {
-      return { label: `${diffDays}d • Por vencer`, color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200' }
+      return { tipo: 'vencimiento', label: `${diffDays}d • Por vencer`, color: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200' }
     }
   }
 
@@ -198,10 +235,13 @@ export default function PresupuestosPage() {
             }`}
           >
             <PlusCircle size={15} />
-            Crear Presupuesto
+            {presupuestoParaClonar ? 'Re-cotizar Presupuesto' : 'Crear Presupuesto'}
           </button>
           <button
-            onClick={() => setActiveTab('list')}
+            onClick={() => {
+              setPresupuestoParaClonar(null)
+              setActiveTab('list')
+            }}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
               activeTab === 'list'
                 ? 'bg-white dark:bg-slate-800 shadow text-blue-600'
@@ -216,7 +256,13 @@ export default function PresupuestosPage() {
 
       {/* Contenido según el Tab Activo */}
       {activeTab === 'create' ? (
-        <BudgetGenerator />
+        <BudgetGenerator
+          presupuestoInicial={presupuestoParaClonar}
+          onPresupuestoEmitido={() => {
+            setPresupuestoParaClonar(null)
+            fetchPresupuestos()
+          }}
+        />
       ) : (
         <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
           <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
@@ -277,9 +323,14 @@ export default function PresupuestosPage() {
                             {new Date(pres.created_at).toLocaleDateString('es-AR')}
                           </div>
                           {followUp && (
-                            <span className={`inline-block text-[9px] font-bold px-1.5 py-0.2 rounded border mt-0.5 ${followUp.color}`}>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenWhatsApp(pres)}
+                              className={`inline-block text-[9px] font-bold px-1.5 py-0.5 rounded border mt-0.5 hover:opacity-80 transition cursor-pointer ${followUp.color}`}
+                              title="Clic para enviar mensaje de seguimiento por WhatsApp"
+                            >
                               {followUp.label}
-                            </span>
+                            </button>
                           )}
                         </td>
                         <td className="py-3 text-right font-mono font-bold">
@@ -316,20 +367,26 @@ export default function PresupuestosPage() {
                         </td>
                         <td className="py-3 text-center">
                           {pres.pdf_url ? (
-                            <a
-                              href={`${BACKEND_URL}${pres.pdf_url}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => handleOpenVisor(pres)}
                               className="p-1.5 bg-blue-50 dark:bg-blue-950/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 rounded-lg inline-flex items-center justify-center transition"
-                              title="Ver / Descargar PDF Oficial"
+                              title="Previsualizar PDF Oficial en Visor Integrado"
                             >
-                              <Download size={14} />
-                            </a>
+                              <Eye size={14} />
+                            </button>
                           ) : (
                             <span className="text-[10px] text-slate-400 italic">No generado</span>
                           )}
                         </td>
                         <td className="py-3 text-right pr-2 space-x-1">
+                          <button
+                            onClick={() => handleDuplicarPresupuesto(pres)}
+                            className="p-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 rounded-lg transition inline-flex items-center"
+                            title="Duplicar / Re-cotizar este presupuesto"
+                          >
+                            <Copy size={14} />
+                          </button>
                           <button
                             onClick={() => handleOpenWhatsApp(pres)}
                             className="p-1.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg transition inline-flex items-center"
@@ -374,6 +431,24 @@ export default function PresupuestosPage() {
           }}
         />
       )}
+
+      {/* Modal de Visor de PDF Membretado Integrado */}
+      {selectedPresupuestoVisor && (
+        <ModalVisorPdfPresupuesto
+          isOpen={isVisorModalOpen}
+          onClose={() => {
+            setIsVisorModalOpen(false)
+            setSelectedPresupuestoVisor(null)
+          }}
+          pdfUrl={selectedPresupuestoVisor.pdf_url}
+          presupuestoId={selectedPresupuestoVisor.id}
+          pacienteNombre={selectedPresupuestoVisor.pacientes?.nombre}
+          onEnviarWhatsApp={() => {
+            handleOpenWhatsApp(selectedPresupuestoVisor)
+          }}
+        />
+      )}
+
     </div>
   )
 }

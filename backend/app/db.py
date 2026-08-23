@@ -2411,6 +2411,82 @@ Quedamos a tu entera disposición para resolver cualquier duda sobre el tratamie
 
     return mensaje.strip()
 
+def generar_mensaje_seguimiento_presupuesto(
+    presupuesto: dict,
+    paciente: dict,
+    items: list,
+    tipo: str = "seguimiento"
+) -> str:
+    """
+    Construye un mensaje de WhatsApp para el seguimiento comercial de un presupuesto ya emitido:
+    - tipo == 'seguimiento': Seguimiento cordial a 3-5 días de emisión.
+    - tipo == 'vencimiento': Recordatorio de próximo vencimiento / validez de aranceles.
+    """
+    from app.services.config_service import load_settings
+    settings = load_settings()
+    plantilla = settings.get("plantilla_presupuesto", {})
+    clinica = settings.get("clinica", {})
+    
+    nombre_paciente = (paciente.get("nombre") or "Estimado/a").strip().title()
+    nombre_clinica = plantilla.get("nombre_institucion") or clinica.get("nombre") or "Centro Médico Nube"
+    
+    nombres_items = [it.get("nombre") or it.get("nombre_prestacion") or "tratamiento" for it in items[:2]]
+    items_resumen = ", ".join(nombres_items) if nombres_items else "procedimiento médico"
+    if len(items) > 2:
+        items_resumen += f" y {len(items)-2} prestación(es) más"
+        
+    if tipo == "vencimiento":
+        return f"""¡Hola {nombre_paciente}! 👋 Te saludamos cordialmente desde *{nombre_clinica}*.
+
+Nos ponemos en contacto para recordarte que tu *Presupuesto Médico Oficial* por *{items_resumen}* está próximo a cumplir su período de validez.
+
+Si deseas coordinar la reserva de quirófano/turno o congelar los aranceles vigentes, avísanos por este medio para ayudarte con todos los detalles.
+
+¡Quedamos a tu entera disposición! 🩺✨""".strip()
+    else:
+        return f"""¡Hola {nombre_paciente}! 👋 Esperamos que te encuentres muy bien.
+
+Te escribimos desde *{nombre_clinica}* para consultarte si tuviste oportunidad de revisar el *Presupuesto Médico* que te enviamos recientemente por *{items_resumen}*.
+
+Si tienes alguna duda médica, consulta sobre coberturas o formas de pago disponibles, estamos a tu disposición para asesorarte y acompañarte. 🩺✨""".strip()
+
+def obtener_datos_duplicar_presupuesto(presupuesto_id: str) -> dict:
+    """
+    Obtiene la estructura completa de un presupuesto previo para clonarlo y cargarlo en el cotizador.
+    """
+    import uuid
+    p_resp = supabase.table("presupuestos")\
+        .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
+        .eq("id", presupuesto_id)\
+        .execute()
+    if not p_resp.data:
+        raise ValueError("Presupuesto no encontrado")
+    
+    p = p_resp.data[0]
+    pac = p.get("pacientes") or {}
+    items_raw = p.get("items_presupuesto") or []
+    
+    items = []
+    for it in items_raw:
+        srv = it.get("servicios_precios") or {}
+        items.append({
+            "id": srv.get("id") or str(uuid.uuid4()),
+            "codigo": srv.get("codigo") or "PRACT",
+            "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+            "cantidad": int(it.get("cantidad") or 1),
+            "precio_unitario": float(it.get("precio_unitario") or 0.0),
+            "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper(),
+            "subtotal": float(it.get("subtotal") or 0.0)
+        })
+        
+    return {
+        "paciente": pac,
+        "paciente_id": p.get("paciente_id"),
+        "total_ars": float(p.get("total_ars") or 0.0),
+        "total_usd": float(p.get("total_usd") or 0.0),
+        "items": items
+    }
+
 def enviar_presupuesto_por_whatsapp(
     presupuesto_id: str, 
     telefono_override: Optional[str] = None, 

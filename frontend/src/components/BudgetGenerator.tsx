@@ -62,7 +62,18 @@ import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import { Send } from 'lucide-react'
 
-export default function BudgetGenerator() {
+interface BudgetGeneratorProps {
+  presupuestoInicial?: {
+    paciente_id?: string
+    items?: BudgetItem[]
+  } | null
+  onPresupuestoEmitido?: (nuevoPres: any) => void
+}
+
+export default function BudgetGenerator({
+  presupuestoInicial = null,
+  onPresupuestoEmitido
+}: BudgetGeneratorProps) {
   const [pacientes, setPacientes] = useState<Paciente[]>([])
   const [selectedPacienteId, setSelectedPacienteId] = useState('')
 
@@ -95,6 +106,22 @@ export default function BudgetGenerator() {
     loadPacientes()
   }, [])
 
+  // Precargar presupuesto si se solicita duplicar / re-cotizar
+  useEffect(() => {
+    if (presupuestoInicial) {
+      if (presupuestoInicial.paciente_id) {
+        setSelectedPacienteId(presupuestoInicial.paciente_id)
+      }
+      if (presupuestoInicial.items && presupuestoInicial.items.length > 0) {
+        setItems(presupuestoInicial.items)
+        setMensaje({
+          tipo: 'success',
+          texto: `Presupuesto clonado con éxito. Puedes modificar los aranceles o ítems y emitir una nueva versión.`
+        })
+      }
+    }
+  }, [presupuestoInicial])
+
   // Disparar búsqueda explícita en catálogo
   const handleTriggerSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -125,6 +152,31 @@ export default function BudgetGenerator() {
     } finally {
       setSearching(false)
     }
+  }
+
+  // Agregar una práctica directamente al presupuesto (1 Clic)
+  const handleAddSinglePractice = (practice: SearchResultPractice) => {
+    const updatedItems = [...items]
+    const existIdx = updatedItems.findIndex((it) => it.codigo === practice.codigo && it.moneda === practice.moneda)
+    const precio = practice.precio || 0
+    if (existIdx > -1) {
+      updatedItems[existIdx].cantidad += 1
+      updatedItems[existIdx].subtotal = updatedItems[existIdx].cantidad * updatedItems[existIdx].precio_unitario
+    } else {
+      updatedItems.push({
+        id: practice.id,
+        codigo: practice.codigo,
+        nombre: practice.nombre,
+        cantidad: 1,
+        precio_unitario: precio,
+        moneda: practice.moneda,
+        subtotal: precio
+      })
+    }
+    setItems(updatedItems)
+    setSearchQuery('')
+    setIsSearchModalOpen(false)
+    setMensaje({ tipo: 'success', texto: `Se agregó "${practice.nombre}" al presupuesto.` })
   }
 
   // Selección/deselección de práctica en el modal
@@ -279,12 +331,16 @@ export default function BudgetGenerator() {
 
       const data = await response.json()
       if (response.ok && data.success) {
-        setPresupuestoCreado(data.presupuesto)
+        const nuevo = data.presupuesto
+        setPresupuestoCreado(nuevo)
         setItems([])
         setSelectedPacienteId('')
         setMensaje({ tipo: 'success', texto: '¡Presupuesto médico y documento PDF generados exitosamente!' })
+        if (onPresupuestoEmitido) {
+          onPresupuestoEmitido(nuevo)
+        }
       } else {
-        setMensaje({ tipo: 'error', texto: data.error || 'No se pudo generar el presupuesto.' })
+        setMensaje({ tipo: 'error', texto: data.error || data.detail || 'No se pudo generar el presupuesto.' })
       }
     } catch (error) {
       console.error('Error al generar presupuesto:', error)

@@ -1281,25 +1281,47 @@ def simulate_message(payload: SimuladorMensaje):
     }
 
 @app.post("/api/presupuestos")
-def create_presupuesto_api(payload: PresupuestoInput):
+def create_presupuesto_api(payload: Dict[str, Any] = Body(...)):
     """
-    Crea un presupuesto para un paciente y genera el PDF correspondiente con valores y soporte multi-moneda.
+    Crea un presupuesto para un paciente y genera el PDF correspondiente con soporte multi-moneda centralizado.
     """
-    logger.info(f"API: Crear presupuesto para paciente {payload.paciente_id}")
-    items_parsed = [
-        {
-            "codigo_servicio": it.codigo_servicio,
-            "nombre_prestacion": it.nombre_prestacion,
-            "cantidad": it.cantidad,
-            "precio_unitario": it.precio_unitario,
-            "moneda": it.moneda or "ARS"
+    logger.info(f"API: Crear presupuesto para paciente {payload.get('paciente_id')}")
+    try:
+        paciente_id = payload.get("paciente_id")
+        if not paciente_id:
+            raise HTTPException(status_code=400, detail="El ID del paciente es obligatorio.")
+        
+        items_raw = payload.get("items", [])
+        if not items_raw:
+            raise HTTPException(status_code=400, detail="Debe incluir al menos una prestación médica.")
+            
+        items_parsed = []
+        for it in items_raw:
+            items_parsed.append({
+                "codigo": it.get("codigo") or it.get("codigo_servicio") or "PRACT",
+                "nombre": it.get("nombre") or it.get("nombre_prestacion") or "Prestación Médica",
+                "cantidad": int(it.get("cantidad", 1)),
+                "precio_unitario": float(it.get("precio_unitario", 0.0)),
+                "moneda": str(it.get("moneda", "ARS")).upper()
+            })
+            
+        presupuesto = crear_presupuesto_rapido({
+            "paciente_id": paciente_id,
+            "asesoria_id": payload.get("asesoria_id"),
+            "estado": payload.get("estado", "enviado"),
+            "items": items_parsed
+        })
+        
+        return {
+            "success": True,
+            "mensaje": "Presupuesto médico y PDF generados correctamente.",
+            "presupuesto": presupuesto
         }
-        for it in payload.items
-    ]
-    res = crear_borrador_presupuesto(payload.paciente_id, items_parsed)
-    if "error" in res:
-        raise HTTPException(status_code=400, detail=res["error"])
-    return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al crear presupuesto: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/presupuestos/plantilla-preview")
 def preview_plantilla_presupuesto():
@@ -2768,6 +2790,64 @@ def obtener_mensaje_sugerido_presupuesto_api(presupuesto_id: str):
         raise
     except Exception as e:
         logger.error(f"Error al generar mensaje sugerido para presupuesto {presupuesto_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/presupuestos/{presupuesto_id}/mensaje-seguimiento")
+def obtener_mensaje_seguimiento_presupuesto_api(presupuesto_id: str, tipo: str = "seguimiento"):
+    """
+    Genera un mensaje de re-contacto comercial cordial para seguimiento o aviso por vencimiento.
+    """
+    try:
+        p_resp = supabase.table("presupuestos")\
+            .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
+            .eq("id", presupuesto_id)\
+            .execute()
+            
+        if not p_resp.data:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
+            
+        presupuesto = p_resp.data[0]
+        paciente = presupuesto.get("pacientes") or {}
+        items_raw = presupuesto.get("items_presupuesto") or []
+        
+        items = []
+        for it in items_raw:
+            srv = it.get("servicios_precios") or {}
+            items.append({
+                "codigo": srv.get("codigo") or "",
+                "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+                "precio_unitario": float(it.get("precio_unitario") or 0.0),
+                "cantidad": int(it.get("cantidad") or 1),
+                "subtotal": float(it.get("subtotal") or 0.0),
+                "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper()
+            })
+            
+        mensaje = generar_mensaje_seguimiento_presupuesto(presupuesto, paciente, items, tipo=tipo)
+        
+        return {
+            "success": True,
+            "presupuesto_id": presupuesto_id,
+            "paciente_nombre": paciente.get("nombre"),
+            "telefono": paciente.get("telefono"),
+            "tipo": tipo,
+            "mensaje_seguimiento": mensaje
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al generar mensaje de seguimiento para presupuesto {presupuesto_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/presupuestos/{presupuesto_id}/duplicar")
+def duplicar_presupuesto_api(presupuesto_id: str):
+    """
+    Retorna los datos preformateados de un presupuesto existente para clonarlo en el cotizador.
+    """
+    try:
+        data = obtener_datos_duplicar_presupuesto(presupuesto_id)
+        return {"success": True, **data}
+    except Exception as e:
+        logger.error(f"Error al duplicar presupuesto {presupuesto_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/presupuestos/{presupuesto_id}/enviar-whatsapp")
