@@ -3706,7 +3706,7 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload):
                 )
                 jid = tel if "@" in tel else f"{tel}@s.whatsapp.net"
                 try:
-                    await whatsapp_manager.enviar_mensaje(jid, msg_ok)
+                    whatsapp_manager.enviar_mensaje(jid, msg_ok)
                 except Exception as err_w:
                     logger.warning(f"No se pudo enviar confirmación por WhatsApp tras firma: {err_w}")
                     

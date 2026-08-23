@@ -410,10 +410,13 @@ class WhatsAppManager:
         """
         telefono = normalize_phone_number(telefono_o_jid) if telefono_o_jid else ""
         clean_digits = clean_phone_digits(telefono)
+        active_lid = get_active_jid_for_paciente_o_conversacion(telefono=telefono_o_jid)
+        target_jid = active_lid or remote_jid or (f"{clean_digits}@s.whatsapp.net" if clean_digits else "")
+        
         try:
-            read_items = [{"id": mid, "fromMe": False} for mid in (message_ids or []) if mid]
-            if not read_items and clean_digits:
-                read_items = [{"id": "", "fromMe": False}]
+            read_items = [{"id": mid, "fromMe": False, "remoteJid": target_jid} for mid in (message_ids or []) if mid]
+            if not read_items and target_jid:
+                read_items = [{"id": "", "fromMe": False, "remoteJid": target_jid}]
 
             payload = {
                 "readMessages": read_items
@@ -466,14 +469,23 @@ class WhatsAppManager:
         elif active_lid and ("@" in str(active_lid)):
             target_number = str(active_lid)
 
+        media_payload = media_url
+        mimetype = None
+        if "base64," in media_url:
+            header, media_payload = media_url.split("base64,", 1)
+            if "data:" in header and ";" in header:
+                mimetype = header.split("data:")[1].split(";")[0]
+
         try:
             payload = {
                 "number": target_number,
                 "mediatype": media_type,
-                "media": media_url,
+                "media": media_payload,
                 "caption": caption,
                 "fileName": filename or "archivo"
             }
+            if mimetype:
+                payload["mimetype"] = mimetype
             r = httpx.post(f"{self.evo_url}/message/sendMedia/{self.evo_instance}", headers=self._headers, json=payload, timeout=20.0)
             if r.status_code in [200, 201]:
                 return r.json()
@@ -510,7 +522,8 @@ class WhatsAppManager:
             payload = {
                 "number": target_number,
                 "mediatype": "document",
-                "media": f"data:application/pdf;base64,{b64_content}",
+                "mimetype": "application/pdf",
+                "media": b64_content,
                 "fileName": filename or "Presupuesto_Medico.pdf",
                 "caption": caption
             }
