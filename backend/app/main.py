@@ -2673,6 +2673,7 @@ def eliminar_asesoria(asesoria_id: str):
 # ====================================================================
 
 @app.get("/api/presupuestos/paciente/{paciente_id}")
+@app.get("/api/pacientes/{paciente_id}/presupuestos")
 def obtener_presupuestos_paciente(paciente_id: str):
     """
     Retorna el listado histórico de presupuestos emitidos a un paciente con sus ítems detallados.

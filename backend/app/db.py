@@ -2166,6 +2166,8 @@ def get_presupuestos_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
                 asesoria_id,
                 estado,
                 total,
+                total_ars,
+                total_usd,
                 pdf_url,
                 created_at,
                 items_presupuesto (

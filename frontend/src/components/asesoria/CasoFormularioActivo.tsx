@@ -71,12 +71,14 @@ interface CasoFormularioActivoProps {
     desc: string
   }>
   onGuardar: (datosActualizados: Partial<AsesoriaQuirurgica>) => Promise<void>
-  onAbrirModalPresupuesto: () => void
+  onAbrirModalPresupuesto: (datosPractica?: { codigo: string; nombre: string; precio: number; moneda: string }) => void
   onAbrirModalWhatsApp: () => void
   onAbrirModalCierre: () => void
   onEliminar: () => void
-  onAprobarRechazarPresupuesto: (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado') => Promise<void>
+  onAprobarRechazarPresupuesto: (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado') => Promise<void> | void
   onDesvincularPresupuesto: () => void
+  onVincularPresupuesto?: (presupuesto: PresupuestoPaciente) => void
+  onEnviarPresupuestoWhatsApp?: (presupuesto: PresupuestoPaciente) => void
 }
 
 export default function CasoFormularioActivo({
@@ -99,7 +101,9 @@ export default function CasoFormularioActivo({
   onAbrirModalCierre,
   onEliminar,
   onAprobarRechazarPresupuesto,
-  onDesvincularPresupuesto
+  onDesvincularPresupuesto,
+  onVincularPresupuesto,
+  onEnviarPresupuestoWhatsApp
 }: CasoFormularioActivoProps) {
   // Estados Locales Editables
   const estadoInicial = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
@@ -302,6 +306,15 @@ export default function CasoFormularioActivo({
 
     onGuardar(payload)
   }
+
+  const presupuestosDelCaso = useMemo(() => {
+    return presupuestos.filter((p) => p.asesoria_id === caso.id)
+  }, [presupuestos, caso.id])
+
+  const todosPresupuestosVisibles = useMemo(() => {
+    if (presupuestosDelCaso.length > 0) return presupuestosDelCaso
+    return presupuestos
+  }, [presupuestosDelCaso, presupuestos])
 
   const presupuestoVinculado = presupuestos.find((p) => p.id === presupuestoId)
 
@@ -633,84 +646,180 @@ export default function CasoFormularioActivo({
               <div className="flex items-center justify-between">
                 <div className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
                   <Receipt size={14} />
-                  Presupuesto Oficial Vinculado
+                  Presupuestos Oficiales del Caso ({todosPresupuestosVisibles.length})
                 </div>
                 <button
                   type="button"
-                  onClick={onAbrirModalPresupuesto}
-                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[11px] font-bold transition-all shadow flex items-center gap-1"
+                  onClick={() => onAbrirModalPresupuesto({
+                    codigo: practicaCodigo,
+                    nombre: practicaNombre,
+                    precio: montoExtra,
+                    moneda: monedaExtra
+                  })}
+                  className="px-2.5 py-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-[11px] font-bold transition-all shadow flex items-center gap-1"
                 >
                   + Emitir Cotización PDF
                 </button>
               </div>
 
-              {presupuestoVinculado ? (
-                <div className="p-3 rounded-xl bg-neutral-950 border border-blue-500/30 flex items-center justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-white">
-                        Presupuesto #{presupuestoVinculado.id.slice(0, 8)}
-                      </span>
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                          presupuestoVinculado.estado === 'aprobado'
-                            ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
-                            : presupuestoVinculado.estado === 'rechazado'
-                            ? 'bg-red-950 text-red-300 border-red-500/40'
-                            : 'bg-amber-950 text-amber-300 border-amber-500/40'
+              {/* Listado de Presupuestos Emitidos */}
+              {todosPresupuestosVisibles.length > 0 ? (
+                <div className="space-y-2">
+                  {todosPresupuestosVisibles.map((p) => {
+                    const isPrincipal = p.id === presupuestoId
+                    return (
+                      <div
+                        key={p.id}
+                        className={`p-3 rounded-xl transition-all border ${
+                          isPrincipal
+                            ? 'bg-blue-950/40 border-blue-500/60 shadow-md ring-1 ring-blue-500/30'
+                            : 'bg-neutral-950 border-[var(--border)] hover:border-gray-700'
                         }`}
                       >
-                        {presupuestoVinculado.estado.toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="text-sm font-mono font-bold text-emerald-400 mt-1">
-                      Total: ${Number(presupuestoVinculado.total || 0).toLocaleString('es-AR')}
-                    </div>
-                  </div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-mono font-bold text-white">
+                                #{p.id.slice(0, 8)}
+                              </span>
+                              {isPrincipal && (
+                                <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-full bg-blue-600 text-white flex items-center gap-1 shadow-sm">
+                                  ⭐ Principal
+                                </span>
+                              )}
+                              <span
+                                className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${
+                                  p.estado === 'aprobado'
+                                    ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                                    : p.estado === 'rechazado'
+                                    ? 'bg-red-950 text-red-300 border-red-500/40'
+                                    : 'bg-amber-950 text-amber-300 border-amber-500/40'
+                                }`}
+                              >
+                                {p.estado.toUpperCase()}
+                              </span>
+                              <span className="text-[10px] text-gray-400">
+                                {new Date(p.created_at).toLocaleDateString('es-AR')}
+                              </span>
+                            </div>
 
-                  <div className="flex items-center gap-1.5">
-                    {presupuestoVinculado.pdf_url && (
-                      <a
-                        href={presupuestoVinculado.pdf_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg text-xs font-bold transition-all"
-                        title="Ver PDF oficial"
-                      >
-                        <Download size={14} />
-                      </a>
-                    )}
-                    {presupuestoVinculado.estado !== 'aprobado' && (
-                      <button
-                        type="button"
-                        onClick={() => onAprobarRechazarPresupuesto(presupuestoVinculado.id, 'aprobado')}
-                        className="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold"
-                      >
-                        Aprobar
-                      </button>
-                    )}
-                  </div>
+                            {/* Ítems del presupuesto */}
+                            {p.items_presupuesto && p.items_presupuesto.length > 0 && (
+                              <div className="mt-1.5 space-y-0.5">
+                                {p.items_presupuesto.map((it, idx) => (
+                                  <div key={idx} className="text-[11px] text-gray-300 flex items-center gap-1.5">
+                                    <span className="text-gray-500">•</span>
+                                    <span className="truncate">{it.nombre || 'Prestación médica'}</span>
+                                    <span className="text-gray-400 font-mono text-[10px]">
+                                      ({it.cantidad}x {it.moneda || 'ARS'} ${Number(it.precio_unitario || 0).toLocaleString('es-AR')})
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Monto Total */}
+                            <div className="mt-1.5 flex items-center gap-3 text-xs font-mono font-bold">
+                              {(p.total_ars || (p.total_usd ? 0 : p.total)) > 0 && (
+                                <span className="text-emerald-400">
+                                  ARS ${Number(p.total_ars || p.total || 0).toLocaleString('es-AR')}
+                                </span>
+                              )}
+                              {Number(p.total_usd || 0) > 0 && (
+                                <span className="text-cyan-400">
+                                  USD ${Number(p.total_usd).toLocaleString('es-AR')}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Botones de acción por presupuesto */}
+                          <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+                            {p.pdf_url && (
+                              <a
+                                href={p.pdf_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg text-xs font-bold transition-all"
+                                title="Ver / Descargar PDF Oficial"
+                              >
+                                <Download size={13} />
+                              </a>
+                            )}
+
+                            {onEnviarPresupuestoWhatsApp && (
+                              <button
+                                type="button"
+                                onClick={() => onEnviarPresupuestoWhatsApp(p)}
+                                className="p-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/50 rounded-lg text-xs font-bold transition-all"
+                                title="Enviar presupuesto por WhatsApp"
+                              >
+                                <Send size={13} />
+                              </button>
+                            )}
+
+                            {!isPrincipal && onVincularPresupuesto && (
+                              <button
+                                type="button"
+                                onClick={() => onVincularPresupuesto(p)}
+                                className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-gray-700 rounded-lg text-[10px] font-bold"
+                                title="Establecer como cotización principal de esta cirugía"
+                              >
+                                Vincular
+                              </button>
+                            )}
+
+                            {p.estado !== 'aprobado' && (
+                              <button
+                                type="button"
+                                onClick={() => onAprobarRechazarPresupuesto(p.id, 'aprobado')}
+                                className="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold"
+                              >
+                                Aprobar
+                              </button>
+                            )}
+
+                            {isPrincipal && (
+                              <button
+                                type="button"
+                                onClick={onDesvincularPresupuesto}
+                                className="px-1.5 py-1 text-gray-500 hover:text-red-400 text-[10px]"
+                                title="Desvincular presupuesto"
+                              >
+                                Desvincular
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <input
-                      type="number"
-                      min="0"
-                      value={montoExtra || ''}
-                      placeholder="Monto cotizado extra..."
-                      onChange={(e) => setMontoExtra(parseFloat(e.target.value) || 0)}
-                      className="w-full px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-white font-mono"
-                    />
+                <div className="space-y-2">
+                  <p className="text-xs text-gray-400">
+                    No hay presupuestos PDF emitidos aún para este procedimiento. Puedes emitir una cotización formal o ingresar un monto directo:
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <input
+                        type="number"
+                        min="0"
+                        value={montoExtra || ''}
+                        placeholder="Monto cotizado directo..."
+                        onChange={(e) => setMontoExtra(parseFloat(e.target.value) || 0)}
+                        className="w-full px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-white font-mono"
+                      />
+                    </div>
+                    <select
+                      value={monedaExtra}
+                      onChange={(e) => setMonedaExtra(e.target.value)}
+                      className="px-2 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-gray-300 font-bold"
+                    >
+                      <option value="ARS">ARS ($)</option>
+                      <option value="USD">USD ($)</option>
+                    </select>
                   </div>
-                  <select
-                    value={monedaExtra}
-                    onChange={(e) => setMonedaExtra(e.target.value)}
-                    className="px-2 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-gray-300 font-bold"
-                  >
-                    <option value="ARS">ARS ($)</option>
-                    <option value="USD">USD ($)</option>
-                  </select>
                 </div>
               )}
             </div>

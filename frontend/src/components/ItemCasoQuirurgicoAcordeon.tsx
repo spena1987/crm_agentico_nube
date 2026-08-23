@@ -161,6 +161,17 @@ export default function ItemCasoQuirurgicoAcordeon({
   const [mostrarModalWhatsApp, setMostrarModalWhatsApp] = useState(false)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [presupuestoParaEnviarWA, setPresupuestoParaEnviarWA] = useState<PresupuestoPaciente | null>(null)
+  const [practicaParaModalPresupuesto, setPracticaParaModalPresupuesto] = useState<{
+    codigo: string
+    nombre: string
+    precio: number
+    moneda: string
+  }>({
+    codigo: caso.practica_codigo || '',
+    nombre: caso.practica_nombre || '',
+    precio: caso.monto_extra || 0,
+    moneda: caso.moneda_extra || 'ARS'
+  })
 
   // Presupuestos vinculados
   const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
@@ -408,12 +419,32 @@ export default function ItemCasoQuirurgicoAcordeon({
               consentimientoInfo={consentimientoInfo}
               etapas={ETAPAS}
               onGuardar={handleGuardarCambios}
-              onAbrirModalPresupuesto={() => setMostrarModalPresupuesto(true)}
+              onAbrirModalPresupuesto={(datos) => {
+                if (datos) {
+                  setPracticaParaModalPresupuesto(datos)
+                } else {
+                  setPracticaParaModalPresupuesto({
+                    codigo: caso.practica_codigo || '',
+                    nombre: caso.practica_nombre || '',
+                    precio: caso.monto_extra || 0,
+                    moneda: caso.moneda_extra || 'ARS'
+                  })
+                }
+                setMostrarModalPresupuesto(true)
+              }}
               onAbrirModalWhatsApp={() => setMostrarModalWhatsApp(true)}
               onAbrirModalCierre={() => setMostrarModalCierre(true)}
               onEliminar={handleEliminarCaso}
               onAprobarRechazarPresupuesto={handleAprobarRechazarPresupuesto}
               onDesvincularPresupuesto={() => handleGuardarCambios({ presupuesto_id: null })}
+              onVincularPresupuesto={(pres) => {
+                handleGuardarCambios({
+                  presupuesto_id: pres.id,
+                  monto_extra: pres.total,
+                  moneda_extra: pres.total_usd && pres.total_usd > 0 ? 'USD' : 'ARS'
+                })
+              }}
+              onEnviarPresupuestoWhatsApp={(pres) => setPresupuestoParaEnviarWA(pres)}
             />
           )}
         </>
@@ -427,10 +458,10 @@ export default function ItemCasoQuirurgicoAcordeon({
           pacienteId={pacienteId}
           asesoriaId={caso.id}
           pacienteNombre={pacienteNombre}
-          practicaInicial={{
-            codigo: caso.practica_codigo || '',
-            nombre: caso.practica_nombre || ''
-          }}
+          pacienteDni={pacienteDni}
+          pacienteTelefono={pacienteTelefono}
+          obraSocial={obraSocialDefault}
+          practicaInicial={practicaParaModalPresupuesto}
           onPresupuestoCreado={handlePresupuestoCreado}
         />
       )}

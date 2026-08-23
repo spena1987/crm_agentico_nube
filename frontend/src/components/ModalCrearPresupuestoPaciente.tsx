@@ -86,23 +86,50 @@ export default function ModalCrearPresupuestoPaciente({
       if (practicaInicial && practicaInicial.nombre) {
         const pPrecio = Number(practicaInicial.precio) || 0
         const pMoneda = (practicaInicial.moneda === 'USD' ? 'USD' : 'ARS') as 'ARS' | 'USD'
+        const pCodigo = practicaInicial.codigo || 'QUIR-01'
+        const pNombre = practicaInicial.nombre
+
         listaInicial.push({
-          codigo: practicaInicial.codigo || 'QUIR-01',
-          nombre: practicaInicial.nombre,
+          codigo: pCodigo,
+          nombre: pNombre,
           cantidad: 1,
           precio_unitario: pPrecio,
           subtotal: pPrecio,
           moneda: pMoneda
         })
+
         if (pMoneda === 'USD') {
           setMonedaDefault('USD')
+        }
+
+        // Si el precio inicial vino en 0, intentar buscar arancel sugerido en nomenclador
+        if (pPrecio === 0 && pNombre !== 'Nueva Cirugía / Procedimiento') {
+          fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(pCodigo || pNombre)}`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.success && data.resultados && data.resultados.length > 0) {
+                const sugerido = data.resultados[0]
+                if (sugerido.precio && sugerido.precio > 0) {
+                  setItems([{
+                    codigo: sugerido.codigo || pCodigo,
+                    nombre: sugerido.nombre || pNombre,
+                    cantidad: 1,
+                    precio_unitario: sugerido.precio,
+                    subtotal: sugerido.precio,
+                    moneda: (sugerido.moneda === 'USD' ? 'USD' : 'ARS')
+                  }])
+                  if (sugerido.moneda === 'USD') setMonedaDefault('USD')
+                }
+              }
+            })
+            .catch(() => {})
         }
       }
 
       setItems(listaInicial)
       buscarPracticasCatalogo('')
     }
-  }, [isOpen, practicaInicial?.nombre, practicaInicial?.codigo])
+  }, [isOpen, practicaInicial?.nombre, practicaInicial?.codigo, practicaInicial?.precio, practicaInicial?.moneda])
 
   // Buscar prácticas en el nomenclador
   const buscarPracticasCatalogo = async (query: string) => {
