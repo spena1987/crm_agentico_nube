@@ -9,7 +9,10 @@ import {
   Download,
   AlertTriangle,
   Loader2,
-  FileText
+  FileText,
+  UploadCloud,
+  CheckCheck,
+  Check
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
@@ -19,15 +22,18 @@ interface ConsolaCabeceraProps {
   turno: any
   onCambiarEstado: (nuevoEstado: string) => Promise<void>
   procesandoEstado: boolean
+  onTurnoActualizado?: (turnoActualizado: any) => void
 }
 
 export default function ConsolaCabeceraIntraoperatoria({
   turno,
   onCambiarEstado,
-  procesandoEstado
+  procesandoEstado,
+  onTurnoActualizado
 }: ConsolaCabeceraProps) {
   const [modalPausaAbierto, setModalPausaAbierto] = useState(false)
   const [descargandoPdf, setDescargandoPdf] = useState(false)
+  const [subiendoGeclisa, setSubiendoGeclisa] = useState(false)
 
   const estado = turno.estado || 'programado'
   const esProgramado = estado === 'programado'
@@ -55,6 +61,33 @@ export default function ConsolaCabeceraIntraoperatoria({
       console.error('Error al descargar Parte Quirúrgico:', e)
     } finally {
       setDescargandoPdf(false)
+    }
+  }
+
+  const handleSubirGeclisa = async () => {
+    try {
+      setSubiendoGeclisa(true)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/subir-parte-quirurgico-geclisa`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        if (onTurnoActualizado) {
+          onTurnoActualizado({
+            ...turno,
+            ...data.turno,
+            parte_quirurgico_geclisa_archivo_id: data.archivo_id,
+            parte_quirurgico_geclisa_sincronizado_at: data.sincronizado_at
+          })
+        }
+      } else {
+        alert(data.detail || data.error || 'Error al subir protocolo a Geclisa')
+      }
+    } catch (e: any) {
+      console.error('Error subiendo protocolo:', e)
+      alert(e.message || 'Error de conexión.')
+    } finally {
+      setSubiendoGeclisa(false)
     }
   }
 
@@ -152,11 +185,11 @@ export default function ConsolaCabeceraIntraoperatoria({
             </button>
           )}
 
-          {/* Si ya está Operado: Botón Descargar Protocolo Quirúrgico Oficial */}
+          {/* Si ya está Operado: Botones de Protocolo Quirúrgico y Subida a Geclisa */}
           {esOperado && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="px-3 py-1.5 rounded-xl bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 font-bold text-xs flex items-center gap-1.5">
-                <CheckCircle2 size={15} className="text-emerald-400" />
+                <Check size={15} className="text-emerald-400" />
                 <span>Cirugía Concluida</span>
               </span>
 
@@ -165,11 +198,41 @@ export default function ConsolaCabeceraIntraoperatoria({
                 disabled={descargandoPdf}
                 onClick={handleDescargarParteQx}
                 className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition disabled:opacity-50"
-                title="Descargar Protocolo / Parte Quirúrgico Oficial en PDF"
+                title="Previsualizar / Descargar Protocolo Quirúrgico Oficial en PDF"
               >
                 {descargandoPdf ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-                <span>Protocolo Quirúrgico (PDF)</span>
+                <span>📄 Ver Protocolo PDF</span>
               </button>
+
+              {turno.parte_quirurgico_geclisa_archivo_id ? (
+                <span
+                  className="px-3.5 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                  title={`Sincronizado en Geclisa (ID #${turno.parte_quirurgico_geclisa_archivo_id})`}
+                >
+                  <CheckCheck size={15} className="text-emerald-400" />
+                  <span>✔ Subido a Geclisa (#{turno.parte_quirurgico_geclisa_archivo_id})</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={subiendoGeclisa}
+                  onClick={handleSubirGeclisa}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-lg shadow-indigo-500/20 transition disabled:opacity-50"
+                  title="Enviar y adjuntar Protocolo Quirúrgico en la Historia Clínica de Geclisa"
+                >
+                  {subiendoGeclisa ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Subiendo a Geclisa...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud size={14} />
+                      <span>📤 Subir a Geclisa</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           )}
         </div>

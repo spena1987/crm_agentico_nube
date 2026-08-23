@@ -306,6 +306,10 @@ export default function ModalDetalleCirugiaEnVivo({
             turno={turnoLocal}
             onCambiarEstado={handleCambiarEstado}
             procesandoEstado={procesandoEstado}
+            onTurnoActualizado={(tUpd) => {
+              setTurnoLocal(tUpd)
+              if (onTurnoGuardado) onTurnoGuardado(tUpd)
+            }}
           />
         </div>
 

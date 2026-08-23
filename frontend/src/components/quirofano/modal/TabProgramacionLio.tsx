@@ -13,7 +13,9 @@ import {
   Save,
   Loader2,
   Building2,
-  AlertCircle
+  AlertCircle,
+  UploadCloud,
+  CheckCheck
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -54,8 +56,9 @@ export default function TabProgramacionLio({
           </p>
         </div>
 
-        {/* Consentimiento */}
-        <div>
+        {/* Documentos Médicos Oficiales */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Consentimiento Informado */}
           {turno.consentimiento_estado === 'firmado_digital' ? (
             <a
               href={`${BACKEND_URL}${turno.consentimiento_pdf_url || '/static/consentimiento_' + turno.id + '.pdf'}`}
@@ -64,12 +67,33 @@ export default function TabProgramacionLio({
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-bold hover:bg-emerald-500/20 transition"
             >
               <FileCheck2 size={14} />
-              <span>Ver Consentimiento Firmado (PDF)</span>
+              <span>Consentimiento Firmado (PDF)</span>
             </a>
           ) : (
             <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-bold">
               <AlertCircle size={14} />
               <span>Consentimiento Pendiente</span>
+            </span>
+          )}
+
+          {/* Protocolo Quirúrgico Oficial */}
+          {turno.estado === 'operado' && (
+            <a
+              href={`${BACKEND_URL}${turno.parte_quirurgico_pdf_url || '/static/parte_quirurgico_' + turno.id + '.pdf'}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400 text-xs font-bold hover:bg-blue-500/20 transition"
+            >
+              <FileCheck2 size={14} />
+              <span>Protocolo Qx (PDF)</span>
+            </a>
+          )}
+
+          {/* Badge Geclisa */}
+          {turno.parte_quirurgico_geclisa_archivo_id && (
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-bold">
+              <CheckCheck size={14} />
+              <span>Geclisa: #{turno.parte_quirurgico_geclisa_archivo_id}</span>
             </span>
           )}
         </div>

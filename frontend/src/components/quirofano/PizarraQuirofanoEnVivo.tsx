@@ -27,7 +27,9 @@ import {
   Send,
   Loader2,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  UploadCloud,
+  CheckCheck
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -48,6 +50,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [horaActual, setHoraActual] = useState(new Date())
   const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
   const [turnoParaPausaOms, setTurnoParaPausaOms] = useState<any | null>(null)
+  const [subiendoGeclisaId, setSubiendoGeclisaId] = useState<string | null>(null)
 
   // Ticker de hora actual para cronómetros cada 1 segundo
   useEffect(() => {
@@ -136,6 +139,39 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       console.error('Error actualizando estado:', err)
     } finally {
       setProcesandoId(null)
+    }
+  }
+
+  // Subir Protocolo Quirúrgico Oficial a Geclisa
+  const handleSubirProtocoloGeclisa = async (turnoId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      setSubiendoGeclisaId(turnoId)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/subir-parte-quirurgico-geclisa`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setTurnos((prev) =>
+          prev.map((t) =>
+            t.id === turnoId
+              ? {
+                  ...t,
+                  ...data.turno,
+                  parte_quirurgico_geclisa_archivo_id: data.archivo_id,
+                  parte_quirurgico_geclisa_sincronizado_at: data.sincronizado_at
+                }
+              : t
+          )
+        )
+      } else {
+        alert(data.detail || data.error || 'Error al subir protocolo a Geclisa')
+      }
+    } catch (err: any) {
+      console.error('Error subiendo protocolo a Geclisa:', err)
+      alert(err.message || 'Error de conexión con el servidor.')
+    } finally {
+      setSubiendoGeclisaId(null)
     }
   }
 
@@ -518,9 +554,9 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </button>
                     )}
 
-                    {/* Si ya está operado */}
+                    {/* Si ya está operado: Protocolo Quirúrgico y Sincronización Geclisa */}
                     {esOperado && (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5 justify-end">
                         <span className="px-2.5 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
                           <Check size={13} />
                           <span>Concluido</span>
@@ -540,12 +576,42 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                               console.error('Error abriendo parte Qx:', err)
                             }
                           }}
-                          className="px-2 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-[11px] font-bold flex items-center gap-1 hover:bg-blue-100 transition"
-                          title="Descargar Protocolo / Parte Quirúrgico Oficial en PDF"
+                          className="px-2.5 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-[11px] font-bold flex items-center gap-1 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition"
+                          title="Previsualizar / Descargar Protocolo Quirúrgico Oficial en PDF"
                         >
                           <FileText size={12} />
-                          <span>Parte Qx</span>
+                          <span>📄 Ver Protocolo PDF</span>
                         </button>
+
+                        {t.parte_quirurgico_geclisa_archivo_id ? (
+                          <span
+                            className="px-2.5 py-1 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1 shadow-sm"
+                            title={`Documento adjuntado en Geclisa (ID #${t.parte_quirurgico_geclisa_archivo_id})`}
+                          >
+                            <CheckCheck size={13} />
+                            <span>✔ Subido a Geclisa (#{t.parte_quirurgico_geclisa_archivo_id})</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={subiendoGeclisaId === t.id}
+                            onClick={(e) => handleSubirProtocoloGeclisa(t.id, e)}
+                            className="px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-extrabold flex items-center gap-1 shadow transition disabled:opacity-50"
+                            title="Adjuntar y sincronizar Protocolo Quirúrgico en la Historia Clínica de Geclisa"
+                          >
+                            {subiendoGeclisaId === t.id ? (
+                              <>
+                                <Loader2 size={12} className="animate-spin" />
+                                <span>Subiendo...</span>
+                              </>
+                            ) : (
+                              <>
+                                <UploadCloud size={12} />
+                                <span>📤 Subir a Geclisa</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
                     )}
 
