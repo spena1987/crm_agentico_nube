@@ -87,7 +87,13 @@ class MediaService:
         relative_url = f"/static/media/{subfolder}/{unique_name}"
         
         # URL completa para el frontend
-        base_api_url = os.getenv("API_BASE_URL", "http://localhost:8000")
+        public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+        base_api_url = os.getenv("API_BASE_URL") or os.getenv("PUBLIC_URL")
+        if not base_api_url and public_domain:
+            base_api_url = f"https://{public_domain}"
+        if not base_api_url:
+            base_api_url = "https://crmagenticonube-production.up.railway.app"
+        
         full_url = f"{base_api_url}{relative_url}"
 
         logger.info(f"Archivo multimedia guardado: {filepath} ({file_size} bytes, tipo={mime_type})")

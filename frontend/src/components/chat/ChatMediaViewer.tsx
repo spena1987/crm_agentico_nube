@@ -58,14 +58,31 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
   }
 
   // Resolver URL del archivo multimedia
-  const getFullUrl = (url?: string, relUrl?: string) => {
-    const target = url || relUrl
+  const getFullUrl = (url?: string, relUrl?: string, dataUri?: string) => {
+    if (dataUri && (dataUri.startsWith('data:') || dataUri.startsWith('blob:'))) {
+      return dataUri
+    }
+    let target = relUrl || url
     if (!target) return ''
-    if (target.startsWith('http') || target.startsWith('data:') || target.startsWith('blob:')) return target
-    return `${BACKEND_URL}${target.startsWith('/') ? '' : '/'}${target}`
+    if (target.startsWith('data:') || target.startsWith('blob:')) return target
+    
+    // Sanear URLs que vengan con localhost o 127.0.0.1 para que apunten al dominio de producción
+    if (target.includes('localhost') || target.includes('127.0.0.1')) {
+      const match = target.match(/\/static\/.+/)
+      if (match) {
+        target = match[0]
+      }
+    }
+
+    if (target.startsWith('http://') || target.startsWith('https://')) {
+      return target
+    }
+
+    const cleanRel = target.startsWith('/') ? target : `/${target}`
+    return `${BACKEND_URL}${cleanRel}`
   }
 
-  const mediaUrl = getFullUrl(metadata.data_uri || metadata.base64 || metadata.media_url, metadata.relative_url)
+  const mediaUrl = getFullUrl(metadata.media_url, metadata.relative_url, metadata.data_uri || metadata.base64)
   const textoTranscrito = metadata.transcripcion || transcripcionLocal
 
   const formatFileSize = (bytes?: number) => {
