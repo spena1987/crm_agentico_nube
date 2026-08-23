@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { 
@@ -52,12 +52,22 @@ interface Paciente {
   medico_cabecera?: string | null
   historial_notas: string | null
   created_at: string
+  asesorias_quirurgicas?: Array<{
+    id: string
+    estado: string
+    fecha_probable_cirugia?: string | null
+    fecha_definitiva_cirugia?: string | null
+    ultimo_contacto_at?: string | null
+    created_at?: string
+    updated_at?: string
+  }>
 }
 
 export default function PacientesPage() {
   const [pacientes, setPacientes] = useState<Paciente[]>([])
   const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [filtroCategoria, setFiltroCategoria] = useState<'todos' | 'activos' | 'alertas' | 'proximas'>('todos')
   const [loading, setLoading] = useState(true)
 
   // Mensajes de acción
@@ -89,11 +99,11 @@ export default function PacientesPage() {
       setLoading(true)
       const { data, error } = await supabase
         .from('pacientes')
-        .select('*')
+        .select('*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, ultimo_contacto_at, created_at, updated_at)')
         .order('nombre')
 
       if (error) throw error
-      const lista = data || []
+      const lista = (data || []) as Paciente[]
       setPacientes(lista)
 
       // Seleccionar paciente
@@ -322,19 +332,95 @@ export default function PacientesPage() {
     return isNaN(edad) ? null : `${edad} años`
   }
 
-  // Filtrado de pacientes en cliente
-  const filteredPacientes = pacientes.filter((p) => {
+  // Filtrado de pacientes en cliente (texto + categoría inteligente)
+  const filteredPacientes = useMemo(() => {
     const term = search.toLowerCase().trim()
-    if (!term) return true
-    return (
-      p.nombre.toLowerCase().includes(term) ||
-      p.telefono.includes(term) ||
-      (p.dni && p.dni.includes(term)) ||
-      (p.obra_social && p.obra_social.toLowerCase().includes(term)) ||
-      (p.nro_hc && p.nro_hc.toLowerCase().includes(term)) ||
-      (p.medico_cabecera && p.medico_cabecera.toLowerCase().includes(term))
-    )
-  })
+    const hoyMs = Date.now()
+    const en7DiasMs = hoyMs + 7 * 24 * 60 * 60 * 1000
+
+    return pacientes.filter((p) => {
+      // 1. Filtro de Texto
+      if (term) {
+        const matchesText =
+          p.nombre.toLowerCase().includes(term) ||
+          p.telefono.includes(term) ||
+          (p.dni && p.dni.includes(term)) ||
+          (p.obra_social && p.obra_social.toLowerCase().includes(term)) ||
+          (p.nro_hc && p.nro_hc.toLowerCase().includes(term)) ||
+          (p.medico_cabecera && p.medico_cabecera.toLowerCase().includes(term))
+
+        if (!matchesText) return false
+      }
+
+      // 2. Filtro de Categoría
+      const asesorias = p.asesorias_quirurgicas || []
+      const asesoriasActivas = asesorias.filter(
+        (a) => a.estado !== 'operado' && a.estado !== 'cancelado'
+      )
+
+      if (filtroCategoria === 'activos') {
+        return asesoriasActivas.length > 0
+      }
+
+      if (filtroCategoria === 'alertas') {
+        return asesoriasActivas.some((a) => {
+          const fechaRef = a.ultimo_contacto_at || a.updated_at || a.created_at
+          if (!fechaRef) return false
+          const diffDias = Math.floor((hoyMs - new Date(fechaRef).getTime()) / (1000 * 60 * 60 * 24))
+          return diffDias >= 3
+        })
+      }
+
+      if (filtroCategoria === 'proximas') {
+        return asesoriasActivas.some((a) => {
+          const fStr = a.fecha_definitiva_cirugia || a.fecha_probable_cirugia
+          if (!fStr) return false
+          const fMs = new Date(fStr).getTime()
+          return fMs >= hoyMs - 24 * 60 * 60 * 1000 && fMs <= en7DiasMs
+        })
+      }
+
+      return true
+    })
+  }, [pacientes, search, filtroCategoria])
+
+  // Conteos rápidos de categorías
+  const metricasCategorias = useMemo(() => {
+    const hoyMs = Date.now()
+    const en7DiasMs = hoyMs + 7 * 24 * 60 * 60 * 1000
+
+    let activos = 0
+    let alertas = 0
+    let proximas = 0
+
+    pacientes.forEach((p) => {
+      const asesorias = p.asesorias_quirurgicas || []
+      const activas = asesorias.filter((a) => a.estado !== 'operado' && a.estado !== 'cancelado')
+      if (activas.length > 0) {
+        activos++
+        const tieneAlerta = activas.some((a) => {
+          const fRef = a.ultimo_contacto_at || a.updated_at || a.created_at
+          return fRef ? Math.floor((hoyMs - new Date(fRef).getTime()) / (1000 * 60 * 60 * 24)) >= 3 : false
+        })
+        if (tieneAlerta) alertas++
+
+        const tieneProxima = activas.some((a) => {
+          const fStr = a.fecha_definitiva_cirugia || a.fecha_probable_cirugia
+          if (!fStr) return false
+          const fMs = new Date(fStr).getTime()
+          return fMs >= hoyMs - 24 * 60 * 60 * 1000 && fMs <= en7DiasMs
+        })
+        if (tieneProxima) proximas++
+      }
+    })
+
+    return {
+      todos: pacientes.length,
+      activos,
+      alertas,
+      proximas
+    }
+  }, [pacientes])
 
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 w-full gap-3 p-3 sm:p-4 md:p-5 overflow-hidden min-w-0">
@@ -375,8 +461,8 @@ export default function PacientesPage() {
         {/* ==================================================================== */}
         <div className="w-full md:w-80 lg:w-96 border-b md:border-b-0 md:border-r border-[var(--border)] flex flex-col bg-neutral-950/40 shrink-0 min-h-0">
           
-          {/* Header del Panel Lateral & Buscador */}
-          <div className="p-3.5 border-b border-[var(--border)] space-y-2.5 bg-[var(--card)] shrink-0">
+          {/* Header del Panel Lateral & Buscador & Chips de Filtro */}
+          <div className="p-3 border-b border-[var(--border)] space-y-2 bg-[var(--card)] shrink-0">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                 <Users size={14} className="text-blue-500" />
@@ -391,8 +477,62 @@ export default function PacientesPage() {
                 placeholder="Buscar por DNI, Nombre, HC..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-neutral-900/80 border border-[var(--border)] focus:border-blue-500 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none transition-all font-mono"
+                className="w-full pl-9 pr-3 py-1.5 bg-neutral-900/80 border border-[var(--border)] focus:border-blue-500 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none transition-all font-mono"
               />
+            </div>
+
+            {/* Chips de Filtro Inteligente */}
+            <div className="grid grid-cols-4 gap-1 pt-0.5">
+              <button
+                type="button"
+                onClick={() => setFiltroCategoria('todos')}
+                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                  filtroCategoria === 'todos'
+                    ? 'bg-neutral-800 text-white border border-gray-600 shadow-sm'
+                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+                }`}
+              >
+                Todos ({metricasCategorias.todos})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFiltroCategoria('activos')}
+                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                  filtroCategoria === 'activos'
+                    ? 'bg-blue-600/20 text-blue-300 border border-blue-500/50 shadow-sm'
+                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+                }`}
+                title="Pacientes con cirugías en gestión"
+              >
+                Activos ({metricasCategorias.activos})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFiltroCategoria('alertas')}
+                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                  filtroCategoria === 'alertas'
+                    ? 'bg-amber-600/20 text-amber-300 border border-amber-500/50 shadow-sm'
+                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+                }`}
+                title="Pacientes con alertas SLA por inactividad"
+              >
+                Alertas ({metricasCategorias.alertas})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setFiltroCategoria('proximas')}
+                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                  filtroCategoria === 'proximas'
+                    ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/50 shadow-sm'
+                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+                }`}
+                title="Cirugías para los próximos 7 días"
+              >
+                Próximas ({metricasCategorias.proximas})
+              </button>
             </div>
           </div>
 

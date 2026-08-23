@@ -3413,6 +3413,61 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
         logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
         return {"success": False, "error": str(e)}
 
+@app.get("/api/turnos-quirofano/{turno_id}/parte-quirurgico")
+def obtener_o_generar_parte_quirurgico(turno_id: str):
+    """
+    Retorna o genera el Protocolo / Parte Quirúrgico Oficial en PDF para el turno indicado.
+    """
+    try:
+        from app.db import supabase
+        from app.services.pdf_service import generar_pdf_parte_quirurgico
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Sin conexión a BD")
+            
+        t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            raise HTTPException(status_code=404, detail="Turno no encontrado")
+            
+        turno_item = t_resp.data[0]
+        paciente_data = turno_item.get("pacientes") or {}
+        
+        pdf_filename = generar_pdf_parte_quirurgico(turno_item, paciente_data)
+        pdf_rel_url = f"/static/{pdf_filename}"
+        
+        supabase.table("turnos_quirofano").update({"parte_quirurgico_pdf_url": pdf_rel_url}).eq("id", turno_id).execute()
+        if turno_item.get("asesoria_id"):
+            supabase.table("asesorias_quirurgicas").update({"parte_quirurgico_pdf_url": pdf_rel_url}).eq("id", turno_item["asesoria_id"]).execute()
+            
+        return {
+            "success": True,
+            "pdf_url": pdf_rel_url,
+            "filename": pdf_filename,
+            "turno_id": turno_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generando Parte Quirúrgico para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/turnos-quirofano/{turno_id}/checklist-seguridad")
+def registrar_checklist_seguridad(turno_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Registra las verificaciones de la Pausa Quirúrgica OMS (Sign-In / Time-Out / Sign-Out).
+    """
+    try:
+        from app.db import guardar_checklist_seguridad_turno
+        res = guardar_checklist_seguridad_turno(turno_id, payload)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error guardando checklist")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error guardando checklist para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 
 
 # ====================================================================

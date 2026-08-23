@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
@@ -1001,4 +1002,333 @@ def generar_pdf_consentimiento_informado(
     # Construir PDF
     doc.build(story)
     return pdf_filename
+
+
+def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
+    """
+    Genera el Parte / Protocolo Quirúrgico Oficial en PDF con ReportLab de alta fidelidad,
+    incluyendo trazabilidad de tiempos, equipo médico, LIO (dioptría, lote, serie, eje),
+    observaciones intraoperatorias, checklist OMS y firmas médicas.
+    """
+    turno_id = turno.get("id") or str(uuid.uuid4())
+    pdf_filename = f"parte_quirurgico_{turno_id}.pdf"
+    pdf_path = os.path.join(PDF_DIR, pdf_filename)
+
+    settings = load_settings()
+    plantilla = settings.get("plantilla_presupuesto", {})
+    nombre_inst = plantilla.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"
+    subtitulo_inst = plantilla.get("subtitulo_institucion") or "Atención Oftalmológica & Quirúrgica"
+    color_primario_hex = "#0F172A"
+    color_acento_hex = "#2563EB"
+
+    doc = SimpleDocTemplate(
+        pdf_path,
+        pagesize=letter,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    styles = getSampleStyleSheet()
+    style_normal = styles['Normal']
+
+    style_titulo = ParagraphStyle(
+        'TituloParte',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=13,
+        leading=16,
+        textColor=colors.HexColor(color_primario_hex),
+        alignment=1
+    )
+    style_subtitulo = ParagraphStyle(
+        'SubtituloParte',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=10,
+        leading=13,
+        textColor=colors.HexColor(color_acento_hex),
+        alignment=1
+    )
+    style_seccion = ParagraphStyle(
+        'SeccionHeader',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=11,
+        textColor=colors.white
+    )
+    style_label = ParagraphStyle(
+        'LabelStyle',
+        parent=style_normal,
+        fontName='Helvetica-Bold',
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor('#475569')
+    )
+    style_val = ParagraphStyle(
+        'ValorStyle',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=8.5,
+        leading=11,
+        textColor=colors.HexColor('#0F172A')
+    )
+    style_nota = ParagraphStyle(
+        'NotaStyle',
+        parent=style_normal,
+        fontName='Helvetica',
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor('#1E293B')
+    )
+
+    story = []
+
+    # 1. Cabecera Institucional
+    header_data = [
+        [
+            Paragraph(f"<b><font size=12 color='{color_primario_hex}'>{nombre_inst.upper()}</font></b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal),
+            Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=8 color='#64748B'>Doc Ref: PQ-{str(turno_id)[:8].upper()}</font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {datetime.now().strftime('%d/%m/%Y %H:%M')}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
+        ]
+    ]
+    t_head = Table(header_data, colWidths=[270, 270])
+    t_head.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_head)
+    story.append(Spacer(1, 4))
+
+    # Línea divisoria
+    t_div = Table([['']], colWidths=[540], rowHeights=[2])
+    t_div.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor(color_acento_hex))]))
+    story.append(t_div)
+    story.append(Spacer(1, 8))
+
+    # 2. Datos del Paciente
+    pac_nombre = paciente.get("nombre") or "Paciente"
+    pac_dni = paciente.get("dni") or "Sin DNI"
+    pac_hc = paciente.get("nro_hc") or "-"
+    pac_os = turno.get("obra_social") or paciente.get("obra_social") or "-"
+    pac_plan = turno.get("plan_obra_social") or paciente.get("plan_cobertura") or "-"
+    pac_tel = paciente.get("telefono") or "-"
+
+    def make_section_header(title):
+        t = Table([[Paragraph(f"<b>{title.upper()}</b>", style_seccion)]], colWidths=[540], rowHeights=[14])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(color_primario_hex)),
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+            ('TOPPADDING', (0,0), (-1,-1), 2),
+        ]))
+        return t
+
+    story.append(make_section_header("1. Identificación del Paciente"))
+    pac_table_data = [
+        [
+            Paragraph(f"<b>Apellido y Nombre:</b> {pac_nombre}", style_val),
+            Paragraph(f"<b>D.N.I.:</b> {pac_dni}", style_val),
+            Paragraph(f"<b>N° H.C.:</b> {pac_hc}", style_val),
+        ],
+        [
+            Paragraph(f"<b>Cobertura Médica:</b> {pac_os}", style_val),
+            Paragraph(f"<b>Plan / Categoría:</b> {pac_plan}", style_val),
+            Paragraph(f"<b>Teléfono de Contacto:</b> {pac_tel}", style_val),
+        ]
+    ]
+    t_pac = Table(pac_table_data, colWidths=[220, 160, 160])
+    t_pac.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_pac)
+    story.append(Spacer(1, 8))
+
+    # 3. Datos del Acto Quirúrgico y Tiempos de Trazabilidad
+    practica = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+    practica_cod = turno.get("practica_codigo") or "-"
+    ojo = turno.get("ojo") or "OD"
+    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    quirofano = turno.get("quirofano_nombre") or "Quirófano Principal"
+    fecha = str(turno.get("fecha_cirugia") or "")
+    anestesia = turno.get("tipo_anestesia") or "Tópica + Sedación"
+
+    def formatear_iso_hora(iso_val, fallback=""):
+        if not iso_val:
+            return fallback
+        try:
+            return str(iso_val)[11:16] + " hs"
+        except Exception:
+            return str(iso_val)
+
+    hora_llegada = formatear_iso_hora(turno.get("llegada_at"), fallback="--:--")
+    hora_inicio = formatear_iso_hora(turno.get("inicio_cirugia_at"), fallback=str(turno.get("hora_inicio") or "")[:5] + " hs")
+    hora_fin = formatear_iso_hora(turno.get("fin_cirugia_at"), fallback="--:--")
+
+    story.append(make_section_header("2. Intervención y Trazabilidad Cronológica"))
+    act_data = [
+        [
+            Paragraph(f"<b>Procedimiento Realizado:</b> {practica} (Cód: {practica_cod})", style_val),
+            Paragraph(f"<b>Lateralidad:</b> <font color='#2563EB'><b>{ojo_desc}</b></font>", style_val),
+        ],
+        [
+            Paragraph(f"<b>Fecha de Intervención:</b> {fecha} en {quirofano}", style_val),
+            Paragraph(f"<b>Técnica Anestésica:</b> {anestesia}", style_val),
+        ],
+        [
+            Paragraph(f"<b>Tiempos Qx:</b> Llegada: <b>{hora_llegada}</b> | Ingreso Sala: <b>{hora_inicio}</b> | Fin: <b>{hora_fin}</b>", style_val),
+            Paragraph(f"<b>Duración Estimada:</b> {turno.get('duracion_minutos', 20)} min", style_val),
+        ]
+    ]
+    t_act = Table(act_data, colWidths=[340, 200])
+    t_act.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_act)
+    story.append(Spacer(1, 8))
+
+    # 4. Equipo Quirúrgico Interviniente
+    cirujano = turno.get("cirujano_nombre") or "No especificado"
+    ayudante = turno.get("ayudante_nombre") or "No asignado"
+    anestesista = turno.get("anestesiologo_nombre") or "No asignado"
+    instrumentador = turno.get("instrumentador_nombre") or "No asignado"
+    derivador = turno.get("medico_derivador_nombre") or "-"
+
+    story.append(make_section_header("3. Equipo Médico y Quirúrgico Interviniente"))
+    eq_data = [
+        [
+            Paragraph(f"<b>Cirujano Principal:</b> Dr/a. {cirujano}", style_val),
+            Paragraph(f"<b>Cirujano Ayudante:</b> {ayudante}", style_val),
+        ],
+        [
+            Paragraph(f"<b>Médico Anestesiólogo:</b> {anestesista}", style_val),
+            Paragraph(f"<b>Instrumentador/a Quirúrgico:</b> {instrumentador}", style_val),
+        ],
+        [
+            Paragraph(f"<b>Médico Derivador:</b> {derivador}", style_val),
+            Paragraph(f"<b>Estado Consentimiento:</b> <b>{turno.get('consentimiento_estado', 'Verificado')}</b>", style_val),
+        ]
+    ]
+    t_eq = Table(eq_data, colWidths=[270, 270])
+    t_eq.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_eq)
+    story.append(Spacer(1, 8))
+
+    # 5. Registro de Implante / Lente Intraocular (LIO)
+    lleva_lio = turno.get("lleva_lente", False)
+    story.append(make_section_header("4. Registro de Implante y Dispositivos Médicos (LIO)"))
+    if lleva_lio:
+        lente_tipo = turno.get("lente_tipo") or "LIO Estándar"
+        lente_diop = turno.get("lente_dioptria") or "-"
+        es_torico = turno.get("es_torico", False)
+        torico_info = f"Tórico: T{turno.get('lente_torico_valor', 0)} (Eje: {turno.get('lente_torico_eje', 90)}°)" if es_torico else "No Tórico"
+        lente_lote = turno.get("lente_lote") or "N/D"
+        lente_serie = turno.get("lente_serie") or "N/D"
+        lente_venc = str(turno.get("lente_vencimiento") or "-")
+
+        lio_data = [
+            [
+                Paragraph(f"<b>Modelo / Tipo LIO:</b> {lente_tipo}", style_val),
+                Paragraph(f"<b>Poder / Dioptría:</b> <b>{lente_diop} D</b>", style_val),
+                Paragraph(f"<b>Corrección Tórica:</b> {torico_info}", style_val),
+            ],
+            [
+                Paragraph(f"<b>N° de Lote:</b> {lente_lote}", style_val),
+                Paragraph(f"<b>N° de Serie:</b> {lente_serie}", style_val),
+                Paragraph(f"<b>Vencimiento LIO:</b> {lente_venc}", style_val),
+            ]
+        ]
+    else:
+        lio_data = [
+            [
+                Paragraph("<i>No se implantó lente intraocular ni prótesis en esta intervención.</i>", style_val)
+            ]
+        ]
+    t_lio = Table(lio_data, colWidths=[200, 170, 170] if lleva_lio else [540])
+    t_lio.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_lio)
+    story.append(Spacer(1, 8))
+
+    # 6. Observaciones y Descripción de la Técnica Intraoperatoria
+    obs_pre = turno.get("observaciones") or "Sin observaciones prequirúrgicas."
+    obs_intra = turno.get("observaciones_intraoperatorias") or "Cirugía realizada conforme a técnica habitual sin complicaciones intraoperatorias registradas."
+
+    story.append(make_section_header("5. Descripción Quirúrgica y Observaciones"))
+    obs_data = [
+        [
+            Paragraph(f"<b>Observaciones Prequirúrgicas:</b><br/>{obs_pre}", style_nota)
+        ],
+        [
+            Paragraph(f"<b>Descripción / Notas Intraoperatorias:</b><br/>{obs_intra}", style_nota)
+        ]
+    ]
+    t_obs = Table(obs_data, colWidths=[540])
+    t_obs.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 6),
+        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_obs)
+    story.append(Spacer(1, 14))
+
+    # 7. Cuadro de Firmas Médicas
+    firma_data = [
+        [
+            Paragraph(f"______________________________________<br/><b>Dr/a. {cirujano}</b><br/><font size=7 color='#64748B'>Cirujano Principal</font>", ParagraphStyle('F1', parent=style_val, alignment=1)),
+            Paragraph(f"______________________________________<br/><b>{anestesista}</b><br/><font size=7 color='#64748B'>Médico Anestesiólogo</font>", ParagraphStyle('F2', parent=style_val, alignment=1)),
+            Paragraph(f"______________________________________<br/><b>{instrumentador}</b><br/><font size=7 color='#64748B'>Instrumentador/a Quirúrgico</font>", ParagraphStyle('F3', parent=style_val, alignment=1)),
+        ]
+    ]
+    t_firmas = Table(firma_data, colWidths=[180, 180, 180])
+    t_firmas.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 16),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+
+    foot_info = Paragraph(
+        f"<font size=7 color='#94A3B8'>Protocolo Quirúrgico emitido electrónicamente por {nombre_inst}. Documento confidencial y de archivo en Historia Clínica.</font>",
+        ParagraphStyle('FootPQ', parent=style_normal, alignment=1)
+    )
+
+    story.append(KeepTogether([t_firmas, Spacer(1, 8), foot_info]))
+
+    # Construir PDF
+    doc.build(story)
+    return pdf_filename
+
 

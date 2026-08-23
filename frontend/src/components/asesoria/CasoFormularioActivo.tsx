@@ -1,0 +1,842 @@
+'use client'
+
+import React, { useState, useEffect, useMemo } from 'react'
+import {
+  Stethoscope,
+  UserCheck,
+  Calendar,
+  DollarSign,
+  ClipboardList,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Save,
+  Loader2,
+  Trash2,
+  Receipt,
+  FileText,
+  Download,
+  Check,
+  XCircle,
+  ExternalLink,
+  ShieldCheck,
+  Send,
+  MessageCircle,
+  Layers,
+  Sparkles,
+  RefreshCw,
+  Search,
+  Tag
+} from 'lucide-react'
+import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
+import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
+import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
+import CasoPagosWidget from './CasoPagosWidget'
+
+interface PrestadorGeclisa {
+  pre_id: number
+  nombre: string
+  matricula: string
+  especialidad?: string
+}
+
+interface PracticaNomenclador {
+  codigo: string
+  nombre: string
+  categoria?: string
+  precio?: number
+  moneda?: string
+}
+
+interface CasoFormularioActivoProps {
+  caso: AsesoriaQuirurgica
+  pacienteId: string
+  pacienteNombre: string
+  pacienteDni?: string | null
+  pacienteTelefono?: string | null
+  obraSocialDefault?: string | null
+  presupuestos: PresupuestoPaciente[]
+  cargandoPresupuestos: boolean
+  guardando: boolean
+  mensajeGuardado: string | null
+  errorAccion: string | null
+  consentimientoInfo?: any
+  etapas: Array<{
+    id: AsesoriaQuirurgica['estado']
+    label: string
+    color: string
+    headerBg: string
+    headerBorder: string
+    desc: string
+  }>
+  onGuardar: (datosActualizados: Partial<AsesoriaQuirurgica>) => Promise<void>
+  onAbrirModalPresupuesto: () => void
+  onAbrirModalWhatsApp: () => void
+  onAbrirModalCierre: () => void
+  onEliminar: () => void
+  onAprobarRechazarPresupuesto: (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado') => Promise<void>
+  onDesvincularPresupuesto: () => void
+}
+
+export default function CasoFormularioActivo({
+  caso,
+  pacienteId,
+  pacienteNombre,
+  pacienteDni,
+  pacienteTelefono,
+  obraSocialDefault,
+  presupuestos,
+  cargandoPresupuestos,
+  guardando,
+  mensajeGuardado,
+  errorAccion,
+  consentimientoInfo,
+  etapas,
+  onGuardar,
+  onAbrirModalPresupuesto,
+  onAbrirModalWhatsApp,
+  onAbrirModalCierre,
+  onEliminar,
+  onAprobarRechazarPresupuesto,
+  onDesvincularPresupuesto
+}: CasoFormularioActivoProps) {
+  // Estados Locales Editables
+  const [estado, setEstado] = useState<AsesoriaQuirurgica['estado']>(caso.estado)
+  const [cobertura, setCobertura] = useState(caso.cobertura_obra_social || obraSocialDefault || '')
+  
+  // Médicos
+  const [medicoDerivador, setMedicoDerivador] = useState<{ id?: number | null; nombre?: string | null; matricula?: string | null }>({
+    id: caso.medico_derivador_id,
+    nombre: caso.medico_derivador_nombre,
+    matricula: caso.medico_derivador_matricula
+  })
+  const [busquedaDerivador, setBusquedaDerivador] = useState(caso.medico_derivador_nombre || '')
+  const [prestadoresDerivador, setPrestadoresDerivador] = useState<PrestadorGeclisa[]>([])
+  const [buscandoDerivador, setBuscandoDerivador] = useState(false)
+  const [mostrarDropdownDerivador, setMostrarDropdownDerivador] = useState(false)
+
+  const [medicoCirujano, setMedicoCirujano] = useState<{ id?: number | null; nombre?: string | null; matricula?: string | null }>({
+    id: caso.medico_cirujano_id,
+    nombre: caso.medico_cirujano_nombre,
+    matricula: caso.medico_cirujano_matricula
+  })
+  const [busquedaCirujano, setBusquedaCirujano] = useState(caso.medico_cirujano_nombre || '')
+  const [prestadoresCirujano, setPrestadoresCirujano] = useState<PrestadorGeclisa[]>([])
+  const [buscandoCirujano, setBuscandoCirujano] = useState(false)
+  const [mostrarDropdownCirujano, setMostrarDropdownCirujano] = useState(false)
+
+  // Práctica / Nomenclador
+  const [practicaCodigo, setPracticaCodigo] = useState(caso.practica_codigo || '')
+  const [practicaNombre, setPracticaNombre] = useState(caso.practica_nombre || '')
+  const [busquedaPractica, setBusquedaPractica] = useState(
+    caso.practica_codigo ? `[${caso.practica_codigo}] ${caso.practica_nombre}` : caso.practica_nombre || ''
+  )
+  const [practicasNomenclador, setPracticasNomenclador] = useState<PracticaNomenclador[]>([])
+  const [buscandoPractica, setBuscandoPractica] = useState(false)
+  const [mostrarDropdownPractica, setMostrarDropdownPractica] = useState(false)
+
+  // Económico y Señas
+  const [montoExtra, setMontoExtra] = useState<number>(caso.monto_extra || 0)
+  const [monedaExtra, setMonedaExtra] = useState<string>(caso.moneda_extra || 'ARS')
+  const [montoSena, setMontoSena] = useState<number>(caso.monto_sena || 0)
+  const [estadoPago, setEstadoPago] = useState<'pendiente' | 'seniado' | 'totalmente_cobrado'>(
+    caso.estado_pago || 'pendiente'
+  )
+  const [medioPago, setMedioPago] = useState<string | null>(caso.medio_pago || null)
+  const [presupuestoId, setPresupuestoId] = useState<string | null>(caso.presupuesto_id || null)
+
+  // Fechas
+  const [fechaProbable, setFechaProbable] = useState(caso.fecha_probable_cirugia || '')
+  const [fechaDefinitiva, setFechaDefinitiva] = useState(caso.fecha_definitiva_cirugia || '')
+
+  // Checklist y Notas
+  const [checklist, setChecklist] = useState<Record<string, boolean>>(caso.checklist_prequirurgico || {})
+  const [proximaAccionFecha, setProximaAccionFecha] = useState(caso.proxima_accion_fecha || '')
+  const [proximaAccionTexto, setProximaAccionTexto] = useState(caso.proxima_accion_texto || '')
+  const [situacionPaciente, setSituacionPaciente] = useState(caso.situacion_paciente || '')
+
+  // --------------------------------------------------------------------------
+  // DETECCIÓN DE CAMBIOS SIN GUARDAR (DIRTY STATE)
+  // --------------------------------------------------------------------------
+  const hasUnsavedChanges = useMemo(() => {
+    return (
+      estado !== caso.estado ||
+      cobertura !== (caso.cobertura_obra_social || obraSocialDefault || '') ||
+      (medicoDerivador.nombre || '') !== (caso.medico_derivador_nombre || '') ||
+      (medicoCirujano.nombre || '') !== (caso.medico_cirujano_nombre || '') ||
+      practicaCodigo !== (caso.practica_codigo || '') ||
+      practicaNombre !== (caso.practica_nombre || '') ||
+      Number(montoExtra) !== Number(caso.monto_extra || 0) ||
+      monedaExtra !== (caso.moneda_extra || 'ARS') ||
+      Number(montoSena) !== Number(caso.monto_sena || 0) ||
+      estadoPago !== (caso.estado_pago || 'pendiente') ||
+      medioPago !== (caso.medio_pago || null) ||
+      presupuestoId !== (caso.presupuesto_id || null) ||
+      fechaProbable !== (caso.fecha_probable_cirugia || '') ||
+      fechaDefinitiva !== (caso.fecha_definitiva_cirugia || '') ||
+      proximaAccionFecha !== (caso.proxima_accion_fecha || '') ||
+      proximaAccionTexto !== (caso.proxima_accion_texto || '') ||
+      situacionPaciente !== (caso.situacion_paciente || '') ||
+      JSON.stringify(checklist) !== JSON.stringify(caso.checklist_prequirurgico || {})
+    )
+  }, [
+    estado,
+    cobertura,
+    medicoDerivador,
+    medicoCirujano,
+    practicaCodigo,
+    practicaNombre,
+    montoExtra,
+    monedaExtra,
+    montoSena,
+    estadoPago,
+    medioPago,
+    presupuestoId,
+    fechaProbable,
+    fechaDefinitiva,
+    proximaAccionFecha,
+    proximaAccionTexto,
+    situacionPaciente,
+    checklist,
+    caso,
+    obraSocialDefault
+  ])
+
+  // Filtrado reactivo en memoria para médicos Geclisa
+  const derivadoresFiltrados = useMemo(() => {
+    const q = (busquedaDerivador || '').trim().toLowerCase()
+    if (!q) return prestadoresDerivador
+    return prestadoresDerivador.filter(
+      (p) =>
+        (p.nombre && p.nombre.toLowerCase().includes(q)) ||
+        (p.matricula && String(p.matricula).toLowerCase().includes(q)) ||
+        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+    )
+  }, [prestadoresDerivador, busquedaDerivador])
+
+  const cirujanosFiltrados = useMemo(() => {
+    const q = (busquedaCirujano || '').trim().toLowerCase()
+    if (!q) return prestadoresCirujano
+    return prestadoresCirujano.filter(
+      (p) =>
+        (p.nombre && p.nombre.toLowerCase().includes(q)) ||
+        (p.matricula && String(p.matricula).toLowerCase().includes(q)) ||
+        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+    )
+  }, [prestadoresCirujano, busquedaCirujano])
+
+  // Buscar prestadores en Geclisa
+  const buscarPrestador = async (tipo: 'derivador' | 'cirujano', query: string) => {
+    const qClean = (query || '').trim()
+    if (tipo === 'derivador') setBuscandoDerivador(true)
+    if (tipo === 'cirujano') setBuscandoCirujano(true)
+
+    try {
+      const res = await fetch(`/api/geclisa/prestadores/buscar?query=${encodeURIComponent(qClean)}&q=${encodeURIComponent(qClean)}`)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        const lista = data.prestadores || []
+        if (tipo === 'derivador') setPrestadoresDerivador(lista)
+        if (tipo === 'cirujano') setPrestadoresCirujano(lista)
+      }
+    } catch (err) {
+      console.error('Error buscando prestador en Geclisa:', err)
+    } finally {
+      if (tipo === 'derivador') setBuscandoDerivador(false)
+      if (tipo === 'cirujano') setBuscandoCirujano(false)
+    }
+  }
+
+  // Buscar en Nomenclador del CRM
+  const buscarPracticasNomenclador = async (query: string) => {
+    setBuscandoPractica(true)
+    const qClean = (query || '').trim()
+    try {
+      const res = await fetch(`/api/nomencladores/practicas/buscar?q=${encodeURIComponent(qClean)}`)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPracticasNomenclador(data.practicas || [])
+      }
+    } catch (err) {
+      console.error('Error al buscar en nomenclador:', err)
+    } finally {
+      setBuscandoPractica(false)
+    }
+  }
+
+  // Guardar Cambios
+  const handleGuardarCambios = () => {
+    const payload: Partial<AsesoriaQuirurgica> = {
+      estado,
+      cobertura_obra_social: cobertura || null,
+      medico_derivador_id: medicoDerivador.id || null,
+      medico_derivador_nombre: medicoDerivador.nombre || null,
+      medico_derivador_matricula: medicoDerivador.matricula || null,
+      medico_cirujano_id: medicoCirujano.id || null,
+      medico_cirujano_nombre: medicoCirujano.nombre || null,
+      medico_cirujano_matricula: medicoCirujano.matricula || null,
+      practica_codigo: practicaCodigo || null,
+      practica_nombre: practicaNombre || 'Práctica Quirúrgica a Determinar',
+      monto_extra: Number(montoExtra) || 0,
+      moneda_extra: monedaExtra,
+      monto_sena: Number(montoSena) || 0,
+      estado_pago: estadoPago,
+      medio_pago: medioPago,
+      presupuesto_id: presupuestoId || null,
+      fecha_probable_cirugia: fechaProbable || null,
+      fecha_definitiva_cirugia: fechaDefinitiva || null,
+      checklist_prequirurgico: checklist,
+      proxima_accion_fecha: proximaAccionFecha || null,
+      proxima_accion_texto: proximaAccionTexto || null,
+      situacion_paciente: situacionPaciente || ''
+    }
+
+    onGuardar(payload)
+  }
+
+  const presupuestoVinculado = presupuestos.find((p) => p.id === presupuestoId)
+
+  return (
+    <div className="p-4 sm:p-5 space-y-4 bg-neutral-950/60">
+      
+      {/* ==================================================================== */}
+      {/* 1. STEPPER DE ETAPAS QUIRÚRGICAS (COMPACTO) */}
+      {/* ==================================================================== */}
+      <div className="p-3 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+            <Layers size={13} className="text-blue-400" />
+            Progreso del Embudo Quirúrgico
+          </span>
+          <span className="text-[10px] text-gray-400 font-mono">
+            Paso: <strong className="text-blue-400">{estado.toUpperCase()}</strong>
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+          {etapas
+            .filter((e) => e.id !== 'cancelado')
+            .map((e, idx) => {
+              const isSelected = estado === e.id
+              const isOperado = e.id === 'operado'
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => setEstado(e.id)}
+                  disabled={guardando}
+                  className={`p-2 rounded-xl text-left transition-all border flex flex-col justify-between ${
+                    isSelected
+                      ? isOperado
+                        ? 'bg-teal-500/20 border-teal-500 text-teal-300 shadow-md ring-1 ring-teal-500/30'
+                        : 'bg-blue-600/20 border-blue-500 text-white shadow-md ring-1 ring-blue-500/30'
+                      : 'bg-neutral-950/60 border-[var(--border)] text-gray-400 hover:bg-neutral-800 hover:text-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold opacity-75">0{idx + 1}</span>
+                    {isSelected && <CheckCircle2 size={12} className={isOperado ? 'text-teal-400' : 'text-blue-400'} />}
+                  </div>
+                  <span className="text-xs font-black truncate mt-1">{e.label.replace(/^[0-9]+\.\s*/, '')}</span>
+                </button>
+              )
+            })}
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
+      {/* 2. DISTRIBUCIÓN ERGONÓMICA EN 2 COLUMNAS EQUILIBRADAS */}
+      {/* ==================================================================== */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        
+        {/* ================================================================== */}
+        {/* COLUMNA IZQUIERDA: CLÍNICA, MÉDICOS & ECONÓMICA */}
+        {/* ================================================================== */}
+        <div className="space-y-4">
+          
+          {/* Card: Práctica Quirúrgica / Nomenclador */}
+          <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
+            <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+              <ClipboardList size={14} className="text-indigo-400" />
+              Práctica Quirúrgica (Nomenclador CRM)
+            </label>
+
+            <div className="relative">
+              <input
+                type="text"
+                disabled={guardando}
+                placeholder="Buscar código o nombre en el Nomenclador..."
+                value={busquedaPractica}
+                onChange={(e) => {
+                  setBusquedaPractica(e.target.value)
+                  setPracticaNombre(e.target.value)
+                  buscarPracticasNomenclador(e.target.value)
+                  setMostrarDropdownPractica(true)
+                }}
+                onFocus={() => {
+                  buscarPracticasNomenclador(busquedaPractica)
+                  setMostrarDropdownPractica(true)
+                }}
+                className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+              />
+              {buscandoPractica && (
+                <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
+              )}
+
+              {mostrarDropdownPractica && practicasNomenclador.length > 0 && (
+                <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-indigo-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                  {practicasNomenclador.map((p) => (
+                    <button
+                      key={p.codigo}
+                      type="button"
+                      onClick={() => {
+                        setPracticaCodigo(p.codigo)
+                        setPracticaNombre(p.nombre)
+                        setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
+                        if (p.precio && p.precio > 0) {
+                          setMontoExtra(p.precio)
+                          if (p.moneda) setMonedaExtra(p.moneda)
+                        }
+                        setMostrarDropdownPractica(false)
+                      }}
+                      className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group flex items-center justify-between"
+                    >
+                      <div className="flex flex-col">
+                        <span className="font-bold text-white group-hover:text-indigo-300">
+                          [{p.codigo}] {p.nombre}
+                        </span>
+                        {p.categoria && <span className="text-[10px] text-gray-500">{p.categoria}</span>}
+                      </div>
+                      {p.precio && p.precio > 0 && (
+                        <span className="text-xs font-mono font-bold text-emerald-400 shrink-0">
+                          {p.moneda || 'ARS'} ${p.precio.toLocaleString('es-AR')}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <span className="text-[11px] text-gray-400">Cobertura:</span>
+              <input
+                type="text"
+                value={cobertura}
+                placeholder="Particular / Obra Social"
+                onChange={(e) => setCobertura(e.target.value)}
+                className="flex-1 px-2 py-1 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-gray-300 focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Card: Equipo Médico (Derivador & Cirujano) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Médico Derivador */}
+            <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
+              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                <UserCheck size={14} className="text-blue-400" />
+                Médico Derivador
+              </label>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  disabled={guardando}
+                  placeholder="Buscar en Geclisa..."
+                  value={busquedaDerivador}
+                  onChange={(e) => {
+                    setBusquedaDerivador(e.target.value)
+                    setMedicoDerivador({ nombre: e.target.value })
+                    buscarPrestador('derivador', e.target.value)
+                    setMostrarDropdownDerivador(true)
+                  }}
+                  onFocus={() => {
+                    buscarPrestador('derivador', busquedaDerivador)
+                    setMostrarDropdownDerivador(true)
+                  }}
+                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                />
+                {buscandoDerivador && (
+                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
+                )}
+
+                {mostrarDropdownDerivador && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                    {derivadoresFiltrados.length > 0 ? (
+                      derivadoresFiltrados.map((p) => (
+                        <button
+                          key={p.pre_id}
+                          type="button"
+                          onClick={() => {
+                            setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                            setBusquedaDerivador(p.nombre)
+                            setMostrarDropdownDerivador(false)
+                          }}
+                          className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-bold text-white group-hover:text-blue-300">{p.nombre}</span>
+                            {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
+                          </div>
+                          <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
+                        <p className="text-[11px]">No se encontró &quot;{busquedaDerivador}&quot; en Geclisa.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMedicoDerivador({ nombre: busquedaDerivador })
+                            setMostrarDropdownDerivador(false)
+                          }}
+                          className="px-2.5 py-1 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-lg text-[10px] font-bold"
+                        >
+                          Usar médico externo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Médico Cirujano */}
+            <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
+              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                <Stethoscope size={14} className="text-emerald-400" />
+                Médico Cirujano (Qx)
+              </label>
+
+              <div className="relative">
+                <input
+                  type="text"
+                  disabled={guardando}
+                  placeholder="Buscar en Geclisa..."
+                  value={busquedaCirujano}
+                  onChange={(e) => {
+                    setBusquedaCirujano(e.target.value)
+                    setMedicoCirujano({ nombre: e.target.value })
+                    buscarPrestador('cirujano', e.target.value)
+                    setMostrarDropdownCirujano(true)
+                  }}
+                  onFocus={() => {
+                    buscarPrestador('cirujano', busquedaCirujano)
+                    setMostrarDropdownCirujano(true)
+                  }}
+                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                />
+                {buscandoCirujano && (
+                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
+                )}
+
+                {mostrarDropdownCirujano && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                    {cirujanosFiltrados.length > 0 ? (
+                      cirujanosFiltrados.map((p) => (
+                        <button
+                          key={p.pre_id}
+                          type="button"
+                          onClick={() => {
+                            setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                            setBusquedaCirujano(p.nombre)
+                            setMostrarDropdownCirujano(false)
+                          }}
+                          className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-bold text-white group-hover:text-emerald-300">{p.nombre}</span>
+                            {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
+                          </div>
+                          <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
+                        <p className="text-[11px]">No se encontró &quot;{busquedaCirujano}&quot; en Geclisa.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMedicoCirujano({ nombre: busquedaCirujano })
+                            setMostrarDropdownCirujano(false)
+                          }}
+                          className="px-2.5 py-1 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold"
+                        >
+                          Usar cirujano externo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Fechas Quirúrgicas (Probable vs Definitiva) */}
+          <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">
+            <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+              <Calendar size={14} className="text-amber-400" />
+              Programación de Fechas de Cirugía
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] text-gray-400 font-medium block mb-1">Fecha Probable / Tentativa</label>
+                <input
+                  type="date"
+                  disabled={guardando}
+                  value={fechaProbable}
+                  onChange={(e) => setFechaProbable(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-xl text-white font-mono focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-emerald-400 font-bold block mb-1">Fecha Definitiva (Fijada en Qx)</label>
+                <input
+                  type="date"
+                  disabled={guardando}
+                  value={fechaDefinitiva}
+                  onChange={(e) => setFechaDefinitiva(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-emerald-300 font-mono font-bold focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Control de Presupuesto, Cotización y Seña */}
+          <div className="space-y-3">
+            {/* Presupuesto Oficial Vinculado */}
+            <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-blue-500/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                  <Receipt size={14} />
+                  Presupuesto Oficial Vinculado
+                </div>
+                <button
+                  type="button"
+                  onClick={onAbrirModalPresupuesto}
+                  className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[11px] font-bold transition-all shadow flex items-center gap-1"
+                >
+                  + Emitir Cotización PDF
+                </button>
+              </div>
+
+              {presupuestoVinculado ? (
+                <div className="p-3 rounded-xl bg-neutral-950 border border-blue-500/30 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-white">
+                        Presupuesto #{presupuestoVinculado.id.slice(0, 8)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          presupuestoVinculado.estado === 'aprobado'
+                            ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
+                            : presupuestoVinculado.estado === 'rechazado'
+                            ? 'bg-red-950 text-red-300 border-red-500/40'
+                            : 'bg-amber-950 text-amber-300 border-amber-500/40'
+                        }`}
+                      >
+                        {presupuestoVinculado.estado.toUpperCase()}
+                      </span>
+                    </div>
+                    <div className="text-sm font-mono font-bold text-emerald-400 mt-1">
+                      Total: ${Number(presupuestoVinculado.total || 0).toLocaleString('es-AR')}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {presupuestoVinculado.pdf_url && (
+                      <a
+                        href={presupuestoVinculado.pdf_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg text-xs font-bold transition-all"
+                        title="Ver PDF oficial"
+                      >
+                        <Download size={14} />
+                      </a>
+                    )}
+                    {presupuestoVinculado.estado !== 'aprobado' && (
+                      <button
+                        type="button"
+                        onClick={() => onAprobarRechazarPresupuesto(presupuestoVinculado.id, 'aprobado')}
+                        className="px-2 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold"
+                      >
+                        Aprobar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="number"
+                      min="0"
+                      value={montoExtra || ''}
+                      placeholder="Monto cotizado extra..."
+                      onChange={(e) => setMontoExtra(parseFloat(e.target.value) || 0)}
+                      className="w-full px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-white font-mono"
+                    />
+                  </div>
+                  <select
+                    value={monedaExtra}
+                    onChange={(e) => setMonedaExtra(e.target.value)}
+                    className="px-2 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-gray-300 font-bold"
+                  >
+                    <option value="ARS">ARS ($)</option>
+                    <option value="USD">USD ($)</option>
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Widget de Seña y Cobranza */}
+            <CasoPagosWidget
+              montoTotal={presupuestoVinculado ? Number(presupuestoVinculado.total) : montoExtra}
+              moneda={monedaExtra}
+              montoSena={montoSena}
+              estadoPago={estadoPago}
+              medioPago={medioPago}
+              disabled={guardando}
+              onChange={(data) => {
+                setMontoSena(data.montoSena)
+                setEstadoPago(data.estadoPago)
+                setMedioPago(data.medioPago || null)
+              }}
+            />
+          </div>
+        </div>
+
+        {/* ================================================================== */}
+        {/* COLUMNA DERECHA: CONVERSIÓN, CHECKLIST & BITÁCORA REALTIME */}
+        {/* ================================================================== */}
+        <div className="space-y-4">
+          
+          {/* Card: Checklist Prequirúrgico Asistido */}
+          <ChecklistPrequirurgico
+            checklist={checklist}
+            disabled={guardando}
+            onChange={(nuevoChecklist) => setChecklist(nuevoChecklist)}
+          />
+
+          {/* Card: Próxima Acción de Seguimiento & WhatsApp Rápido */}
+          <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                <Clock size={14} className="text-purple-400" />
+                Próxima Acción Programada
+              </div>
+              
+              <button
+                type="button"
+                onClick={onAbrirModalWhatsApp}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow"
+              >
+                <Send size={12} />
+                WhatsApp Rápido
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="sm:col-span-1">
+                <input
+                  type="date"
+                  value={proximaAccionFecha}
+                  onChange={(e) => setProximaAccionFecha(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <input
+                  type="text"
+                  value={proximaAccionTexto}
+                  placeholder="Ej: Llamar para confirmar fecha / Solicitar estudios..."
+                  onChange={(e) => setProximaAccionTexto(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white placeholder-gray-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card: Bitácora Cronológica de Evoluciones en Vivo */}
+          <TimelineEvolucionesAsesoria
+            asesoriaId={caso.id}
+            pacienteId={pacienteId}
+            pacienteNombre={pacienteNombre}
+            disabled={false}
+          />
+        </div>
+
+      </div>
+
+      {/* ==================================================================== */}
+      {/* 3. FOOTER CON ACCIONES Y ALERTA DE CAMBIOS SIN GUARDAR */}
+      {/* ==================================================================== */}
+      <div className="pt-3 border-t border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Alerta de Dirty State / Cambios pendientes */}
+        <div className="flex items-center gap-2">
+          {hasUnsavedChanges ? (
+            <span className="px-2.5 py-1 rounded-lg bg-amber-950/80 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 animate-pulse">
+              <AlertCircle size={13} className="text-amber-400 shrink-0" />
+              Tienes modificaciones sin guardar
+            </span>
+          ) : (
+            <span className="text-[11px] text-gray-500 flex items-center gap-1">
+              <CheckCircle2 size={12} className="text-emerald-500" />
+              Datos sincronizados
+            </span>
+          )}
+        </div>
+
+        {/* Botonera de Acciones */}
+        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+          <button
+            type="button"
+            onClick={onAbrirModalCierre}
+            disabled={guardando}
+            className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold transition-all"
+          >
+            Desistir / Cerrar Caso
+          </button>
+
+          <button
+            type="button"
+            onClick={onEliminar}
+            disabled={guardando}
+            className="p-2 bg-neutral-900 hover:bg-red-950/40 text-gray-400 hover:text-red-300 border border-[var(--border)] rounded-xl text-xs transition-all"
+            title="Eliminar procedimiento"
+          >
+            <Trash2 size={15} />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleGuardarCambios}
+            disabled={guardando}
+            className={`px-4 py-2 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 ${
+              hasUnsavedChanges
+                ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 hover:from-blue-500 hover:to-emerald-500 ring-2 ring-blue-400/50 shadow-blue-500/20'
+                : 'bg-blue-600 hover:bg-blue-500'
+            }`}
+          >
+            {guardando ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                <span>Guardando...</span>
+              </>
+            ) : (
+              <>
+                <Save size={14} />
+                <span>Guardar Cambios</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

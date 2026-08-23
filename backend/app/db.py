@@ -3135,11 +3135,46 @@ COLUMN_KEYS_TURNOS_QUIROFANO = {
     "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
     "cirujano_nombre", "ayudante_nombre", "anestesiologo_nombre", "medico_derivador_nombre",
     "practica_codigo", "practica_nombre", "codigo_obra_social", "obra_social", "plan_obra_social",
-    "token_autorizacion", "lente_tipo", "lente_dioptria", "lente_lote", "tipo_anestesia",
+    "token_autorizacion", "lente_tipo", "lente_dioptria", "lente_lote", "lente_serie", "lente_vencimiento", "lente_foto_url",
+    "checklist_seguridad_quirurgica", "parte_quirurgico_pdf_url", "tipo_anestesia",
     "checks_adicionales", "estado", "consentimiento_estado", "consentimiento_token",
     "consentimiento_pdf_url", "consentimiento_enviado_at", "consentimiento_firmado_at",
     "consentimiento_firma_ip", "consentimiento_firma_img", "observaciones", "usuario_alta"
 }
+
+def verificar_solapamiento_turno_quirofano(quirofano_id: str, fecha_cirugia: str, hora_inicio: str, duracion_minutos: int = 20, excluir_turno_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Verifica si existe otro turno activo en la misma sala y fecha que se solape con el horario deseado.
+    """
+    if not supabase or not quirofano_id or not fecha_cirugia or not hora_inicio:
+        return None
+    try:
+        def a_minutos(h_str: str) -> int:
+            partes = str(h_str)[:5].split(":")
+            return int(partes[0]) * 60 + int(partes[1])
+
+        h_ini_min = a_minutos(hora_inicio)
+        h_fin_min = h_ini_min + (duracion_minutos or 20)
+
+        res = supabase.table("turnos_quirofano").select("id, hora_inicio, duracion_minutos, estado, pacientes(nombre)").eq("quirofano_id", quirofano_id).eq("fecha_cirugia", fecha_cirugia).neq("estado", "cancelado").execute()
+        turnos_existentes = res.data or []
+
+        for t in turnos_existentes:
+            if excluir_turno_id and str(t.get("id")) == str(excluir_turno_id):
+                continue
+            if not t.get("hora_inicio"):
+                continue
+            t_ini = a_minutos(t["hora_inicio"])
+            t_dur = t.get("duracion_minutos") or 20
+            t_fin = t_ini + t_dur
+
+            # Hay solapamiento si (h_ini_min < t_fin) y (h_fin_min > t_ini)
+            if max(h_ini_min, t_ini) < min(h_fin_min, t_fin):
+                return t
+        return None
+    except Exception as e:
+        logger.warning(f"Error verificando solapamiento: {e}")
+        return None
 
 def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
     """
@@ -3595,14 +3630,57 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
             except Exception as e_as:
                 logger.warning(f"No se pudo resolver asesoria_id para paciente {turno_actual.get('paciente_id')}: {e_as}")
 
+        # 5. Si pasa a 'operado', generar automáticamente el Protocolo / Parte Quirúrgico Oficial en PDF
+        if nuevo_estado == "operado":
+            try:
+                from app.services.pdf_service import generar_pdf_parte_quirurgico
+                t_full = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
+                if t_full.data:
+                    t_item = t_full.data[0]
+                    paciente_data = t_item.get("pacientes") or {}
+                    pdf_filename = generar_pdf_parte_quirurgico(t_item, paciente_data)
+                    pdf_rel_url = f"/static/{pdf_filename}"
+                    supabase.table("turnos_quirofano").update({"parte_quirurgico_pdf_url": pdf_rel_url}).eq("id", turno_id).execute()
+                    turno_modificado["parte_quirurgico_pdf_url"] = pdf_rel_url
+                    logger.info(f"Parte quirúrgico PDF generado exitosamente para turno {turno_id}: {pdf_rel_url}")
+            except Exception as e_pdf:
+                logger.error(f"Error generando Parte Quirúrgico PDF al operar turno {turno_id}: {e_pdf}")
+
         if asesoria_id:
             asesoria_payload: Dict[str, Any] = {"estado": nuevo_estado, "updated_at": "now()"}
             if nuevo_estado == "operado":
                 asesoria_payload["fecha_definitiva_cirugia"] = turno_actual.get("fecha_cirugia")
+                if turno_modificado.get("parte_quirurgico_pdf_url"):
+                    asesoria_payload["parte_quirurgico_pdf_url"] = turno_modificado["parte_quirurgico_pdf_url"]
             supabase.table("asesorias_quirurgicas").update(asesoria_payload).eq("id", asesoria_id).execute()
             logger.info(f"Asesoría {asesoria_id} sincronizada automáticamente al estado '{nuevo_estado}'.")
             
         return {"success": True, "turno": turno_modificado, "nuevo_estado": nuevo_estado}
     except Exception as e:
         logger.error(f"Error al cambiar estado de turno {turno_id} a {nuevo_estado}: {e}")
+        return {"success": False, "error": str(e)}
+
+def guardar_checklist_seguridad_turno(turno_id: str, checklist_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Guarda el checklist de seguridad quirúrgica (Pausa Quirúrgica OMS) en turnos_quirofano.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "No database connection"}
+    try:
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        
+        # Merge de checklist
+        t_resp = supabase.table("turnos_quirofano").select("checklist_seguridad_quirurgica").eq("id", turno_id).limit(1).execute()
+        prev_check = t_resp.data[0].get("checklist_seguridad_quirurgica") or {} if t_resp.data else {}
+        
+        updated_check = {**prev_check, **checklist_data, "updated_at": ahora_iso}
+        res = supabase.table("turnos_quirofano").update({
+            "checklist_seguridad_quirurgica": updated_check,
+            "updated_at": ahora_iso
+        }).eq("id", turno_id).execute()
+        
+        return {"success": True, "checklist": updated_check}
+    except Exception as e:
+        logger.error(f"Error al guardar checklist de seguridad para turno {turno_id}: {e}")
         return {"success": False, "error": str(e)}
