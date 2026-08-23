@@ -43,22 +43,41 @@ class GeclisaClient:
 
     def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
-        Ejecuta una petición HTTP contra Geclisa con fallback automático por IP si falla la resolución DNS.
+        Ejecuta una petición HTTP contra Geclisa con reintento automático y fallback por IP si falla la resolución DNS.
         """
-        timeout = kwargs.pop("timeout", 15)
+        timeout = kwargs.pop("timeout", 18)
         headers = kwargs.pop("headers", {}) or {}
 
-        try:
-            return self.session.request(method, url, headers=headers, timeout=timeout, **kwargs)
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as err:
-            err_str = str(err)
-            if "creogeclisa.fertilidadmendoza.com.ar" in url or "Name or service not known" in err_str or "gaierror" in err_str:
-                fallback_url = url.replace("creogeclisa.fertilidadmendoza.com.ar", "190.15.197.191")
-                logger.warning(f"DNS de Geclisa no resuelto. Reintentando por IP directa: {fallback_url}")
-                headers_copy = dict(headers)
-                headers_copy["Host"] = "creogeclisa.fertilidadmendoza.com.ar"
-                return self.session.request(method, fallback_url, headers=headers_copy, timeout=timeout, **kwargs)
-            raise
+        for intento in range(2):
+            try:
+                return self.session.request(method, url, headers=headers, timeout=timeout, **kwargs)
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as err:
+                err_str = str(err)
+                logger.warning(f"Intento {intento + 1}/2 falló para {url} ({err_str}).")
+                
+                # Fallback por IP si falla DNS o timeout en hostname
+                if "apigeclisa.centrovision.com.ar" in url:
+                    fallback_url = url.replace("apigeclisa.centrovision.com.ar", "190.231.99.200")
+                    headers_copy = dict(headers)
+                    headers_copy["Host"] = "apigeclisa.centrovision.com.ar"
+                    try:
+                        logger.warning(f"Reintentando por IP directa Centro Visión: {fallback_url}")
+                        return self.session.request(method, fallback_url, headers=headers_copy, timeout=timeout, **kwargs)
+                    except Exception:
+                        pass
+                elif "creogeclisa.fertilidadmendoza.com.ar" in url:
+                    fallback_url = url.replace("creogeclisa.fertilidadmendoza.com.ar", "190.15.197.191")
+                    headers_copy = dict(headers)
+                    headers_copy["Host"] = "creogeclisa.fertilidadmendoza.com.ar"
+                    try:
+                        logger.warning(f"Reintentando por IP directa CREO: {fallback_url}")
+                        return self.session.request(method, fallback_url, headers=headers_copy, timeout=timeout, **kwargs)
+                    except Exception:
+                        pass
+
+                if intento == 1:
+                    raise
+                time.sleep(0.6)
 
     def _obtener_token(self) -> str:
         """
@@ -334,23 +353,26 @@ class GeclisaClient:
             else:
                 paciente_item = data
 
-            # Extraer fichaId para enriquecer ficha
+            # Extraer fichaId para intentar enriquecer ficha completa de forma segura
             ficha_id = paciente_item.get("fichaId") or paciente_item.get("id") or paciente_item.get("ficId")
             if ficha_id:
-                ficha_completa = self.obtener_ficha_completa(int(ficha_id))
-                if ficha_completa.get("encontrado"):
-                    if not ficha_completa.get("dni"):
-                        ficha_completa["dni"] = str(paciente_item.get("ficNrodoc") or dni_limpio)
-                    log_event(
-                        nivel="INFO",
-                        modulo="GECLISA",
-                        accion="PACIENTE_ENCONTRADO_DNI",
-                        mensaje=f"Paciente '{ficha_completa.get('nombre_completo')}' (DNI {dni_limpio}) encontrado en Geclisa (Ficha #{ficha_id})",
-                        detalles={"dni": dni_limpio, "ficha_id": ficha_id, "nombre": ficha_completa.get("nombre_completo"), "obra_social": ficha_completa.get("obra_social")},
-                        duracion_ms=duracion,
-                        http_status=200
-                    )
-                    return ficha_completa
+                try:
+                    ficha_completa = self.obtener_ficha_completa(int(ficha_id))
+                    if ficha_completa.get("encontrado"):
+                        if not ficha_completa.get("dni"):
+                            ficha_completa["dni"] = str(paciente_item.get("ficNrodoc") or dni_limpio)
+                        log_event(
+                            nivel="INFO",
+                            modulo="GECLISA",
+                            accion="PACIENTE_ENCONTRADO_DNI",
+                            mensaje=f"Paciente '{ficha_completa.get('nombre_completo')}' (DNI {dni_limpio}) encontrado en Geclisa (Ficha #{ficha_id})",
+                            detalles={"dni": dni_limpio, "ficha_id": ficha_id, "nombre": ficha_completa.get("nombre_completo"), "obra_social": ficha_completa.get("obra_social")},
+                            duracion_ms=duracion,
+                            http_status=200
+                        )
+                        return ficha_completa
+                except Exception as enrich_err:
+                    logger.warning(f"No se pudo enriquecer ficha completa #{ficha_id} ({enrich_err}), usando datos básicos.")
             
             # Si no vino fichaId o falló la ficha detallada, normalizar el paciente_item directamente
             nombre = paciente_item.get("ficNombre") or paciente_item.get("nombre") or ""
