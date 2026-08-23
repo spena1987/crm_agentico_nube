@@ -16,13 +16,12 @@ def test_solicitar_codigo_vinculacion_mock():
         "instructions": ["Abre WhatsApp", "Vincular"]
     }
     
-    with patch("httpx.post", return_value=mock_resp), \
+    with patch("httpx.get", return_value=mock_resp), \
          patch.object(manager, "ensure_service_running", return_value=True):
         res = manager.solicitar_codigo_vinculacion("011 15 1234-5678")
         assert res["success"] is True
         assert res["code"] == "WA5T-7P62"
         assert res["phone"].startswith("54911")
-        assert "instructions" in res
 
 def test_solicitar_codigo_vinculacion_invalido():
     manager = WhatsAppManager()

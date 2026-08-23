@@ -481,12 +481,96 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
         logger.error(f"Error procesando respuesta de agente IA en background: {agent_err}")
 
 @app.post("/api/whatsapp/webhook/incoming")
-async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, background_tasks: BackgroundTasks):
+async def receive_incoming_whatsapp_message(request: Request, background_tasks: BackgroundTasks):
     """
-    Webhook ultra-rápido que recibe los mensajes entrantes de WhatsApp desde el microservicio Baileys,
-    persiste el mensaje en la BD y despacha el Agente IA en segundo plano.
+    Webhook unificado que recibe eventos y mensajes entrantes de WhatsApp desde Evolution API v2,
+    persiste el mensaje en Supabase y despacha el Agente IA en segundo plano.
     """
     try:
+        body = await request.json()
+    except Exception:
+        return {"status": "error", "detail": "Invalid JSON"}
+
+    try:
+        # Caso 1: Eventos de Evolution API v2
+        if isinstance(body, dict) and "event" in body:
+            event_name = str(body.get("event", "")).upper()
+            data = body.get("data", {})
+
+            # 1.1 Actualización de estados de entrega (SERVER_ACK, DELIVERY_ACK, READ)
+            if event_name in ["MESSAGES_UPDATE", "MESSAGES.UPDATE"]:
+                updates = data if isinstance(data, list) else [data]
+                for upd in updates:
+                    key = upd.get("key", {}) if isinstance(upd, dict) else {}
+                    msg_id = key.get("id")
+                    status_raw = upd.get("update", {}).get("status") if isinstance(upd, dict) else None
+                    if msg_id and status_raw and supabase:
+                        status_label = "enviado"
+                        s_str = str(status_raw).upper()
+                        if s_str in ["3", "DELIVERY_ACK", "DELIVERED"]:
+                            status_label = "entregado"
+                        elif s_str in ["4", "5", "READ", "PLAYED"]:
+                            status_label = "leido"
+                        try:
+                            m_res = supabase.table("mensajes").select("id, metadata_json").filter("metadata_json->>whatsapp_message_id", "eq", msg_id).execute()
+                            if m_res.data:
+                                row = m_res.data[0]
+                                meta = row.get("metadata_json") or {}
+                                meta["delivery_status"] = status_label
+                                supabase.table("mensajes").update({"metadata_json": meta}).eq("id", row["id"]).execute()
+                        except Exception:
+                            pass
+                return {"status": "processed", "event": event_name}
+
+            # 1.2 Mensaje entrante de WhatsApp (MESSAGES_UPSERT)
+            if event_name in ["MESSAGES_UPSERT", "MESSAGES.UPSERT"]:
+                key = data.get("key", {})
+                from_me = key.get("fromMe", False)
+                if from_me:
+                    return {"status": "ignored", "reason": "outgoing_message"}
+
+                remote_jid = key.get("remoteJid", "")
+                message_id = key.get("id", "")
+                push_name = data.get("pushName", "Paciente")
+                msg_content = data.get("message", {}) or {}
+                
+                texto = ""
+                message_type = "text"
+                media_info = None
+
+                if isinstance(msg_content, dict):
+                    if "conversation" in msg_content:
+                        texto = msg_content.get("conversation", "")
+                    elif "extendedTextMessage" in msg_content:
+                        texto = msg_content.get("extendedTextMessage", {}).get("text", "")
+                    elif "imageMessage" in msg_content:
+                        message_type = "image"
+                        texto = msg_content.get("imageMessage", {}).get("caption", "")
+                    elif "documentMessage" in msg_content:
+                        message_type = "document"
+                        texto = msg_content.get("documentMessage", {}).get("caption", "")
+                    elif "audioMessage" in msg_content:
+                        message_type = "audio"
+
+                phone_raw = remote_jid.split("@")[0].split(":")[0] if remote_jid else ""
+                clean_phone = normalize_phone_number(phone_raw)
+                timestamp = data.get("messageTimestamp", int(time.time()))
+                
+                payload = IncomingWebhookMessage(
+                    message_id=message_id,
+                    from_me=from_me,
+                    phone=clean_phone,
+                    jid=remote_jid,
+                    name=push_name,
+                    text=texto or "",
+                    message_type=message_type,
+                    timestamp=timestamp
+                )
+            else:
+                return {"status": "ignored", "reason": f"unhandled_event_{event_name}"}
+        else:
+            payload = IncomingWebhookMessage(**body)
+
         if payload.from_me:
             return {"status": "ignored", "reason": "outgoing_message"}
 
@@ -494,27 +578,13 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
         texto = payload.text.strip() if payload.text else ""
         incoming_jid = payload.jid or payload.phone
 
-        logger.info(f"Mensaje entrante Baileys desde {clean_phone} (JID: {incoming_jid}) [{payload.message_type}]: {texto[:50]}")
+        logger.info(f"Mensaje entrante WhatsApp desde {clean_phone} (JID: {incoming_jid}) [{payload.message_type}]: {texto[:50]}")
 
         if not clean_phone:
             return {"status": "ignored", "reason": "empty_phone"}
 
-        # Si el remitente es un LID de WhatsApp, resolver al paciente real
-        paciente = None
-        if is_lid_number(clean_phone) or is_lid_number(payload.phone):
-            logger.info(f"Detectado identificador LID ({payload.phone}). Resolviendo con paciente real del CRM...")
-            paciente = get_paciente_by_lid(payload.phone) or get_paciente_by_lid(clean_phone)
-            if not paciente and payload.name and payload.name != "Paciente":
-                paciente = get_paciente_by_nombre_aproximado(payload.name)
-            if not paciente:
-                paciente = get_ultimo_paciente_activo()
-            if paciente:
-                clean_phone = paciente.get("telefono") or clean_phone
-                logger.info(f"✔ Mensaje del LID {payload.phone} enrutado exitosamente a paciente: {paciente.get('nombre')} ({clean_phone})")
-
         # 1. Obtener o crear paciente
-        if not paciente:
-            paciente = get_paciente_by_telefono(clean_phone)
+        paciente = get_paciente_by_telefono(clean_phone)
         if not paciente:
             nombre = payload.name if payload.name and payload.name != "Paciente" else f"Paciente {clean_phone[-4:] if len(clean_phone) >= 4 else clean_phone}"
             paciente = crear_paciente(telefono=clean_phone, nombre=nombre)
@@ -525,16 +595,14 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
 
         paciente_id = paciente["id"] if isinstance(paciente, dict) else paciente.get("id")
 
-        # 1.1 Interceptor Inteligente de DNI para Pacientes no vinculados a Geclisa
+        # 1.1 Interceptor Inteligente de DNI para Pacientes
         if paciente and not paciente.get("dni") and texto:
             dni_match = re.search(r'\b(\d{7,8})\b', texto)
             if dni_match:
                 potential_dni = dni_match.group(1)
-                logger.info(f"Detectado posible DNI {potential_dni} en mensaje de paciente {paciente_id}. Verificando en Geclisa...")
                 try:
                     res_geclisa = geclisa_client.buscar_paciente_por_dni(potential_dni)
                     if res_geclisa and res_geclisa.get("encontrado"):
-                        logger.info(f"✔ Paciente encontrado en Geclisa para DNI {potential_dni}: {res_geclisa.get('nombre_completo')}. Vinculando...")
                         paciente_vinculado = vincular_o_fusionar_paciente_con_geclisa(
                             paciente_temporal_id=paciente_id,
                             datos_geclisa=res_geclisa,
@@ -544,7 +612,6 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
                             paciente = paciente_vinculado
                             paciente_id = paciente.get("id")
                     else:
-                        logger.info(f"DNI {potential_dni} no encontrado en Geclisa. Registrando como nuevo paciente CRM...")
                         registrar_dni_paciente_nuevo_crm(paciente_id, potential_dni)
                         paciente["dni"] = potential_dni
                 except Exception as g_err:
@@ -553,22 +620,11 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
         # 2. Conversación
         conversacion = get_or_create_conversacion(paciente_id)
         if not conversacion:
-            logger.error(f"No se pudo obtener/crear conversacion para paciente {paciente_id}")
             return {"status": "error", "detail": "No se pudo obtener conversación"}
 
         conversacion_id = conversacion["id"] if isinstance(conversacion, dict) else conversacion.get("id")
 
-        # 2.1 Registrar Canal Activo de Despacho en la conversación
-        if incoming_jid and supabase:
-            try:
-                c_meta = (conversacion.get("metadata_json") or {}) if isinstance(conversacion, dict) else {}
-                c_meta["active_remote_jid"] = incoming_jid
-                c_meta["last_active_phone"] = clean_phone
-                supabase.table("conversaciones").update({"metadata_json": c_meta}).eq("id", conversacion_id).execute()
-            except Exception as meta_err:
-                logger.warning(f"Error actualizando active_remote_jid en conversación {conversacion_id}: {meta_err}")
-
-        # 3. Guardar mensaje entrante del paciente (con deduplicación estricta por whatsapp_message_id)
+        # 3. Guardar mensaje entrante del paciente (con deduplicación)
         if payload.message_id and supabase:
             try:
                 existente = supabase.table("mensajes").select("id").filter("metadata_json->>whatsapp_message_id", "eq", payload.message_id).execute()
@@ -578,11 +634,10 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
             except Exception as dedup_err:
                 logger.warning(f"Error verificando duplicado: {dedup_err}")
 
-        # Construir metadata_json enriquecido con datos multimedia y canal de despacho
         meta = {
             "whatsapp_message_id": payload.message_id,
-            "whatsapp_lid": payload.phone if is_lid_number(payload.phone) else None,
-            "remote_jid": incoming_jid
+            "remote_jid": incoming_jid,
+            "gateway": "evolution_api_v2"
         }
         if payload.media and isinstance(payload.media, dict):
             meta.update(payload.media)
@@ -591,7 +646,6 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
         tipo_label = payload.media.get("tipo", payload.message_type) if (payload.media and isinstance(payload.media, dict)) else payload.message_type
         contenido_final = texto or caption_texto or f"[{tipo_label.upper()}]"
 
-        # Calcular timestamp original del mensaje de WhatsApp
         created_at_iso = None
         if payload.timestamp and payload.timestamp > 0:
             try:
@@ -608,15 +662,15 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
             created_at=created_at_iso
         )
 
-        # 4. Despachar agente IA en background para responder de inmediato al webhook
+        # 4. Despachar agente IA en background
         bot_disabled = conversacion.get("bot_disabled", False) if isinstance(conversacion, dict) else False
         if not bot_disabled and texto:
             background_tasks.add_task(procesar_agente_ia_background, conversacion_id, clean_phone, texto, incoming_jid)
 
         return {"status": "processed", "conversacion_id": conversacion_id, "telefono": clean_phone, "remote_jid": incoming_jid}
     except Exception as e:
-        logger.error(f"Error procesando mensaje entrante Baileys: {e}", exc_info=True)
-        log_event(nivel="ERROR", modulo="WHATSAPP", accion="ERROR_WEBHOOK_FASTAPI", mensaje=f"Error procesando mensaje: {e}", metadata_json={"error": str(e)})
+        logger.error(f"Error procesando mensaje entrante WhatsApp: {e}", exc_info=True)
+        log_event(nivel="ERROR", modulo="WHATSAPP", accion="ERROR_WEBHOOK_FASTAPI", mensaje=f"Error procesando mensaje: {e}", detalles={"error": str(e)})
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/conversaciones")

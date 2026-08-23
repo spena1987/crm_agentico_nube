@@ -1,10 +1,10 @@
 from __future__ import annotations
 import os
 import time
+import base64
 import logging
 import threading
 import datetime
-import subprocess
 import httpx
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
@@ -14,7 +14,6 @@ from app.db import (
     get_or_create_conversacion, guardar_mensaje,
     actualizar_bot_disabled, supabase
 )
-from app.agent import procesar_mensaje_agente
 from app.services.config_service import load_settings
 from app.services.phone_normalizer import (
     normalize_phone_number,
@@ -28,44 +27,99 @@ from app.services.logger_service import log_event
 load_dotenv()
 logger = logging.getLogger("whatsapp_daemon")
 
-BAILEYS_PORT = int(os.getenv("WHATSAPP_SERVICE_PORT", "3001"))
-BAILEYS_URL = os.getenv("WHATSAPP_SERVICE_URL", f"http://127.0.0.1:{BAILEYS_PORT}")
+EVOLUTION_API_URL = os.getenv("EVOLUTION_API_URL", "https://evolution-api-production-a680.up.railway.app").rstrip("/")
+EVOLUTION_API_KEY = os.getenv("EVOLUTION_API_KEY", "medcrm_secret_token_2026")
+EVOLUTION_INSTANCE = os.getenv("EVOLUTION_INSTANCE_NAME", "medcrm")
+CRM_WEBHOOK_URL = os.getenv("CRM_BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app/api/whatsapp/webhook/incoming")
 
 class WhatsAppManager:
     """
-    Gestor de la pasarela de WhatsApp conectada al microservicio Baileys (Node.js/TypeScript).
-    Proporciona vinculación instantánea por QR o Código numérico de 8 dígitos,
-    gestión de estado multidispositivo, y despacho de mensajes y presupuestos PDF.
+    Gestor de la pasarela de WhatsApp conectada a Evolution API v2.
+    Proporciona alta disponibilidad, reconexión automática, gestión de sesiones en PostgreSQL/Redis,
+    resolución nativa de números internacionales y despacho garantizado de mensajes y presupuestos PDF.
     """
     def __init__(self):
-        self.service_url = BAILEYS_URL
-        self.node_process: Optional[subprocess.Popen] = None
+        self.evo_url = EVOLUTION_API_URL
+        self.evo_key = EVOLUTION_API_KEY
+        self.evo_instance = EVOLUTION_INSTANCE
+        self.webhook_url = CRM_WEBHOOK_URL
         self.status: str = "DISCONNECTED"
         self.logs_buffer: List[Dict[str, Any]] = []
         self.max_logs: int = 100
         self._lock = threading.Lock()
-        self._last_revive_attempt = 0
+        self._headers = {
+            "apikey": self.evo_key,
+            "Content-Type": "application/json"
+        }
         
-        self.add_log("INFO", f"WhatsAppManager inicializado con pasarela Baileys ({self.service_url}).")
-        # Asegurar arranque del microservicio en segundo plano si corre en local o contenedor
-        self.ensure_service_running()
+        self.add_log("INFO", f"WhatsAppManager inicializado con Evolution API v2 ({self.evo_url}) [Instancia: {self.evo_instance}].")
+        threading.Thread(target=self._bootstrap_evolution_instance, daemon=True).start()
         self._start_watchdog()
+
+    def _bootstrap_evolution_instance(self):
+        """
+        Verifica o crea la instancia 'medcrm' en Evolution API y configura el webhook oficial.
+        """
+        try:
+            time.sleep(2)
+            r = httpx.get(f"{self.evo_url}/instance/connectionState/{self.evo_instance}", headers=self._headers, timeout=6.0)
+            if r.status_code == 404 or (r.status_code == 200 and r.json().get("status") == 404):
+                self.add_log("INFO", f"Creando instancia '{self.evo_instance}' en Evolution API...")
+                create_payload = {
+                    "instanceName": self.evo_instance,
+                    "token": self.evo_key,
+                    "qrcode": True,
+                    "integration": "WHATSAPP-BAILEYS",
+                    "reject_call": False,
+                    "msg_call": "No recibimos llamadas por este medio.",
+                    "groups_ignore": True,
+                    "always_online": True,
+                    "read_messages": False,
+                    "read_status": False
+                }
+                httpx.post(f"{self.evo_url}/instance/create", headers=self._headers, json=create_payload, timeout=10.0)
+
+            webhook_payload = {
+                "webhook": {
+                    "enabled": True,
+                    "url": self.webhook_url,
+                    "byEvents": False,
+                    "base64": False,
+                    "events": [
+                        "MESSAGES_UPSERT",
+                        "MESSAGES_UPDATE",
+                        "CONNECTION_UPDATE",
+                        "QRCODE_UPDATED"
+                    ]
+                }
+            }
+            httpx.post(f"{self.evo_url}/webhook/set/{self.evo_instance}", headers=self._headers, json=webhook_payload, timeout=8.0)
+            self.add_log("INFO", f"Webhook de Evolution API vinculado exitosamente a {self.webhook_url}.")
+        except Exception as e:
+            self.add_log("WARNING", f"Error en bootstrap de Evolution API: {e}")
+
+    def ensure_service_running(self) -> bool:
+        """
+        Verifica que la conexión a Evolution API esté disponible.
+        """
+        try:
+            r = httpx.get(f"{self.evo_url}/instance/connectionState/{self.evo_instance}", headers=self._headers, timeout=2.0)
+            return r.status_code in [200, 201]
+        except Exception:
+            return False
 
     def _start_watchdog(self):
         """
-        Inicia un hilo guardián que verifica la salud de Baileys cada 20 segundos
-        y lo resucita automáticamente si detecta caída.
+        Inicia un hilo guardián que sincroniza el estado de Evolution API cada 15 segundos.
         """
         def _watchdog_loop():
             time.sleep(5)
             while True:
                 try:
-                    r = httpx.get(f"{self.service_url}/status", timeout=2.0)
-                    if r.status_code != 200:
-                        self.ensure_service_running()
+                    self.get_status()
                 except Exception:
-                    self.ensure_service_running()
-                time.sleep(20)
+                    pass
+                time.sleep(15)
 
         t = threading.Thread(target=_watchdog_loop, daemon=True)
         t.start()
@@ -83,7 +137,6 @@ class WhatsAppManager:
             if len(self.logs_buffer) > self.max_logs:
                 self.logs_buffer.pop(0)
         
-        # Persistir también en Supabase system_logs
         log_event(
             nivel=level,
             modulo="WHATSAPP",
@@ -99,93 +152,105 @@ class WhatsAppManager:
         else:
             logger.info(message)
 
-    def ensure_service_running(self):
-        """
-        Verifica si el microservicio Baileys responde; si no, lo inicia en un subproceso background único.
-        """
-        try:
-            r = httpx.get(f"{self.service_url}/status", timeout=1.5)
-            if r.status_code == 200:
-                return True
-        except Exception:
-            pass
-
-        now = time.time()
-        # Evitar reintentos de spawn en ráfaga (mínimo 4s entre intentos)
-        if now - self._last_revive_attempt < 4:
-            return False
-        self._last_revive_attempt = now
-
-        # Si ya hay un subproceso vivo de python, esperar a que levante
-        if self.node_process and self.node_process.poll() is None:
-            for _ in range(4):
-                time.sleep(0.5)
-                try:
-                    r = httpx.get(f"{self.service_url}/status", timeout=1.0)
-                    if r.status_code == 200:
-                        return True
-                except Exception:
-                    pass
-            return True
-
-        # Si no responde, buscar server.js e iniciarlo
-        service_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "whatsapp_service")
-        server_js = os.path.join(service_dir, "server.js")
-        
-        if os.path.exists(server_js):
-            try:
-                self.add_log("INFO", f"Watchdog: Iniciando proceso Node.js de Baileys desde {server_js}...")
-                self.node_process = subprocess.Popen(
-                    ["node", "server.js"],
-                    cwd=service_dir,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=dict(os.environ, WHATSAPP_SERVICE_PORT=str(BAILEYS_PORT))
-                )
-                time.sleep(1.5)
-                return True
-            except Exception as e:
-                self.add_log("WARNING", f"No se pudo iniciar subproceso Node.js: {e}")
-        return False
-
     def get_status(self) -> Dict[str, Any]:
         """
-        Consulta el estado vivo de la pasarela Baileys.
+        Consulta el estado vivo de la instancia en Evolution API v2.
         """
         try:
-            r = httpx.get(f"{self.service_url}/status", timeout=3.0)
+            r = httpx.get(f"{self.evo_url}/instance/connectionState/{self.evo_instance}", headers=self._headers, timeout=4.0)
             if r.status_code == 200:
                 data = r.json()
-                self.status = data.get("status", "DISCONNECTED")
-                return data
+                inst_data = data.get("instance", {})
+                state = inst_data.get("state", "close").lower()
+                
+                if state in ["open", "connected"]:
+                    self.status = "CONNECTED"
+                    is_logged = True
+                    qr_ready = False
+                elif state in ["connecting"]:
+                    self.status = "PAIRING_QR_READY"
+                    is_logged = False
+                    qr_ready = True
+                else:
+                    self.status = "DISCONNECTED"
+                    is_logged = False
+                    qr_ready = False
+
+                device_info = {
+                    "phone": None,
+                    "push_name": None,
+                    "business_name": None,
+                    "platform": "WhatsApp Evolution API v2",
+                    "jid": None,
+                    "connected_at": None
+                }
+                
+                if is_logged:
+                    try:
+                        r_inst = httpx.get(f"{self.evo_url}/instance/fetchInstances", headers=self._headers, timeout=3.0)
+                        if r_inst.status_code == 200:
+                            instances = r_inst.json()
+                            for it in instances:
+                                if it.get("name") == self.evo_instance:
+                                    owner = it.get("ownerJid") or it.get("owner", "")
+                                    clean_phone = owner.split("@")[0].split(":")[0] if owner else None
+                                    device_info["phone"] = clean_phone
+                                    device_info["push_name"] = it.get("profileName") or "Dispositivo WhatsApp"
+                                    device_info["jid"] = owner
+                                    device_info["connected_at"] = it.get("updatedAt", "")[:19].replace("T", " ")
+                    except Exception:
+                        pass
+
+                return {
+                    "available": True,
+                    "engine": "Evolution API v2",
+                    "status": self.status,
+                    "is_logged_in": is_logged,
+                    "qr_ready": qr_ready,
+                    "qr_expires_in": 30,
+                    "pairing_code": None,
+                    "pairing_phone": None,
+                    "device_info": device_info,
+                    "session_dir": "PostgreSQL"
+                }
+            elif r.status_code == 404:
+                self._bootstrap_evolution_instance()
         except Exception as e:
-            # Invocar auto-recuperación si no responde
-            self.ensure_service_running()
+            self.add_log("WARNING", f"No se pudo consultar estado en Evolution API: {e}")
 
         return {
             "available": True,
-            "engine": "Baileys",
+            "engine": "Evolution API v2",
             "status": "INITIALIZING",
             "is_logged_in": False,
             "qr_ready": False,
             "qr_expires_in": 30,
             "pairing_code": None,
             "pairing_phone": None,
-            "device_info": {"phone": None, "push_name": None, "business_name": None, "platform": "Baileys", "jid": None, "connected_at": None},
-            "session_dir": "sessions"
+            "device_info": {"phone": None, "push_name": None, "business_name": None, "platform": "Evolution API", "jid": None, "connected_at": None},
+            "session_dir": "PostgreSQL"
         }
 
     def get_qr_data(self) -> Dict[str, Any]:
         """
-        Retorna el código QR activo en base64 Data-URI.
+        Retorna el código QR activo en base64 Data-URI generado por Evolution API v2.
         """
         try:
-            r = httpx.get(f"{self.service_url}/qr", timeout=3.0)
+            r = httpx.get(f"{self.evo_url}/instance/connect/{self.evo_instance}", headers=self._headers, timeout=5.0)
             if r.status_code == 200:
-                return r.json()
-        except Exception:
-            pass
-        return {"qr_data_uri": None, "expires_in": 30, "status": "DISCONNECTED"}
+                data = r.json()
+                b64 = data.get("base64")
+                if b64 and not b64.startswith("data:image"):
+                    b64 = f"data:image/png;base64,{b64}"
+                return {
+                    "qr_data_uri": b64,
+                    "pairing_code": data.get("pairingCode"),
+                    "expires_in": 30,
+                    "status": "PAIRING_QR_READY"
+                }
+        except Exception as e:
+            self.add_log("WARNING", f"Error obteniendo QR de Evolution API: {e}")
+        return {"qr_data_uri": None, "expires_in": 30, "status": self.status}
 
     def solicitar_codigo_vinculacion(self, telefono: str) -> Dict[str, Any]:
         """
@@ -198,35 +263,46 @@ class WhatsAppManager:
         if not clean_digits or len(clean_digits) < 8:
             return {"error": f"Número de teléfono inválido: {telefono}. Debe incluir código de país (ej: 5491112345678)"}
 
-        self.add_log("INFO", f"Solicitando código de vinculación Baileys para +{clean_digits}...")
-        self.ensure_service_running()
+        self.add_log("INFO", f"Solicitando código de vinculación en Evolution API para +{clean_digits}...")
 
         try:
-            r = httpx.post(f"{self.service_url}/pair-code", json={"phone": clean_digits}, timeout=15.0)
+            r = httpx.get(
+                f"{self.evo_url}/instance/connect/{self.evo_instance}?number={clean_digits}",
+                headers=self._headers,
+                timeout=12.0
+            )
             if r.status_code == 200:
                 res = r.json()
-                self.add_log("INFO", f"¡Código generado exitosamente!: {res.get('code')}")
-                return res
+                code = res.get("pairingCode") or res.get("code")
+                self.add_log("INFO", f"Código generado exitosamente: {code}")
+                return {"code": code, "phone": clean_digits, "success": True}
             else:
                 err = r.json().get("error", "Error generando código")
-                self.add_log("ERROR", f"Error de Baileys al generar código: {err}")
+                self.add_log("ERROR", f"Error de Evolution API al generar código: {err}")
                 return {"error": err}
         except Exception as e:
-            self.add_log("ERROR", f"Error conectando con microservicio Baileys: {e}")
+            self.add_log("ERROR", f"Error conectando con Evolution API: {e}")
             return {"error": f"Error de conexión con la pasarela: {str(e)}"}
 
-    def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None, emisor: str = "operador", remote_jid: Optional[str] = None) -> Dict[str, Any]:
+    def enviar_mensaje(
+        self,
+        telefono_o_jid: str,
+        texto: str,
+        conversacion_id: Optional[str] = None,
+        emisor: str = "operador",
+        remote_jid: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Envía un mensaje de texto saliente por WhatsApp y lo registra en la conversación del CRM.
-        Utiliza el canal activo dinámico (active_remote_jid) si está disponible para asegurar entrega instantánea.
+        Envía un mensaje de texto saliente por WhatsApp mediante Evolution API v2
+        y lo registra en la conversación correspondiente del CRM.
         """
         if not texto or not texto.strip():
             return {"error": "El mensaje no puede estar vacío"}
 
         telefono = normalize_phone_number(telefono_o_jid)
+        clean_digits = clean_phone_digits(telefono)
         self.add_log("INFO", f"Enviando mensaje a {format_phone_display(telefono)} [{emisor}]: {texto[:60]}...")
 
-        # Si no nos pasaron conversacion_id, intentamos resolverla automáticamente
         if not conversacion_id:
             try:
                 pac = get_paciente_by_telefono(telefono)
@@ -237,27 +313,26 @@ class WhatsAppManager:
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
 
-        # Si no pasaron remote_jid explícito pero tenemos conversacion_id, recuperar active_remote_jid de metadata_json
-        if not remote_jid and conversacion_id and supabase:
-            try:
-                c_data = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
-                if c_data.data and len(c_data.data) > 0:
-                    c_meta = c_data.data[0].get("metadata_json") or {}
-                    if isinstance(c_meta, dict):
-                        remote_jid = c_meta.get("active_remote_jid")
-            except Exception:
-                pass
-
-        payload_send = {"phone": telefono, "text": texto}
-        if remote_jid:
-            payload_send["remote_jid"] = remote_jid
+        payload_send = {
+            "number": clean_digits,
+            "text": texto,
+            "delay": 1000,
+            "linkPreview": True
+        }
 
         try:
-            r = httpx.post(f"{self.service_url}/send-message", json=payload_send, timeout=12.0)
-            if r.status_code == 200:
+            r = httpx.post(
+                f"{self.evo_url}/message/sendText/{self.evo_instance}",
+                headers=self._headers,
+                json=payload_send,
+                timeout=12.0
+            )
+            if r.status_code in [200, 201]:
                 res = r.json()
-                msg_id = res.get("message_id")
-                # Guardar mensaje saliente en Supabase con el rol de emisor correspondiente (operador o bot)
+                msg_key = res.get("key", {})
+                msg_id = msg_key.get("id") or res.get("message_id")
+                dispatched_jid = msg_key.get("remoteJid") or f"{clean_digits}@s.whatsapp.net"
+
                 if conversacion_id:
                     try:
                         guardar_mensaje(
@@ -265,52 +340,82 @@ class WhatsAppManager:
                             emisor=emisor,
                             contenido=texto,
                             whatsapp_message_id=msg_id,
-                            metadata_json={"delivery_status": "enviado", "dispatched_jid": res.get("jid")}
+                            metadata_json={
+                                "delivery_status": "enviado",
+                                "dispatched_jid": dispatched_jid,
+                                "gateway": "evolution_api_v2"
+                            }
                         )
                     except Exception as db_err:
                         self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
-                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": telefono, "conversacion_id": conversacion_id, "jid": res.get("jid")}
+
+                self.add_log("INFO", f"Mensaje despachado exitosamente vía Evolution API a +{clean_digits} (ID: {msg_id})")
+                return {
+                    "success": True,
+                    "enviado_real": True,
+                    "message_id": msg_id,
+                    "telefono": telefono,
+                    "conversacion_id": conversacion_id,
+                    "jid": dispatched_jid
+                }
             else:
-                err = r.json().get("error", "Error al enviar mensaje")
-                self.add_log("WARNING", f"Fallo al enviar mensaje: {err}")
-                return {"error": err, "enviado_real": False}
+                err_data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"error": r.text}
+                err = err_data.get("response", {}).get("message") or err_data.get("error", "Error al enviar mensaje")
+                self.add_log("WARNING", f"Fallo al enviar mensaje vía Evolution API: {err}")
+                return {"error": str(err), "enviado_real": False}
         except Exception as e:
-            self.add_log("ERROR", f"Error de comunicación con microservicio WhatsApp: {e}")
+            self.add_log("ERROR", f"Error de comunicación con Evolution API: {e}")
             return {"error": f"Error de comunicación con WhatsApp: {str(e)}", "enviado_real": False}
 
-    def marcar_como_leido(self, telefono_o_jid: str, message_ids: Optional[List[str]] = None, remote_jid: Optional[str] = None) -> Dict[str, Any]:
+    def marcar_como_leido(
+        self,
+        telefono_o_jid: str,
+        message_ids: Optional[List[str]] = None,
+        remote_jid: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Envía confirmación de lectura a WhatsApp para activar el doble tilde azul en el teléfono del paciente.
         """
         telefono = normalize_phone_number(telefono_o_jid) if telefono_o_jid else ""
+        clean_digits = clean_phone_digits(telefono)
         try:
+            read_items = [{"id": mid, "fromMe": False} for mid in (message_ids or []) if mid]
+            if not read_items and clean_digits:
+                read_items = [{"id": "", "fromMe": False}]
+
             payload = {
-                "phone": telefono,
-                "message_ids": message_ids or [],
-                "remote_jid": remote_jid
+                "readMessages": read_items
             }
-            r = httpx.post(f"{self.service_url}/read-messages", json=payload, timeout=5.0)
-            if r.status_code == 200:
-                return r.json()
+            r = httpx.post(f"{self.evo_url}/chat/markMessageAsRead/{self.evo_instance}", headers=self._headers, json=payload, timeout=5.0)
+            if r.status_code in [200, 201]:
+                return {"success": True}
             return {"success": False, "error": r.text}
         except Exception as e:
-            logger.warning(f"Error marcando mensajes como leídos en WhatsApp: {e}")
+            logger.warning(f"Error marcando mensajes como leídos en Evolution API: {e}")
             return {"success": False, "error": str(e)}
 
-    def enviar_multimedia(self, telefono: str, media_url: str, media_type: str = "document", caption: str = "", filename: str = "") -> Dict[str, Any]:
+    def enviar_multimedia(
+        self,
+        telefono: str,
+        media_url: str,
+        media_type: str = "document",
+        caption: str = "",
+        filename: str = ""
+    ) -> Dict[str, Any]:
         """
-        Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Baileys.
+        Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Evolution API v2.
         """
-        clean_phone = normalize_phone_number(telefono)
+        clean_digits = clean_phone_digits(normalize_phone_number(telefono))
         try:
-            r = httpx.post(f"{self.service_url}/send-media", json={
-                "phone": clean_phone,
-                "media_url": media_url,
-                "media_type": media_type,
+            payload = {
+                "number": clean_digits,
+                "mediatype": media_type,
+                "media": media_url,
                 "caption": caption,
-                "filename": filename
-            }, timeout=20.0)
-            if r.status_code == 200:
+                "fileName": filename or "archivo"
+            }
+            r = httpx.post(f"{self.evo_url}/message/sendMedia/{self.evo_instance}", headers=self._headers, json=payload, timeout=20.0)
+            if r.status_code in [200, 201]:
                 return r.json()
             return {"error": r.json().get("error", "Error enviando multimedia")}
         except Exception as e:
@@ -325,22 +430,29 @@ class WhatsAppManager:
         conversacion_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Envía un documento local (PDF de presupuesto, estudios, etc.) vía WhatsApp y lo registra en Supabase.
+        Envía un documento local (PDF de presupuesto, estudios, etc.) vía WhatsApp convirtiéndolo a base64 para Evolution API.
         """
-        clean_phone = normalize_phone_number(telefono_o_jid)
+        clean_digits = clean_phone_digits(normalize_phone_number(telefono_o_jid))
         try:
-            r = httpx.post(f"{self.service_url}/send-media", json={
-                "phone": clean_phone,
-                "file_path": filepath,
-                "media_type": "document",
-                "filename": filename,
+            if not os.path.exists(filepath):
+                return {"success": False, "error": "El archivo local no existe"}
+
+            with open(filepath, "rb") as f:
+                b64_content = base64.b64encode(f.read()).decode("utf-8")
+
+            payload = {
+                "number": clean_digits,
+                "mediatype": "document",
+                "media": f"data:application/pdf;base64,{b64_content}",
+                "fileName": filename or "Presupuesto_Medico.pdf",
                 "caption": caption
-            }, timeout=25.0)
-            
+            }
+
+            r = httpx.post(f"{self.evo_url}/message/sendMedia/{self.evo_instance}", headers=self._headers, json=payload, timeout=25.0)
             res_json = r.json() if r.status_code in [200, 201] else {}
-            msg_id = res_json.get("message_id")
-            
-            # Guardar en base de datos Supabase
+            msg_key = res_json.get("key", {})
+            msg_id = msg_key.get("id") or res_json.get("message_id")
+
             if conversacion_id:
                 try:
                     guardar_mensaje(
@@ -351,59 +463,48 @@ class WhatsAppManager:
                         metadata_json={
                             "documento": filename,
                             "filepath": filepath,
-                            "delivery_status": "enviado"
+                            "delivery_status": "enviado",
+                            "gateway": "evolution_api_v2"
                         }
                     )
                 except Exception as db_err:
                     self.add_log("WARNING", f"Error guardando mensaje de documento en Supabase: {db_err}")
-                    
+
             if r.status_code in [200, 201]:
-                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": clean_phone}
+                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": clean_digits}
             else:
                 err = res_json.get("error", "Error enviando documento")
                 return {"success": False, "error": err, "enviado_real": False}
         except Exception as e:
-            self.add_log("ERROR", f"Error de conexión enviando documento: {e}")
+            self.add_log("ERROR", f"Error enviando documento: {e}")
             return {"success": False, "error": str(e), "enviado_real": False}
 
     def desconectar_y_logout(self) -> bool:
         """
-        Cierra sesión formal en WhatsApp y limpia los tokens locales.
+        Cierra sesión formal en WhatsApp y desvincula la instancia en Evolution API.
         """
         try:
-            r = httpx.post(f"{self.service_url}/logout", timeout=8.0)
+            r = httpx.delete(f"{self.evo_url}/instance/logout/{self.evo_instance}", headers=self._headers, timeout=8.0)
             self.status = "DISCONNECTED"
-            self.add_log("INFO", "Sesión de WhatsApp cerrada exitosamente.")
-            return r.status_code == 200
+            self.add_log("INFO", "Sesión de WhatsApp cerrada y desvinculada exitosamente en Evolution API.")
+            return r.status_code in [200, 204]
         except Exception as e:
-            self.add_log("ERROR", f"Error en logout: {e}")
+            self.add_log("ERROR", f"Error en logout de Evolution API: {e}")
             return False
 
     def iniciar_daemon(self, force_restart: bool = False):
         """
-        Reinicia la conexión del microservicio Baileys.
+        Solicita inicio de conexión y regeneración de QR en Evolution API.
         """
         try:
-            self.ensure_service_running()
-            httpx.post(f"{self.service_url}/connect?force={str(force_restart).lower()}", timeout=5.0)
+            httpx.get(f"{self.evo_url}/instance/connect/{self.evo_instance}", headers=self._headers, timeout=6.0)
         except Exception as e:
-            self.add_log("WARNING", f"Error reconectando: {e}")
+            self.add_log("WARNING", f"Error reconectando Evolution API: {e}")
 
     def get_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
-        # Intentar obtener logs consolidados del microservicio Baileys
-        try:
-            r = httpx.get(f"{self.service_url}/logs", timeout=2.0)
-            if r.status_code == 200:
-                service_logs = r.json().get("logs", [])
-                combined = self.logs_buffer + service_logs
-                combined.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-                return combined[:limit]
-        except Exception:
-            pass
         with self._lock:
             return list(reversed(self.logs_buffer[-limit:]))
 
-# Instancia global única
 whatsapp_manager = WhatsAppManager()
 
 def iniciar_daemon_whatsapp(force_restart: bool = False):
