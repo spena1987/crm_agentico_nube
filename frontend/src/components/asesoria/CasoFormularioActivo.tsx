@@ -102,7 +102,8 @@ export default function CasoFormularioActivo({
   onDesvincularPresupuesto
 }: CasoFormularioActivoProps) {
   // Estados Locales Editables
-  const [estado, setEstado] = useState<AsesoriaQuirurgica['estado']>(caso.estado)
+  const estadoInicial = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
+  const [estado, setEstado] = useState<AsesoriaQuirurgica['estado']>(estadoInicial)
   const [cobertura, setCobertura] = useState(caso.cobertura_obra_social || obraSocialDefault || '')
   
   // Médicos

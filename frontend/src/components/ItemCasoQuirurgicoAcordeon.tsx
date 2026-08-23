@@ -57,7 +57,7 @@ export interface AsesoriaQuirurgica {
   control_postop_24h?: boolean
   control_postop_7d?: boolean
   alta_medica_definitiva?: boolean
-  estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'confirmado' | 'operado' | 'cancelado'
+  estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'presupuesto_enviado' | 'confirmado' | 'operado' | 'cancelado'
   situacion_paciente?: string | null
   motivo_cancelacion?: string | null
   checklist_prequirurgico?: Record<string, boolean> | null
@@ -348,7 +348,8 @@ export default function ItemCasoQuirurgicoAcordeon({
     setMostrarModalPresupuesto(false)
   }
 
-  const etapaActual = ETAPAS.find((e) => e.id === caso.estado) || ETAPAS[0]
+  const estadoNormalizado = caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado
+  const etapaActual = ETAPAS.find((e) => e.id === estadoNormalizado) || ETAPAS[0]
 
   return (
     <div
