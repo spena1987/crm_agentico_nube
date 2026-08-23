@@ -277,19 +277,80 @@ export default function CasoFormularioActivo({
     }
   }
 
+  // Sincronizar estados locales cuando cambia el objeto caso desde el backend
+  useEffect(() => {
+    const est = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
+    setEstado(est)
+    setCobertura(caso.cobertura_obra_social || obraSocialDefault || '')
+    setMedicoDerivador({
+      id: caso.medico_derivador_id,
+      nombre: caso.medico_derivador_nombre,
+      matricula: caso.medico_derivador_matricula
+    })
+    setBusquedaDerivador(caso.medico_derivador_nombre || '')
+    setMedicoCirujano({
+      id: caso.medico_cirujano_id,
+      nombre: caso.medico_cirujano_nombre,
+      matricula: caso.medico_cirujano_matricula
+    })
+    setBusquedaCirujano(caso.medico_cirujano_nombre || '')
+    setPracticaCodigo(caso.practica_codigo || '')
+    setPracticaNombre(caso.practica_nombre || '')
+    setBusquedaPractica(
+      caso.practica_codigo ? `[${caso.practica_codigo}] ${caso.practica_nombre}` : caso.practica_nombre || ''
+    )
+    setMontoExtra(caso.monto_extra || 0)
+    setMonedaExtra(caso.moneda_extra || 'ARS')
+    setMontoSena(caso.monto_sena || 0)
+    setEstadoPago(caso.estado_pago || 'pendiente')
+    setMedioPago(caso.medio_pago || null)
+    setPresupuestoId(caso.presupuesto_id || null)
+    setFechaProbable(caso.fecha_probable_cirugia || '')
+    setFechaDefinitiva(caso.fecha_definitiva_cirugia || '')
+    setChecklist(caso.checklist_prequirurgico || {})
+    setProximaAccionFecha(caso.proxima_accion_fecha || '')
+    setProximaAccionTexto(caso.proxima_accion_texto || '')
+    setSituacionPaciente(caso.situacion_paciente || '')
+  }, [
+    caso.id,
+    caso.updated_at,
+    caso.practica_nombre,
+    caso.practica_codigo,
+    caso.medico_cirujano_nombre,
+    caso.medico_derivador_nombre,
+    caso.estado,
+    caso.presupuesto_id,
+    caso.monto_extra,
+    caso.moneda_extra,
+    caso.monto_sena,
+    caso.estado_pago,
+    caso.medio_pago,
+    caso.fecha_probable_cirugia,
+    caso.fecha_definitiva_cirugia
+  ])
+
   // Guardar Cambios
   const handleGuardarCambios = () => {
+    let cleanPracticaNombre = (practicaNombre || '').trim()
+    if (!cleanPracticaNombre && busquedaPractica) {
+      cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
+    }
+    if (!cleanPracticaNombre) cleanPracticaNombre = 'Nueva Cirugía / Procedimiento'
+
+    const derivNombre = (medicoDerivador.nombre || busquedaDerivador || '').trim() || null
+    const cirujNombre = (medicoCirujano.nombre || busquedaCirujano || '').trim() || null
+
     const payload: Partial<AsesoriaQuirurgica> = {
       estado,
-      cobertura_obra_social: cobertura || null,
+      cobertura_obra_social: (cobertura || '').trim() || null,
       medico_derivador_id: medicoDerivador.id || null,
-      medico_derivador_nombre: medicoDerivador.nombre || null,
+      medico_derivador_nombre: derivNombre,
       medico_derivador_matricula: medicoDerivador.matricula || null,
       medico_cirujano_id: medicoCirujano.id || null,
-      medico_cirujano_nombre: medicoCirujano.nombre || null,
+      medico_cirujano_nombre: cirujNombre,
       medico_cirujano_matricula: medicoCirujano.matricula || null,
       practica_codigo: practicaCodigo || null,
-      practica_nombre: practicaNombre || 'Práctica Quirúrgica a Determinar',
+      practica_nombre: cleanPracticaNombre,
       monto_extra: Number(montoExtra) || 0,
       moneda_extra: monedaExtra,
       monto_sena: Number(montoSena) || 0,
