@@ -47,7 +47,7 @@ export default function WhatsAppConfigCard() {
   const [desconectando, setDesconectando] = useState<boolean>(false)
   
   // Vinculación por Código Numérico
-  const [pairingMethod, setPairingMethod] = useState<'code' | 'qr'>('code')
+  const [pairingMethod, setPairingMethod] = useState<'code' | 'qr'>('qr')
   const [phoneNumberInput, setPhoneNumberInput] = useState<string>('549')
   const [pairingCode, setPairingCode] = useState<string | null>(null)
   const [pairingCountdown, setPairingCountdown] = useState<number>(0)
@@ -65,16 +65,21 @@ export default function WhatsAppConfigCard() {
     try {
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
       if (res.ok) {
-        const data: WhatsAppStatus = await res.json()
+        const data: WhatsAppStatus & { qr_data_uri?: string } = await res.json()
         setStatusData(data)
         
         if (data.pairing_code) {
           setPairingCode(data.pairing_code)
         }
 
-        // Si no está conectado, consultar QR
+        if (data.qr_data_uri) {
+          setQrDataUri(data.qr_data_uri)
+          setCountdown(data.qr_expires_in || 30)
+        }
+
+        // Si no está conectado, asegurar que el QR esté disponible
         if (!data.is_logged_in && data.status !== 'CONNECTED') {
-          if (pairingMethod === 'qr') {
+          if (!data.qr_data_uri) {
             await fetchQR()
           }
         } else {

@@ -201,12 +201,27 @@ class WhatsAppManager:
                     except Exception:
                         pass
 
+                qr_data_uri = None
+                if not is_logged:
+                    try:
+                        r_qr = httpx.get(f"{self.evo_url}/instance/connect/{self.evo_instance}", headers=self._headers, timeout=3.0)
+                        if r_qr.status_code == 200:
+                            qr_json = r_qr.json()
+                            b64 = qr_json.get("base64")
+                            if b64:
+                                qr_data_uri = b64 if b64.startswith("data:image") else f"data:image/png;base64,{b64}"
+                                qr_ready = True
+                                self.status = "PAIRING_QR_READY"
+                    except Exception:
+                        pass
+
                 return {
                     "available": True,
                     "engine": "Evolution API v2",
                     "status": self.status,
                     "is_logged_in": is_logged,
                     "qr_ready": qr_ready,
+                    "qr_data_uri": qr_data_uri,
                     "qr_expires_in": 30,
                     "pairing_code": None,
                     "pairing_phone": None,
