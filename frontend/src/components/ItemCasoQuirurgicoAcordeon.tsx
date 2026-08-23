@@ -430,7 +430,7 @@ export default function ItemCasoQuirurgicoAcordeon({
     setBuscandoPractica(true)
     const qClean = (query || '').trim()
     try {
-      const res = await fetch(`/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
+      const res = await fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
       const data = await res.json()
 
       let lista: PracticaNomenclador[] = []

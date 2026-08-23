@@ -1846,33 +1846,65 @@ def buscar_practicas_presupuesto(q: str = "", fecha_consulta: Optional[str] = No
             
         practica_ids = [p["id"] for p in practicas]
         
-        # Aranceles vigentes
+        # 1. Obtener aranceles configurados
         ar_resp = supabase.table("nomenclador_aranceles")\
             .select("*")\
             .in_("practica_id", practica_ids)\
-            .lte("vigencia_desde", fecha_ref)\
             .order("vigencia_desde", desc=True)\
             .execute()
             
         ar_data = ar_resp.data or []
         arancel_map = {}
+        
+        # Primer pase: buscar coincidencia vigente en la fecha de referencia
         for ar in ar_data:
             pid = ar["practica_id"]
             if pid in arancel_map:
                 continue
+            v_desde = ar.get("vigencia_desde") or ""
             v_hasta = ar.get("vigencia_hasta")
-            if not v_hasta or v_hasta >= fecha_ref:
+            if v_desde <= fecha_ref and (not v_hasta or v_hasta >= fecha_ref):
                 arancel_map[pid] = ar
+                
+        # Segundo pase: para cualquier práctica restante, tomar el arancel configurado más reciente
+        for ar in ar_data:
+            pid = ar["practica_id"]
+            if pid not in arancel_map:
+                arancel_map[pid] = ar
+                
+        # 2. Fallback a servicios_precios si existiese registro histórico
+        codigos = [p["codigo"] for p in practicas if p.get("codigo")]
+        srv_map = {}
+        if codigos:
+            try:
+                srv_resp = supabase.table("servicios_precios")\
+                    .select("codigo, precio, moneda")\
+                    .in_("codigo", codigos)\
+                    .execute()
+                for s in (srv_resp.data or []):
+                    if s.get("codigo"):
+                        srv_map[s["codigo"]] = s
+            except Exception:
+                pass
                 
         resultados = []
         for p in practicas:
             nom_info = p.get("nomencladores") or {}
             moneda_default = nom_info.get("moneda_default", "ARS")
             ar = arancel_map.get(p["id"])
+            srv = srv_map.get(p["codigo"])
             
             hab_arancel = p.get("habilitar_arancel", True)
-            precio = float(ar["precio"]) if (ar and hab_arancel) else 0.0
-            moneda = ar.get("moneda", moneda_default) if ar else moneda_default
+            
+            if ar and hab_arancel and float(ar.get("precio", 0) or 0) > 0:
+                precio = float(ar["precio"])
+                moneda = ar.get("moneda", moneda_default)
+            elif srv and float(srv.get("precio", 0) or 0) > 0:
+                precio = float(srv["precio"])
+                moneda = srv.get("moneda", moneda_default)
+            else:
+                precio = float(ar.get("precio", 0.0) or 0.0) if ar else 0.0
+                moneda = ar.get("moneda", moneda_default) if ar else (srv.get("moneda", moneda_default) if srv else moneda_default)
             
             resultados.append({
                 "id": p["id"],
