@@ -329,17 +329,18 @@ class WhatsAppManager:
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
 
-        # Resolución inteligente de destino (LID vs Phone Number)
+        # Resolución inteligente de destino (Prioridad absoluta a @lid si existe)
         target_number = clean_digits
-        if remote_jid and ("@" in str(remote_jid)):
+        active_lid = get_active_jid_for_paciente_o_conversacion(
+            conversacion_id=conversacion_id,
+            telefono=telefono
+        )
+        if active_lid and ("@lid" in str(active_lid)):
+            target_number = str(active_lid)
+        elif remote_jid and ("@" in str(remote_jid)):
             target_number = str(remote_jid)
-        else:
-            active_jid = get_active_jid_for_paciente_o_conversacion(
-                conversacion_id=conversacion_id,
-                telefono=telefono
-            )
-            if active_jid and ("@" in str(active_jid)):
-                target_number = str(active_jid)
+        elif active_lid and ("@" in str(active_lid)):
+            target_number = str(active_lid)
 
         payload_send = {
             "number": target_number,
@@ -436,9 +437,11 @@ class WhatsAppManager:
         """
         clean_digits = clean_phone_digits(normalize_phone_number(telefono))
         target_number = clean_digits
-        active_jid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono)
-        if active_jid and ("@" in str(active_jid)):
-            target_number = str(active_jid)
+        active_lid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono)
+        if active_lid and ("@lid" in str(active_lid)):
+            target_number = str(active_lid)
+        elif active_lid and ("@" in str(active_lid)):
+            target_number = str(active_lid)
 
         try:
             payload = {
@@ -468,9 +471,11 @@ class WhatsAppManager:
         """
         clean_digits = clean_phone_digits(normalize_phone_number(telefono_o_jid))
         target_number = clean_digits
-        active_jid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono_o_jid)
-        if active_jid and ("@" in str(active_jid)):
-            target_number = str(active_jid)
+        active_lid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono_o_jid)
+        if active_lid and ("@lid" in str(active_lid)):
+            target_number = str(active_lid)
+        elif active_lid and ("@" in str(active_lid)):
+            target_number = str(active_lid)
 
         try:
             if not os.path.exists(filepath):
