@@ -446,10 +446,10 @@ def generar_pdf_presupuesto(
                 style_texto
             ),
             Paragraph(
+                f"<b>Tipo de Documento:</b> Cotización Médica Oficial<br/>"
                 f"<b>Fecha de Emisión:</b> {fecha_emision}<br/>"
-                f"<b>Validez:</b> {plantilla.get('validez_dias', 30)} días corridos<br/>"
-                f"<b>Estado:</b> <font color='{color_estado}'><b>{estado_raw}</b></font><br/>"
-                f"<b>Moneda Principal:</b> {moneda_resumen}", 
+                f"<b>Validez de Aranceles:</b> {plantilla.get('validez_dias', 30)} días corridos<br/>"
+                f"<b>Moneda de Cotización:</b> {moneda_resumen}", 
                 style_texto
             )
         ]
