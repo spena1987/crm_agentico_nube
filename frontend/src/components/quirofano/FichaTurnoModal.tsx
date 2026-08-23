@@ -455,6 +455,59 @@ export default function FichaTurnoModal({
     }
   }
 
+  const [eliminandoConsentimientoGeclisa, setEliminandoConsentimientoGeclisa] = useState(false)
+  const [eliminandoParteGeclisa, setEliminandoParteGeclisa] = useState(false)
+
+  const handleEliminarConsentimientoGeclisa = async () => {
+    if (!turno?.id) return
+    if (!confirm('¿Está seguro de eliminar el Consentimiento Informado de la Historia Clínica en Geclisa? Podrá volver a subirlo tras realizar correcciones.')) {
+      return
+    }
+    try {
+      setEliminandoConsentimientoGeclisa(true)
+      setError(null)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/consentimiento`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error al eliminar consentimiento de Geclisa.')
+      }
+      setMensajeExito(`✔ ${data.mensaje || 'Consentimiento eliminado de Geclisa correctamente.'}`)
+      onSaved()
+      setTimeout(() => setMensajeExito(null), 4000)
+    } catch (err: any) {
+      setError(err.message || 'Error al conectar con Geclisa')
+    } finally {
+      setEliminandoConsentimientoGeclisa(false)
+    }
+  }
+
+  const handleEliminarParteGeclisa = async () => {
+    if (!turno?.id) return
+    if (!confirm('¿Está seguro de eliminar el Protocolo Quirúrgico de la Historia Clínica en Geclisa? Podrá volver a subirlo tras realizar correcciones.')) {
+      return
+    }
+    try {
+      setEliminandoParteGeclisa(true)
+      setError(null)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/parte_quirurgico`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error al eliminar protocolo de Geclisa.')
+      }
+      setMensajeExito(`✔ ${data.mensaje || 'Protocolo Quirúrgico eliminado de Geclisa correctamente.'}`)
+      onSaved()
+      setTimeout(() => setMensajeExito(null), 4000)
+    } catch (err: any) {
+      setError(err.message || 'Error al conectar con Geclisa')
+    } finally {
+      setEliminandoParteGeclisa(false)
+    }
+  }
+
   // Quirófano actual seleccionado
   const quirofanoActual = quirofanos.find((q) => q.id === formData.quirofano_id) || quirofanos[0]
 
@@ -727,7 +780,7 @@ export default function FichaTurnoModal({
                       </a>
 
                       {/* Botón Subir a Geclisa (Opción 2) */}
-                      {!turno.consentimiento_geclisa_archivo_id && (
+                      {!turno.consentimiento_geclisa_archivo_id ? (
                         <button
                           type="button"
                           onClick={handleSubirConsentimientoGeclisa}
@@ -744,6 +797,26 @@ export default function FichaTurnoModal({
                             <>
                               <UploadCloud size={13} />
                               <span>Subir a Geclisa</span>
+                            </>
+                          )}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleEliminarConsentimientoGeclisa}
+                          disabled={eliminandoConsentimientoGeclisa}
+                          className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 dark:text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
+                          title="Eliminar consentimiento de la Historia Clínica en Geclisa para corregirlo"
+                        >
+                          {eliminandoConsentimientoGeclisa ? (
+                            <>
+                              <Loader2 size={13} className="animate-spin" />
+                              <span>Eliminando...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 size={13} />
+                              <span>Eliminar de Geclisa</span>
                             </>
                           )}
                         </button>
@@ -811,8 +884,8 @@ export default function FichaTurnoModal({
                     <span>Ver Protocolo PDF</span>
                   </a>
 
-                  {/* Botón Subir Parte a Geclisa */}
-                  {!turno.parte_quirurgico_geclisa_archivo_id && (
+                  {/* Botón Subir Parte a Geclisa / Eliminar */}
+                  {!turno.parte_quirurgico_geclisa_archivo_id ? (
                     <button
                       type="button"
                       onClick={handleSubirParteGeclisa}
@@ -829,6 +902,26 @@ export default function FichaTurnoModal({
                         <>
                           <UploadCloud size={13} />
                           <span>Subir a Geclisa</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleEliminarParteGeclisa}
+                      disabled={eliminandoParteGeclisa}
+                      className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 dark:text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
+                      title="Eliminar protocolo de la Historia Clínica en Geclisa para corregirlo"
+                    >
+                      {eliminandoParteGeclisa ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin" />
+                          <span>Eliminando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 size={13} />
+                          <span>Eliminar de Geclisa</span>
                         </>
                       )}
                     </button>

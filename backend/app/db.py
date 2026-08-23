@@ -3830,12 +3830,11 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         pdf_path = Path(PDF_DIR) / pdf_filename
         
         if not pdf_path.exists():
-            firma_img = turno.get("consentimiento_firma_img")
-            if firma_img:
-                generated_fn = generar_pdf_consentimiento(turno, paciente, firma_img)
-                pdf_path = Path(PDF_DIR) / generated_fn
-            else:
-                return {"success": False, "error": "El consentimiento aún no ha sido firmado digitalmente por el paciente."}
+            generated_fn = generar_pdf_consentimiento(turno, paciente)
+            pdf_path = Path(PDF_DIR) / generated_fn
+            pdf_rel = f"/static/{generated_fn}"
+            supabase.table("turnos_quirofano").update({"consentimiento_pdf_url": pdf_rel}).eq("id", turno_id).execute()
+            turno["consentimiento_pdf_url"] = pdf_rel
                 
         if not pdf_path.exists():
             return {"success": False, "error": "No se encontró el archivo PDF del consentimiento en el servidor."}
@@ -4021,11 +4020,16 @@ def desvincular_documento_geclisa_turno(turno_id: str, tipo_doc: str) -> Dict[st
                 logger.warning(f"No se pudo eliminar archivo #{archivo_id} en Geclisa: {e_del}")
                 
         upd = {col_id: None, col_at: None, "updated_at": "now()"}
-        supabase.table("turnos_quirofano").update(upd).eq("id", turno_id).execute()
+        res_u = supabase.table("turnos_quirofano").update(upd).eq("id", turno_id).execute()
+        turno_upd = res_u.data[0] if res_u.data else {**turno, **upd}
         if turno.get("asesoria_id"):
             supabase.table("asesorias_quirurgicas").update(upd).eq("id", turno["asesoria_id"]).execute()
             
-        return {"success": True, "mensaje": f"Documento {tipo_doc} desvinculado de Geclisa correctamente."}
+        return {
+            "success": True, 
+            "mensaje": f"Documento {tipo_doc} eliminado de Geclisa y desvinculado correctamente.",
+            "turno": turno_upd
+        }
     except Exception as e:
         logger.error(f"Error al desvincular documento {tipo_doc} de Geclisa para turno {turno_id}: {e}")
         return {"success": False, "error": str(e)}
