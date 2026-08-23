@@ -413,26 +413,63 @@ async function getValidJid(phone) {
     return lidJid
   }
 
+  // 1.1 Probar recuperar whatsapp_lid o JID previo desde Supabase para sobrevivir a reinicios
+  if (SUPABASE_KEY) {
+    try {
+      const resMeta = await axios.get(`${SUPABASE_URL}/rest/v1/mensajes?metadata_json->>whatsapp_lid=neq.null&select=metadata_json&limit=1`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
+        timeout: 3000
+      })
+      if (resMeta.data && resMeta.data.length > 0) {
+        const lidVal = resMeta.data[0].metadata_json?.whatsapp_lid
+        if (lidVal) {
+          const lidDigits = String(lidVal).replace(/\D/g, '')
+          if (lidDigits) {
+            saveLidMapping(lidDigits, clean)
+            const lidJid = `${lidDigits}@lid`
+            addLog('INFO', `Enrutando a LID histórico recuperado de Supabase: ${lidJid} (Teléfono: +${clean})`)
+            return lidJid
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
   if (!sock) return `${clean}@s.whatsapp.net`
 
-  // 2. Si no hay historial previo, probar validación onWhatsApp
+  // 2. Probar validación onWhatsApp con número con 9 (ej: 549261...)
   try {
     const candidateJid = `${clean}@s.whatsapp.net`
     const results = await sock.onWhatsApp(candidateJid)
     if (results && results.length > 0 && results[0].exists) {
+      phoneToRemoteJidMap.set(clean, results[0].jid)
       return results[0].jid
     }
   } catch (e) {
     addLog('WARNING', `onWhatsApp check con 549 falló para ${clean}: ${e.message}`)
   }
 
-  // 3. Para cuentas de Argentina creadas sin el 9
+  // 3. Para cuentas de Argentina creadas en Meta sin el 9 (ej: 54261...)
   if (clean.startsWith('549')) {
     const fallbackWithout9 = '54' + clean.slice(3) + '@s.whatsapp.net'
     try {
       const results = await sock.onWhatsApp(fallbackWithout9)
       if (results && results.length > 0 && results[0].exists) {
-        addLog('INFO', `Destinatario WhatsApp resuelto sin 9: ${results[0].jid}`)
+        addLog('INFO', `✔ Destinatario WhatsApp resuelto sin 9: ${results[0].jid}`)
+        phoneToRemoteJidMap.set(clean, results[0].jid)
+        return results[0].jid
+      }
+    } catch (e) {}
+  }
+
+  // 4. Si la cuenta es de Argentina sin 9 al inicio (ej: 54261...)
+  if (clean.startsWith('54') && !clean.startsWith('549')) {
+    const with9 = '549' + clean.slice(2) + '@s.whatsapp.net'
+    try {
+      const results = await sock.onWhatsApp(with9)
+      if (results && results.length > 0 && results[0].exists) {
+        addLog('INFO', `✔ Destinatario WhatsApp resuelto con 9: ${results[0].jid}`)
+        phoneToRemoteJidMap.set(clean, results[0].jid)
         return results[0].jid
       }
     } catch (e) {}
@@ -972,16 +1009,36 @@ app.post('/send-message', async (req, res) => {
 
     const cleanNormPhone = normalizePhone(phone)
     lastContactedPhone = cleanNormPhone
-    const jid = await getValidJid(phone)
-    const result = await sock.sendMessage(jid, { text })
+    let jid = await getValidJid(phone)
+    let result = null
 
-    // Si el socket resolvió o devolvió un LID, asociarlo
-    if (result && result.key && result.key.remoteJid && result.key.remoteJid.includes('@lid')) {
-      const lidD = result.key.remoteJid.split('@')[0].split(':')[0]
-      saveLidMapping(lidD, cleanNormPhone)
+    try {
+      result = await sock.sendMessage(jid, { text })
+    } catch (sendErr) {
+      if (cleanNormPhone.startsWith('549')) {
+        const altJid = '54' + cleanNormPhone.slice(3) + '@s.whatsapp.net'
+        if (altJid !== jid) {
+          addLog('WARNING', `Reintentando envío a JID alternativo ${altJid} tras error: ${sendErr.message}`)
+          result = await sock.sendMessage(altJid, { text })
+          jid = altJid
+        } else {
+          throw sendErr
+        }
+      } else {
+        throw sendErr
+      }
     }
 
-    addLog('INFO', `Mensaje enviado a ${jid}: ${text.substring(0, 50)}...`)
+    // Si el socket resolvió o devolvió un LID o JID, asociarlo en caché
+    if (result && result.key && result.key.remoteJid) {
+      if (result.key.remoteJid.includes('@lid')) {
+        const lidD = result.key.remoteJid.split('@')[0].split(':')[0]
+        saveLidMapping(lidD, cleanNormPhone)
+      }
+      phoneToRemoteJidMap.set(cleanNormPhone, result.key.remoteJid)
+    }
+
+    addLog('INFO', `Mensaje enviado exitosamente a ${jid}: ${text.substring(0, 50)}...`)
     res.json({
       success: true,
       message_id: result.key.id,
