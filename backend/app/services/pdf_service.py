@@ -1034,9 +1034,11 @@ def generar_pdf_consentimiento(turno: dict, paciente: dict, firma_img: Optional[
             texto_consentimiento = resumen_practica["texto_consentimiento"]
         else:
             config = get_configuracion_quirofano()
-            plantillas = config.get("plantillas_consentimiento") or []
+            p_nom_low = (practica_nombre or "").lower()
             for pl in plantillas:
-                if pl.get("id") in practica_nombre.lower() or pl.get("tipo") in practica_nombre.lower():
+                pl_id = str(pl.get("id") or "").lower()
+                pl_tipo = str(pl.get("tipo") or "").lower()
+                if (pl_id and pl_id in p_nom_low) or (pl_tipo and pl_tipo in p_nom_low):
                     texto_consentimiento = pl.get("cuerpo_markdown") or pl.get("cuerpo_texto")
                     break
             if not texto_consentimiento and plantillas:

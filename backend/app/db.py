@@ -3423,8 +3423,11 @@ def registrar_firma_consentimiento(
     # 2. Fallback a plantillas de quirófano general
     if not cuerpo_template:
         plantilla_sel = None
+        p_nom_low = (practica_nombre or "").lower()
         for pl in plantillas:
-            if pl.get("id") in practica_nombre.lower() or pl.get("tipo") in practica_nombre.lower():
+            pl_id = str(pl.get("id") or "").lower()
+            pl_tipo = str(pl.get("tipo") or "").lower()
+            if (pl_id and pl_id in p_nom_low) or (pl_tipo and pl_tipo in p_nom_low):
                 plantilla_sel = pl
                 break
         if not plantilla_sel and len(plantillas) > 0:

@@ -29,7 +29,9 @@ import {
   FileText,
   AlertTriangle,
   UploadCloud,
-  CheckCheck
+  CheckCheck,
+  Trash2,
+  ShieldCheck
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -51,6 +53,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
   const [turnoParaPausaOms, setTurnoParaPausaOms] = useState<any | null>(null)
   const [subiendoGeclisaId, setSubiendoGeclisaId] = useState<string | null>(null)
+  const [desvinculandoGeclisaId, setDesvinculandoGeclisaId] = useState<string | null>(null)
+  const [subiendoConsentimientoId, setSubiendoConsentimientoId] = useState<string | null>(null)
 
   // Ticker de hora actual para cronómetros cada 1 segundo
   useEffect(() => {
@@ -172,6 +176,111 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       alert(err.message || 'Error de conexión con el servidor.')
     } finally {
       setSubiendoGeclisaId(null)
+    }
+  }
+
+  // Eliminar Protocolo de Geclisa
+  const handleEliminarProtocoloGeclisa = async (turnoId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm('¿Desea eliminar el Protocolo Quirúrgico de la Historia Clínica en Geclisa? Podrá volver a subirlo tras realizar correcciones.')) {
+      return
+    }
+    try {
+      setDesvinculandoGeclisaId(turnoId)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/desvincular-documento-geclisa/parte_quirurgico`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setTurnos((prev) =>
+          prev.map((t) =>
+            t.id === turnoId
+              ? {
+                  ...t,
+                  ...data.turno,
+                  parte_quirurgico_geclisa_archivo_id: null,
+                  parte_quirurgico_geclisa_sincronizado_at: null
+                }
+              : t
+          )
+        )
+      } else {
+        alert(data.detail || data.error || 'Error al eliminar protocolo de Geclisa')
+      }
+    } catch (err: any) {
+      console.error('Error eliminando protocolo de Geclisa:', err)
+      alert(err.message || 'Error de conexión.')
+    } finally {
+      setDesvinculandoGeclisaId(null)
+    }
+  }
+
+  // Subir Consentimiento Informado a Geclisa
+  const handleSubirConsentimientoGeclisa = async (turnoId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      setSubiendoConsentimientoId(turnoId)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/subir-consentimiento-geclisa`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setTurnos((prev) =>
+          prev.map((t) =>
+            t.id === turnoId
+              ? {
+                  ...t,
+                  ...data.turno,
+                  consentimiento_geclisa_archivo_id: data.archivo_id,
+                  consentimiento_geclisa_sincronizado_at: data.sincronizado_at
+                }
+              : t
+          )
+        )
+      } else {
+        alert(data.detail || data.error || 'Error al subir consentimiento a Geclisa')
+      }
+    } catch (err: any) {
+      console.error('Error subiendo consentimiento a Geclisa:', err)
+      alert(err.message || 'Error de conexión.')
+    } finally {
+      setSubiendoConsentimientoId(null)
+    }
+  }
+
+  // Eliminar Consentimiento de Geclisa
+  const handleEliminarConsentimientoGeclisa = async (turnoId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm('¿Desea eliminar el Consentimiento Informado de la Historia Clínica en Geclisa? Podrá volver a subirlo tras realizar correcciones.')) {
+      return
+    }
+    try {
+      setDesvinculandoGeclisaId(turnoId)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/desvincular-documento-geclisa/consentimiento`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setTurnos((prev) =>
+          prev.map((t) =>
+            t.id === turnoId
+              ? {
+                  ...t,
+                  ...data.turno,
+                  consentimiento_geclisa_archivo_id: null,
+                  consentimiento_geclisa_sincronizado_at: null
+                }
+              : t
+          )
+        )
+      } else {
+        alert(data.detail || data.error || 'Error al eliminar consentimiento de Geclisa')
+      }
+    } catch (err: any) {
+      console.error('Error eliminando consentimiento de Geclisa:', err)
+      alert(err.message || 'Error de conexión.')
+    } finally {
+      setDesvinculandoGeclisaId(null)
     }
   }
 
@@ -448,19 +557,55 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </div>
                     )}
 
-                    {/* Estado del Consentimiento */}
-                    <div>
+                    {/* Estado del Consentimiento & Geclisa */}
+                    <div className="flex flex-wrap items-center gap-2">
                       {t.consentimiento_estado === 'firmado_digital' ? (
-                        <a
-                          href={`${BACKEND_URL}${t.consentimiento_pdf_url || '/static/consentimiento_' + t.id + '.pdf'}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline"
-                        >
-                          <FileCheck2 size={12} />
-                          <span>Consentimiento Firmado</span>
-                        </a>
+                        <>
+                          <a
+                            href={`${BACKEND_URL}${t.consentimiento_pdf_url || '/static/consentimiento_' + t.id + '.pdf'}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline"
+                          >
+                            <FileCheck2 size={12} />
+                            <span>Consentimiento Firmado</span>
+                          </a>
+
+                          {/* Geclisa Consentimiento Controls */}
+                          {t.consentimiento_geclisa_archivo_id ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 flex items-center gap-1 font-bold">
+                                <Check size={9} className="text-blue-400" />
+                                Geclisa #{t.consentimiento_geclisa_archivo_id}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={desvinculandoGeclisaId === t.id}
+                                onClick={(e) => handleEliminarConsentimientoGeclisa(t.id, e)}
+                                className="p-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold transition disabled:opacity-50"
+                                title="Eliminar consentimiento de la Historia Clínica de Geclisa para corregir"
+                              >
+                                {desvinculandoGeclisaId === t.id ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={subiendoConsentimientoId === t.id}
+                              onClick={(e) => handleSubirConsentimientoGeclisa(t.id, e)}
+                              className="px-2 py-0.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold flex items-center gap-1 shadow-sm transition disabled:opacity-50"
+                              title="Subir Consentimiento Informado a la Historia Clínica de Geclisa"
+                            >
+                              {subiendoConsentimientoId === t.id ? (
+                                <Loader2 size={10} className="animate-spin" />
+                              ) : (
+                                <UploadCloud size={10} />
+                              )}
+                              <span>📤 Geclisa</span>
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <span className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
                           <AlertCircle size={12} />

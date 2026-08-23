@@ -3603,8 +3603,11 @@ def obtener_datos_consentimiento_publico(token: str):
             config = get_configuracion_quirofano()
             plantillas = config.get("plantillas_consentimiento") or []
             plantilla_sel = None
+            p_nom_low = (practica_nombre or "").lower()
             for pl in plantillas:
-                if pl.get("id") in practica_nombre.lower() or pl.get("tipo") in practica_nombre.lower():
+                pl_id = str(pl.get("id") or "").lower()
+                pl_tipo = str(pl.get("tipo") or "").lower()
+                if (pl_id and pl_id in p_nom_low) or (pl_tipo and pl_tipo in p_nom_low):
                     plantilla_sel = pl
                     break
             if not plantilla_sel and len(plantillas) > 0:
@@ -3927,7 +3930,22 @@ def listar_archivos_paciente_geclisa(paciente_id: str):
         logger.error(f"Error al listar archivos de Geclisa para paciente {paciente_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
+@app.delete("/api/geclisa/archivos/{as_id}")
+def eliminar_archivo_geclisa_endpoint(as_id: int):
+    """
+    Elimina un archivo adjunto del repositorio de Geclisa por su ID de archivo (asId / hcaId).
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        res = geclisa_client.eliminar_archivo_historia_clinica(as_id, as_id)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("mensaje") or "Error al eliminar archivo de Geclisa.")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error eliminando archivo #{as_id} de Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/modelos-lio")
 def listar_modelos_lio_endpoint(solo_activos: bool = False):
