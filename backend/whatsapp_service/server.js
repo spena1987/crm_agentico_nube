@@ -215,22 +215,15 @@ function loadLidMappings() {
           const cleanPhone = normalizePhone(phone)
           lidToPhoneMap.set(cleanLid, cleanPhone)
           phoneToLidMap.set(cleanPhone, cleanLid)
-          phoneToRemoteJidMap.set(cleanPhone, `${cleanLid}@lid`)
         }
       }
     }
   } catch (e) {
     addLog('WARNING', `No se pudieron cargar mapeos de LID: ${e.message}`)
   }
-  // Mapeo conocido por defecto para el dispositivo de prueba (+54 9 261 470-3230)
-  if (!lidToPhoneMap.has('194149819109552')) {
-    lidToPhoneMap.set('194149819109552', '5492614703230')
-    phoneToLidMap.set('5492614703230', '194149819109552')
-    phoneToRemoteJidMap.set('5492614703230', '194149819109552@lid')
-  }
 }
 
-function saveLidMapping(lid, phone, fullRemoteJid = null) {
+function saveLidMapping(lid, phone) {
   if (!lid || !phone) return
   const cleanLid = String(lid).replace(/\D/g, '')
   const cleanPhone = normalizePhone(phone)
@@ -238,14 +231,13 @@ function saveLidMapping(lid, phone, fullRemoteJid = null) {
   
   lidToPhoneMap.set(cleanLid, cleanPhone)
   phoneToLidMap.set(cleanPhone, cleanLid)
-  phoneToRemoteJidMap.set(cleanPhone, fullRemoteJid || `${cleanLid}@lid`)
   try {
     const obj = {}
     for (const [k, v] of lidToPhoneMap.entries()) {
       obj[k] = v
     }
     fs.writeFileSync(LID_MAP_FILE, JSON.stringify(obj, null, 2), 'utf-8')
-    addLog('INFO', `LID ${cleanLid} vinculado exitosamente a teléfono +${cleanPhone}`)
+    addLog('INFO', `LID ${cleanLid} mapeado para recepción a teléfono +${cleanPhone}`)
     syncSessionsToSupabase()
   } catch (e) {
     addLog('WARNING', `Error guardando mapeo de LID en disco: ${e.message}`)

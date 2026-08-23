@@ -46,20 +46,17 @@ def is_lid_number(phone_str: str) -> bool:
     if not phone_str:
         return False
     digits = "".join(filter(str.isdigit, str(phone_str)))
-    if len(digits) >= 15 or digits == "194149819109552":
+    if len(digits) >= 15:
         return True
     return False
 
 def get_paciente_by_lid(lid: str):
     """
-    Busca si algún paciente tiene asociado este LID o retorna el paciente principal si es el LID de prueba.
+    Busca si algún paciente tiene asociado este LID en su registro o metadata.
     """
     if not supabase or not lid:
         return None
     clean_lid = "".join(filter(str.isdigit, str(lid)))
-    # El LID del teléfono de prueba del usuario pertenece a Sebastián Peña (+5492614703230)
-    if clean_lid == "194149819109552":
-        return get_paciente_by_telefono("5492614703230")
     try:
         resp = supabase.table("pacientes").select("*").ilike("telefono", f"%{clean_lid}%").execute()
         if resp.data and len(resp.data) > 0:

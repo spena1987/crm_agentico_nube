@@ -497,7 +497,7 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
         if not clean_phone:
             return {"status": "ignored", "reason": "empty_phone"}
 
-        # Si el remitente es un LID de WhatsApp (ej: 194149819109552), resolver al paciente real
+        # Si el remitente es un LID de WhatsApp, resolver al paciente real
         paciente = None
         if is_lid_number(clean_phone) or is_lid_number(payload.phone):
             logger.info(f"Detectado identificador LID ({payload.phone}). Resolviendo con paciente real del CRM...")
