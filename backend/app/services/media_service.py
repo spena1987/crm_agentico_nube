@@ -126,13 +126,15 @@ class MediaService:
                     mime_type = header.split("data:")[1].split(";")[0]
 
         data = base64.b64decode(raw_b64)
-        return MediaService.save_media_bytes(
+        saved = MediaService.save_media_bytes(
             data=data,
             subfolder=subfolder,
             mime_type=mime_type,
             original_filename=original_filename,
             prefix=prefix
         )
+        saved["data_uri"] = f"data:{mime_type};base64,{raw_b64}"
+        return saved
 
     @staticmethod
     def extract_and_download_media(client, message_protobuf, conversacion_id: str = "") -> Optional[Dict[str, Any]]:

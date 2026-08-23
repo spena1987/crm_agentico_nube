@@ -61,11 +61,11 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
   const getFullUrl = (url?: string, relUrl?: string) => {
     const target = url || relUrl
     if (!target) return ''
-    if (target.startsWith('http')) return target
+    if (target.startsWith('http') || target.startsWith('data:') || target.startsWith('blob:')) return target
     return `${BACKEND_URL}${target.startsWith('/') ? '' : '/'}${target}`
   }
 
-  const mediaUrl = getFullUrl(metadata.media_url, metadata.relative_url)
+  const mediaUrl = getFullUrl(metadata.data_uri || metadata.base64 || metadata.media_url, metadata.relative_url)
   const textoTranscrito = metadata.transcripcion || transcripcionLocal
 
   const formatFileSize = (bytes?: number) => {

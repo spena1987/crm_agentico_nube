@@ -426,6 +426,26 @@ class WhatsAppManager:
             logger.warning(f"Error marcando mensajes como leídos en Evolution API: {e}")
             return {"success": False, "error": str(e)}
 
+    def get_media_base64(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Descarga el payload Base64 y MimeType de cualquier mensaje multimedia desde Evolution API v2.
+        """
+        try:
+            payload = {
+                "message": {
+                    "key": {
+                        "id": message_id
+                    }
+                },
+                "convertToMp4": False
+            }
+            r = httpx.post(f"{self.evo_url}/chat/getBase64FromMediaMessage/{self.evo_instance}", headers=self._headers, json=payload, timeout=20.0)
+            if r.status_code in [200, 201]:
+                return r.json()
+        except Exception as e:
+            logger.warning(f"Error obteniendo base64 de mensaje multimedia {message_id}: {e}")
+        return None
+
     def enviar_multimedia(
         self,
         telefono: str,

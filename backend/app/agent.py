@@ -277,30 +277,36 @@ def procesar_mensaje_agente(
         logger.error(f"Error procesando mensaje en agente: {e}", exc_info=True)
         return "Disculpas, he tenido un inconveniente procesando tu mensaje. Por favor intenta de nuevo."
 
-def transcribir_audio_con_gemini(audio_url: str) -> str:
+def transcribir_audio_con_gemini(audio_url: Optional[str] = None, audio_bytes: Optional[bytes] = None, mime_type: str = "audio/ogg") -> str:
     """
-    Descarga el audio desde la URL de Supabase Storage y lo transcribe usando Gemini Flash.
+    Descarga o recibe los bytes de audio y los transcribe usando Gemini Flash (gemini-3.5-flash).
     """
     if not client:
         raise ValueError("Cliente Gemini no configurado. Verifique GEMINI_API_KEY.")
     
     import httpx
     try:
-        logger.info(f"Descargando audio para transcripción desde: {audio_url}")
-        res = httpx.get(audio_url, timeout=35.0, follow_redirects=True)
-        res.raise_for_status()
-        audio_bytes = res.content
+        if not audio_bytes and audio_url:
+            logger.info(f"Descargando audio para transcripción desde: {audio_url}")
+            res = httpx.get(audio_url, timeout=35.0, follow_redirects=True)
+            res.raise_for_status()
+            audio_bytes = res.content
+            mime_type = res.headers.get("content-type", mime_type)
+
+        if not audio_bytes:
+            raise ValueError("No se proporcionaron bytes ni URL válida para transcribir.")
         
         # Determinar MIME type
-        mime_type = res.headers.get("content-type", "audio/ogg")
-        if "ogg" in audio_url.lower() or "opus" in str(mime_type).lower():
-            mime_type = "audio/ogg"
-        elif "mp3" in audio_url.lower():
-            mime_type = "audio/mp3"
-        elif "wav" in audio_url.lower():
-            mime_type = "audio/wav"
-        elif "m4a" in audio_url.lower() or "aac" in audio_url.lower():
-            mime_type = "audio/mp4"
+        if "ogg" in str(mime_type).lower() or "opus" in str(mime_type).lower():
+            clean_mime = "audio/ogg"
+        elif "mp3" in str(mime_type).lower():
+            clean_mime = "audio/mp3"
+        elif "wav" in str(mime_type).lower():
+            clean_mime = "audio/wav"
+        elif "m4a" in str(mime_type).lower() or "aac" in str(mime_type).lower():
+            clean_mime = "audio/mp4"
+        else:
+            clean_mime = "audio/ogg"
 
         prompt = (
             "Transcribe este mensaje de voz de un paciente exactamente palabra por palabra en español. "
@@ -309,8 +315,8 @@ def transcribir_audio_con_gemini(audio_url: str) -> str:
         )
 
         candidate_models = [
-            os.getenv("GEMINI_TRANSCRIPTION_MODEL", "gemini-flash-latest"),
             "gemini-3.5-flash",
+            "gemini-flash-latest",
             "gemini-flash-lite-latest"
         ]
 
@@ -322,7 +328,7 @@ def transcribir_audio_con_gemini(audio_url: str) -> str:
                     contents=[
                         types.Part.from_bytes(
                             data=audio_bytes,
-                            mime_type=mime_type
+                            mime_type=clean_mime
                         ),
                         prompt
                     ]

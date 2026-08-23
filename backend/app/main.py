@@ -347,6 +347,39 @@ def servir_archivo_estatico(filename: str):
         }
     )
 
+@app.get("/static/media/{subfolder}/{filename}")
+def servir_archivo_media(subfolder: str, filename: str):
+    """
+    Sirve archivos multimedia recibidos por WhatsApp (audios, imágenes, stickers, documentos, videos).
+    """
+    safe_subfolder = os.path.basename(subfolder)
+    safe_filename = os.path.basename(filename)
+    if ".." in subfolder or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Ruta de archivo no válida.")
+        
+    file_path = os.path.join(STATIC_MEDIA_DIR, safe_subfolder, safe_filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Archivo multimedia no encontrado.")
+        
+    import mimetypes
+    guessed_mime, _ = mimetypes.guess_type(file_path)
+    if safe_filename.endswith(".ogg"):
+        guessed_mime = "audio/ogg"
+    elif safe_filename.endswith(".webp"):
+        guessed_mime = "image/webp"
+    elif safe_filename.endswith(".mp3"):
+        guessed_mime = "audio/mpeg"
+        
+    return FileResponse(
+        path=file_path,
+        media_type=guessed_mime or "application/octet-stream",
+        filename=safe_filename,
+        headers={
+            "Content-Disposition": f"inline; filename={safe_filename}",
+            "Cache-Control": "public, max-age=86400"
+        }
+    )
+
 # ====================================================================
 # ENDPOINTS GENERALES Y HEALTH
 # ====================================================================
@@ -583,6 +616,11 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         texto = caption
                         mime = img_data.get("mimetype", "image/jpeg")
                         b64 = base64_data or img_data.get("base64")
+                        if not b64 and message_id:
+                            m_resp = whatsapp_manager.get_media_base64(message_id)
+                            if m_resp:
+                                b64 = m_resp.get("base64")
+                                mime = m_resp.get("mimetype", mime)
                         media_info = {"tipo": "imagen", "mime_type": mime, "caption": caption}
                         if b64:
                             try:
@@ -598,11 +636,27 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         mime = aud_data.get("mimetype", "audio/ogg; codecs=opus")
                         is_ptt = aud_data.get("ptt", True)
                         b64 = base64_data or aud_data.get("base64")
+                        if not b64 and message_id:
+                            m_resp = whatsapp_manager.get_media_base64(message_id)
+                            if m_resp:
+                                b64 = m_resp.get("base64")
+                                mime = m_resp.get("mimetype", mime)
+                        
                         media_info = {"tipo": "audio", "mime_type": mime, "is_voice_note": bool(is_ptt)}
                         if b64:
                             try:
                                 saved = media_service.save_base64_media(b64, "audio", mime, "audio.ogg")
                                 media_info.update(saved)
+                                try:
+                                    import base64 as b64_mod
+                                    raw_audio = b64_mod.b64decode(b64.split("base64,")[-1])
+                                    transcript = transcribir_audio_con_gemini(audio_bytes=raw_audio, mime_type=mime)
+                                    if transcript:
+                                        media_info["transcripcion"] = transcript
+                                        texto = transcript
+                                        logger.info(f"✔ Audio de WhatsApp transcripto automáticamente: '{transcript[:60]}'")
+                                except Exception as t_err:
+                                    logger.warning(f"Error en auto-transcripción de audio: {t_err}")
                             except Exception as e:
                                 logger.warning(f"Error guardando audio base64: {e}")
 
@@ -612,6 +666,11 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         stk_data = msg_content.get("stickerMessage", {})
                         mime = stk_data.get("mimetype", "image/webp")
                         b64 = base64_data or stk_data.get("base64")
+                        if not b64 and message_id:
+                            m_resp = whatsapp_manager.get_media_base64(message_id)
+                            if m_resp:
+                                b64 = m_resp.get("base64")
+                                mime = m_resp.get("mimetype", mime)
                         media_info = {"tipo": "sticker", "mime_type": mime}
                         if b64:
                             try:
@@ -628,6 +687,11 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         caption = doc_data.get("caption", "")
                         mime = doc_data.get("mimetype", "application/pdf")
                         b64 = base64_data or doc_data.get("base64")
+                        if not b64 and message_id:
+                            m_resp = whatsapp_manager.get_media_base64(message_id)
+                            if m_resp:
+                                b64 = m_resp.get("base64")
+                                mime = m_resp.get("mimetype", mime)
                         media_info = {"tipo": "documento", "mime_type": mime, "file_name": filename, "caption": caption}
                         if b64:
                             try:
@@ -643,6 +707,11 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         caption = vid_data.get("caption", "")
                         mime = vid_data.get("mimetype", "video/mp4")
                         b64 = base64_data or vid_data.get("base64")
+                        if not b64 and message_id:
+                            m_resp = whatsapp_manager.get_media_base64(message_id)
+                            if m_resp:
+                                b64 = m_resp.get("base64")
+                                mime = m_resp.get("mimetype", mime)
                         media_info = {"tipo": "video", "mime_type": mime, "caption": caption}
                         if b64:
                             try:
