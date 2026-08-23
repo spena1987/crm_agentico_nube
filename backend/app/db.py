@@ -4030,3 +4030,48 @@ def desvincular_documento_geclisa_turno(turno_id: str, tipo_doc: str) -> Dict[st
         logger.error(f"Error al desvincular documento {tipo_doc} de Geclisa para turno {turno_id}: {e}")
         return {"success": False, "error": str(e)}
 
+def get_active_jid_for_paciente_o_conversacion(
+    conversacion_id: Optional[str] = None,
+    paciente_id: Optional[str] = None,
+    telefono: Optional[str] = None
+) -> Optional[str]:
+    """
+    Recupera el JID activo (@lid o @s.whatsapp.net) del paciente para garantizar
+    el enrutamiento criptográfico correcto de mensajes salientes en WhatsApp.
+    """
+    if not supabase:
+        return None
+    try:
+        if conversacion_id:
+            res = supabase.table("mensajes").select("metadata_json").eq("conversacion_id", conversacion_id).order("created_at", desc=True).limit(20).execute()
+            if res.data:
+                for r in res.data:
+                    m = r.get("metadata_json") or {}
+                    if isinstance(m, dict):
+                        rj = m.get("remote_jid") or m.get("whatsapp_lid") or m.get("dispatched_jid")
+                        if rj and "@lid" in str(rj):
+                            return str(rj)
+
+        p_id = paciente_id
+        if not p_id and telefono:
+            pac = get_paciente_by_telefono(telefono)
+            if pac:
+                p_id = pac.get("id")
+
+        if p_id:
+            convs = supabase.table("conversaciones").select("id").eq("paciente_id", p_id).execute()
+            if convs.data:
+                for c in convs.data:
+                    cid = c["id"]
+                    res = supabase.table("mensajes").select("metadata_json").eq("conversacion_id", cid).order("created_at", desc=True).limit(20).execute()
+                    if res.data:
+                        for r in res.data:
+                            m = r.get("metadata_json") or {}
+                            if isinstance(m, dict):
+                                rj = m.get("remote_jid") or m.get("whatsapp_lid") or m.get("dispatched_jid")
+                                if rj and "@lid" in str(rj):
+                                    return str(rj)
+    except Exception as e:
+        logger.warning(f"Error resolviendo active_jid para paciente/conversacion: {e}")
+    return None
+

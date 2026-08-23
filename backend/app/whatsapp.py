@@ -12,7 +12,8 @@ from dotenv import load_dotenv
 from app.db import (
     get_paciente_by_telefono, crear_paciente, 
     get_or_create_conversacion, guardar_mensaje,
-    actualizar_bot_disabled, supabase
+    actualizar_bot_disabled, supabase,
+    get_active_jid_for_paciente_o_conversacion
 )
 from app.services.config_service import load_settings
 from app.services.phone_normalizer import (
@@ -328,8 +329,20 @@ class WhatsAppManager:
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
 
+        # Resolución inteligente de destino (LID vs Phone Number)
+        target_number = clean_digits
+        if remote_jid and ("@" in str(remote_jid)):
+            target_number = str(remote_jid)
+        else:
+            active_jid = get_active_jid_for_paciente_o_conversacion(
+                conversacion_id=conversacion_id,
+                telefono=telefono
+            )
+            if active_jid and ("@" in str(active_jid)):
+                target_number = str(active_jid)
+
         payload_send = {
-            "number": clean_digits,
+            "number": target_number,
             "text": texto,
             "delay": 1000,
             "linkPreview": True
@@ -346,7 +359,7 @@ class WhatsAppManager:
                 res = r.json()
                 msg_key = res.get("key", {})
                 msg_id = msg_key.get("id") or res.get("message_id")
-                dispatched_jid = msg_key.get("remoteJid") or f"{clean_digits}@s.whatsapp.net"
+                dispatched_jid = msg_key.get("remoteJid") or target_number
 
                 if conversacion_id:
                     try:
@@ -364,7 +377,7 @@ class WhatsAppManager:
                     except Exception as db_err:
                         self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
 
-                self.add_log("INFO", f"Mensaje despachado exitosamente vía Evolution API a +{clean_digits} (ID: {msg_id})")
+                self.add_log("INFO", f"Mensaje despachado exitosamente vía Evolution API a {target_number} (ID: {msg_id})")
                 return {
                     "success": True,
                     "enviado_real": True,
@@ -415,15 +428,21 @@ class WhatsAppManager:
         media_url: str,
         media_type: str = "document",
         caption: str = "",
-        filename: str = ""
+        filename: str = "",
+        conversacion_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Evolution API v2.
         """
         clean_digits = clean_phone_digits(normalize_phone_number(telefono))
+        target_number = clean_digits
+        active_jid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono)
+        if active_jid and ("@" in str(active_jid)):
+            target_number = str(active_jid)
+
         try:
             payload = {
-                "number": clean_digits,
+                "number": target_number,
                 "mediatype": media_type,
                 "media": media_url,
                 "caption": caption,
@@ -448,6 +467,11 @@ class WhatsAppManager:
         Envía un documento local (PDF de presupuesto, estudios, etc.) vía WhatsApp convirtiéndolo a base64 para Evolution API.
         """
         clean_digits = clean_phone_digits(normalize_phone_number(telefono_o_jid))
+        target_number = clean_digits
+        active_jid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono_o_jid)
+        if active_jid and ("@" in str(active_jid)):
+            target_number = str(active_jid)
+
         try:
             if not os.path.exists(filepath):
                 return {"success": False, "error": "El archivo local no existe"}
@@ -456,7 +480,7 @@ class WhatsAppManager:
                 b64_content = base64.b64encode(f.read()).decode("utf-8")
 
             payload = {
-                "number": clean_digits,
+                "number": target_number,
                 "mediatype": "document",
                 "media": f"data:application/pdf;base64,{b64_content}",
                 "fileName": filename or "Presupuesto_Medico.pdf",
