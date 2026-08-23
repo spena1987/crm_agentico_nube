@@ -1034,18 +1034,34 @@ export default function CasoFormularioActivo({
       {/* 3. FOOTER CON ACCIONES Y ALERTA DE CAMBIOS SIN GUARDAR */}
       {/* ==================================================================== */}
       <div className="pt-3 border-t border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        {/* Alerta de Dirty State / Cambios pendientes */}
-        <div className="flex items-center gap-2">
-          {hasUnsavedChanges ? (
-            <span className="px-2.5 py-1 rounded-lg bg-amber-950/80 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 animate-pulse">
-              <AlertCircle size={13} className="text-amber-400 shrink-0" />
-              Tienes modificaciones sin guardar
+        {/* Alerta de Dirty State / Cambios pendientes / Confirmación de guardado */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {mensajeGuardado && (
+            <span className="px-2.5 py-1 rounded-lg bg-emerald-950/90 text-emerald-300 border border-emerald-500/50 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+              {mensajeGuardado}
             </span>
-          ) : (
-            <span className="text-[11px] text-gray-500 flex items-center gap-1">
-              <CheckCircle2 size={12} className="text-emerald-500" />
-              Datos sincronizados
+          )}
+
+          {errorAccion && (
+            <span className="px-2.5 py-1 rounded-lg bg-red-950/90 text-red-300 border border-red-500/50 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+              <AlertCircle size={13} className="text-red-400 shrink-0" />
+              {errorAccion}
             </span>
+          )}
+
+          {!mensajeGuardado && !errorAccion && (
+            hasUnsavedChanges ? (
+              <span className="px-2.5 py-1 rounded-lg bg-amber-950/80 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 animate-pulse">
+                <AlertCircle size={13} className="text-amber-400 shrink-0" />
+                Tienes modificaciones sin guardar
+              </span>
+            ) : (
+              <span className="text-[11px] text-gray-500 flex items-center gap-1">
+                <CheckCircle2 size={12} className="text-emerald-500" />
+                Datos sincronizados
+              </span>
+            )
           )}
         </div>
 
