@@ -399,45 +399,51 @@ function phoneToJid(phone) {
 
 async function getValidJid(phone) {
   const clean = normalizePhone(phone)
-  
-  // 1. Si tenemos el canal activo directo registrado para este paciente (LID o JID directo), usarlo prioritariamente
+  if (!clean) return null
+
+  // 1. Si tenemos el canal activo directo registrado en memoria para este número exacto, usarlo
   if (phoneToRemoteJidMap.has(clean)) {
     const directJid = phoneToRemoteJidMap.get(clean)
-    addLog('INFO', `Enrutando mensaje al canal activo directo de WhatsApp: ${directJid} (Teléfono: +${clean})`)
+    addLog('INFO', `Enrutando mensaje al canal activo de WhatsApp: ${directJid} (Teléfono: +${clean})`)
     return directJid
   }
 
-  if (phoneToLidMap.has(clean)) {
-    const lidJid = `${phoneToLidMap.get(clean)}@lid`
-    addLog('INFO', `Enrutando mensaje a LID de WhatsApp: ${lidJid} (Teléfono: +${clean})`)
-    return lidJid
+  // 2. Si no hay socket activo, retornar el formato estándar internacional
+  if (!sock) {
+    return `${clean}@s.whatsapp.net`
   }
 
-  // 1.1 Probar recuperar whatsapp_lid o JID previo desde Supabase para sobrevivir a reinicios
-  if (SUPABASE_KEY) {
+  // 3. Para números de Argentina (código 54)
+  if (clean.startsWith('54')) {
+    const jidWith9 = clean.startsWith('549') ? `${clean}@s.whatsapp.net` : `549${clean.slice(2)}@s.whatsapp.net`
+    const jidWithout9 = clean.startsWith('549') ? `54${clean.slice(3)}@s.whatsapp.net` : `${clean}@s.whatsapp.net`
+
+    // Probar primero el formato estándar con 9
     try {
-      const resMeta = await axios.get(`${SUPABASE_URL}/rest/v1/mensajes?metadata_json->>whatsapp_lid=neq.null&select=metadata_json&limit=1`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` },
-        timeout: 3000
-      })
-      if (resMeta.data && resMeta.data.length > 0) {
-        const lidVal = resMeta.data[0].metadata_json?.whatsapp_lid
-        if (lidVal) {
-          const lidDigits = String(lidVal).replace(/\D/g, '')
-          if (lidDigits) {
-            saveLidMapping(lidDigits, clean)
-            const lidJid = `${lidDigits}@lid`
-            addLog('INFO', `Enrutando a LID histórico recuperado de Supabase: ${lidJid} (Teléfono: +${clean})`)
-            return lidJid
-          }
-        }
+      const check1 = await sock.onWhatsApp(jidWith9)
+      if (check1 && check1.length > 0 && check1[0].exists) {
+        phoneToRemoteJidMap.set(clean, check1[0].jid)
+        return check1[0].jid
+      }
+    } catch (e) {
+      addLog('WARNING', `onWhatsApp check con 9 falló para ${clean}: ${e.message}`)
+    }
+
+    // Probar el formato sin 9
+    try {
+      const check2 = await sock.onWhatsApp(jidWithout9)
+      if (check2 && check2.length > 0 && check2[0].exists) {
+        addLog('INFO', `✔ Destinatario WhatsApp resuelto sin 9: ${check2[0].jid}`)
+        phoneToRemoteJidMap.set(clean, check2[0].jid)
+        return check2[0].jid
       }
     } catch (e) {}
+
+    // Por defecto en Argentina usar jidWith9
+    return jidWith9
   }
 
-  if (!sock) return `${clean}@s.whatsapp.net`
-
-  // 2. Probar validación onWhatsApp con número con 9 (ej: 549261...)
+  // 4. Formato estándar internacional para el resto de países
   try {
     const candidateJid = `${clean}@s.whatsapp.net`
     const results = await sock.onWhatsApp(candidateJid)
@@ -445,35 +451,7 @@ async function getValidJid(phone) {
       phoneToRemoteJidMap.set(clean, results[0].jid)
       return results[0].jid
     }
-  } catch (e) {
-    addLog('WARNING', `onWhatsApp check con 549 falló para ${clean}: ${e.message}`)
-  }
-
-  // 3. Para cuentas de Argentina creadas en Meta sin el 9 (ej: 54261...)
-  if (clean.startsWith('549')) {
-    const fallbackWithout9 = '54' + clean.slice(3) + '@s.whatsapp.net'
-    try {
-      const results = await sock.onWhatsApp(fallbackWithout9)
-      if (results && results.length > 0 && results[0].exists) {
-        addLog('INFO', `✔ Destinatario WhatsApp resuelto sin 9: ${results[0].jid}`)
-        phoneToRemoteJidMap.set(clean, results[0].jid)
-        return results[0].jid
-      }
-    } catch (e) {}
-  }
-
-  // 4. Si la cuenta es de Argentina sin 9 al inicio (ej: 54261...)
-  if (clean.startsWith('54') && !clean.startsWith('549')) {
-    const with9 = '549' + clean.slice(2) + '@s.whatsapp.net'
-    try {
-      const results = await sock.onWhatsApp(with9)
-      if (results && results.length > 0 && results[0].exists) {
-        addLog('INFO', `✔ Destinatario WhatsApp resuelto con 9: ${results[0].jid}`)
-        phoneToRemoteJidMap.set(clean, results[0].jid)
-        return results[0].jid
-      }
-    } catch (e) {}
-  }
+  } catch (e) {}
 
   return `${clean}@s.whatsapp.net`
 }
