@@ -1619,30 +1619,45 @@ def obtener_historia_clinica_paciente(paciente_id: str):
         # 4. Consultar Historia Clínica Resumen en Geclisa
         resultado_hc = geclisa_client.obtener_historia_clinica_resumen(int(ficha_id))
         if not resultado_hc.get("encontrado"):
+            msg = resultado_hc.get("mensaje") or "No se encontraron evoluciones en Geclisa."
             return {
+                "success": False,
                 "encontrado": False,
                 "motivo": "no_encontrado_geclisa",
                 "ficha_id": ficha_id,
-                "mensaje": resultado_hc.get("mensaje") or "No se encontraron evoluciones en Geclisa."
+                "mensaje": msg,
+                "detail": msg
             }
 
+        evoluciones_lista = resultado_hc.get("evoluciones_recientes", [])
         return {
+            "success": True,
             "encontrado": True,
             "paciente_id": paciente_crm_id or paciente_id,
             "ficha_id": ficha_id,
             "paciente_nombre": paciente_nombre,
             "paciente_dni": dni,
             "fecha_generacion": resultado_hc.get("fecha_generacion"),
-            "evoluciones_recientes": resultado_hc.get("evoluciones_recientes", []),
-            "total_evoluciones": resultado_hc.get("total_evoluciones", 0)
+            "evoluciones": evoluciones_lista,
+            "evoluciones_recientes": evoluciones_lista,
+            "total_evoluciones": len(evoluciones_lista),
+            "data": {
+                "evoluciones": evoluciones_lista,
+                "evoluciones_recientes": evoluciones_lista,
+                "total_evoluciones": len(evoluciones_lista),
+                "paciente_nombre": paciente_nombre,
+                "ficha_id": ficha_id
+            }
         }
 
     except Exception as e:
         logger.error(f"Error al obtener historia clínica para paciente {paciente_id}: {e}")
         return {
+            "success": False,
             "encontrado": False,
             "motivo": "error_servidor",
-            "mensaje": f"Error al consultar historia clínica en Geclisa: {str(e)}"
+            "mensaje": f"Error al consultar historia clínica en Geclisa: {str(e)}",
+            "detail": str(e)
         }
 
 @app.get("/api/geclisa/pacientes/{paciente_id}/indicaciones")
@@ -1705,36 +1720,54 @@ def obtener_indicaciones_paciente(paciente_id: str):
 
         if not ficha_id:
             if not dni:
+                msg = "El paciente no posee número de DNI ni Ficha Geclisa registrada en el CRM."
                 return {
+                    "success": False,
                     "encontrado": False,
                     "motivo": "sin_dni",
-                    "mensaje": "El paciente no posee número de DNI ni Ficha Geclisa registrada en el CRM."
+                    "mensaje": msg,
+                    "detail": msg
                 }
             else:
+                msg = f"No se encontró ninguna ficha activa en Geclisa para el DNI {dni}."
                 return {
+                    "success": False,
                     "encontrado": False,
                     "motivo": "sin_ficha_geclisa",
-                    "mensaje": f"No se encontró ninguna ficha activa en Geclisa para el DNI {dni}."
+                    "mensaje": msg,
+                    "detail": msg
                 }
 
         # 3. Consultar Indicaciones Médicas en Geclisa
         resultado_ind = geclisa_client.obtener_indicaciones_medicas(int(ficha_id))
+        indicaciones_lista = resultado_ind.get("indicaciones", [])
         return {
+            "success": True,
             "encontrado": True,
             "paciente_id": paciente_crm_id or paciente_id,
             "ficha_id": ficha_id,
             "paciente_nombre": paciente_nombre,
             "paciente_dni": dni,
-            "indicaciones": resultado_ind.get("indicaciones", []),
-            "total_indicaciones": resultado_ind.get("total_indicaciones", 0)
+            "indicaciones": indicaciones_lista,
+            "recetas": indicaciones_lista,
+            "total_indicaciones": len(indicaciones_lista),
+            "data": {
+                "indicaciones": indicaciones_lista,
+                "recetas": indicaciones_lista,
+                "total_indicaciones": len(indicaciones_lista),
+                "paciente_nombre": paciente_nombre,
+                "ficha_id": ficha_id
+            }
         }
 
     except Exception as e:
         logger.error(f"Error al obtener indicaciones para paciente {paciente_id}: {e}")
         return {
+            "success": False,
             "encontrado": False,
             "motivo": "error_servidor",
-            "mensaje": f"Error al consultar indicaciones en Geclisa: {str(e)}"
+            "mensaje": f"Error al consultar indicaciones en Geclisa: {str(e)}",
+            "detail": str(e)
         }
 
 @app.put("/api/pacientes/{paciente_id}")

@@ -127,16 +127,20 @@ export default function ModalDetalleCirugiaEnVivo({
 
   // Cargar Historia Clínica de Geclisa cuando se abre la pestaña 2
   const fetchHistoriaClinica = async () => {
-    if (!turnoLocal?.paciente_id) return
+    const pacienteId = turnoLocal?.paciente_id || turnoLocal?.pacientes?.id || turnoLocal?.pacientes?.dni
+    if (!pacienteId) {
+      setErrorHC('No se encontró el ID o DNI del paciente en el turno para consultar Geclisa.')
+      return
+    }
     try {
       setCargandoHC(true)
       setErrorHC(null)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${turnoLocal.paciente_id}/historia-clinica`)
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${pacienteId}/historia-clinica`)
       const data = await res.json()
-      if (res.ok && data.success) {
-        setDatosHC(data.data || data)
+      if (res.ok && (data.success || data.encontrado)) {
+        setDatosHC(data)
       } else {
-        throw new Error(data.detail || 'No se pudo cargar la Historia Clínica desde Geclisa.')
+        throw new Error(data.mensaje || data.detail || 'No se pudo cargar la Historia Clínica desde Geclisa.')
       }
     } catch (err: any) {
       console.error('Error cargando HC:', err)
@@ -154,16 +158,20 @@ export default function ModalDetalleCirugiaEnVivo({
 
   // Cargar Indicaciones Médicas de Geclisa cuando se abre la pestaña 3
   const fetchIndicaciones = async () => {
-    if (!turnoLocal?.paciente_id) return
+    const pacienteId = turnoLocal?.paciente_id || turnoLocal?.pacientes?.id || turnoLocal?.pacientes?.dni
+    if (!pacienteId) {
+      setErrorInd('No se encontró el ID o DNI del paciente en el turno para consultar Geclisa.')
+      return
+    }
     try {
       setCargandoInd(true)
       setErrorInd(null)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${turnoLocal.paciente_id}/indicaciones`)
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${pacienteId}/indicaciones`)
       const data = await res.json()
-      if (res.ok && data.success) {
-        setDatosInd(data.data || data)
+      if (res.ok && (data.success || data.encontrado)) {
+        setDatosInd(data)
       } else {
-        throw new Error(data.detail || 'No se pudieron cargar las Indicaciones Médicas desde Geclisa.')
+        throw new Error(data.mensaje || data.detail || 'No se pudieron cargar las Indicaciones Médicas desde Geclisa.')
       }
     } catch (err: any) {
       console.error('Error cargando Indicaciones:', err)
