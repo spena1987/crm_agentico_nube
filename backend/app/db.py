@@ -2069,8 +2069,16 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             "monto_extra": float(payload.get("monto_extra", 0.0)) if payload.get("monto_extra") is not None else 0.0,
             "moneda_extra": payload.get("moneda_extra", "ARS").upper(),
             
+            "monto_sena": float(payload.get("monto_sena", 0.0)) if payload.get("monto_sena") is not None else 0.0,
+            "estado_pago": payload.get("estado_pago", "pendiente"),
+            "medio_pago": payload.get("medio_pago") or None,
+            
             "fecha_probable_cirugia": payload.get("fecha_probable_cirugia") or None,
             "fecha_definitiva_cirugia": payload.get("fecha_definitiva_cirugia") or None,
+            
+            "control_postop_24h": bool(payload.get("control_postop_24h", False)),
+            "control_postop_7d": bool(payload.get("control_postop_7d", False)),
+            "alta_medica_definitiva": bool(payload.get("alta_medica_definitiva", False)),
             
             "estado": payload.get("estado", "en_asesoramiento"),
             "situacion_paciente": payload.get("situacion_paciente") or "",
@@ -2097,8 +2105,10 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             "medico_derivador_id", "medico_derivador_nombre", "medico_derivador_matricula",
             "medico_cirujano_id", "medico_cirujano_nombre", "medico_cirujano_matricula",
             "practica_codigo", "practica_nombre", "cobertura_obra_social",
-            "monto_extra", "moneda_extra", "fecha_probable_cirugia",
-            "fecha_definitiva_cirugia", "estado", "situacion_paciente", "motivo_cancelacion",
+            "monto_extra", "moneda_extra", "monto_sena", "estado_pago", "medio_pago",
+            "fecha_probable_cirugia", "fecha_definitiva_cirugia", 
+            "control_postop_24h", "control_postop_7d", "alta_medica_definitiva",
+            "estado", "situacion_paciente", "motivo_cancelacion",
             "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at"
         ]
         
@@ -2106,10 +2116,12 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             if k in payload:
                 if k in ["medico_derivador_id", "medico_cirujano_id"]:
                     datos[k] = int(payload[k]) if payload[k] else None
-                elif k == "monto_extra":
+                elif k in ["monto_extra", "monto_sena"]:
                     datos[k] = float(payload[k]) if payload[k] is not None else 0.0
                 elif k == "moneda_extra":
                     datos[k] = str(payload[k]).upper()
+                elif k in ["control_postop_24h", "control_postop_7d", "alta_medica_definitiva"]:
+                    datos[k] = bool(payload[k])
                 else:
                     datos[k] = payload[k]
                     

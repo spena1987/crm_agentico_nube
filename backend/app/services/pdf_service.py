@@ -179,6 +179,28 @@ def formatear_monto_moneda(monto: float, moneda: str = "ARS") -> str:
         return f"USD {formateado}"
     return f"$ {formateado}"
 
+def parse_and_format_date(val: Any) -> str:
+    """
+    Parsea de forma segura cualquier formato de fecha (ISO, timestamp o texto) a formato argentino DD/MM/YYYY.
+    Evita cadenas como 'now()' o 'None'.
+    """
+    from datetime import date
+    if not val:
+        return date.today().strftime('%d/%m/%Y')
+    s = str(val).strip()
+    if s.lower() in ("now()", "now", "today", "none", "", "null"):
+        return date.today().strftime('%d/%m/%Y')
+    try:
+        clean_s = s.split("T")[0].split(" ")[0]
+        parts = clean_s.split("-")
+        if len(parts) == 3 and len(parts[0]) == 4:
+            return f"{parts[2]}/{parts[1]}/{parts[0]}"
+        if "/" in s:
+            return s
+        return clean_s
+    except Exception:
+        return date.today().strftime('%d/%m/%Y')
+
 def generar_pdf_presupuesto(
     presupuesto: dict, 
     paciente: dict, 
@@ -186,8 +208,8 @@ def generar_pdf_presupuesto(
     plantilla_override: Optional[dict] = None
 ) -> str:
     """
-    Genera un presupuesto en formato PDF estético y profesional utilizando ReportLab.
-    Aplica la configuración personalizada de la plantilla institucional y soporte multi-moneda.
+    Genera un presupuesto en formato PDF estético, limpio y profesional utilizando ReportLab.
+    Aplica diseño médico institucional, columnas proporcionales con SPAN y soporte multi-moneda independiente.
     Retorna el nombre del archivo PDF generado.
     """
     pdf_filename = f"presupuesto_{presupuesto['id']}.pdf"
@@ -212,7 +234,8 @@ def generar_pdf_presupuesto(
     terminos = plantilla.get("terminos_condiciones") or [
         "Este presupuesto tiene una validez de 30 días corridos a partir de la fecha de emisión.",
         "Los precios cotizados respetan la moneda especificada (Pesos ARS o Dólares USD).",
-        "La confirmación de turnos y prácticas queda supeditada a disponibilidad de agenda y confirmación de pago."
+        "La confirmación de turnos quirúrgicos, prácticas y estudios de alta complejidad queda supeditada a disponibilidad de agenda y confirmación de pago.",
+        "Formas de pago habilitadas: Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración."
     ]
     pie_pagina = plantilla.get("pie_pagina") or "Documento emitido electrónicamente por el sistema CRM Médico Nube."
     mostrar_firma = plantilla.get("mostrar_firma", True)
@@ -252,15 +275,6 @@ def generar_pdf_presupuesto(
         textColor=color_primario
     )
     
-    style_subinstitucion = ParagraphStyle(
-        name='SubInstStyle',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=9,
-        leading=12,
-        textColor=colors.HexColor('#64748B')
-    )
-    
     style_titulo_doc = ParagraphStyle(
         name='DocTitleStyle',
         parent=styles['Normal'],
@@ -271,22 +285,12 @@ def generar_pdf_presupuesto(
         textColor=color_secundario
     )
     
-    style_num_doc = ParagraphStyle(
-        name='DocNumStyle',
-        parent=styles['Normal'],
-        fontName='Helvetica',
-        fontSize=9,
-        leading=12,
-        alignment=2, # Derecha
-        textColor=colors.HexColor('#64748B')
-    )
-    
     style_seccion_header = ParagraphStyle(
         name='SecHeaderStyle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=9,
-        leading=12,
+        fontSize=8.5,
+        leading=11,
         textColor=color_primario
     )
     
@@ -294,26 +298,77 @@ def generar_pdf_presupuesto(
         name='TextStyle',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=9,
-        leading=13,
+        fontSize=8.5,
+        leading=12,
         textColor=colors.HexColor('#334155')
     )
     
-    style_texto_bold = ParagraphStyle(
-        name='TextBoldStyle',
+    style_texto_right = ParagraphStyle(
+        name='TextRightStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=8.5,
+        leading=12,
+        alignment=2,
+        textColor=colors.HexColor('#334155')
+    )
+    
+    style_texto_bold_right = ParagraphStyle(
+        name='TextBoldRightStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=12,
+        alignment=2,
+        textColor=colors.HexColor('#0F172A')
+    )
+    
+    style_total_label = ParagraphStyle(
+        name='TotalLabelStyle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
         fontSize=9,
+        leading=12,
+        alignment=2, # Derecha
+        textColor=color_primario
+    )
+    
+    style_total_amount = ParagraphStyle(
+        name='TotalAmountStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=10,
         leading=13,
-        textColor=colors.HexColor('#0F172A')
+        alignment=2, # Derecha
+        textColor=color_primario
     )
     
     style_encabezado_tabla = ParagraphStyle(
         name='TableHeaderStyle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=9,
+        fontSize=8.5,
         leading=11,
+        textColor=colors.white
+    )
+    
+    style_encabezado_tabla_right = ParagraphStyle(
+        name='TableHeaderRightStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=11,
+        alignment=2,
+        textColor=colors.white
+    )
+    
+    style_encabezado_tabla_center = ParagraphStyle(
+        name='TableHeaderCenterStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=11,
+        alignment=1,
         textColor=colors.white
     )
     
@@ -359,7 +414,7 @@ def generar_pdf_presupuesto(
         ('TOPPADDING', (0,0), (-1,-1), 0),
     ]))
     story.append(d_line)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
     
     # 2. Resumen de Monedas en los Items
     monedas_usadas = set(it.get("moneda", "ARS").upper() for it in items)
@@ -370,7 +425,10 @@ def generar_pdf_presupuesto(
     else:
         moneda_resumen = "Pesos Argentinos (ARS)"
         
-    fecha_emision = str(presupuesto.get('created_at', ''))[:10] or "2026-08-15"
+    fecha_emision = parse_and_format_date(presupuesto.get('created_at'))
+    estado_raw = str(presupuesto.get('estado', 'BORRADOR')).upper()
+    
+    color_estado = '#16A34A' if estado_raw == 'APROBADO' else ('#2563EB' if estado_raw == 'ENVIADO' else ('#DC2626' if estado_raw == 'RECHAZADO' else '#475569'))
     
     # Información del Paciente y Detalle de Emisión
     info_box = [
@@ -389,7 +447,7 @@ def generar_pdf_presupuesto(
             Paragraph(
                 f"<b>Fecha de Emisión:</b> {fecha_emision}<br/>"
                 f"<b>Validez:</b> {plantilla.get('validez_dias', 30)} días corridos<br/>"
-                f"<b>Estado:</b> <font color='#16A34A'><b>{presupuesto.get('estado', 'BORRADOR').upper()}</b></font><br/>"
+                f"<b>Estado:</b> <font color='{color_estado}'><b>{estado_raw}</b></font><br/>"
                 f"<b>Moneda Principal:</b> {moneda_resumen}", 
                 style_texto
             )
@@ -401,22 +459,23 @@ def generar_pdf_presupuesto(
         ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
         ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('TOPPADDING', (0,0), (-1,-1), 8),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('LEFTPADDING', (0,0), (-1,-1), 10),
         ('RIGHTPADDING', (0,0), (-1,-1), 10),
     ]))
     story.append(t_info)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 10))
     
-    # 3. Tabla de Prestaciones / Items Presupuestados
+    # 3. Tabla de Prestaciones / Items Presupuestados (Exact 540 pt)
+    # Anchos: Código (55) + Descripción (245) + Moneda (45) + P. Unit (80) + Cant (35) + Subtotal (80) = 540 pt
     table_data = [[
         Paragraph("<b>Código</b>", style_encabezado_tabla),
         Paragraph("<b>Prestación / Descripción Médica</b>", style_encabezado_tabla),
-        Paragraph("<b>Moneda</b>", style_encabezado_tabla),
-        Paragraph("<b>P. Unitario</b>", style_encabezado_tabla),
-        Paragraph("<b>Cant.</b>", style_encabezado_tabla),
-        Paragraph("<b>Subtotal</b>", style_encabezado_tabla)
+        Paragraph("<b>Moneda</b>", style_encabezado_tabla_center),
+        Paragraph("<b>P. Unitario</b>", style_encabezado_tabla_right),
+        Paragraph("<b>Cant.</b>", style_encabezado_tabla_center),
+        Paragraph("<b>Subtotal</b>", style_encabezado_tabla_right)
     ]]
     
     total_ars = 0.0
@@ -442,77 +501,93 @@ def generar_pdf_presupuesto(
             Paragraph(f"<font color='#2563EB'><b>{codigo}</b></font>", style_texto),
             Paragraph(nombre, style_texto),
             Paragraph(f"<b>{moneda_item}</b>", style_moneda_tag),
-            Paragraph(p_unit_str, style_texto),
-            Paragraph(str(cantidad), style_texto),
-            Paragraph(f"<b>{subtotal_str}</b>", style_texto_bold)
+            Paragraph(p_unit_str, style_texto_right),
+            Paragraph(str(cantidad), ParagraphStyle('CantCenter', parent=style_texto, alignment=1)),
+            Paragraph(f"<b>{subtotal_str}</b>", style_texto_bold_right)
         ])
         
-    # Totales
+    num_items = len(items)
+    
+    # Filas de Totales con SPAN de columnas 0 a 4
     if total_ars > 0 and total_usd > 0:
         table_data.append([
+            Paragraph("<b>TOTAL EN PESOS (ARS):</b>", style_total_label),
             "", "", "", "",
-            Paragraph("<b>TOTAL ARS:</b>", style_texto_bold),
-            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_institucion)
+            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount)
         ])
         table_data.append([
+            Paragraph("<b>TOTAL EN DÓLARES (USD):</b>", style_total_label),
             "", "", "", "",
-            Paragraph("<b>TOTAL USD:</b>", style_texto_bold),
-            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_institucion)
+            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount)
         ])
     elif total_usd > 0:
         table_data.append([
+            Paragraph("<b>TOTAL EN DÓLARES (USD):</b>", style_total_label),
             "", "", "", "",
-            Paragraph("<b>TOTAL:</b>", style_texto_bold),
-            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_institucion)
+            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount)
         ])
     else:
         table_data.append([
+            Paragraph("<b>TOTAL EN PESOS (ARS):</b>", style_total_label),
             "", "", "", "",
-            Paragraph("<b>TOTAL:</b>", style_texto_bold),
-            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_institucion)
+            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount)
         ])
         
-    t_items = Table(table_data, colWidths=[65, 215, 55, 75, 40, 90])
+    t_items = Table(table_data, colWidths=[55, 245, 45, 80, 35, 80])
     
     table_styles = [
         ('BACKGROUND', (0,0), (-1,0), color_primario),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('ALIGN', (2,0), (2,-1), 'CENTER'),
-        ('ALIGN', (4,0), (4,-1), 'CENTER'),
-        ('ALIGN', (3,0), (3,-1), 'RIGHT'),
-        ('ALIGN', (5,0), (5,-1), 'RIGHT'),
-        ('ROWBACKGROUNDS', (0,1), (-1,-1 if (total_ars == 0 or total_usd == 0) else -2), [colors.white, colors.HexColor('#F8FAFC')]),
-        ('GRID', (0,0), (-1,-2 if (total_ars > 0 and total_usd > 0) else -2), 0.5, colors.HexColor('#CBD5E1')),
-        ('TOPPADDING', (0,0), (-1,-1), 6),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-        ('LEFTPADDING', (0,0), (-1,-1), 6),
-        ('RIGHTPADDING', (0,0), (-1,-1), 6),
+        ('GRID', (0,0), (-1, num_items), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+        ('LEFTPADDING', (0,0), (-1,-1), 5),
+        ('RIGHTPADDING', (0,0), (-1,-1), 5),
     ]
     
-    # Línea divisoria sobre la fila de total
-    table_styles.append(('LINEABOVE', (4,-2 if (total_ars > 0 and total_usd > 0) else -1), (5,-1), 1.5, color_primario))
+    # Zebra striping en items
+    for r in range(1, num_items + 1):
+        bg_col = colors.white if r % 2 != 0 else colors.HexColor('#F8FAFC')
+        table_styles.append(('BACKGROUND', (0, r), (-1, r), bg_col))
+        
+    # Estilos y SPAN para las filas de totales
+    first_total_row = num_items + 1
+    total_rows_count = 2 if (total_ars > 0 and total_usd > 0) else 1
+    
+    for tr in range(first_total_row, first_total_row + total_rows_count):
+        table_styles.append(('SPAN', (0, tr), (4, tr)))
+        table_styles.append(('BACKGROUND', (0, tr), (-1, tr), colors.HexColor('#F8FAFC')))
+        table_styles.append(('ALIGN', (0, tr), (4, tr), 'RIGHT'))
+        table_styles.append(('ALIGN', (5, tr), (5, tr), 'RIGHT'))
+        table_styles.append(('TOPPADDING', (0, tr), (-1, tr), 6))
+        table_styles.append(('BOTTOMPADDING', (0, tr), (-1, tr), 6))
+        table_styles.append(('LINEABOVE', (0, tr), (-1, tr), 1.0, color_primario if tr == first_total_row else colors.HexColor('#E2E8F0')))
+        table_styles.append(('LINEBELOW', (0, tr), (-1, tr), 1.0, color_primario if tr == (first_total_row + total_rows_count - 1) else colors.HexColor('#E2E8F0')))
+        table_styles.append(('LINEBEFORE', (0, tr), (0, tr), 0.5, colors.HexColor('#E2E8F0')))
+        table_styles.append(('LINEAFTER', (5, tr), (5, tr), 0.5, colors.HexColor('#E2E8F0')))
     
     t_items.setStyle(TableStyle(table_styles))
     story.append(t_items)
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 10))
     
     # 4. Términos y Condiciones
-    condiciones_html = "<b>TÉRMINOS Y CONDICIONES DEL PRESUPUESTO:</b><br/>"
+    condiciones_html = f"<b><font color='{color_primario_hex}'>TÉRMINOS Y CONDICIONES DEL PRESUPUESTO:</font></b><br/>"
     for i, cond in enumerate(terminos, 1):
         condiciones_html += f"<b>{i}.</b> {cond}<br/>"
         
     t_cond = Table([[Paragraph(condiciones_html, style_texto)]], colWidths=[540])
     t_cond.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F1F5F9')),
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
         ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('TOPPADDING', (0,0), (-1,-1), 8),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('LINEBEFORE', (0,0), (-1,-1), 3.0, color_secundario), # Borde de acento lateral
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('LEFTPADDING', (0,0), (-1,-1), 10),
         ('RIGHTPADDING', (0,0), (-1,-1), 10),
     ]))
     story.append(t_cond)
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 12))
     
     # 5. Firma y Pie de Página (Mantener juntos para no desbordar)
     footer_elements = []
@@ -527,11 +602,11 @@ def generar_pdf_presupuesto(
         t_firma.setStyle(TableStyle([
             ('ALIGN', (0,0), (-1,-1), 'CENTER'),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 15),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING', (0,0), (-1,-1), 10),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
         ]))
         footer_elements.append(t_firma)
-        footer_elements.append(Spacer(1, 10))
+        footer_elements.append(Spacer(1, 8))
         
     if pie_pagina:
         footer_elements.append(
