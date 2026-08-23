@@ -104,6 +104,37 @@ class MediaService:
         }
 
     @staticmethod
+    def save_base64_media(
+        base64_str: str,
+        subfolder: str,
+        mime_type: str = "application/octet-stream",
+        original_filename: Optional[str] = None,
+        prefix: str = "wa"
+    ) -> Dict[str, Any]:
+        """
+        Decodifica un string base64 o Data URI y lo persiste en el disco.
+        """
+        import base64
+        if not base64_str:
+            raise ValueError("Base64 string vacío.")
+        
+        raw_b64 = base64_str
+        if "base64," in raw_b64:
+            header, raw_b64 = raw_b64.split("base64,", 1)
+            if not mime_type or mime_type == "application/octet-stream":
+                if "data:" in header and ";" in header:
+                    mime_type = header.split("data:")[1].split(";")[0]
+
+        data = base64.b64decode(raw_b64)
+        return MediaService.save_media_bytes(
+            data=data,
+            subfolder=subfolder,
+            mime_type=mime_type,
+            original_filename=original_filename,
+            prefix=prefix
+        )
+
+    @staticmethod
     def extract_and_download_media(client, message_protobuf, conversacion_id: str = "") -> Optional[Dict[str, Any]]:
         """
         Inspecciona un mensaje de WhatsApp (Protobuf), descarga su contenido binario 

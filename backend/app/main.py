@@ -501,10 +501,12 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
             if event_name in ["MESSAGES_UPDATE", "MESSAGES.UPDATE"]:
                 updates = data if isinstance(data, list) else [data]
                 for upd in updates:
-                    key = upd.get("key", {}) if isinstance(upd, dict) else {}
-                    msg_id = key.get("id")
-                    status_raw = upd.get("update", {}).get("status") if isinstance(upd, dict) else None
-                    if msg_id and status_raw and supabase:
+                    if not isinstance(upd, dict):
+                        continue
+                    key = upd.get("key", {}) if isinstance(upd.get("key"), dict) else {}
+                    msg_id = key.get("id") or upd.get("id")
+                    status_raw = upd.get("update", {}).get("status") if isinstance(upd.get("update"), dict) else upd.get("status")
+                    if msg_id and status_raw is not None and supabase:
                         status_label = "enviado"
                         s_str = str(status_raw).upper()
                         if s_str in ["3", "DELIVERY_ACK", "DELIVERED"]:
@@ -516,15 +518,16 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                             if m_res.data:
                                 row = m_res.data[0]
                                 meta = row.get("metadata_json") or {}
-                                meta["delivery_status"] = status_label
-                                supabase.table("mensajes").update({"metadata_json": meta}).eq("id", row["id"]).execute()
-                        except Exception:
-                            pass
+                                if isinstance(meta, dict):
+                                    meta["delivery_status"] = status_label
+                                    supabase.table("mensajes").update({"metadata_json": meta}).eq("id", row["id"]).execute()
+                        except Exception as upd_err:
+                            logger.warning(f"Error actualizando delivery_status para {msg_id}: {upd_err}")
                 return {"status": "processed", "event": event_name}
 
             # 1.2 Mensaje entrante de WhatsApp (MESSAGES_UPSERT)
             if event_name in ["MESSAGES_UPSERT", "MESSAGES.UPSERT"]:
-                key = data.get("key", {})
+                key = data.get("key", {}) if isinstance(data.get("key"), dict) else {}
                 from_me = key.get("fromMe", False)
                 if from_me:
                     return {"status": "ignored", "reason": "outgoing_message"}
@@ -535,22 +538,137 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                 msg_content = data.get("message", {}) or {}
                 
                 texto = ""
-                message_type = "text"
+                message_type = "texto"
                 media_info = None
+                base64_data = data.get("base64")
+
+                # REACCION A UN MENSAJE
+                if isinstance(msg_content, dict) and "reactionMessage" in msg_content:
+                    react = msg_content.get("reactionMessage", {})
+                    target_id = react.get("key", {}).get("id")
+                    emoji = react.get("text", "")
+                    if target_id and emoji and supabase:
+                        try:
+                            t_res = supabase.table("mensajes").select("id, metadata_json").filter("metadata_json->>whatsapp_message_id", "eq", target_id).execute()
+                            if t_res.data:
+                                t_row = t_res.data[0]
+                                t_meta = t_row.get("metadata_json") or {}
+                                if isinstance(t_meta, dict):
+                                    reactions_list = t_meta.get("reactions") or []
+                                    reactions_list.append({
+                                        "emisor": "paciente",
+                                        "emoji": emoji,
+                                        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                    })
+                                    t_meta["reactions"] = reactions_list
+                                    supabase.table("mensajes").update({"metadata_json": t_meta}).eq("id", t_row["id"]).execute()
+                        except Exception as re_err:
+                            logger.warning(f"Error procesando reacción en webhook: {re_err}")
+                    return {"status": "processed", "event": "reaction"}
 
                 if isinstance(msg_content, dict):
+                    # TEXTO SIMPLE
                     if "conversation" in msg_content:
                         texto = msg_content.get("conversation", "")
+                        message_type = "texto"
                     elif "extendedTextMessage" in msg_content:
                         texto = msg_content.get("extendedTextMessage", {}).get("text", "")
+                        message_type = "texto"
+
+                    # IMAGEN
                     elif "imageMessage" in msg_content:
-                        message_type = "image"
-                        texto = msg_content.get("imageMessage", {}).get("caption", "")
-                    elif "documentMessage" in msg_content:
-                        message_type = "document"
-                        texto = msg_content.get("documentMessage", {}).get("caption", "")
+                        message_type = "imagen"
+                        img_data = msg_content.get("imageMessage", {})
+                        caption = img_data.get("caption", "")
+                        texto = caption
+                        mime = img_data.get("mimetype", "image/jpeg")
+                        b64 = base64_data or img_data.get("base64")
+                        media_info = {"tipo": "imagen", "mime_type": mime, "caption": caption}
+                        if b64:
+                            try:
+                                saved = media_service.save_base64_media(b64, "images", mime, "imagen.jpg")
+                                media_info.update(saved)
+                            except Exception as e:
+                                logger.warning(f"Error guardando imagen base64: {e}")
+
+                    # AUDIO / NOTA DE VOZ
                     elif "audioMessage" in msg_content:
                         message_type = "audio"
+                        aud_data = msg_content.get("audioMessage", {})
+                        mime = aud_data.get("mimetype", "audio/ogg; codecs=opus")
+                        is_ptt = aud_data.get("ptt", True)
+                        b64 = base64_data or aud_data.get("base64")
+                        media_info = {"tipo": "audio", "mime_type": mime, "is_voice_note": bool(is_ptt)}
+                        if b64:
+                            try:
+                                saved = media_service.save_base64_media(b64, "audio", mime, "audio.ogg")
+                                media_info.update(saved)
+                            except Exception as e:
+                                logger.warning(f"Error guardando audio base64: {e}")
+
+                    # STICKER
+                    elif "stickerMessage" in msg_content:
+                        message_type = "sticker"
+                        stk_data = msg_content.get("stickerMessage", {})
+                        mime = stk_data.get("mimetype", "image/webp")
+                        b64 = base64_data or stk_data.get("base64")
+                        media_info = {"tipo": "sticker", "mime_type": mime}
+                        if b64:
+                            try:
+                                saved = media_service.save_base64_media(b64, "stickers", mime, "sticker.webp")
+                                media_info.update(saved)
+                            except Exception as e:
+                                logger.warning(f"Error guardando sticker base64: {e}")
+
+                    # DOCUMENTO
+                    elif "documentMessage" in msg_content:
+                        message_type = "documento"
+                        doc_data = msg_content.get("documentMessage", {})
+                        filename = doc_data.get("fileName", "Documento.pdf")
+                        caption = doc_data.get("caption", "")
+                        mime = doc_data.get("mimetype", "application/pdf")
+                        b64 = base64_data or doc_data.get("base64")
+                        media_info = {"tipo": "documento", "mime_type": mime, "file_name": filename, "caption": caption}
+                        if b64:
+                            try:
+                                saved = media_service.save_base64_media(b64, "documents", mime, filename)
+                                media_info.update(saved)
+                            except Exception as e:
+                                logger.warning(f"Error guardando documento base64: {e}")
+
+                    # VIDEO
+                    elif "videoMessage" in msg_content:
+                        message_type = "video"
+                        vid_data = msg_content.get("videoMessage", {})
+                        caption = vid_data.get("caption", "")
+                        mime = vid_data.get("mimetype", "video/mp4")
+                        b64 = base64_data or vid_data.get("base64")
+                        media_info = {"tipo": "video", "mime_type": mime, "caption": caption}
+                        if b64:
+                            try:
+                                saved = media_service.save_base64_media(b64, "videos", mime, "video.mp4")
+                                media_info.update(saved)
+                            except Exception as e:
+                                logger.warning(f"Error guardando video base64: {e}")
+
+                    # UBICACION
+                    elif "locationMessage" in msg_content:
+                        message_type = "ubicacion"
+                        loc_data = msg_content.get("locationMessage", {})
+                        lat = loc_data.get("degreesLatitude")
+                        lng = loc_data.get("degreesLongitude")
+                        name = loc_data.get("name", "Ubicación")
+                        media_info = {"tipo": "ubicacion", "latitud": lat, "longitud": lng, "nombre": name, "maps_url": f"https://www.google.com/maps?q={lat},{lng}"}
+                        texto = f"📍 {name}"
+
+                    # CONTACTO
+                    elif "contactMessage" in msg_content or "contactsArrayMessage" in msg_content:
+                        message_type = "contacto"
+                        c_data = msg_content.get("contactMessage", {})
+                        c_name = c_data.get("displayName", "Contacto")
+                        c_vcard = c_data.get("vcard", "")
+                        media_info = {"tipo": "contacto", "nombre": c_name, "vcard": c_vcard}
+                        texto = f"👤 {c_name}"
 
                 phone_raw = remote_jid.split("@")[0].split(":")[0] if remote_jid else ""
                 clean_phone = normalize_phone_number(phone_raw)
@@ -564,6 +682,7 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                     name=push_name,
                     text=texto or "",
                     message_type=message_type,
+                    media=media_info,
                     timestamp=timestamp
                 )
             else:
@@ -637,14 +756,32 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
         meta = {
             "whatsapp_message_id": payload.message_id,
             "remote_jid": incoming_jid,
-            "gateway": "evolution_api_v2"
+            "gateway": "evolution_api_v2",
+            "tipo": payload.message_type
         }
         if payload.media and isinstance(payload.media, dict):
             meta.update(payload.media)
 
         caption_texto = payload.media.get("caption") if (payload.media and isinstance(payload.media, dict)) else None
-        tipo_label = payload.media.get("tipo", payload.message_type) if (payload.media and isinstance(payload.media, dict)) else payload.message_type
-        contenido_final = texto or caption_texto or f"[{tipo_label.upper()}]"
+        
+        # Etiqueta amigable de contenido para la vista previa en la bandeja de chats
+        if payload.message_type == "imagen":
+            contenido_final = caption_texto or "📷 [Imagen]"
+        elif payload.message_type == "audio":
+            contenido_final = "🎵 [Nota de Voz]"
+        elif payload.message_type == "sticker":
+            contenido_final = "💟 [Sticker]"
+        elif payload.message_type == "documento":
+            doc_name = payload.media.get("file_name", "Documento") if payload.media else "Documento"
+            contenido_final = caption_texto or f"📄 [{doc_name}]"
+        elif payload.message_type == "video":
+            contenido_final = caption_texto or "🎥 [Video]"
+        elif payload.message_type == "ubicacion":
+            contenido_final = texto or "📍 [Ubicación]"
+        elif payload.message_type == "contacto":
+            contenido_final = texto or "👤 [Contacto]"
+        else:
+            contenido_final = texto or "[MENSAJE]"
 
         created_at_iso = None
         if payload.timestamp and payload.timestamp > 0:

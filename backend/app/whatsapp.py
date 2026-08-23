@@ -85,10 +85,13 @@ class WhatsAppManager:
                     "enabled": True,
                     "url": self.webhook_url,
                     "byEvents": False,
-                    "base64": False,
+                    "base64": True,
                     "events": [
                         "MESSAGES_UPSERT",
                         "MESSAGES_UPDATE",
+                        "MESSAGES_EDITED",
+                        "MESSAGES_DELETE",
+                        "SEND_MESSAGE",
                         "CONNECTION_UPDATE",
                         "QRCODE_UPDATED"
                     ]
