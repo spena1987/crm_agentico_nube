@@ -57,6 +57,7 @@ from app.db import (
     eliminar_asesoria_quirurgica,
     get_presupuestos_by_paciente,
     cambiar_estado_presupuesto,
+    vincular_presupuesto_a_asesoria,
     crear_presupuesto_rapido,
     get_evoluciones_by_asesoria,
     crear_evolucion_asesoria,
@@ -2737,6 +2738,19 @@ def actualizar_estado_presupuesto(presupuesto_id: str, payload: Dict[str, Any] =
         }
     except Exception as e:
         logger.error(f"Error al actualizar estado del presupuesto {presupuesto_id}: {e}")
+@app.put("/api/presupuestos/{presupuesto_id}/vincular-asesoria")
+def vincular_presupuesto_asesoria_api(presupuesto_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Asocia bidireccionalmente un presupuesto existente con un caso quirúrgico.
+    """
+    asesoria_id = payload.get("asesoria_id")
+    if not asesoria_id:
+        raise HTTPException(status_code=400, detail="El ID de la asesoría quirúrgica es obligatorio.")
+    try:
+        presupuesto = vincular_presupuesto_a_asesoria(presupuesto_id, asesoria_id)
+        return {"success": True, "mensaje": "Presupuesto vinculado exitosamente al caso quirúrgico.", "presupuesto": presupuesto}
+    except Exception as e:
+        logger.error(f"Error al vincular presupuesto {presupuesto_id} a asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/presupuestos/crear-rapido")

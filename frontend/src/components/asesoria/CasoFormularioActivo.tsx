@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import {
+  Link2,
   Stethoscope,
   UserCheck,
   Calendar,
@@ -140,6 +141,9 @@ export default function CasoFormularioActivo({
   const [practicasNomenclador, setPracticasNomenclador] = useState<PracticaNomenclador[]>([])
   const [buscandoPractica, setBuscandoPractica] = useState(false)
   const [mostrarDropdownPractica, setMostrarDropdownPractica] = useState(false)
+
+  // Selector colapsable de presupuestos históricos del paciente
+  const [mostrarOtrosPresupuestos, setMostrarOtrosPresupuestos] = useState(false)
 
   // Económico y Señas
   const [montoExtra, setMontoExtra] = useState<number>(caso.monto_extra || 0)
@@ -368,14 +372,15 @@ export default function CasoFormularioActivo({
     onGuardar(payload)
   }
 
+  // 1. Presupuestos emitidos estrictamente para este caso quirúrgico
   const presupuestosDelCaso = useMemo(() => {
     return presupuestos.filter((p) => p.asesoria_id === caso.id)
   }, [presupuestos, caso.id])
 
-  const todosPresupuestosVisibles = useMemo(() => {
-    if (presupuestosDelCaso.length > 0) return presupuestosDelCaso
-    return presupuestos
-  }, [presupuestosDelCaso, presupuestos])
+  // 2. Otros presupuestos del paciente no asignados a esta cirugía
+  const otrosPresupuestosPaciente = useMemo(() => {
+    return presupuestos.filter((p) => p.asesoria_id !== caso.id)
+  }, [presupuestos, caso.id])
 
   const presupuestoVinculado = presupuestos.find((p) => p.id === presupuestoId)
 
@@ -702,12 +707,12 @@ export default function CasoFormularioActivo({
 
           {/* Card: Control de Presupuesto, Cotización y Seña */}
           <div className="space-y-3">
-            {/* Presupuesto Oficial Vinculado */}
+            {/* Presupuesto Oficial Vinculado (Aislamiento Estricto por Caso) */}
             <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-blue-500/20 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
                   <Receipt size={14} />
-                  Presupuestos Oficiales del Caso ({todosPresupuestosVisibles.length})
+                  Presupuestos Oficiales del Caso ({presupuestosDelCaso.length})
                 </div>
                 <button
                   type="button"
@@ -723,10 +728,10 @@ export default function CasoFormularioActivo({
                 </button>
               </div>
 
-              {/* Listado de Presupuestos Emitidos */}
-              {todosPresupuestosVisibles.length > 0 ? (
+              {/* Listado Exclusivo de Presupuestos de Este Caso */}
+              {presupuestosDelCaso.length > 0 ? (
                 <div className="space-y-2">
-                  {todosPresupuestosVisibles.map((p) => {
+                  {presupuestosDelCaso.map((p) => {
                     const isPrincipal = p.id === presupuestoId
                     return (
                       <div
@@ -857,19 +862,25 @@ export default function CasoFormularioActivo({
                   })}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-400">
-                    No hay presupuestos PDF emitidos aún para este procedimiento. Puedes emitir una cotización formal o ingresar un monto directo:
-                  </p>
+                <div className="space-y-3">
+                  <div className="p-3 rounded-xl bg-neutral-950/60 border border-dashed border-gray-800 text-center py-3.5 space-y-1">
+                    <p className="text-xs text-gray-400">
+                      No hay presupuestos oficiales emitidos aún para este procedimiento.
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      Puedes emitir una cotización membretada en PDF o fijar un monto estimado directo:
+                    </p>
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <div className="flex-1">
                       <input
                         type="number"
                         min="0"
                         value={montoExtra || ''}
-                        placeholder="Monto cotizado directo..."
+                        placeholder="Monto cotizado estimado directo..."
                         onChange={(e) => setMontoExtra(parseFloat(e.target.value) || 0)}
-                        className="w-full px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-white font-mono"
+                        className="w-full px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-xl text-white font-mono focus:border-blue-500 focus:outline-none"
                       />
                     </div>
                     <select
@@ -881,6 +892,61 @@ export default function CasoFormularioActivo({
                       <option value="USD">USD ($)</option>
                     </select>
                   </div>
+                </div>
+              )}
+
+              {/* Selector Opcional: Vincular presupuesto previo del paciente */}
+              {otrosPresupuestosPaciente.length > 0 && (
+                <div className="pt-2 border-t border-[var(--border)]/60">
+                  <button
+                    type="button"
+                    onClick={() => setMostrarOtrosPresupuestos(!mostrarOtrosPresupuestos)}
+                    className="text-[11px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1.5 transition-colors"
+                  >
+                    <Link2 size={12} />
+                    <span>{mostrarOtrosPresupuestos ? '▲ Ocultar cotizaciones previas del paciente' : `🔗 Vincular cotización previa del paciente (${otrosPresupuestosPaciente.length})`}</span>
+                  </button>
+
+                  {mostrarOtrosPresupuestos && (
+                    <div className="mt-2 space-y-1.5 p-2.5 rounded-xl bg-neutral-950 border border-blue-500/20 max-h-48 overflow-y-auto">
+                      <p className="text-[10px] text-gray-400 mb-1">
+                        Cotizaciones emitidas previamente al paciente que puedes asignar a esta cirugía:
+                      </p>
+                      {otrosPresupuestosPaciente.map((op) => (
+                        <div key={op.id} className="p-2 rounded-lg bg-neutral-900/90 border border-[var(--border)] flex items-center justify-between gap-2 text-xs hover:border-gray-700">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-gray-200">#{op.id.slice(0, 8)}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 uppercase font-bold">{op.estado}</span>
+                              <span className="text-[10px] text-gray-400">{new Date(op.created_at).toLocaleDateString('es-AR')}</span>
+                            </div>
+                            <div className="text-[11px] font-mono text-emerald-400 font-bold mt-0.5">
+                              Total: ${Number(op.total_ars || op.total || 0).toLocaleString('es-AR')} {Number(op.total_usd || 0) > 0 ? `| USD $${Number(op.total_usd).toLocaleString('es-AR')}` : ''}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {op.pdf_url && (
+                              <a href={op.pdf_url} target="_blank" rel="noreferrer" className="p-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded text-xs" title="Ver PDF">
+                                <Download size={12} />
+                              </a>
+                            )}
+                            {onVincularPresupuesto && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onVincularPresupuesto(op)
+                                  setMostrarOtrosPresupuestos(false)
+                                }}
+                                className="px-2 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 rounded text-[10px] font-bold"
+                              >
+                                + Asignar a este Caso
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

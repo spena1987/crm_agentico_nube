@@ -437,12 +437,35 @@ export default function ItemCasoQuirurgicoAcordeon({
               onEliminar={handleEliminarCaso}
               onAprobarRechazarPresupuesto={handleAprobarRechazarPresupuesto}
               onDesvincularPresupuesto={() => handleGuardarCambios({ presupuesto_id: null })}
-              onVincularPresupuesto={(pres) => {
-                handleGuardarCambios({
-                  presupuesto_id: pres.id,
-                  monto_extra: pres.total,
-                  moneda_extra: pres.total_usd && pres.total_usd > 0 ? 'USD' : 'ARS'
-                })
+              onVincularPresupuesto={async (pres) => {
+                try {
+                  setGuardando(true)
+                  try {
+                    await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/vincular-asesoria`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ asesoria_id: caso.id })
+                    })
+                  } catch (e) {
+                    await supabase.from('presupuestos').update({ asesoria_id: caso.id }).eq('id', pres.id)
+                  }
+
+                  setPresupuestos((prev) =>
+                    prev.map((p) => (p.id === pres.id ? { ...p, asesoria_id: caso.id } : p))
+                  )
+
+                  const montoTotal = Number(pres.total_ars || pres.total || 0)
+                  const moneda = pres.total_usd && pres.total_usd > 0 ? 'USD' : 'ARS'
+                  await handleGuardarCambios({
+                    presupuesto_id: pres.id,
+                    monto_extra: moneda === 'USD' ? Number(pres.total_usd) : montoTotal,
+                    moneda_extra: moneda
+                  })
+                } catch (err) {
+                  console.error('Error al vincular presupuesto:', err)
+                } finally {
+                  setGuardando(false)
+                }
               }}
               onEnviarPresupuestoWhatsApp={(pres) => setPresupuestoParaEnviarWA(pres)}
             />

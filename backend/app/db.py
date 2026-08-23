@@ -2243,6 +2243,37 @@ def cambiar_estado_presupuesto(presupuesto_id: str, nuevo_estado: str, asesoria_
         logger.error(f"Error al cambiar estado del presupuesto {presupuesto_id}: {e}")
         raise
 
+def vincular_presupuesto_a_asesoria(presupuesto_id: str, asesoria_id: str) -> Dict[str, Any]:
+    """
+    Vincula bidireccionalmente un presupuesto existente con una asesoría quirúrgica.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        # 1. Actualizar asesoria_id en el presupuesto
+        p_resp = supabase.table("presupuestos").update({"asesoria_id": asesoria_id}).eq("id", presupuesto_id).execute()
+        if not p_resp.data:
+            raise Exception(f"No se encontró el presupuesto {presupuesto_id}.")
+        pres = p_resp.data[0]
+        
+        # 2. Actualizar presupuesto_id y monto en la asesoría
+        monto = float(pres.get("total_ars") or pres.get("total") or 0.0)
+        moneda = "USD" if (pres.get("total_usd") and pres.get("total_usd") > 0) else "ARS"
+        if moneda == "USD":
+            monto = float(pres.get("total_usd") or 0.0)
+
+        supabase.table("asesorias_quirurgicas").update({
+            "presupuesto_id": presupuesto_id,
+            "monto_extra": monto,
+            "moneda_extra": moneda,
+            "updated_at": "now()"
+        }).eq("id", asesoria_id).execute()
+
+        return pres
+    except Exception as e:
+        logger.error(f"Error al vincular presupuesto {presupuesto_id} a asesoría {asesoria_id}: {e}")
+        raise
+
 def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
     """
     Crea un presupuesto con ítems, calcula el total, genera el PDF membretado oficial y vincula al paciente/asesoría.
