@@ -18,6 +18,7 @@ import {
   Filter
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { BACKEND_URL } from '@/lib/api'
 
 export interface ItemPresupuestoDetalle {
   id?: string
@@ -61,8 +62,6 @@ interface ModalHistorialPresupuestosPacienteProps {
   onEnviarPresupuestoWhatsApp?: (presupuesto: PresupuestoPaciente) => void
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'
-
 export default function ModalHistorialPresupuestosPaciente({
   isOpen,
   onClose,
@@ -75,6 +74,7 @@ export default function ModalHistorialPresupuestosPaciente({
   onEnviarPresupuestoWhatsApp
 }: ModalHistorialPresupuestosPacienteProps) {
   const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
+  const [casosLocales, setCasosLocales] = useState<CasoQuirurgicoSimple[]>(casosQuirurgicos)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'aprobado' | 'enviado' | 'rechazado'>('todos')
@@ -83,34 +83,72 @@ export default function ModalHistorialPresupuestosPaciente({
   const [actualizandoEstadoId, setActualizandoEstadoId] = useState<string | null>(null)
   const [eliminandoId, setEliminandoId] = useState<string | null>(null)
 
-  // Cargar presupuestos del paciente
-  const fetchPresupuestos = async () => {
+  // Cargar Presupuestos y Casos Quirúrgicos de forma ultra resiliente (API + Fallback Supabase)
+  const fetchDatos = async () => {
     if (!pacienteId) return
     try {
       setLoading(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/presupuestos/paciente/${pacienteId}`)
-      const data = await res.json()
+      let listaPresupuestos: PresupuestoPaciente[] = []
 
-      if (res.ok && data.success) {
-        setPresupuestos(data.presupuestos || [])
-      } else {
-        // Fallback Supabase
+      // 1. Intentar consultar Backend API
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/pacientes/${pacienteId}/presupuestos`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.success && Array.isArray(data.presupuestos)) {
+            listaPresupuestos = data.presupuestos
+          }
+        }
+      } catch (apiErr) {
+        console.warn('API backend no disponible en este momento, consultando base de datos Supabase:', apiErr)
+      }
+
+      // 2. Si la API no respondió, consultar Supabase directamente con JOIN a servicios_precios
+      if (listaPresupuestos.length === 0) {
         const { data: sbData, error: sbErr } = await supabase
           .from('presupuestos')
-          .select('*, items_presupuesto(*)')
+          .select('*, items_presupuesto(*, servicios_precios(nombre_prestacion, codigo))')
           .eq('paciente_id', pacienteId)
           .order('created_at', { ascending: false })
 
-        if (!sbErr && sbData) {
-          setPresupuestos(sbData as PresupuestoPaciente[])
-        } else {
-          setPresupuestos([])
+        if (!sbErr && sbData && sbData.length > 0) {
+          listaPresupuestos = sbData.map((p: any) => {
+            const items = (p.items_presupuesto || []).map((it: any) => ({
+              id: it.id,
+              nombre: it.nombre || it.servicios_precios?.nombre_prestacion || 'Prestación médica',
+              cantidad: it.cantidad || 1,
+              precio_unitario: Number(it.precio_unitario || 0),
+              subtotal: Number(it.subtotal || 0),
+              moneda: it.moneda || 'ARS'
+            }))
+
+            return {
+              ...p,
+              items_presupuesto: items
+            }
+          })
         }
       }
+
+      setPresupuestos(listaPresupuestos)
+
+      // 3. Cargar / Sincronizar Casos Quirúrgicos del paciente
+      const { data: qxData, error: qxErr } = await supabase
+        .from('asesorias_quirurgicas')
+        .select('id, practica_nombre, practica_codigo, estado')
+        .eq('paciente_id', pacienteId)
+        .order('created_at', { ascending: false })
+
+      if (!qxErr && qxData && qxData.length > 0) {
+        setCasosLocales(qxData as CasoQuirurgicoSimple[])
+      } else if (casosQuirurgicos.length > 0) {
+        setCasosLocales(casosQuirurgicos)
+      }
+
     } catch (err: any) {
-      console.error('Error al cargar presupuestos:', err)
-      setError('No se pudieron cargar los presupuestos.')
+      console.error('Error general al cargar presupuestos:', err)
+      setError('Ocurrió un problema al cargar los presupuestos.')
     } finally {
       setLoading(false)
     }
@@ -118,14 +156,14 @@ export default function ModalHistorialPresupuestosPaciente({
 
   useEffect(() => {
     if (isOpen && pacienteId) {
-      fetchPresupuestos()
+      fetchDatos()
     }
   }, [isOpen, pacienteId])
 
   // Mapeo rápido de asesoria_id a nombre del caso
   const mapaCasos = useMemo(() => {
     const mapa: Record<string, { titulo: string; codigo?: string; index: number }> = {}
-    casosQuirurgicos.forEach((c, idx) => {
+    casosLocales.forEach((c, idx) => {
       mapa[c.id] = {
         titulo: c.practica_nombre || 'Cirugía Programada',
         codigo: c.practica_codigo,
@@ -133,7 +171,7 @@ export default function ModalHistorialPresupuestosPaciente({
       }
     })
     return mapa
-  }, [casosQuirurgicos])
+  }, [casosLocales])
 
   // KPIs Financieros
   const kpis = useMemo(() => {
@@ -334,7 +372,7 @@ export default function ModalHistorialPresupuestosPaciente({
               ))}
             </div>
 
-            {casosQuirurgicos.length > 0 && (
+            {casosLocales.length > 0 && (
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] font-bold text-gray-400">Filtrar Cirugía:</span>
                 <select
@@ -343,7 +381,7 @@ export default function ModalHistorialPresupuestosPaciente({
                   className="px-2.5 py-1 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-gray-300 font-semibold focus:outline-none focus:border-blue-500"
                 >
                   <option value="todos">Todos los procedimientos</option>
-                  {casosQuirurgicos.map((c, idx) => (
+                  {casosLocales.map((c, idx) => (
                     <option key={c.id} value={c.id}>
                       Cirugía #{idx + 1}: {c.practica_nombre || 'Sin título'}
                     </option>

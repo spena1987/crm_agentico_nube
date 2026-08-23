@@ -1036,24 +1036,41 @@ class GeclisaClient:
         }
         
         from datetime import datetime
+        hoy_str = datetime.now().strftime("%Y-%m-%d")
         if fecha_iso:
             fecha_parte = fecha_iso.split("T")[0]
+            if fecha_parte > hoy_str:
+                fecha_parte = hoy_str
         else:
-            fecha_parte = datetime.now().strftime("%Y-%m-%d")
+            fecha_parte = hoy_str
             
         fecha_str = f"{fecha_parte}T00:00:00"
         hora_int = 0
         
+        import unicodedata
+        def _clean_str(s: str, max_len: int = 80) -> str:
+            if not s:
+                return ""
+            nfkd = unicodedata.normalize('NFKD', str(s))
+            ascii_text = "".join([c for c in nfkd if not unicodedata.combining(c)])
+            return ascii_text.strip()[:max_len]
+
+        titulo_limpio = _clean_str(titulo or filename, 48)
+        obs_limpia = _clean_str(observaciones or "", 120)
+        fn_limpio = _clean_str(filename, 48)
+        if not fn_limpio.lower().endswith(".pdf") and filename.lower().endswith(".pdf"):
+            fn_limpio += ".pdf"
+            
         content_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
         files = {
-            "Archivo": (filename, file_bytes, content_type)
+            "Archivo": (fn_limpio, file_bytes, content_type)
         }
         data = {
             "FichaId": str(int(ficha_id)),
             "Fecha": fecha_str,
             "Hora": str(hora_int),
-            "Titulo": (titulo or filename).strip(),
-            "Observaciones": (observaciones or "").strip(),
+            "Titulo": titulo_limpio,
+            "Observaciones": obs_limpia,
             "ClaseId": str(int(clase_id)),
             "AmId": "1"
         }

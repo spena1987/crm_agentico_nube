@@ -3769,6 +3769,37 @@ def _resolver_ficha_geclisa_paciente(paciente: Dict[str, Any]) -> Optional[int]:
             logger.warning(f"No se pudo resolver Ficha Geclisa por DNI {dni}: {e}")
     return None
 
+def _resolver_pre_id_geclisa(cirujano_nombre: Optional[str], cirujano_id: Optional[Any] = None) -> Optional[int]:
+    """
+    Resuelve el ID de Prestador (PreId) en Geclisa para asociar el archivo en la historia clínica.
+    Si cirujano_id ya es numérico, lo utiliza. Si no, busca por nombre en Geclisa.
+    Si no encuentra coincidencia exacta, retorna None para asegurar que Geclisa acepte el archivo sin error 400.
+    """
+    if cirujano_id:
+        try:
+            val = int(cirujano_id)
+            if val < 100000:
+                return val
+        except (ValueError, TypeError):
+            pass
+            
+    if cirujano_nombre:
+        try:
+            from app.services.geclisa_client import geclisa_client
+            partes = cirujano_nombre.replace("Dr.", "").replace("Dra.", "").replace("Dr", "").replace("Dra", "").strip().split()
+            query = partes[0].rstrip(",") if partes else cirujano_nombre
+            matches = geclisa_client.buscar_prestadores(query)
+            if matches:
+                # Priorizar coincidencia más cercana
+                for m in matches:
+                    if query.lower() in m.get("nombre", "").lower():
+                        return int(m["pre_id"])
+                return int(matches[0]["pre_id"])
+        except Exception as e:
+            logger.warning(f"Aviso resolviendo pre_id para cirujano '{cirujano_nombre}': {e}")
+            
+    return None
+
 def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
     """
     Sube el Consentimiento Informado firmado en PDF a la Historia Clínica en Geclisa.
@@ -3777,9 +3808,10 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         return {"success": False, "error": "Sin conexión a la base de datos."}
     try:
         from pathlib import Path
+        import os
         from datetime import datetime, timezone
         from app.services.geclisa_client import geclisa_client
-        from app.services.pdf_service import generar_pdf_consentimiento
+        from app.services.pdf_service import PDF_DIR, generar_pdf_consentimiento
         
         t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*)").eq("id", turno_id).limit(1).execute()
         if not t_resp.data:
@@ -3795,20 +3827,16 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
                 "error": f"El paciente '{paciente.get('nombre')}' no tiene Ficha ID de Geclisa ni pudo localizarse por DNI ({paciente.get('dni') or 'sin DNI'})."
             }
             
-        # 1. Localizar o generar el PDF de consentimiento
+        # 1. Localizar o regenerar el PDF del Consentimiento
         pdf_rel = turno.get("consentimiento_pdf_url") or f"/static/consentimiento_{turno_id}.pdf"
-        pdf_path = Path("backend") / pdf_rel.lstrip("/")
+        pdf_filename = os.path.basename(pdf_rel)
+        pdf_path = Path(PDF_DIR) / pdf_filename
+        
         if not pdf_path.exists():
-            pdf_path = Path(pdf_rel.lstrip("/"))
-            
-        if not pdf_path.exists():
-            # Si no existe en disco, intentar generarlo si fue firmado
             firma_img = turno.get("consentimiento_firma_img")
             if firma_img:
-                pdf_filename = generar_pdf_consentimiento(turno, paciente, firma_img)
-                pdf_path = Path("backend/static") / pdf_filename
-                if not pdf_path.exists():
-                    pdf_path = Path("static") / pdf_filename
+                generated_fn = generar_pdf_consentimiento(turno, paciente, firma_img)
+                pdf_path = Path(PDF_DIR) / generated_fn
             else:
                 return {"success": False, "error": "El consentimiento aún no ha sido firmado digitalmente por el paciente."}
                 
@@ -3821,28 +3849,24 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         # 2. Preparar metadatos para Geclisa
         practica_nom = turno.get("practica_nombre") or "Cirugía Oftalmológica"
         ojo = turno.get("ojo") or ""
-        titulo = f"Consentimiento Informado - {practica_nom}"
+        titulo = f"Consentimiento - {practica_nom}"
         if ojo:
             titulo += f" ({ojo})"
+        titulo = titulo[:45]
             
         firmado_at = turno.get("consentimiento_firmado_at") or datetime.now().isoformat()
         obs = f"Consentimiento firmado digitalmente. Paciente: {paciente.get('nombre')} - Cirujano: {turno.get('cirujano_nombre') or 'No especificado'}."
         
-        cirujano_id = None
-        if turno.get("cirujano_id"):
-            try:
-                cirujano_id = int(turno["cirujano_id"])
-            except Exception:
-                pass
+        cirujano_id_geclisa = _resolver_pre_id_geclisa(turno.get("cirujano_nombre"), turno.get("cirujano_id"))
                 
-        # 3. Invocar API de Geclisa
+        # 3. Invocar API de Geclisa (pre_id=None para asociar via usuario API sin conflicto 400)
         res_g = geclisa_client.adjuntar_archivo_historia_clinica(
             ficha_id=ficha_id,
             file_bytes=file_bytes,
             filename=f"Consentimiento_{paciente.get('nombre', 'Paciente').replace(' ', '_')}_{turno_id[:8]}.pdf",
             titulo=titulo,
             observaciones=obs,
-            pre_id=cirujano_id,
+            pre_id=None,
             clase_id=1,
             fecha_iso=firmado_at[:19] if firmado_at else None
         )
@@ -3859,7 +3883,8 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             "consentimiento_geclisa_sincronizado_at": ahora_iso,
             "updated_at": ahora_iso
         }
-        supabase.table("turnos_quirofano").update(upd_data).eq("id", turno_id).execute()
+        res_u = supabase.table("turnos_quirofano").update(upd_data).eq("id", turno_id).execute()
+        turno_upd = res_u.data[0] if res_u.data else {**turno, **upd_data}
         if turno.get("asesoria_id"):
             supabase.table("asesorias_quirurgicas").update(upd_data).eq("id", turno["asesoria_id"]).execute()
             
@@ -3868,7 +3893,8 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             "mensaje": f"Consentimiento Informado subido exitosamente a la Historia Clínica de Geclisa (Ficha #{ficha_id}).",
             "archivo_id": archivo_id,
             "sincronizado_at": ahora_iso,
-            "ficha_id": ficha_id
+            "ficha_id": ficha_id,
+            "turno": turno_upd
         }
     except Exception as e:
         logger.error(f"Error subiendo consentimiento a Geclisa para turno {turno_id}: {e}")
@@ -3882,9 +3908,10 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         return {"success": False, "error": "Sin conexión a la base de datos."}
     try:
         from pathlib import Path
+        import os
         from datetime import datetime, timezone
         from app.services.geclisa_client import geclisa_client
-        from app.services.pdf_service import generar_pdf_parte_quirurgico
+        from app.services.pdf_service import PDF_DIR, generar_pdf_parte_quirurgico
         
         t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
         if not t_resp.data:
@@ -3902,15 +3929,15 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             
         # 1. Localizar o regenerar el PDF del Protocolo Quirúrgico
         pdf_rel = turno.get("parte_quirurgico_pdf_url") or f"/static/parte_quirurgico_{turno_id}.pdf"
-        pdf_path = Path("backend") / pdf_rel.lstrip("/")
+        pdf_filename = os.path.basename(pdf_rel)
+        pdf_path = Path(PDF_DIR) / pdf_filename
+        
         if not pdf_path.exists():
-            pdf_path = Path(pdf_rel.lstrip("/"))
-            
-        if not pdf_path.exists():
-            pdf_filename = generar_pdf_parte_quirurgico(turno, paciente)
-            pdf_path = Path("backend/static") / pdf_filename
-            if not pdf_path.exists():
-                pdf_path = Path("static") / pdf_filename
+            generated_fn = generar_pdf_parte_quirurgico(turno, paciente)
+            pdf_path = Path(PDF_DIR) / generated_fn
+            pdf_rel = f"/static/{generated_fn}"
+            supabase.table("turnos_quirofano").update({"parte_quirurgico_pdf_url": pdf_rel}).eq("id", turno_id).execute()
+            turno["parte_quirurgico_pdf_url"] = pdf_rel
                 
         if not pdf_path.exists():
             return {"success": False, "error": "No se pudo generar ni localizar el PDF del protocolo quirúrgico."}
@@ -3921,31 +3948,25 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         # 2. Metadatos para Geclisa
         practica_nom = turno.get("practica_nombre") or "Cirugía Oftalmológica"
         ojo = turno.get("ojo") or ""
-        titulo = f"Protocolo Quirúrgico Oficial - {practica_nom}"
+        titulo = f"Protocolo Qx - {practica_nom}"
         if ojo:
             titulo += f" ({ojo})"
+        titulo = titulo[:45]
             
         lente_info = f"LIO: {turno.get('lente_tipo') or 'N/A'} ({turno.get('lente_dioptria') or 'N/A'} D) - Lote: {turno.get('lente_lote') or 'N/A'}"
         obs = f"Cirugía completada. {lente_info} - Cirujano: {turno.get('cirujano_nombre') or 'N/A'}."
         
-        cirujano_id = None
-        if turno.get("cirujano_id"):
-            try:
-                cirujano_id = int(turno["cirujano_id"])
-            except Exception:
-                pass
-                
         fecha_cirugia = turno.get("fecha_cirugia")
         fecha_iso = f"{fecha_cirugia}T12:00:00" if fecha_cirugia else None
         
-        # 3. Invocar API de Geclisa
+        # 3. Invocar API de Geclisa (pre_id=None para evitar conflictos de prestadores externos)
         res_g = geclisa_client.adjuntar_archivo_historia_clinica(
             ficha_id=ficha_id,
             file_bytes=file_bytes,
             filename=f"ProtocoloQuirurgico_{paciente.get('nombre', 'Paciente').replace(' ', '_')}_{turno_id[:8]}.pdf",
             titulo=titulo,
             observaciones=obs,
-            pre_id=cirujano_id,
+            pre_id=None,
             clase_id=1,
             fecha_iso=fecha_iso
         )
@@ -3962,7 +3983,8 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             "parte_quirurgico_geclisa_sincronizado_at": ahora_iso,
             "updated_at": ahora_iso
         }
-        supabase.table("turnos_quirofano").update(upd_data).eq("id", turno_id).execute()
+        res_u = supabase.table("turnos_quirofano").update(upd_data).eq("id", turno_id).execute()
+        turno_upd = res_u.data[0] if res_u.data else {**turno, **upd_data}
         if turno.get("asesoria_id"):
             supabase.table("asesorias_quirurgicas").update(upd_data).eq("id", turno["asesoria_id"]).execute()
             
@@ -3971,7 +3993,8 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             "mensaje": f"Protocolo Quirúrgico subido exitosamente a la Historia Clínica de Geclisa (Ficha #{ficha_id}).",
             "archivo_id": archivo_id,
             "sincronizado_at": ahora_iso,
-            "ficha_id": ficha_id
+            "ficha_id": ficha_id,
+            "turno": turno_upd
         }
     except Exception as e:
         logger.error(f"Error subiendo protocolo quirúrgico a Geclisa para turno {turno_id}: {e}")
