@@ -1007,6 +1007,198 @@ class GeclisaClient:
                 detalles={"nomId": nom_id, "search": search_string},
                 duracion_ms=duracion
             )
+    # ====================================================================
+    # GESTIÓN DOCUMENTAL Y ARCHIVOS (HISTORIA CLÍNICA)
+    # ====================================================================
+
+    def adjuntar_archivo_historia_clinica(
+        self,
+        ficha_id: int,
+        file_bytes: bytes,
+        filename: str,
+        titulo: str,
+        observaciones: str = "",
+        pre_id: Optional[int] = None,
+        me_id: Optional[int] = None,
+        turno_id: Optional[int] = None,
+        clase_id: int = 1,
+        fecha_iso: Optional[str] = None
+    ) -> dict:
+        """
+        Sube un archivo PDF o imagen a la historia clínica del paciente en Geclisa.
+        Ruta: POST /api/Archivo/adjuntar-archivo-historia-clinica (multipart/form-data)
+        """
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/Archivo/adjuntar-archivo-historia-clinica"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        
+        from datetime import datetime
+        if fecha_iso:
+            fecha_parte = fecha_iso.split("T")[0]
+        else:
+            fecha_parte = datetime.now().strftime("%Y-%m-%d")
+            
+        fecha_str = f"{fecha_parte}T00:00:00"
+        hora_int = 0
+        
+        content_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
+        files = {
+            "Archivo": (filename, file_bytes, content_type)
+        }
+        data = {
+            "FichaId": str(int(ficha_id)),
+            "Fecha": fecha_str,
+            "Hora": str(hora_int),
+            "Titulo": (titulo or filename).strip(),
+            "Observaciones": (observaciones or "").strip(),
+            "ClaseId": str(int(clase_id)),
+            "AmId": "1"
+        }
+        if pre_id:
+            data["PreId"] = str(int(pre_id))
+        if me_id:
+            data["MeId"] = str(int(me_id))
+        if turno_id:
+            data["TurnoId"] = str(int(turno_id))
+            
+        t_start = time.time()
+        try:
+            res = self._do_request("POST", url, headers=headers, data=data, files=files, timeout=30)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            res_data = res.json() if res.content else {}
+            
+            archivo_id = None
+            as_id = None
+            if isinstance(res_data, dict):
+                archivo_id = res_data.get("hcaId") or res_data.get("id")
+                as_id = res_data.get("asId")
+            elif isinstance(res_data, int) and not isinstance(res_data, bool):
+                archivo_id = res_data
+                
+            # Si no devolvió ID explícito o vino bool True, buscar el archivo recién subido en la historia clínica
+            if not archivo_id or not as_id or isinstance(archivo_id, bool):
+                try:
+                    archivos_recientes = self.listar_archivos_historia_clinica(ficha_id)
+                    for a in archivos_recientes:
+                        if a.get("titulo") == (titulo or filename).strip():
+                            archivo_id = a.get("id")
+                            as_id = a.get("asId")
+                            break
+                except Exception:
+                    pass
+                
+            final_id = as_id or archivo_id
+            log_event(
+                nivel="INFO",
+                modulo="GECLISA",
+                accion="ADJUNTAR_DOCUMENTO_HC",
+                mensaje=f"Documento '{titulo}' adjuntado con éxito a Ficha #{ficha_id} en Geclisa",
+                detalles={"ficha_id": ficha_id, "titulo": titulo, "archivo_id": final_id, "as_id": as_id, "filename": filename},
+                duracion_ms=duracion,
+                http_status=res.status_code
+            )
+            return {
+                "success": True,
+                "mensaje": "Documento adjuntado exitosamente en Geclisa.",
+                "archivo_id": final_id,
+                "as_id": as_id,
+                "hca_id": archivo_id if not isinstance(archivo_id, bool) else None,
+                "raw": res_data
+            }
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Error al adjuntar archivo en Geclisa (Ficha #{ficha_id}): {e}")
+            log_event(
+                nivel="ERROR",
+                modulo="GECLISA",
+                accion="ERROR_ADJUNTAR_DOCUMENTO_HC",
+                mensaje=f"Error adjuntando documento '{titulo}' en Geclisa (Ficha #{ficha_id}): {e}",
+                detalles={"ficha_id": ficha_id, "titulo": titulo, "error": str(e)},
+                duracion_ms=duracion
+            )
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def eliminar_archivo_historia_clinica(self, archivo_id: int, as_id: Optional[int] = None) -> dict:
+        """
+        Elimina un archivo adjunto del repositorio de Geclisa.
+        Ruta primaria: DELETE /api/Archivo?asId={asId}
+        Ruta secundaria: DELETE /api/Archivo/historia-clinica-archivo/{hcaId}
+        """
+        token = self._obtener_token()
+        target_as_id = as_id or archivo_id
+        url_as = f"{self.base_url}/api/Archivo?asId={target_as_id}"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        
+        t_start = time.time()
+        try:
+            res = self._do_request("DELETE", url_as, headers=headers, timeout=15)
+            if res.status_code == 200:
+                duracion = int((time.time() - t_start) * 1000)
+                log_event(
+                    nivel="INFO",
+                    modulo="GECLISA",
+                    accion="ELIMINAR_DOCUMENTO_HC",
+                    mensaje=f"Documento (asId #{target_as_id}) eliminado de Geclisa",
+                    detalles={"asId": target_as_id},
+                    duracion_ms=duracion,
+                    http_status=res.status_code
+                )
+                return {"success": True, "mensaje": f"Archivo #{target_as_id} eliminado de Geclisa."}
+        except Exception:
+            pass
+            
+        # Fallback a historia-clinica-archivo
+        try:
+            url_hca = f"{self.base_url}/api/Archivo/historia-clinica-archivo/{archivo_id}"
+            res = self._do_request("DELETE", url_hca, headers=headers, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            return {"success": True, "mensaje": f"Archivo #{archivo_id} eliminado de Geclisa."}
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Error eliminando archivo #{archivo_id} en Geclisa: {e}")
+            return {"success": False, "error": str(e)}
+
+    def listar_archivos_historia_clinica(
+        self,
+        ficha_id: int,
+        fecha_desde: Optional[str] = None,
+        fecha_hasta: Optional[str] = None,
+        es_administrativo: bool = False
+    ) -> list:
+        """
+        Lista los archivos y documentos adjuntos en la historia clínica del paciente en Geclisa.
+        Ruta: POST /api/Archivo/historias-clinicas-archivos
+        """
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/Archivo/historias-clinicas-archivos"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"}
+        
+        payload = {
+            "fichaId": int(ficha_id),
+            "fechaInicio": fecha_desde or "2000-01-01T00:00:00",
+            "fechaFin": fecha_hasta or "2099-12-31T23:59:59",
+            "esAdministrativo": es_administrativo,
+            "hcProbIds": []
+        }
+        
+        t_start = time.time()
+        try:
+            res = self._do_request("POST", url, headers=headers, json=payload, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            data = res.json()
+            items = data if isinstance(data, list) else data.get("data", [])
+            return items
+        except Exception as e:
+            logger.error(f"Error listando archivos de historia clínica para Ficha #{ficha_id}: {e}")
             return []
 
     # ====================================================================

@@ -58,6 +58,7 @@ from app.db import (
     get_presupuestos_by_paciente,
     cambiar_estado_presupuesto,
     vincular_presupuesto_a_asesoria,
+    eliminar_presupuesto,
     crear_presupuesto_rapido,
     get_evoluciones_by_asesoria,
     crear_evolucion_asesoria,
@@ -115,9 +116,11 @@ from app.db import (
     get_modelos_lio,
     crear_modelo_lio,
     actualizar_modelo_lio,
-    eliminar_modelo_lio,
     get_turnos_dia_ejecucion,
-    cambiar_estado_turno_quirofano
+    cambiar_estado_turno_quirofano,
+    subir_consentimiento_turno_a_geclisa,
+    subir_parte_quirurgico_turno_a_geclisa,
+    desvincular_documento_geclisa_turno
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -2753,6 +2756,18 @@ def vincular_presupuesto_asesoria_api(presupuesto_id: str, payload: Dict[str, An
         logger.error(f"Error al vincular presupuesto {presupuesto_id} a asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/presupuestos/{presupuesto_id}")
+def eliminar_presupuesto_endpoint(presupuesto_id: str):
+    """
+    Elimina un presupuesto y sus ítems, desvinculándolo si estaba asociado a una asesoría.
+    """
+    try:
+        ok = eliminar_presupuesto(presupuesto_id)
+        return {"success": ok, "mensaje": "Presupuesto eliminado correctamente."}
+    except Exception as e:
+        logger.error(f"Error al eliminar presupuesto {presupuesto_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/presupuestos/crear-rapido")
 def emitir_presupuesto_rapido(payload: Dict[str, Any] = Body(...)):
     """
@@ -3513,14 +3528,94 @@ def registrar_checklist_seguridad(turno_id: str, payload: Dict[str, Any] = Body(
         raise
     except Exception as e:
         logger.error(f"Error guardando checklist para turno {turno_id}: {e}")
+@app.post("/api/turnos-quirofano/{turno_id}/subir-consentimiento-geclisa")
+def subir_consentimiento_geclisa_endpoint(turno_id: str):
+    """
+    Sube el Consentimiento Informado firmado digitalmente a la Historia Clínica de Geclisa.
+    """
+    try:
+        res = subir_consentimiento_turno_a_geclisa(turno_id)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al subir consentimiento a Geclisa.")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error subiendo consentimiento a Geclisa para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/turnos-quirofano/{turno_id}/subir-parte-quirurgico-geclisa")
+def subir_parte_quirurgico_geclisa_endpoint(turno_id: str):
+    """
+    Sube el Protocolo / Parte Quirúrgico Oficial a la Historia Clínica de Geclisa.
+    """
+    try:
+        res = subir_parte_quirurgico_turno_a_geclisa(turno_id)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al subir protocolo quirúrgico a Geclisa.")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error subiendo protocolo quirúrgico a Geclisa para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/turnos-quirofano/{turno_id}/desvincular-documento-geclisa/{tipo_doc}")
+def desvincular_documento_geclisa_endpoint(turno_id: str, tipo_doc: str):
+    """
+    Elimina el documento en Geclisa y limpia el estado de sincronización.
+    """
+    if tipo_doc not in ["consentimiento", "parte_quirurgico"]:
+        raise HTTPException(status_code=400, detail="tipo_doc debe ser 'consentimiento' o 'parte_quirurgico'.")
+    try:
+        res = desvincular_documento_geclisa_turno(turno_id, tipo_doc)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al desvincular documento de Geclisa.")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error desvinculando documento {tipo_doc} de turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geclisa/pacientes/{paciente_id}/archivos")
+def listar_archivos_paciente_geclisa(paciente_id: str):
+    """
+    Lista todos los documentos y archivos adjuntos en la Historia Clínica de Geclisa para el paciente.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        p_resp = supabase.table("pacientes").select("id, nombre, dni, geclisa_ficha_id").eq("id", paciente_id).limit(1).execute()
+        if not p_resp.data:
+            raise HTTPException(status_code=404, detail="Paciente no encontrado en el CRM.")
+        paciente = p_resp.data[0]
+        
+        ficha_id = paciente.get("geclisa_ficha_id")
+        if not ficha_id and paciente.get("dni"):
+            res_d = geclisa_client.buscar_paciente_por_dni(str(paciente["dni"]))
+            if res_d.get("encontrado") and res_d.get("ficha_id"):
+                ficha_id = int(res_d["ficha_id"])
+                supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente["id"]).execute()
+                
+        if not ficha_id:
+            return {"success": False, "encontrado": False, "mensaje": "El paciente no tiene Ficha en Geclisa.", "archivos": []}
+            
+        archivos = geclisa_client.listar_archivos_historia_clinica(ficha_id)
+        return {
+            "success": True,
+            "encontrado": True,
+            "ficha_id": ficha_id,
+            "paciente_nombre": paciente.get("nombre"),
+            "archivos": archivos,
+            "total_archivos": len(archivos)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al listar archivos de Geclisa para paciente {paciente_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-
-
-# ====================================================================
-# ENDPOINTS: MODELOS DE LENTES INTRAOCULARES (LIO)
-# ====================================================================
 
 @app.get("/api/modelos-lio")
 def listar_modelos_lio_endpoint(solo_activos: bool = False):

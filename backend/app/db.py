@@ -2274,6 +2274,24 @@ def vincular_presupuesto_a_asesoria(presupuesto_id: str, asesoria_id: str) -> Di
         logger.error(f"Error al vincular presupuesto {presupuesto_id} a asesoría {asesoria_id}: {e}")
         raise
 
+def eliminar_presupuesto(presupuesto_id: str) -> bool:
+    """
+    Elimina un presupuesto y desvincula la referencia en asesorias_quirurgicas si estaba asociado.
+    """
+    if not supabase:
+        return False
+    try:
+        # Desvincular de asesorias_quirurgicas
+        supabase.table("asesorias_quirurgicas").update({"presupuesto_id": None, "updated_at": "now()"}).eq("presupuesto_id", presupuesto_id).execute()
+        # Eliminar items del presupuesto
+        supabase.table("items_presupuesto").delete().eq("presupuesto_id", presupuesto_id).execute()
+        # Eliminar presupuesto
+        resp = supabase.table("presupuestos").delete().eq("id", presupuesto_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar presupuesto {presupuesto_id}: {e}")
+        raise
+
 def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
     """
     Crea un presupuesto con ítems, calcula el total, genera el PDF membretado oficial y vincula al paciente/asesoría.
@@ -3722,3 +3740,273 @@ def guardar_checklist_seguridad_turno(turno_id: str, checklist_data: Dict[str, A
     except Exception as e:
         logger.error(f"Error al guardar checklist de seguridad para turno {turno_id}: {e}")
         return {"success": False, "error": str(e)}
+
+# ====================================================================
+# SUBIDA DE DOCUMENTOS QUIRÚRGICOS A GECLISA (/api/Archivo)
+# ====================================================================
+
+def _resolver_ficha_geclisa_paciente(paciente: Dict[str, Any]) -> Optional[int]:
+    """
+    Obtiene o busca la FichaId de Geclisa para el paciente. Si no está en BD, busca por DNI.
+    """
+    if not paciente:
+        return None
+    ficha_id = paciente.get("geclisa_ficha_id")
+    if ficha_id:
+        return int(ficha_id)
+        
+    dni = paciente.get("dni")
+    if dni and supabase:
+        try:
+            from app.services.geclisa_client import geclisa_client
+            res_g = geclisa_client.buscar_paciente_por_dni(str(dni))
+            if res_g.get("encontrado") and res_g.get("ficha_id"):
+                f_id = int(res_g["ficha_id"])
+                supabase.table("pacientes").update({"geclisa_ficha_id": f_id}).eq("id", paciente["id"]).execute()
+                logger.info(f"Ficha #{f_id} de Geclisa vinculada automáticamente al paciente {paciente.get('nombre')}")
+                return f_id
+        except Exception as e:
+            logger.warning(f"No se pudo resolver Ficha Geclisa por DNI {dni}: {e}")
+    return None
+
+def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
+    """
+    Sube el Consentimiento Informado firmado en PDF a la Historia Clínica en Geclisa.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Sin conexión a la base de datos."}
+    try:
+        from pathlib import Path
+        from datetime import datetime, timezone
+        from app.services.geclisa_client import geclisa_client
+        from app.services.pdf_service import generar_pdf_consentimiento
+        
+        t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*)").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            return {"success": False, "error": f"No se encontró el turno quirúrgico {turno_id}."}
+            
+        turno = t_resp.data[0]
+        paciente = turno.get("pacientes") or {}
+        
+        ficha_id = _resolver_ficha_geclisa_paciente(paciente)
+        if not ficha_id:
+            return {
+                "success": False,
+                "error": f"El paciente '{paciente.get('nombre')}' no tiene Ficha ID de Geclisa ni pudo localizarse por DNI ({paciente.get('dni') or 'sin DNI'})."
+            }
+            
+        # 1. Localizar o generar el PDF de consentimiento
+        pdf_rel = turno.get("consentimiento_pdf_url") or f"/static/consentimiento_{turno_id}.pdf"
+        pdf_path = Path("backend") / pdf_rel.lstrip("/")
+        if not pdf_path.exists():
+            pdf_path = Path(pdf_rel.lstrip("/"))
+            
+        if not pdf_path.exists():
+            # Si no existe en disco, intentar generarlo si fue firmado
+            firma_img = turno.get("consentimiento_firma_img")
+            if firma_img:
+                pdf_filename = generar_pdf_consentimiento(turno, paciente, firma_img)
+                pdf_path = Path("backend/static") / pdf_filename
+                if not pdf_path.exists():
+                    pdf_path = Path("static") / pdf_filename
+            else:
+                return {"success": False, "error": "El consentimiento aún no ha sido firmado digitalmente por el paciente."}
+                
+        if not pdf_path.exists():
+            return {"success": False, "error": "No se encontró el archivo PDF del consentimiento en el servidor."}
+            
+        with open(pdf_path, "rb") as f:
+            file_bytes = f.read()
+            
+        # 2. Preparar metadatos para Geclisa
+        practica_nom = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+        ojo = turno.get("ojo") or ""
+        titulo = f"Consentimiento Informado - {practica_nom}"
+        if ojo:
+            titulo += f" ({ojo})"
+            
+        firmado_at = turno.get("consentimiento_firmado_at") or datetime.now().isoformat()
+        obs = f"Consentimiento firmado digitalmente. Paciente: {paciente.get('nombre')} - Cirujano: {turno.get('cirujano_nombre') or 'No especificado'}."
+        
+        cirujano_id = None
+        if turno.get("cirujano_id"):
+            try:
+                cirujano_id = int(turno["cirujano_id"])
+            except Exception:
+                pass
+                
+        # 3. Invocar API de Geclisa
+        res_g = geclisa_client.adjuntar_archivo_historia_clinica(
+            ficha_id=ficha_id,
+            file_bytes=file_bytes,
+            filename=f"Consentimiento_{paciente.get('nombre', 'Paciente').replace(' ', '_')}_{turno_id[:8]}.pdf",
+            titulo=titulo,
+            observaciones=obs,
+            pre_id=cirujano_id,
+            clase_id=1,
+            fecha_iso=firmado_at[:19] if firmado_at else None
+        )
+        
+        if not res_g.get("success"):
+            return {"success": False, "error": res_g.get("error") or "Error al subir consentimiento a Geclisa."}
+            
+        archivo_id = res_g.get("archivo_id")
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        
+        # 4. Actualizar BD Supabase
+        upd_data = {
+            "consentimiento_geclisa_archivo_id": archivo_id,
+            "consentimiento_geclisa_sincronizado_at": ahora_iso,
+            "updated_at": ahora_iso
+        }
+        supabase.table("turnos_quirofano").update(upd_data).eq("id", turno_id).execute()
+        if turno.get("asesoria_id"):
+            supabase.table("asesorias_quirurgicas").update(upd_data).eq("id", turno["asesoria_id"]).execute()
+            
+        return {
+            "success": True,
+            "mensaje": f"Consentimiento Informado subido exitosamente a la Historia Clínica de Geclisa (Ficha #{ficha_id}).",
+            "archivo_id": archivo_id,
+            "sincronizado_at": ahora_iso,
+            "ficha_id": ficha_id
+        }
+    except Exception as e:
+        logger.error(f"Error subiendo consentimiento a Geclisa para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
+    """
+    Sube el Protocolo / Parte Quirúrgico Oficial en PDF a la Historia Clínica en Geclisa.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Sin conexión a la base de datos."}
+    try:
+        from pathlib import Path
+        from datetime import datetime, timezone
+        from app.services.geclisa_client import geclisa_client
+        from app.services.pdf_service import generar_pdf_parte_quirurgico
+        
+        t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            return {"success": False, "error": f"No se encontró el turno quirúrgico {turno_id}."}
+            
+        turno = t_resp.data[0]
+        paciente = turno.get("pacientes") or {}
+        
+        ficha_id = _resolver_ficha_geclisa_paciente(paciente)
+        if not ficha_id:
+            return {
+                "success": False,
+                "error": f"El paciente '{paciente.get('nombre')}' no tiene Ficha ID de Geclisa ni pudo localizarse por DNI ({paciente.get('dni') or 'sin DNI'})."
+            }
+            
+        # 1. Localizar o regenerar el PDF del Protocolo Quirúrgico
+        pdf_rel = turno.get("parte_quirurgico_pdf_url") or f"/static/parte_quirurgico_{turno_id}.pdf"
+        pdf_path = Path("backend") / pdf_rel.lstrip("/")
+        if not pdf_path.exists():
+            pdf_path = Path(pdf_rel.lstrip("/"))
+            
+        if not pdf_path.exists():
+            pdf_filename = generar_pdf_parte_quirurgico(turno, paciente)
+            pdf_path = Path("backend/static") / pdf_filename
+            if not pdf_path.exists():
+                pdf_path = Path("static") / pdf_filename
+                
+        if not pdf_path.exists():
+            return {"success": False, "error": "No se pudo generar ni localizar el PDF del protocolo quirúrgico."}
+            
+        with open(pdf_path, "rb") as f:
+            file_bytes = f.read()
+            
+        # 2. Metadatos para Geclisa
+        practica_nom = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+        ojo = turno.get("ojo") or ""
+        titulo = f"Protocolo Quirúrgico Oficial - {practica_nom}"
+        if ojo:
+            titulo += f" ({ojo})"
+            
+        lente_info = f"LIO: {turno.get('lente_tipo') or 'N/A'} ({turno.get('lente_dioptria') or 'N/A'} D) - Lote: {turno.get('lente_lote') or 'N/A'}"
+        obs = f"Cirugía completada. {lente_info} - Cirujano: {turno.get('cirujano_nombre') or 'N/A'}."
+        
+        cirujano_id = None
+        if turno.get("cirujano_id"):
+            try:
+                cirujano_id = int(turno["cirujano_id"])
+            except Exception:
+                pass
+                
+        fecha_cirugia = turno.get("fecha_cirugia")
+        fecha_iso = f"{fecha_cirugia}T12:00:00" if fecha_cirugia else None
+        
+        # 3. Invocar API de Geclisa
+        res_g = geclisa_client.adjuntar_archivo_historia_clinica(
+            ficha_id=ficha_id,
+            file_bytes=file_bytes,
+            filename=f"ProtocoloQuirurgico_{paciente.get('nombre', 'Paciente').replace(' ', '_')}_{turno_id[:8]}.pdf",
+            titulo=titulo,
+            observaciones=obs,
+            pre_id=cirujano_id,
+            clase_id=1,
+            fecha_iso=fecha_iso
+        )
+        
+        if not res_g.get("success"):
+            return {"success": False, "error": res_g.get("error") or "Error al subir protocolo quirúrgico a Geclisa."}
+            
+        archivo_id = res_g.get("archivo_id")
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        
+        # 4. Actualizar BD Supabase
+        upd_data = {
+            "parte_quirurgico_geclisa_archivo_id": archivo_id,
+            "parte_quirurgico_geclisa_sincronizado_at": ahora_iso,
+            "updated_at": ahora_iso
+        }
+        supabase.table("turnos_quirofano").update(upd_data).eq("id", turno_id).execute()
+        if turno.get("asesoria_id"):
+            supabase.table("asesorias_quirurgicas").update(upd_data).eq("id", turno["asesoria_id"]).execute()
+            
+        return {
+            "success": True,
+            "mensaje": f"Protocolo Quirúrgico subido exitosamente a la Historia Clínica de Geclisa (Ficha #{ficha_id}).",
+            "archivo_id": archivo_id,
+            "sincronizado_at": ahora_iso,
+            "ficha_id": ficha_id
+        }
+    except Exception as e:
+        logger.error(f"Error subiendo protocolo quirúrgico a Geclisa para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+def desvincular_documento_geclisa_turno(turno_id: str, tipo_doc: str) -> Dict[str, Any]:
+    """
+    Elimina el documento en Geclisa (si tiene ID) y limpia el estado de sincronización en CRM.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Sin conexión a la base de datos."}
+    try:
+        from app.services.geclisa_client import geclisa_client
+        t_resp = supabase.table("turnos_quirofano").select("id, consentimiento_geclisa_archivo_id, parte_quirurgico_geclisa_archivo_id, asesoria_id").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            return {"success": False, "error": "Turno no encontrado."}
+            
+        turno = t_resp.data[0]
+        col_id = "consentimiento_geclisa_archivo_id" if tipo_doc == "consentimiento" else "parte_quirurgico_geclisa_archivo_id"
+        col_at = "consentimiento_geclisa_sincronizado_at" if tipo_doc == "consentimiento" else "parte_quirurgico_geclisa_sincronizado_at"
+        
+        archivo_id = turno.get(col_id)
+        if archivo_id:
+            try:
+                geclisa_client.eliminar_archivo_historia_clinica(int(archivo_id))
+            except Exception as e_del:
+                logger.warning(f"No se pudo eliminar archivo #{archivo_id} en Geclisa: {e_del}")
+                
+        upd = {col_id: None, col_at: None, "updated_at": "now()"}
+        supabase.table("turnos_quirofano").update(upd).eq("id", turno_id).execute()
+        if turno.get("asesoria_id"):
+            supabase.table("asesorias_quirurgicas").update(upd).eq("id", turno["asesoria_id"]).execute()
+            
+        return {"success": True, "mensaje": f"Documento {tipo_doc} desvinculado de Geclisa correctamente."}
+    except Exception as e:
+        logger.error(f"Error al desvincular documento {tipo_doc} de Geclisa para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+

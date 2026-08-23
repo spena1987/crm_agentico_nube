@@ -22,8 +22,9 @@ def test_buscar_prestadores_mock():
         }
     ]
 
-    with patch("requests.get", return_value=mock_response), \
-         patch.object(mock_client, "_get_headers", return_value={"Authorization": "Bearer test"}):
+    with patch.object(mock_client, "_do_request", return_value=mock_response), \
+         patch.object(mock_client, "_get_headers", return_value={"Authorization": "Bearer test"}), \
+         patch.object(mock_client, "_obtener_token", return_value="test-token"):
         resultado = mock_client.buscar_prestadores("garcia")
         assert len(resultado) == 1
         assert resultado[0]["pre_id"] == 32
@@ -44,8 +45,9 @@ def test_obtener_prestador_por_id_mock():
         }
     ]
 
-    with patch("requests.get", return_value=mock_response), \
-         patch.object(mock_client, "_get_headers", return_value={"Authorization": "Bearer test"}):
+    with patch.object(mock_client, "_do_request", return_value=mock_response), \
+         patch.object(mock_client, "_get_headers", return_value={"Authorization": "Bearer test"}), \
+         patch.object(mock_client, "_obtener_token", return_value="test-token"):
         resultado = mock_client.obtener_prestador_por_id(10)
         assert resultado["encontrado"] is True
         assert resultado["pre_id"] == 10

@@ -32,7 +32,8 @@ import {
   FileText,
   Plus,
   ExternalLink,
-  Save
+  Save,
+  UploadCloud
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -407,6 +408,53 @@ export default function FichaTurnoModal({
     }
   }
 
+  const [subiendoConsentimientoGeclisa, setSubiendoConsentimientoGeclisa] = useState(false)
+  const [subiendoParteGeclisa, setSubiendoParteGeclisa] = useState(false)
+
+  const handleSubirConsentimientoGeclisa = async () => {
+    if (!turno?.id) return
+    try {
+      setSubiendoConsentimientoGeclisa(true)
+      setError(null)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/subir-consentimiento-geclisa`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error al subir consentimiento a Geclisa.')
+      }
+      setMensajeExito(`✔ ${data.mensaje || 'Consentimiento subido exitosamente a Geclisa.'}`)
+      onSaved()
+      setTimeout(() => setMensajeExito(null), 4000)
+    } catch (err: any) {
+      setError(err.message || 'Error al conectar con Geclisa')
+    } finally {
+      setSubiendoConsentimientoGeclisa(false)
+    }
+  }
+
+  const handleSubirParteGeclisa = async () => {
+    if (!turno?.id) return
+    try {
+      setSubiendoParteGeclisa(true)
+      setError(null)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/subir-parte-quirurgico-geclisa`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error al subir protocolo quirúrgico a Geclisa.')
+      }
+      setMensajeExito(`✔ ${data.mensaje || 'Protocolo Quirúrgico subido exitosamente a Geclisa.'}`)
+      onSaved()
+      setTimeout(() => setMensajeExito(null), 4000)
+    } catch (err: any) {
+      setError(err.message || 'Error al conectar con Geclisa')
+    } finally {
+      setSubiendoParteGeclisa(false)
+    }
+  }
+
   // Quirófano actual seleccionado
   const quirofanoActual = quirofanos.find((q) => q.id === formData.quirofano_id) || quirofanos[0]
 
@@ -612,16 +660,16 @@ export default function FichaTurnoModal({
             </div>
           )}
 
-          {/* SECCIÓN ESTADO DE CONSENTIMIENTO INFORMADO */}
+          {/* SECCIÓN ESTADO DE CONSENTIMIENTO INFORMADO & GECLISA */}
           {esEdicion && turno && (
-            <div className={`p-4 rounded-2xl border transition-all space-y-2 shadow-sm ${
+            <div className={`p-4 rounded-2xl border transition-all space-y-2.5 shadow-sm ${
               turno.consentimiento_estado === 'firmado_digital'
                 ? 'bg-emerald-500/10 border-emerald-500/30'
                 : turno.consentimiento_estado === 'enviado_whatsapp'
                 ? 'bg-amber-500/10 border-amber-500/30'
                 : 'bg-slate-500/10 border-slate-500/20'
             }`}>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
                   <div className={`p-2 rounded-xl ${
                     turno.consentimiento_estado === 'firmado_digital'
@@ -633,7 +681,7 @@ export default function FichaTurnoModal({
                     {turno.consentimiento_estado === 'firmado_digital' ? <ShieldCheck size={18} /> : <FileCheck2 size={18} />}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-[var(--foreground)]">Consentimiento Informado:</span>
                       <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                         turno.consentimiento_estado === 'firmado_digital'
@@ -648,37 +696,142 @@ export default function FichaTurnoModal({
                           ? '⏳ Enviado por WhatsApp (Pendiente Firma)'
                           : '⚪ Pendiente de Envío'}
                       </span>
+
+                      {/* Badge de Sincronización Geclisa */}
+                      {turno.consentimiento_geclisa_archivo_id && (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/60 flex items-center gap-1 font-bold">
+                          <Check size={10} className="text-blue-400" />
+                          Geclisa HC #{turno.consentimiento_geclisa_archivo_id}
+                        </span>
+                      )}
                     </div>
                     {turno.consentimiento_firmado_at && (
                       <p className="text-[11px] text-[var(--secondary)] font-mono mt-0.5">
-                        Firmado el: {new Date(turno.consentimiento_firmado_at).toLocaleString('es-AR')} • IP/Dispositivo: {turno.consentimiento_firma_ip || 'Móvil'}
+                        Firmado el: {new Date(turno.consentimiento_firmado_at).toLocaleString('es-AR')} • IP: {turno.consentimiento_firma_ip || 'Móvil'}
                       </p>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {turno.consentimiento_estado === 'firmado_digital' && (
-                    <a
-                      href={`${BACKEND_URL}${turno.consentimiento_pdf_url || '/static/consentimiento_' + turno.id + '.pdf'}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
-                    >
-                      <Download size={14} />
-                      <span>Descargar PDF Firmado</span>
-                    </a>
+                    <>
+                      <a
+                        href={`${BACKEND_URL}${turno.consentimiento_pdf_url || '/static/consentimiento_' + turno.id + '.pdf'}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                      >
+                        <Download size={13} />
+                        <span>Ver PDF</span>
+                      </a>
+
+                      {/* Botón Subir a Geclisa (Opción 2) */}
+                      {!turno.consentimiento_geclisa_archivo_id && (
+                        <button
+                          type="button"
+                          onClick={handleSubirConsentimientoGeclisa}
+                          disabled={subiendoConsentimientoGeclisa}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+                          title="Subir archivo PDF a la Historia Clínica de Geclisa"
+                        >
+                          {subiendoConsentimientoGeclisa ? (
+                            <>
+                              <Loader2 size={13} className="animate-spin" />
+                              <span>Subiendo...</span>
+                            </>
+                          ) : (
+                            <>
+                              <UploadCloud size={13} />
+                              <span>Subir a Geclisa</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </>
                   )}
+
                   {turno.consentimiento_token && (
                     <a
                       href={`/consentimiento/${turno.consentimiento_token}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 border border-[var(--border)] transition-all"
+                      className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold flex items-center gap-1 border border-[var(--border)] transition-all"
                     >
-                      <Eye size={13} />
-                      <span>Ver Portal</span>
+                      <Eye size={12} />
+                      <span>Portal</span>
                     </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SECCIÓN PROTOCOLO / PARTE QUIRÚRGICO OFICIAL & GECLISA */}
+          {esEdicion && turno && (turno.estado === 'operado' || turno.parte_quirurgico_pdf_url) && (
+            <div className="p-4 rounded-2xl border bg-indigo-500/10 border-indigo-500/30 transition-all space-y-2.5 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-indigo-600 text-white shadow-sm">
+                    <FileText size={18} />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-[var(--foreground)]">Protocolo / Parte Quirúrgico:</span>
+                      <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
+                        ✔ Cirugía Completada
+                      </span>
+
+                      {/* Badge de Sincronización Geclisa */}
+                      {turno.parte_quirurgico_geclisa_archivo_id ? (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/60 flex items-center gap-1 font-bold">
+                          <Check size={10} className="text-blue-400" />
+                          Geclisa HC #{turno.parte_quirurgico_geclisa_archivo_id}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                          ⚪ Pendiente en Geclisa
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[var(--secondary)] font-mono mt-0.5">
+                      Cirujano: {turno.cirujano_nombre || 'N/A'} • Ojo: {turno.ojo || 'OD'} • LIO: {turno.lente_tipo || 'N/A'} ({turno.lente_dioptria || 'N/A'} D)
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <a
+                    href={`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/parte-quirurgico`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                  >
+                    <Download size={13} />
+                    <span>Ver Protocolo PDF</span>
+                  </a>
+
+                  {/* Botón Subir Parte a Geclisa */}
+                  {!turno.parte_quirurgico_geclisa_archivo_id && (
+                    <button
+                      type="button"
+                      onClick={handleSubirParteGeclisa}
+                      disabled={subiendoParteGeclisa}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+                      title="Subir Protocolo Quirúrgico a la Historia Clínica de Geclisa"
+                    >
+                      {subiendoParteGeclisa ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin" />
+                          <span>Subiendo...</span>
+                        </>
+                      ) : (
+                        <>
+                          <UploadCloud size={13} />
+                          <span>Subir a Geclisa</span>
+                        </>
+                      )}
+                    </button>
                   )}
                 </div>
               </div>
