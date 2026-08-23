@@ -215,9 +215,10 @@ class WhatsAppManager:
             self.add_log("ERROR", f"Error conectando con microservicio Baileys: {e}")
             return {"error": f"Error de conexión con la pasarela: {str(e)}"}
 
-    def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None, emisor: str = "operador") -> Dict[str, Any]:
+    def enviar_mensaje(self, telefono_o_jid: str, texto: str, conversacion_id: Optional[str] = None, emisor: str = "operador", remote_jid: Optional[str] = None) -> Dict[str, Any]:
         """
         Envía un mensaje de texto saliente por WhatsApp y lo registra en la conversación del CRM.
+        Utiliza el canal activo dinámico (active_remote_jid) si está disponible para asegurar entrega instantánea.
         """
         if not texto or not texto.strip():
             return {"error": "El mensaje no puede estar vacío"}
@@ -236,8 +237,23 @@ class WhatsAppManager:
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
 
+        # Si no pasaron remote_jid explícito pero tenemos conversacion_id, recuperar active_remote_jid de metadata_json
+        if not remote_jid and conversacion_id and supabase:
+            try:
+                c_data = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+                if c_data.data and len(c_data.data) > 0:
+                    c_meta = c_data.data[0].get("metadata_json") or {}
+                    if isinstance(c_meta, dict):
+                        remote_jid = c_meta.get("active_remote_jid")
+            except Exception:
+                pass
+
+        payload_send = {"phone": telefono, "text": texto}
+        if remote_jid:
+            payload_send["remote_jid"] = remote_jid
+
         try:
-            r = httpx.post(f"{self.service_url}/send-message", json={"phone": telefono, "text": texto}, timeout=10.0)
+            r = httpx.post(f"{self.service_url}/send-message", json=payload_send, timeout=12.0)
             if r.status_code == 200:
                 res = r.json()
                 msg_id = res.get("message_id")
@@ -249,18 +265,18 @@ class WhatsAppManager:
                             emisor=emisor,
                             contenido=texto,
                             whatsapp_message_id=msg_id,
-                            metadata_json={"delivery_status": "enviado"}
+                            metadata_json={"delivery_status": "enviado", "dispatched_jid": res.get("jid")}
                         )
                     except Exception as db_err:
                         self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
-                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": telefono, "conversacion_id": conversacion_id}
+                return {"success": True, "enviado_real": True, "message_id": msg_id, "telefono": telefono, "conversacion_id": conversacion_id, "jid": res.get("jid")}
             else:
                 err = r.json().get("error", "Error al enviar mensaje")
                 self.add_log("WARNING", f"Fallo al enviar mensaje: {err}")
                 return {"error": err, "enviado_real": False}
         except Exception as e:
-            self.add_log("ERROR", f"Error de conexión al enviar mensaje: {e}")
-            return {"error": str(e), "enviado_real": False}
+            self.add_log("ERROR", f"Error de comunicación con microservicio WhatsApp: {e}")
+            return {"error": f"Error de comunicación con WhatsApp: {str(e)}", "enviado_real": False}
 
     def marcar_como_leido(self, telefono_o_jid: str, message_ids: Optional[List[str]] = None, remote_jid: Optional[str] = None) -> Dict[str, Any]:
         """

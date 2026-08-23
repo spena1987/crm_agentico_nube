@@ -389,24 +389,38 @@ function phoneToJid(phone) {
   return `${clean}@s.whatsapp.net`
 }
 
-async function getValidJid(phone) {
+async function getValidJid(phone, explicitRemoteJid = null) {
   const clean = normalizePhone(phone)
-  if (!clean) return null
+  if (!clean && !explicitRemoteJid) return null
 
-  // 1. Si tenemos el canal activo directo registrado en memoria para este número exacto, usarlo
-  if (phoneToRemoteJidMap.has(clean)) {
+  // 0. Si se pasó un canal activo explícito válido, usarlo
+  if (explicitRemoteJid && (explicitRemoteJid.includes('@s.whatsapp.net') || explicitRemoteJid.includes('@lid'))) {
+    addLog('INFO', `Enrutando mensaje por canal explícito: ${explicitRemoteJid}`)
+    return explicitRemoteJid
+  }
+
+  // 1. Si tenemos el canal activo directo registrado en memoria para este número exacto, usarlo prioritariamente
+  if (clean && phoneToRemoteJidMap.has(clean)) {
     const directJid = phoneToRemoteJidMap.get(clean)
     addLog('INFO', `Enrutando mensaje al canal activo de WhatsApp: ${directJid} (Teléfono: +${clean})`)
     return directJid
   }
 
+  // 1.1 Si existe un LID mapeado en memoria para este teléfono
+  if (clean && phoneToLidMap.has(clean)) {
+    const lidVal = phoneToLidMap.get(clean)
+    const activeLidJid = `${lidVal}@lid`
+    addLog('INFO', `Enrutando mensaje a LID activo registrado: ${activeLidJid} (Teléfono: +${clean})`)
+    return activeLidJid
+  }
+
   // 2. Si no hay socket activo, retornar el formato estándar internacional
   if (!sock) {
-    return `${clean}@s.whatsapp.net`
+    return clean ? `${clean}@s.whatsapp.net` : explicitRemoteJid
   }
 
   // 3. Para números de Argentina (código 54)
-  if (clean.startsWith('54')) {
+  if (clean && clean.startsWith('54')) {
     const jidWith9 = clean.startsWith('549') ? `${clean}@s.whatsapp.net` : `549${clean.slice(2)}@s.whatsapp.net`
     const jidWithout9 = clean.startsWith('549') ? `54${clean.slice(3)}@s.whatsapp.net` : `${clean}@s.whatsapp.net`
 
@@ -417,9 +431,7 @@ async function getValidJid(phone) {
         phoneToRemoteJidMap.set(clean, check1[0].jid)
         return check1[0].jid
       }
-    } catch (e) {
-      addLog('WARNING', `onWhatsApp check con 9 falló para ${clean}: ${e.message}`)
-    }
+    } catch (e) {}
 
     // Probar el formato sin 9
     try {
@@ -436,16 +448,20 @@ async function getValidJid(phone) {
   }
 
   // 4. Formato estándar internacional para el resto de países
-  try {
-    const candidateJid = `${clean}@s.whatsapp.net`
-    const results = await sock.onWhatsApp(candidateJid)
-    if (results && results.length > 0 && results[0].exists) {
-      phoneToRemoteJidMap.set(clean, results[0].jid)
-      return results[0].jid
-    }
-  } catch (e) {}
+  if (clean) {
+    try {
+      const candidateJid = `${clean}@s.whatsapp.net`
+      const results = await sock.onWhatsApp(candidateJid)
+      if (results && results.length > 0 && results[0].exists) {
+        phoneToRemoteJidMap.set(clean, results[0].jid)
+        return results[0].jid
+      }
+    } catch (e) {}
 
-  return `${clean}@s.whatsapp.net`
+    return `${clean}@s.whatsapp.net`
+  }
+
+  return explicitRemoteJid || null
 }
 
 async function initBaileys(forceClean = false) {
@@ -965,30 +981,47 @@ app.post('/pair-code', async (req, res) => {
   }
 })
 
-// 4. Enviar Mensaje de Texto
+// 4. Enviar Mensaje de Texto con Despacho en Cascada
 app.post('/send-message', async (req, res) => {
   try {
-    const { phone, text } = req.body
-    if (!phone || !text) {
-      return res.status(400).json({ error: 'phone y text son requeridos.' })
+    const { phone, text, remote_jid } = req.body
+    if ((!phone && !remote_jid) || !text) {
+      return res.status(400).json({ error: 'phone o remote_jid y text son requeridos.' })
     }
 
     if (!sock || connectionStatus !== 'CONNECTED') {
       return res.status(503).json({ error: 'WhatsApp no está conectado.', status: connectionStatus })
     }
 
-    const cleanNormPhone = normalizePhone(phone)
-    lastContactedPhone = cleanNormPhone
-    let jid = await getValidJid(phone)
+    const cleanNormPhone = phone ? normalizePhone(phone) : ''
+    if (cleanNormPhone) lastContactedPhone = cleanNormPhone
+    let jid = await getValidJid(phone, remote_jid)
     let result = null
 
     try {
       result = await sock.sendMessage(jid, { text })
     } catch (sendErr) {
-      if (cleanNormPhone.startsWith('549')) {
+      addLog('WARNING', `Fallo de envío inicial a ${jid}: ${sendErr.message}. Iniciando reintento en cascada...`)
+      
+      // Cascada 1: Si era @lid y falló, probar con el teléfono canónico @s.whatsapp.net
+      if (jid && jid.includes('@lid') && cleanNormPhone) {
+        const phoneJid = `${cleanNormPhone}@s.whatsapp.net`
+        try {
+          result = await sock.sendMessage(phoneJid, { text })
+          jid = phoneJid
+        } catch (e1) {
+          if (cleanNormPhone.startsWith('549')) {
+            const altJid = '54' + cleanNormPhone.slice(3) + '@s.whatsapp.net'
+            result = await sock.sendMessage(altJid, { text })
+            jid = altJid
+          } else {
+            throw e1
+          }
+        }
+      } else if (cleanNormPhone && cleanNormPhone.startsWith('549')) {
+        // Cascada 2: Si era 549 y falló, probar 54 sin 9
         const altJid = '54' + cleanNormPhone.slice(3) + '@s.whatsapp.net'
         if (altJid !== jid) {
-          addLog('WARNING', `Reintentando envío a JID alternativo ${altJid} tras error: ${sendErr.message}`)
           result = await sock.sendMessage(altJid, { text })
           jid = altJid
         } else {
@@ -999,16 +1032,12 @@ app.post('/send-message', async (req, res) => {
       }
     }
 
-    // Si el socket resolvió o devolvió un LID o JID, asociarlo en caché
-    if (result && result.key && result.key.remoteJid) {
-      if (result.key.remoteJid.includes('@lid')) {
-        const lidD = result.key.remoteJid.split('@')[0].split(':')[0]
-        saveLidMapping(lidD, cleanNormPhone)
-      }
+    // Registrar el canal exitoso en memoria
+    if (cleanNormPhone && result && result.key && result.key.remoteJid) {
       phoneToRemoteJidMap.set(cleanNormPhone, result.key.remoteJid)
     }
 
-    addLog('INFO', `Mensaje enviado exitosamente a ${jid}: ${text.substring(0, 50)}...`)
+    addLog('INFO', `Mensaje despachado exitosamente a ${jid}: ${text.substring(0, 50)}...`, 'MENSAJE_ENVIADO')
     res.json({
       success: true,
       message_id: result.key.id,
@@ -1018,6 +1047,37 @@ app.post('/send-message', async (req, res) => {
   } catch (error) {
     addLog('ERROR', `Error enviando mensaje: ${error.message}`)
     res.status(500).json({ error: error.message })
+  }
+})
+
+// Endpoint de diagnóstico en tiempo real de canales de enrutamiento
+app.get('/channel-check', async (req, res) => {
+  try {
+    const phone = req.query.phone || req.query.telefono || ''
+    const clean = normalizePhone(phone)
+    let onWhatsAppWith9 = null
+    let onWhatsAppWithout9 = null
+    if (sock && clean) {
+      try {
+        onWhatsAppWith9 = await sock.onWhatsApp(`${clean}@s.whatsapp.net`)
+      } catch (e) {}
+      if (clean.startsWith('549')) {
+        try {
+          onWhatsAppWithout9 = await sock.onWhatsApp('54' + clean.slice(3) + '@s.whatsapp.net')
+        } catch (e) {}
+      }
+    }
+    res.json({
+      status: connectionStatus,
+      phone: clean,
+      active_remote_jid_in_memory: clean ? (phoneToRemoteJidMap.get(clean) || null) : null,
+      lid_mapping: clean ? (phoneToLidMap.get(clean) || null) : null,
+      on_whatsapp_with_9: onWhatsAppWith9,
+      on_whatsapp_without_9: onWhatsAppWithout9,
+      device_info: deviceInfo
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
   }
 })
 

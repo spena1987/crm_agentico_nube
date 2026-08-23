@@ -447,10 +447,10 @@ class IncomingWebhookMessage(BaseModel):
     timestamp: Optional[int] = None
     raw_message: Optional[Dict[str, Any]] = None
 
-def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto: str):
+def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto: str, remote_jid: Optional[str] = None):
     """
     Ejecuta el Agente IA de Gemini en segundo plano con filtro rápido de escalamiento
-    y auto-lectura al responder con éxito.
+    y auto-lectura al responder con éxito, enrutando por el canal activo dinámico.
     """
     try:
         texto_lower = texto.lower()
@@ -464,13 +464,14 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
                 clean_phone,
                 "Te comunico de inmediato con nuestro equipo de atención humana. Un asesor se contactará a la brevedad.",
                 conversacion_id=conversacion_id,
-                emisor="bot"
+                emisor="bot",
+                remote_jid=remote_jid
             )
             return
 
         respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
         if respuesta_agente:
-            whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot")
+            whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot", remote_jid=remote_jid)
             # Auto-lectura de la consulta gestionada 100% por IA (no generar badges falsos a operadores humanos)
             try:
                 marcar_mensajes_conversacion_leidos(conversacion_id)
@@ -491,8 +492,9 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
 
         clean_phone = normalize_phone_number(payload.phone) if payload.phone else ""
         texto = payload.text.strip() if payload.text else ""
+        incoming_jid = payload.jid or payload.phone
 
-        logger.info(f"Mensaje entrante Baileys desde {clean_phone} [{payload.message_type}]: {texto[:50]}")
+        logger.info(f"Mensaje entrante Baileys desde {clean_phone} (JID: {incoming_jid}) [{payload.message_type}]: {texto[:50]}")
 
         if not clean_phone:
             return {"status": "ignored", "reason": "empty_phone"}
@@ -556,6 +558,16 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
 
         conversacion_id = conversacion["id"] if isinstance(conversacion, dict) else conversacion.get("id")
 
+        # 2.1 Registrar Canal Activo de Despacho en la conversación
+        if incoming_jid and supabase:
+            try:
+                c_meta = (conversacion.get("metadata_json") or {}) if isinstance(conversacion, dict) else {}
+                c_meta["active_remote_jid"] = incoming_jid
+                c_meta["last_active_phone"] = clean_phone
+                supabase.table("conversaciones").update({"metadata_json": c_meta}).eq("id", conversacion_id).execute()
+            except Exception as meta_err:
+                logger.warning(f"Error actualizando active_remote_jid en conversación {conversacion_id}: {meta_err}")
+
         # 3. Guardar mensaje entrante del paciente (con deduplicación estricta por whatsapp_message_id)
         if payload.message_id and supabase:
             try:
@@ -566,10 +578,11 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
             except Exception as dedup_err:
                 logger.warning(f"Error verificando duplicado: {dedup_err}")
 
-        # Construir metadata_json enriquecido con datos multimedia
+        # Construir metadata_json enriquecido con datos multimedia y canal de despacho
         meta = {
             "whatsapp_message_id": payload.message_id,
-            "whatsapp_lid": payload.phone if is_lid_number(payload.phone) else None
+            "whatsapp_lid": payload.phone if is_lid_number(payload.phone) else None,
+            "remote_jid": incoming_jid
         }
         if payload.media and isinstance(payload.media, dict):
             meta.update(payload.media)
@@ -598,9 +611,9 @@ async def receive_incoming_whatsapp_message(payload: IncomingWebhookMessage, bac
         # 4. Despachar agente IA en background para responder de inmediato al webhook
         bot_disabled = conversacion.get("bot_disabled", False) if isinstance(conversacion, dict) else False
         if not bot_disabled and texto:
-            background_tasks.add_task(procesar_agente_ia_background, conversacion_id, clean_phone, texto)
+            background_tasks.add_task(procesar_agente_ia_background, conversacion_id, clean_phone, texto, incoming_jid)
 
-        return {"status": "processed", "conversacion_id": conversacion_id, "telefono": clean_phone}
+        return {"status": "processed", "conversacion_id": conversacion_id, "telefono": clean_phone, "remote_jid": incoming_jid}
     except Exception as e:
         logger.error(f"Error procesando mensaje entrante Baileys: {e}", exc_info=True)
         log_event(nivel="ERROR", modulo="WHATSAPP", accion="ERROR_WEBHOOK_FASTAPI", mensaje=f"Error procesando mensaje: {e}", metadata_json={"error": str(e)})
@@ -837,6 +850,45 @@ def send_message_api(payload: SendMessageRequest):
     if "error" in result and not result.get("guardado_db"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+@app.get("/api/whatsapp/chequeo-canal")
+def chequeo_canal_whatsapp_api(telefono: str):
+    """
+    Inspecciona en tiempo real el canal activo, el paciente, la conversación y el estado onWhatsApp para un número telefónico.
+    """
+    clean_tel = normalize_phone_number(telefono) if telefono else ""
+    if not clean_tel:
+        raise HTTPException(status_code=400, detail="Debe especificar un número de teléfono.")
+
+    paciente = get_paciente_by_telefono(clean_tel)
+    conversacion = None
+    active_remote_jid = None
+    if paciente and supabase:
+        try:
+            c_resp = supabase.table("conversaciones").select("*").eq("paciente_id", paciente["id"]).execute()
+            if c_resp.data and len(c_resp.data) > 0:
+                conversacion = c_resp.data[0]
+                active_remote_jid = (conversacion.get("metadata_json") or {}).get("active_remote_jid")
+        except Exception:
+            pass
+
+    # Consultar estado en pasarela Node.js
+    node_status = {}
+    try:
+        r = httpx.get(f"{whatsapp_manager.service_url}/channel-check?phone={clean_tel}", timeout=4.0)
+        if r.status_code == 200:
+            node_status = r.json()
+    except Exception as err:
+        node_status = {"error": str(err)}
+
+    return {
+        "telefono_solicitado": telefono,
+        "telefono_normalizado": clean_tel,
+        "paciente": paciente,
+        "conversacion_id": conversacion.get("id") if conversacion else None,
+        "active_remote_jid_en_db": active_remote_jid,
+        "gateway_node": node_status
+    }
 
 # ====================================================================
 # ENDPOINTS COPILOTO DE IA (GEMINI)
