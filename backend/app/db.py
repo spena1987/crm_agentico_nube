@@ -3847,7 +3847,7 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             file_bytes = f.read()
             
         # 2. Preparar metadatos para Geclisa
-        practica_nom = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+        practica_nom = (turno.get("practica_nombre") or "Cirugia").replace("/", "-").replace("\\", "-")
         ojo = turno.get("ojo") or ""
         titulo = f"Consentimiento - {practica_nom}"
         if ojo:
@@ -3946,7 +3946,7 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             file_bytes = f.read()
             
         # 2. Metadatos para Geclisa
-        practica_nom = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+        practica_nom = (turno.get("practica_nombre") or "Cirugia").replace("/", "-").replace("\\", "-")
         ojo = turno.get("ojo") or ""
         titulo = f"Protocolo Qx - {practica_nom}"
         if ojo:

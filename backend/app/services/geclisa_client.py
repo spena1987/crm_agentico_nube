@@ -1047,17 +1047,20 @@ class GeclisaClient:
         fecha_str = f"{fecha_parte}T00:00:00"
         hora_int = 0
         
-        import unicodedata
-        def _clean_str(s: str, max_len: int = 80) -> str:
+        import unicodedata, re
+        def _clean_str(s: str, max_len: int = 45) -> str:
             if not s:
                 return ""
             nfkd = unicodedata.normalize('NFKD', str(s))
             ascii_text = "".join([c for c in nfkd if not unicodedata.combining(c)])
-            return ascii_text.strip()[:max_len]
+            # Eliminar caracteres prohibidos en rutas de archivos Windows (\ / : * ? " < > |)
+            sanitized = re.sub(r'[^a-zA-Z0-9 \-_().,]', ' ', ascii_text)
+            sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+            return sanitized[:max_len]
 
-        titulo_limpio = _clean_str(titulo or filename, 48)
-        obs_limpia = _clean_str(observaciones or "", 120)
-        fn_limpio = _clean_str(filename, 48)
+        titulo_limpio = _clean_str(titulo or filename, 45)
+        obs_limpia = _clean_str(observaciones or "", 100)
+        fn_limpio = _clean_str(filename, 45)
         if not fn_limpio.lower().endswith(".pdf") and filename.lower().endswith(".pdf"):
             fn_limpio += ".pdf"
             
@@ -1101,7 +1104,7 @@ class GeclisaClient:
                 try:
                     archivos_recientes = self.listar_archivos_historia_clinica(ficha_id)
                     for a in archivos_recientes:
-                        if a.get("titulo") == (titulo or filename).strip():
+                        if a.get("titulo") == titulo_limpio or a.get("titulo") == (titulo or filename).strip():
                             archivo_id = a.get("id")
                             as_id = a.get("asId")
                             break
