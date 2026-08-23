@@ -32,6 +32,7 @@ import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQu
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 import CasoPagosWidget from './CasoPagosWidget'
+import { BACKEND_URL } from '@/lib/api'
 
 interface PrestadorGeclisa {
   pre_id: number
@@ -250,15 +251,22 @@ export default function CasoFormularioActivo({
   // Buscar en Nomenclador del CRM
   const buscarPracticasNomenclador = async (query: string) => {
     setBuscandoPractica(true)
-    const qClean = (query || '').trim()
+    let qClean = (query || '').trim()
+    // Si contiene formato [CODIGO] Nombre, extraer el término de búsqueda
+    if (qClean.startsWith('[') && qClean.includes(']')) {
+      qClean = qClean.replace(/^\[[^\]]+\]\s*/, '').trim()
+    }
     try {
-      const res = await fetch(`/api/nomencladores/practicas/buscar?q=${encodeURIComponent(qClean)}`)
+      const res = await fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(qClean)}`)
       const data = await res.json()
       if (res.ok && data.success) {
-        setPracticasNomenclador(data.practicas || [])
+        setPracticasNomenclador(data.resultados || [])
+      } else {
+        setPracticasNomenclador([])
       }
     } catch (err) {
       console.error('Error al buscar en nomenclador:', err)
+      setPracticasNomenclador([])
     } finally {
       setBuscandoPractica(false)
     }
@@ -383,37 +391,49 @@ export default function CasoFormularioActivo({
                 <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
               )}
 
-              {mostrarDropdownPractica && practicasNomenclador.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-indigo-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                  {practicasNomenclador.map((p) => (
-                    <button
-                      key={p.codigo}
-                      type="button"
-                      onClick={() => {
-                        setPracticaCodigo(p.codigo)
-                        setPracticaNombre(p.nombre)
-                        setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
-                        if (p.precio && p.precio > 0) {
-                          setMontoExtra(p.precio)
-                          if (p.moneda) setMonedaExtra(p.moneda)
-                        }
-                        setMostrarDropdownPractica(false)
-                      }}
-                      className="w-full text-left p-2.5 hover:bg-indigo-600/15 text-xs transition-colors group flex items-center justify-between"
-                    >
-                      <div className="flex flex-col">
-                        <span className="font-bold text-white group-hover:text-indigo-300">
-                          [{p.codigo}] {p.nombre}
-                        </span>
-                        {p.categoria && <span className="text-[10px] text-gray-500">{p.categoria}</span>}
-                      </div>
-                      {p.precio && p.precio > 0 && (
-                        <span className="text-xs font-mono font-bold text-emerald-400 shrink-0">
-                          {p.moneda || 'ARS'} ${p.precio.toLocaleString('es-AR')}
-                        </span>
-                      )}
-                    </button>
-                  ))}
+              {mostrarDropdownPractica && (
+                <div className="absolute top-full left-0 right-0 mt-1 max-h-52 overflow-y-auto bg-neutral-900 border border-indigo-500/40 rounded-xl shadow-2xl z-50 divide-y divide-[var(--border)]">
+                  {buscandoPractica && practicasNomenclador.length === 0 ? (
+                    <div className="p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
+                      <Loader2 size={13} className="animate-spin text-indigo-400" />
+                      <span>Buscando en el nomenclador...</span>
+                    </div>
+                  ) : practicasNomenclador.length === 0 ? (
+                    <div className="p-3 text-center text-xs text-gray-500">
+                      No se encontraron prácticas con &quot;{busquedaPractica}&quot;
+                    </div>
+                  ) : (
+                    practicasNomenclador.map((p) => (
+                      <button
+                        key={p.codigo}
+                        type="button"
+                        onClick={() => {
+                          setPracticaCodigo(p.codigo)
+                          setPracticaNombre(p.nombre)
+                          setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
+                          if (p.precio && p.precio > 0) {
+                            setMontoExtra(p.precio)
+                            if (p.moneda) setMonedaExtra(p.moneda)
+                          }
+                          setMostrarDropdownPractica(false)
+                        }}
+                        className="w-full text-left p-2.5 hover:bg-indigo-600/20 text-xs transition-colors group flex items-center justify-between"
+                      >
+                        <div className="flex flex-col pr-2">
+                          <span className="font-bold text-white group-hover:text-indigo-300">
+                            [{p.codigo}] {p.nombre}
+                          </span>
+                          {p.categoria && <span className="text-[10px] text-gray-500">{p.categoria}</span>}
+                        </div>
+                        {p.precio && p.precio > 0 ? (
+                          <span className="text-xs font-mono font-bold text-emerald-400 shrink-0">
+                            {p.moneda === 'USD' ? 'USD ' : '$ '}
+                            {p.precio.toLocaleString('es-AR')}
+                          </span>
+                        ) : null}
+                      </button>
+                    ))
+                  )}
                 </div>
               )}
             </div>
