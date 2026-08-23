@@ -25,11 +25,14 @@ import {
   Edit2,
   XCircle,
   Send,
-  Loader2
+  Loader2,
+  FileText,
+  AlertTriangle
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
+import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -44,6 +47,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [procesandoId, setProcesandoId] = useState<string | null>(null)
   const [horaActual, setHoraActual] = useState(new Date())
   const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
+  const [turnoParaPausaOms, setTurnoParaPausaOms] = useState<any | null>(null)
 
   // Ticker de hora actual para cronómetros cada 1 segundo
   useEffect(() => {
@@ -61,7 +65,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           setQuirofanos(data.quirofanos)
         }
       } catch (err) {
-        console.error('Error cargando quirofanos:', err)
+        console.error('Error cargando quirófanos:', err)
       }
     }
     loadQuirofanos()
@@ -71,11 +75,16 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const fetchTurnosDia = async () => {
     try {
       setCargando(true)
-      const qParam = quirofanoFiltro !== 'todos' ? `&quirofano_id=${quirofanoFiltro}` : ''
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano-dia?fecha=${fecha}${qParam}`)
+      let url = `${BACKEND_URL}/api/turnos-quirofano-dia?fecha=${fecha}`
+      if (quirofanoFiltro !== 'todos') {
+        url += `&quirofano_id=${quirofanoFiltro}`
+      }
+      const res = await fetch(url)
       const data = await res.json()
-      if (data.success && data.turnos) {
-        setTurnos(data.turnos)
+      if (res.ok && data.success) {
+        setTurnos(data.turnos || [])
+      } else {
+        setTurnos([])
       }
     } catch (err) {
       console.error('Error cargando turnos del día:', err)
@@ -144,22 +153,28 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     const enEspera = turnos.filter((t) => t.estado === 'en_espera').length
     const enOperacion = turnos.filter((t) => t.estado === 'en_operacion').length
     const operados = turnos.filter((t) => t.estado === 'operado').length
-    const cancelados = turnos.filter((t) => t.estado === 'cancelado').length
-    return { total, programados, enEspera, enOperacion, operados, cancelados }
+    return { total, programados, enEspera, enOperacion, operados }
   }, [turnos])
 
-  // Calcular tiempo transcurrido en quirófano
-  const calcularTiempoEnOperacion = (inicioIso?: string) => {
-    if (!inicioIso) return { minutos: 0, segundos: 0, texto: '00:00' }
+  // Calcular tiempo transcurrido en quirófano con alertas de sobretiempo
+  const calcularTiempoEnOperacion = (inicioIso?: string, duracionEstimada: number = 20) => {
+    if (!inicioIso) return { minutos: 0, segundos: 0, texto: '00:00', esExcedidoModerado: false, esExcedidoCritico: false, minutosExcedidos: 0 }
     const start = new Date(inicioIso).getTime()
     const now = horaActual.getTime()
     const diffSec = Math.max(0, Math.floor((now - start) / 1000))
     const min = Math.floor(diffSec / 60)
     const sec = diffSec % 60
+    const esExcedidoModerado = min > duracionEstimada && min <= duracionEstimada * 1.3
+    const esExcedidoCritico = min > duracionEstimada * 1.3
+    const minutosExcedidos = Math.max(0, min - duracionEstimada)
+
     return {
       minutos: min,
       segundos: sec,
-      texto: `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+      texto: `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`,
+      esExcedidoModerado,
+      esExcedidoCritico,
+      minutosExcedidos
     }
   }
 
@@ -253,28 +268,28 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           <Clock size={20} className="text-slate-400 opacity-60" />
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 flex items-center justify-between">
+        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-bold uppercase text-amber-600 dark:text-amber-400">En Espera</p>
+            <p className="text-[10px] font-bold uppercase text-amber-600 dark:text-amber-400">En Espera (Llegaron)</p>
             <p className="text-xl font-extrabold text-amber-600 dark:text-amber-400 font-mono mt-0.5">{metricas.enEspera}</p>
           </div>
-          <Activity size={20} className="text-amber-500 opacity-60 animate-pulse" />
+          <Activity size={20} className="text-amber-500 opacity-60" />
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/40 flex items-center justify-between">
+        <div className="p-3.5 rounded-2xl bg-purple-500/10 border border-purple-500/30 flex items-center justify-between animate-pulse">
           <div>
             <p className="text-[10px] font-bold uppercase text-purple-600 dark:text-purple-400">En Quirófano</p>
             <p className="text-xl font-extrabold text-purple-600 dark:text-purple-400 font-mono mt-0.5">{metricas.enOperacion}</p>
           </div>
-          <Scissors size={20} className="text-purple-500 opacity-60 animate-bounce" />
+          <Timer size={20} className="text-purple-500 opacity-80" />
         </div>
 
-        <div className="p-3.5 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 flex items-center justify-between">
+        <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-bold uppercase text-emerald-600 dark:text-emerald-400">Operados</p>
+            <p className="text-[10px] font-bold uppercase text-emerald-600 dark:text-emerald-400">Operados (Concluidos)</p>
             <p className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">{metricas.operados}</p>
           </div>
-          <CheckCircle2 size={20} className="text-emerald-500 opacity-60" />
+          <CheckCircle2 size={20} className="text-emerald-500 opacity-80" />
         </div>
       </div>
 
@@ -290,10 +305,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         </div>
       ) : (
         <div className="space-y-3.5">
-          {turnos.map((t, idx) => {
+          {turnos.map((t) => {
             const pac = t.pacientes || {}
             const q = t.quirofanos || {}
-            const tiempoOp = calcularTiempoEnOperacion(t.inicio_cirugia_at)
+            const duracionEstimada = t.duracion_minutos || 20
+            const tiempoOp = calcularTiempoEnOperacion(t.inicio_cirugia_at, duracionEstimada)
             const esEnOperacion = t.estado === 'en_operacion'
             const esOperado = t.estado === 'operado'
             const esEnEspera = t.estado === 'en_espera'
@@ -328,55 +344,44 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     </span>
 
                     <span className="text-[11px] font-semibold text-[var(--secondary)]">
-                      Duración: <b className="text-[var(--foreground)] font-mono">{t.duracion_minutos || 20}m</b>
+                      ⏱ {duracionEstimada} min estimados
                     </span>
 
-                    {/* Estado Badge */}
-                    <span
-                      className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
-                        esEnOperacion
-                          ? 'bg-purple-600 text-white animate-pulse'
-                          : esEnEspera
-                          ? 'bg-amber-500 text-white'
-                          : esOperado
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
-                      }`}
-                    >
-                      {esEnOperacion && <Activity size={12} className="animate-spin" />}
-                      {esEnEspera && <Activity size={12} />}
-                      {esOperado && <Check size={12} />}
-                      <span>
-                        {esEnOperacion
-                          ? 'En Operación'
-                          : esEnEspera
-                          ? 'En Sala de Espera'
-                          : esOperado
-                          ? 'Operado (Finalizado)'
-                          : 'Programado'}
-                      </span>
-                    </span>
-
-                    {/* Badge de Ojo */}
-                    <span className="px-2 py-0.5 text-[11px] font-bold rounded-md bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 font-mono">
+                    {/* Badge Lateralidad Ocular */}
+                    <span className="px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-extrabold">
                       {t.ojo === 'OD' ? 'Ojo Derecho (OD)' : t.ojo === 'OI' ? 'Ojo Izquierdo (OI)' : 'Ambos Ojos (AO)'}
                     </span>
+
+                    {/* Estado de Llegada */}
+                    {t.llegada_at && (
+                      <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
+                        Llegó: {String(t.llegada_at).slice(11, 16)} hs
+                      </span>
+                    )}
                   </div>
 
-                  {/* Fila 2: Paciente & Práctica */}
-                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-3">
-                    <h4 className="text-sm font-extrabold text-[var(--foreground)] truncate">
-                      {pac.nombre || t.paciente_nombre || 'Paciente'}
-                    </h4>
-                    <span className="text-xs text-[var(--secondary)] font-mono">
-                      DNI: {pac.dni || t.paciente_dni || 'S/D'} • Tel: {pac.telefono || t.paciente_telefono || 'S/D'}
-                    </span>
-                    <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 truncate">
-                      🩺 {t.practica_nombre}
+                  {/* Fila 2: Paciente & Cirugía */}
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <h3 className="text-base font-extrabold text-[var(--foreground)] tracking-tight">
+                      {pac.nombre || 'Paciente sin nombre'}
+                    </h3>
+                    <span className="text-xs text-[var(--secondary)] font-mono">DNI: {pac.dni || 'S/D'}</span>
+                    {pac.telefono && (
+                      <span className="text-xs text-[var(--secondary)] flex items-center gap-1">
+                        <Phone size={11} /> {pac.telefono}
+                      </span>
+                    )}
+                    <span className="text-xs px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                      {t.obra_social || pac.obra_social || 'Particular'}
                     </span>
                   </div>
 
-                  {/* Fila 3: Equipo Médico, LIO y Consentimiento */}
+                  <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                    <Scissors size={13} />
+                    <span>{t.practica_nombre || 'Cirugía Oftalmológica'}</span>
+                  </p>
+
+                  {/* Fila 3: Equipo Médico & Consentimiento */}
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[var(--secondary)] pt-1 border-t border-[var(--border)]">
                     <div>
                       👨‍⚕️ <b>Cirujano:</b> {t.cirujano_nombre || 'No asignado'}
@@ -403,6 +408,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         <span>👁 LIO: {t.lente_tipo || 'Estándar'}</span>
                         {t.lente_dioptria && <span>• Diop: {t.lente_dioptria}</span>}
                         {t.es_torico && <span>• Tórico: T{t.lente_torico_valor || 0} (Eje {t.lente_torico_eje || 90}°)</span>}
+                        {t.lente_lote && <span>• Lote: {t.lente_lote}</span>}
                       </div>
                     )}
 
@@ -433,11 +439,22 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                 <div className="flex flex-col sm:flex-row lg:flex-col items-end justify-center gap-2.5 shrink-0 border-t lg:border-t-0 lg:border-l border-[var(--border)] pt-3 lg:pt-0 lg:pl-4">
                   {/* Cronómetro en Vivo para cirugías en curso */}
                   {esEnOperacion && (
-                    <div className="p-2.5 rounded-xl bg-purple-600 text-white font-mono flex items-center gap-2 shadow-md animate-pulse w-full sm:w-auto text-center justify-center">
-                      <Timer size={16} />
+                    <div className={`p-2.5 rounded-xl text-white font-mono flex items-center gap-2 shadow-md w-full sm:w-auto text-center justify-center ${
+                      tiempoOp.esExcedidoCritico
+                        ? 'bg-rose-600 animate-bounce border border-rose-300'
+                        : tiempoOp.esExcedidoModerado
+                        ? 'bg-amber-500 text-slate-950 font-bold border border-amber-300 animate-pulse'
+                        : 'bg-purple-600 animate-pulse'
+                    }`}>
+                      {tiempoOp.esExcedidoCritico || tiempoOp.esExcedidoModerado ? <AlertTriangle size={16} /> : <Timer size={16} />}
                       <div className="text-left">
-                        <p className="text-[9px] uppercase font-bold tracking-wider opacity-80">En Quirófano</p>
-                        <p className="text-sm font-extrabold">{tiempoOp.texto} <span className="text-[10px] opacity-75 font-normal">/ {t.duracion_minutos || 20}m</span></p>
+                        <p className="text-[9px] uppercase font-bold tracking-wider opacity-90">
+                          {tiempoOp.esExcedidoCritico ? 'Sobreduración' : tiempoOp.esExcedidoModerado ? 'Tiempo Excedido' : 'En Quirófano'}
+                        </p>
+                        <p className="text-sm font-extrabold">
+                          {tiempoOp.texto} <span className="text-[10px] opacity-80 font-normal">/ {duracionEstimada}m</span>
+                          {tiempoOp.minutosExcedidos > 0 && <span className="ml-1 text-[11px] font-black underline">(+{tiempoOp.minutosExcedidos}m)</span>}
+                        </p>
                       </div>
                     </div>
                   )}
@@ -467,20 +484,20 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </div>
                     )}
 
-                    {/* Botón 2: Iniciar Cirugía */}
+                    {/* Botón 2: Iniciar Cirugía (Abre Pausa Quirúrgica OMS) */}
                     {t.estado === 'en_espera' && (
                       <button
                         type="button"
                         disabled={procesandoId === t.id}
                         onClick={(e) => {
                           e.stopPropagation()
-                          handleCambiarEstado(t.id, 'en_operacion')
+                          setTurnoParaPausaOms(t)
                         }}
-                        className="px-3.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
-                        title="El paciente ingresa al quirófano y comienza la intervención"
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+                        title="Abrir verificación de Pausa Quirúrgica OMS e iniciar intervención"
                       >
                         {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
-                        <span>🟣 Iniciar Cirugía</span>
+                        <span>🟣 Iniciar Cirugía (Pausa OMS)</span>
                       </button>
                     )}
 
@@ -494,7 +511,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                           handleCambiarEstado(t.id, 'operado')
                         }}
                         className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
-                        title="Finalizar cirugía, registrar egreso y archivar como operado"
+                        title="Finalizar cirugía, registrar egreso, emitir Parte Qx y archivar como operado"
                       >
                         {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={14} />}
                         <span>🟢 Finalizar (Operado)</span>
@@ -503,10 +520,33 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
                     {/* Si ya está operado */}
                     {esOperado && (
-                      <span className="px-3 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
-                        <Check size={13} />
-                        <span>Cirugía Concluida</span>
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2.5 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-300 dark:border-emerald-800 flex items-center gap-1">
+                          <Check size={13} />
+                          <span>Concluido</span>
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={async (e) => {
+                            e.stopPropagation()
+                            try {
+                              const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${t.id}/parte-quirurgico`)
+                              const data = await res.json()
+                              if (res.ok && data.pdf_url) {
+                                window.open(`${BACKEND_URL}${data.pdf_url}`, '_blank')
+                              }
+                            } catch (err) {
+                              console.error('Error abriendo parte Qx:', err)
+                            }
+                          }}
+                          className="px-2 py-1 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 text-[11px] font-bold flex items-center gap-1 hover:bg-blue-100 transition"
+                          title="Descargar Protocolo / Parte Quirúrgico Oficial en PDF"
+                        >
+                          <FileText size={12} />
+                          <span>Parte Qx</span>
+                        </button>
+                      </div>
                     )}
 
                     {/* Editar Ficha */}
@@ -531,19 +571,40 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         </div>
       )}
 
-      {/* MODAL INTEGRAL AL DOBLE CLIC (PROGRAMACIÓN, HISTORIA CLÍNICA E INDICACIONES DE GECLISA) */}
+      {/* Modal Clínico de 3 Pestañas con Geclisa */}
       {turnoModalDetalle && (
         <ModalDetalleCirugiaEnVivo
-          isOpen={Boolean(turnoModalDetalle)}
+          isOpen={!!turnoModalDetalle}
           onClose={() => setTurnoModalDetalle(null)}
           turno={turnoModalDetalle}
           quirofanos={quirofanos}
-          onEstadoCambiado={(tId, nEst, tAct) => {
-            setTurnos((prev) => prev.map((t) => (t.id === tId ? { ...t, estado: nEst, ...tAct } : t)))
+          onEstadoCambiado={(tId, nuevoEst, tActualizado) => {
+            setTurnos((prev) =>
+              prev.map((t) => (t.id === tId ? { ...t, estado: nuevoEst, ...tActualizado } : t))
+            )
+            setTurnoModalDetalle(tActualizado)
           }}
-          onTurnoGuardado={(tAct) => {
-            setTurnos((prev) => prev.map((t) => (t.id === tAct.id ? { ...t, ...tAct } : t)))
+          onTurnoGuardado={(tActualizado) => {
+            setTurnos((prev) =>
+              prev.map((t) => (t.id === tActualizado.id ? { ...t, ...tActualizado } : t))
+            )
+            setTurnoModalDetalle(tActualizado)
           }}
+        />
+      )}
+
+      {/* Modal de Pausa Quirúrgica OMS al iniciar desde la tarjeta */}
+      {turnoParaPausaOms && (
+        <ModalPausaQuirurgicaOms
+          isOpen={!!turnoParaPausaOms}
+          onClose={() => setTurnoParaPausaOms(null)}
+          turno={turnoParaPausaOms}
+          onConfirmarInicio={async () => {
+            const tId = turnoParaPausaOms.id
+            setTurnoParaPausaOms(null)
+            await handleCambiarEstado(tId, 'en_operacion')
+          }}
+          procesando={procesandoId === turnoParaPausaOms.id}
         />
       )}
     </div>

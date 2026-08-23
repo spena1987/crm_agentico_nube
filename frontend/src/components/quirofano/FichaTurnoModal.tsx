@@ -160,6 +160,9 @@ export default function FichaTurnoModal({
     es_torico: turno?.es_torico ?? false,
     lente_torico_valor: turno?.lente_torico_valor !== undefined && turno?.lente_torico_valor !== null ? turno.lente_torico_valor : 0,
     lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : 90,
+    lente_lote: turno?.lente_lote || '',
+    lente_serie: turno?.lente_serie || '',
+    lente_vencimiento: turno?.lente_vencimiento || '',
     tipo_anestesia: turno?.tipo_anestesia || 'Tópica + Sedación',
     observaciones: turno?.observaciones || '',
     observaciones_intraoperatorias: turno?.observaciones_intraoperatorias || '',
@@ -319,9 +322,11 @@ export default function FichaTurnoModal({
         lleva_lente: !!formData.lleva_lente,
         es_torico: !!formData.es_torico,
         lente_torico_valor: formData.es_torico ? Number(formData.lente_torico_valor) || 0 : null,
-        lente_torico_eje: formData.es_torico ? Number(formData.lente_torico_eje) || 0 : null,
         lente_dioptria: formData.lleva_lente ? formData.lente_dioptria : null,
-        lente_tipo: formData.lleva_lente ? formData.lente_tipo : null
+        lente_tipo: formData.lleva_lente ? formData.lente_tipo : null,
+        lente_lote: formData.lleva_lente ? formData.lente_lote : null,
+        lente_serie: formData.lleva_lente ? formData.lente_serie : null,
+        lente_vencimiento: formData.lleva_lente && formData.lente_vencimiento ? formData.lente_vencimiento : null
       }
 
       const url = esEdicion
@@ -1164,6 +1169,30 @@ export default function FichaTurnoModal({
                         No Tórico
                       </div>
                     )}
+                  </div>
+
+                  {/* 4. Trazabilidad LIO (Lote y Serie) */}
+                  <div className="col-span-full grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[var(--border)]">
+                    <div>
+                      <label className="text-[11px] font-semibold text-[var(--secondary)]">N° de Lote LIO</label>
+                      <input
+                        type="text"
+                        value={formData.lente_lote}
+                        onChange={(e) => setFormData({ ...formData, lente_lote: e.target.value })}
+                        placeholder="Ej: LOT-98214"
+                        className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-[var(--secondary)]">N° de Serie LIO</label>
+                      <input
+                        type="text"
+                        value={formData.lente_serie}
+                        onChange={(e) => setFormData({ ...formData, lente_serie: e.target.value })}
+                        placeholder="Ej: SN-44120"
+                        className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono outline-none focus:border-blue-500"
+                      />
+                    </div>
                   </div>
                 </div>
               ) : (
