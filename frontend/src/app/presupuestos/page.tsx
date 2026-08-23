@@ -147,21 +147,70 @@ export default function PresupuestosPage() {
     setIsVisorModalOpen(true)
   }
 
-  // Duplicar / Re-cotizar presupuesto
+  // Duplicar / Re-cotizar presupuesto con fallback dual resiliente
   const handleDuplicarPresupuesto = async (pres: Presupuesto) => {
     try {
       setLoading(true)
-      const res = await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/duplicar`)
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setPresupuestoParaClonar(data)
+      let dataToClone: any = null
+
+      // 1. Intentar vía API Backend
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/duplicar`)
+        if (res.ok) {
+          const apiData = await res.json()
+          if (apiData.success) {
+            dataToClone = apiData
+          }
+        }
+      } catch (apiErr) {
+        console.warn('API Backend duplicar no disponible, intentando vía Supabase:', apiErr)
+      }
+
+      // 2. Fallback robusto directo de Supabase
+      if (!dataToClone) {
+        const { data: pData, error } = await supabase
+          .from('presupuestos')
+          .select('*, pacientes(*), items_presupuesto(*, servicios_precios(*))')
+          .eq('id', pres.id)
+          .single()
+
+        if (error) throw error
+
+        if (pData) {
+          const itemsRaw = pData.items_presupuesto || []
+          const parsedItems = itemsRaw.map((it: any) => {
+            const srv = it.servicios_precios || {}
+            return {
+              id: srv.id || it.id || String(Math.random()),
+              codigo: srv.codigo || 'PRACT',
+              nombre: srv.nombre_prestacion || 'Prestación Médica',
+              cantidad: Number(it.cantidad || 1),
+              precio_unitario: Number(it.precio_unitario || 0),
+              moneda: String(it.moneda || srv.moneda || 'ARS').toUpperCase(),
+              subtotal: Number(it.subtotal || (Number(it.cantidad || 1) * Number(it.precio_unitario || 0)))
+            }
+          })
+
+          const pAny = pData as any
+          dataToClone = {
+            paciente: pAny.pacientes,
+            paciente_id: pAny.paciente_id,
+            total_ars: Number(pAny.total_ars || 0),
+            total_usd: Number(pAny.total_usd || 0),
+            items: parsedItems
+          }
+        }
+      }
+
+      if (dataToClone) {
+        setPresupuestoParaClonar(dataToClone)
         setActiveTab('create')
       } else {
         alert('No se pudieron obtener los datos para duplicar el presupuesto.')
       }
     } catch (err) {
       console.error('Error al clonar presupuesto:', err)
-      alert('Error de conexión al duplicar.')
+      alert('No se pudo duplicar el presupuesto. Revisa la conexión con el servidor.')
     } finally {
       setLoading(false)
     }
