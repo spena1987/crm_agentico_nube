@@ -520,6 +520,43 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
     except Exception as agent_err:
         logger.error(f"Error procesando respuesta de agente IA en background: {agent_err}")
 
+def unwrap_whatsapp_message(msg_dict: Any) -> Dict[str, Any]:
+    """
+    Desempaqueta recursivamente mensajes encapsulados de WhatsApp emitidos por dispositivos iOS (iPhone)
+    o configuraciones de privacidad (Mensajes Efímeros / Ephemeral, ViewOnce, Documentos con Caption, etc.).
+    """
+    if not isinstance(msg_dict, dict):
+        return {}
+    
+    current = msg_dict
+    for _ in range(10):  # Limitar profundidad para evitar recursión infinita
+        if not isinstance(current, dict):
+            break
+        if "ephemeralMessage" in current and isinstance(current["ephemeralMessage"], dict):
+            current = current["ephemeralMessage"].get("message", {})
+        elif "viewOnceMessage" in current and isinstance(current["viewOnceMessage"], dict):
+            current = current["viewOnceMessage"].get("message", {})
+        elif "viewOnceMessageV2" in current and isinstance(current["viewOnceMessageV2"], dict):
+            current = current["viewOnceMessageV2"].get("message", {})
+        elif "viewOnceMessageV2Extension" in current and isinstance(current["viewOnceMessageV2Extension"], dict):
+            current = current["viewOnceMessageV2Extension"].get("message", {})
+        elif "documentWithCaptionMessage" in current and isinstance(current["documentWithCaptionMessage"], dict):
+            current = current["documentWithCaptionMessage"].get("message", {})
+        elif "botInvokeMessage" in current and isinstance(current["botInvokeMessage"], dict):
+            current = current["botInvokeMessage"].get("message", {})
+        elif "templateMessage" in current and isinstance(current["templateMessage"], dict):
+            hydrated = current["templateMessage"].get("hydratedTemplate", {})
+            current = hydrated or current["templateMessage"]
+        elif "interactiveMessage" in current and isinstance(current["interactiveMessage"], dict):
+            body = current["interactiveMessage"].get("body", {})
+            if isinstance(body, dict) and "text" in body:
+                return {"conversation": body["text"]}
+            break
+        else:
+            break
+
+    return current if isinstance(current, dict) else {}
+
 @app.post("/api/whatsapp/webhook/incoming")
 async def receive_incoming_whatsapp_message(request: Request, background_tasks: BackgroundTasks):
     """
@@ -583,7 +620,10 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                 addressing_mode = key.get("addressingMode") or data.get("addressingMode") or ""
                 message_id = key.get("id", "")
                 push_name = data.get("pushName", "Paciente")
-                msg_content = data.get("message", {}) or {}
+                
+                # Desempaquetar capas envolventes de iOS / Ephemeral / ViewOnce
+                raw_msg = data.get("message", {}) or {}
+                msg_content = unwrap_whatsapp_message(raw_msg)
                 
                 texto = ""
                 message_type = "texto"
@@ -621,6 +661,20 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         message_type = "texto"
                     elif "extendedTextMessage" in msg_content:
                         texto = msg_content.get("extendedTextMessage", {}).get("text", "")
+                        message_type = "texto"
+                    elif "buttonsResponseMessage" in msg_content:
+                        texto = msg_content.get("buttonsResponseMessage", {}).get("selectedDisplayText", "") or msg_content.get("buttonsResponseMessage", {}).get("selectedButtonId", "")
+                        message_type = "texto"
+                    elif "templateButtonReplyMessage" in msg_content:
+                        texto = msg_content.get("templateButtonReplyMessage", {}).get("selectedDisplayText", "") or msg_content.get("templateButtonReplyMessage", {}).get("selectedId", "")
+                        message_type = "texto"
+                    elif "listResponseMessage" in msg_content:
+                        texto = msg_content.get("listResponseMessage", {}).get("title", "") or msg_content.get("listResponseMessage", {}).get("description", "")
+                        message_type = "texto"
+                    elif "interactiveResponseMessage" in msg_content:
+                        body_txt = msg_content.get("interactiveResponseMessage", {}).get("body", {}).get("text", "")
+                        native_p = msg_content.get("interactiveResponseMessage", {}).get("nativeFlowResponseMessage", {}).get("paramsJson", "")
+                        texto = body_txt or native_p
                         message_type = "texto"
 
                     # IMAGEN
