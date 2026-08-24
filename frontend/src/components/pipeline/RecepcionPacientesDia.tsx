@@ -71,6 +71,48 @@ export default function RecepcionPacientesDia() {
   const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
   const [busqueda, setBusqueda] = useState<string>('')
 
+  // Restaurar pestaña activa desde URL o localStorage al cargar
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search)
+      const tabUrl = urlParams.get('tab') as FiltroEstado
+      const tabStorage = localStorage.getItem('crm_recepcion_tab_activa') as FiltroEstado
+
+      const tabsValidas: FiltroEstado[] = ['todos', 'programado', 'en_espera', 'en_operacion', 'operado']
+
+      if (tabUrl && tabsValidas.includes(tabUrl)) {
+        setFiltroEstado(tabUrl)
+        localStorage.setItem('crm_recepcion_tab_activa', tabUrl)
+      } else if (tabStorage && tabsValidas.includes(tabStorage)) {
+        setFiltroEstado(tabStorage)
+        if (tabStorage !== 'todos') {
+          const url = new URL(window.location.href)
+          url.searchParams.set('tab', tabStorage)
+          window.history.replaceState({}, '', url.toString())
+        }
+      }
+    } catch (e) {
+      console.warn('No se pudo restaurar la pestaña activa de recepción:', e)
+    }
+  }, [])
+
+  // Cambiar pestaña con persistencia automática
+  const handleCambiarTab = (nuevaTab: FiltroEstado) => {
+    setFiltroEstado(nuevaTab)
+    try {
+      localStorage.setItem('crm_recepcion_tab_activa', nuevaTab)
+      const url = new URL(window.location.href)
+      if (nuevaTab === 'todos') {
+        url.searchParams.delete('tab')
+      } else {
+        url.searchParams.set('tab', nuevaTab)
+      }
+      window.history.replaceState({}, '', url.toString())
+    } catch (e) {
+      // Silencioso
+    }
+  }
+
   // Cargar turnos del día seleccionado
   const fetchTurnosHoy = async () => {
     try {
@@ -319,7 +361,7 @@ export default function RecepcionPacientesDia() {
         {/* Tab 1: Todos */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('todos')}
+          onClick={() => handleCambiarTab('todos')}
           className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
             filtroEstado === 'todos'
               ? 'bg-neutral-800 border-blue-500 shadow-md ring-2 ring-blue-500/30'
@@ -337,7 +379,7 @@ export default function RecepcionPacientesDia() {
         {/* Tab 2: Citados / Por Llegar */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('programado')}
+          onClick={() => handleCambiarTab('programado')}
           className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
             filtroEstado === 'programado'
               ? 'bg-blue-950/60 border-blue-500 shadow-md ring-2 ring-blue-500/40'
@@ -355,7 +397,7 @@ export default function RecepcionPacientesDia() {
         {/* Tab 3: En Sala de Espera */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('en_espera')}
+          onClick={() => handleCambiarTab('en_espera')}
           className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
             filtroEstado === 'en_espera'
               ? 'bg-amber-950/60 border-amber-500 shadow-md ring-2 ring-amber-500/40'
@@ -373,7 +415,7 @@ export default function RecepcionPacientesDia() {
         {/* Tab 4: En Mesa Quirúrgica */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('en_operacion')}
+          onClick={() => handleCambiarTab('en_operacion')}
           className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
             filtroEstado === 'en_operacion'
               ? 'bg-purple-950/60 border-purple-500 shadow-md ring-2 ring-purple-500/40'
@@ -391,7 +433,7 @@ export default function RecepcionPacientesDia() {
         {/* Tab 5: Cirugías Finalizadas */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('operado')}
+          onClick={() => handleCambiarTab('operado')}
           className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
             filtroEstado === 'operado'
               ? 'bg-emerald-950/60 border-emerald-500 shadow-md ring-2 ring-emerald-500/40'
@@ -429,7 +471,7 @@ export default function RecepcionPacientesDia() {
             <button
               type="button"
               onClick={() => {
-                setFiltroEstado('todos')
+                handleCambiarTab('todos')
                 setBusqueda('')
               }}
               className="mt-2 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold transition shadow"

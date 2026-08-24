@@ -170,6 +170,8 @@ export default function ChatInbox() {
   const prevMessagesLengthRef = useRef<number>(0)
   const [showScrollBottom, setShowScrollBottom] = useState<boolean>(false)
   const [unreadNewCount, setUnreadNewCount] = useState<number>(0)
+  const [replyingToMessage, setReplyingToMessage] = useState<Mensaje | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ message: Mensaje; position: { x: number; y: number } } | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
@@ -527,24 +529,145 @@ export default function ChatInbox() {
 
   const selectedConv = conversaciones.find((c) => c.id === selectedConvId)
 
+  // Handlers del Menú Contextual (WhatsApp Web + Clínico)
+  const handleOpenContextMenu = (e: React.MouseEvent, msg: Mensaje) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({
+      message: msg,
+      position: { x: e.clientX, y: e.clientY }
+    })
+  }
+
+  const handleReplyMessage = (msg: Mensaje) => {
+    setReplyingToMessage(msg)
+    setTimeout(() => {
+      messageInputRef.current?.focus()
+    }, 60)
+  }
+
+  const handleCancelReply = () => {
+    setReplyingToMessage(null)
+  }
+
+  const handleCopyText = (text: string) => {
+    if (!text) return
+    navigator.clipboard.writeText(text).catch(() => {})
+  }
+
+  const handleReactToMessage = async (msg: Mensaje, emoji: string) => {
+    try {
+      setMensajes((prev) =>
+        prev.map((m) => {
+          if (m.id === msg.id) {
+            const prevReactions = m.metadata_json?.reactions || []
+            const filtered = prevReactions.filter((r: any) => r.emisor !== 'operador')
+            return {
+              ...m,
+              metadata_json: {
+                ...(m.metadata_json || {}),
+                reactions: [...filtered, { emisor: 'operador', emoji, created_at: new Date().toISOString() }]
+              }
+            }
+          }
+          return m
+        })
+      )
+
+      await fetch(`${BACKEND_URL}/api/mensajes/${msg.id}/reaccionar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji })
+      })
+    } catch (err) {
+      console.error('Error enviando reacción:', err)
+    }
+  }
+
+  const handleSaveClinicalNote = async (msg: Mensaje) => {
+    if (!selectedConv) return
+    const pac = getPatient(selectedConv)
+    if (!pac || !pac.id) return
+
+    try {
+      const fechaStr = new Date(msg.created_at).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })
+      const autor = msg.emisor === 'paciente' ? (pac.nombre || 'Paciente') : 'Operador CRM'
+      const nuevaNota = `[${fechaStr} - ${autor}]: ${msg.contenido}`
+      
+      const notasActuales = (pac as any).historial_notas ? `${(pac as any).historial_notas}\n\n${nuevaNota}` : nuevaNota
+
+      await fetch(`${BACKEND_URL}/api/pacientes/${pac.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ historial_notas: notasActuales })
+      })
+
+      alert(`✅ Nota clínica guardada en el historial de ${pac.nombre || 'Paciente'}.`)
+    } catch (err) {
+      console.error('Error guardando nota clínica:', err)
+      alert('No se pudo guardar la nota clínica.')
+    }
+  }
+
+  const handleConvertToInternalNote = async (msg: Mensaje) => {
+    if (!selectedConvId) return
+    const autor = msg.emisor === 'paciente' ? 'Paciente' : 'Operador'
+    const textoNota = `[REF ${autor.toUpperCase()}]: ${msg.contenido}`
+    
+    try {
+      await supabase.from('mensajes').insert({
+        conversacion_id: selectedConvId,
+        emisor: 'operador',
+        contenido: textoNota,
+        metadata_json: { is_internal_note: true, tipo: 'nota_interna' }
+      })
+      fetchMensajes(selectedConvId)
+    } catch (err) {
+      console.error('Error creando nota interna:', err)
+    }
+  }
+
+  const handleDeleteMessage = async (msg: Mensaje) => {
+    if (!confirm('¿Deseas eliminar este mensaje del chat?')) return
+    try {
+      setMensajes((prev) => prev.filter((m) => m.id !== msg.id))
+      await fetch(`${BACKEND_URL}/api/mensajes/${msg.id}`, { method: 'DELETE' })
+    } catch (err) {
+      console.error('Error eliminando mensaje:', err)
+    }
+  }
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
 
     const mensajeAEnviar = nuevoMensaje.trim()
     const esNotaInternaActual = isInternalNote
+    const currentReply = replyingToMessage
     setNuevoMensaje('')
+    setReplyingToMessage(null)
     setQuickRepliesOpen(false)
 
+    const quotedId = currentReply?.metadata_json?.whatsapp_message_id || currentReply?.id
+    const quotedData = currentReply ? {
+      id: currentReply.id,
+      emisor: currentReply.emisor,
+      contenido: currentReply.contenido,
+      nombre: currentReply.emisor === 'paciente' ? (getPatient(selectedConv)?.nombre || 'Paciente') : 'Operador Humano'
+    } : undefined
+
     const tempId = `temp_${Date.now()}`
+    const metaOpt: any = esNotaInternaActual 
+      ? { is_internal_note: true, tipo: 'nota_interna' } 
+      : { status: 'delivered' }
+    if (quotedData) metaOpt.quoted_message = quotedData
+
     const optimisticMsg: Mensaje = {
       id: tempId,
       conversacion_id: selectedConvId,
       emisor: 'operador',
       contenido: mensajeAEnviar,
-      metadata_json: esNotaInternaActual 
-        ? { is_internal_note: true, tipo: 'nota_interna' } 
-        : { status: 'delivered' },
+      metadata_json: metaOpt,
       created_at: new Date().toISOString()
     }
     setMensajes((prev) => [...prev, optimisticMsg])
@@ -562,7 +685,9 @@ export default function ChatInbox() {
             telefono: telefonoDestino,
             mensaje: mensajeAEnviar,
             conversacion_id: selectedConvId,
-            is_internal_note: esNotaInternaActual
+            is_internal_note: esNotaInternaActual,
+            quoted_message_id: quotedId,
+            quoted_message_data: quotedData
           })
         })
         if (response.ok) {
@@ -573,13 +698,16 @@ export default function ChatInbox() {
       }
 
       if (!dispatchedViaBackend) {
+        const dbMeta: any = esNotaInternaActual ? { is_internal_note: true, tipo: 'nota_interna' } : {}
+        if (quotedData) dbMeta.quoted_message = quotedData
+
         await supabase
           .from('mensajes')
           .insert({
             conversacion_id: selectedConvId,
             emisor: 'operador',
             contenido: mensajeAEnviar,
-            metadata_json: esNotaInternaActual ? { is_internal_note: true, tipo: 'nota_interna' } : {}
+            metadata_json: dbMeta
           })
 
         if (!esNotaInternaActual) {
@@ -1312,9 +1440,23 @@ export default function ChatInbox() {
                     // 1. NOTA INTERNA PRIVADA (ÁMBAR)
                     if (isInternal) {
                       return (
-                        <div key={msg.id} className="flex justify-center my-2">
-                          <div className="max-w-md w-full bg-[#241a06] border border-amber-500/50 text-amber-200 rounded-2xl p-3 shadow-md text-xs">
-                            <div className="flex items-center justify-between gap-1 text-[9.5px] font-bold text-amber-400 mb-1.5 pb-1 border-b border-amber-800/40">
+                        <div 
+                          key={msg.id} 
+                          onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                          className="flex justify-center my-2 group relative"
+                        >
+                          <div className="max-w-md w-full bg-[#241a06] border border-amber-500/50 text-amber-200 rounded-2xl p-3 shadow-md text-xs relative">
+                            {/* Botón flotante Hover para menú */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenContextMenu(e, msg)}
+                              className="absolute top-2 right-2 p-1 rounded-full bg-amber-950/80 hover:bg-amber-900 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                              title="Menú de nota interna"
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+
+                            <div className="flex items-center justify-between gap-1 text-[9.5px] font-bold text-amber-400 mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
                               <span className="flex items-center gap-1">
                                 <Lock size={11} /> NOTA INTERNA (Privado del Equipo Médico)
                               </span>
@@ -1332,7 +1474,8 @@ export default function ChatInbox() {
                     return (
                       <div
                         key={msg.id}
-                        className={`flex ${isOperator ? 'justify-end' : 'justify-start'}`}
+                        onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                        className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
                       >
                         <div
                           className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
@@ -1343,8 +1486,30 @@ export default function ChatInbox() {
                               : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
                           }`}
                         >
+                          {/* Botón flotante Hover para Menú Contextual (Estilo WhatsApp Web) */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenContextMenu(e, msg)}
+                            className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-black/70 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                            title="Opciones del mensaje"
+                          >
+                            <ChevronDown size={14} />
+                          </button>
+
+                          {/* Renderizado de Mensaje Citado (Reply preview dentro de la burbuja) */}
+                          {msg.metadata_json?.quoted_message && (
+                            <div className="mb-2.5 p-2 rounded-xl bg-black/30 border-l-4 border-blue-400 text-[11px] select-none flex flex-col gap-0.5">
+                              <span className="font-bold text-blue-300 text-[9.5px]">
+                                {msg.metadata_json.quoted_message.nombre || (msg.metadata_json.quoted_message.emisor === 'paciente' ? 'Paciente' : 'Operador Humano')}
+                              </span>
+                              <span className="text-slate-200 line-clamp-2 italic opacity-90">
+                                {msg.metadata_json.quoted_message.contenido}
+                              </span>
+                            </div>
+                          )}
+
                           {/* Badge del emisor */}
-                          <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider">
+                          <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider pr-6">
                             {isOperator ? (
                               <>
                                 <User size={10} className="text-blue-200" /> Operador Humano (CRM)
@@ -1494,6 +1659,28 @@ export default function ChatInbox() {
                   </button>
                 </div>
               </div>
+
+              {/* Banner de Cita/Respuesta (Estilo WhatsApp Web) */}
+              {replyingToMessage && (
+                <div className="flex items-center justify-between p-2.5 bg-[#0b1324] border-l-4 border-blue-500 rounded-xl border border-slate-700/60 shadow-lg animate-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex flex-col min-w-0 pr-2">
+                    <span className="text-[10px] font-bold text-blue-400 flex items-center gap-1">
+                      <Reply size={11} /> Respondiendo a {replyingToMessage.emisor === 'paciente' ? (getPatient(selectedConv)?.nombre || 'Paciente') : 'Operador Humano'}
+                    </span>
+                    <span className="text-xs text-slate-300 truncate max-w-md italic mt-0.5">
+                      {replyingToMessage.contenido || '[Archivo Multimedia]'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCancelReply}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors cursor-pointer shrink-0"
+                    title="Cancelar respuesta"
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              )}
 
               {/* Formulario Principal de Envío */}
               <form onSubmit={handleSend} className="flex items-end gap-2 relative">
@@ -1689,6 +1876,21 @@ export default function ChatInbox() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MENÚ CONTEXTUAL DE MENSAJES (CLIC DERECHO Y HOVER) */}
+      {contextMenu && (
+        <ChatMessageContextMenu
+          message={contextMenu.message}
+          position={contextMenu.position}
+          onClose={() => setContextMenu(null)}
+          onReply={handleReplyMessage}
+          onCopy={handleCopyText}
+          onReact={handleReactToMessage}
+          onSaveClinicalNote={handleSaveClinicalNote}
+          onConvertToInternalNote={handleConvertToInternalNote}
+          onDelete={handleDeleteMessage}
+        />
       )}
     </div>
   )
