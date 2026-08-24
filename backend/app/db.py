@@ -2127,6 +2127,25 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
         resp = supabase.table("asesorias_quirurgicas").update(datos).eq("id", asesoria_id).execute()
         if not resp.data:
             raise Exception(f"No se encontró la asesoría {asesoria_id} para actualizar.")
+        
+        # Sincronizar hacia turnos de quirófano vinculados a esta asesoría
+        if "practica_nombre" in datos or "practica_codigo" in datos or "medico_cirujano_nombre" in datos or "medico_cirujano_id" in datos:
+            upd_turno = {}
+            if "practica_nombre" in datos and datos["practica_nombre"] and datos["practica_nombre"] != "Nueva Cirugía / Procedimiento":
+                upd_turno["practica_nombre"] = datos["practica_nombre"]
+            if "practica_codigo" in datos and datos["practica_codigo"]:
+                upd_turno["practica_codigo"] = datos["practica_codigo"]
+            if "medico_cirujano_nombre" in datos and datos["medico_cirujano_nombre"]:
+                upd_turno["cirujano_nombre"] = datos["medico_cirujano_nombre"]
+            if "medico_cirujano_id" in datos and datos["medico_cirujano_id"]:
+                upd_turno["cirujano_id"] = datos["medico_cirujano_id"]
+                
+            if upd_turno:
+                try:
+                    supabase.table("turnos_quirofano").update(upd_turno).eq("asesoria_id", asesoria_id).execute()
+                except Exception as e_t:
+                    logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
+
         return resp.data[0]
     except Exception as e:
         logger.error(f"Error al actualizar asesoría quirúrgica {asesoria_id}: {e}")

@@ -350,12 +350,38 @@ export default function ItemCasoQuirurgicoAcordeon({
   }
 
   // Callback cuando se crea presupuesto
-  const handlePresupuestoCreado = (nuevoPresupuesto: PresupuestoPaciente) => {
+  const handlePresupuestoCreado = async (nuevoPresupuesto: PresupuestoPaciente) => {
     setPresupuestos((prev) => [nuevoPresupuesto, ...prev])
-    handleGuardarCambios({
+
+    // Extraer práctica del presupuesto emitido si está disponible
+    let codPrac = caso.practica_codigo
+    let nomPrac = caso.practica_nombre
+
+    if (nuevoPresupuesto.items_presupuesto && nuevoPresupuesto.items_presupuesto.length > 0) {
+      const primerItem: any = nuevoPresupuesto.items_presupuesto[0]
+      const cod = primerItem.codigo || primerItem.servicios_precios?.codigo
+      const nom = primerItem.nombre || primerItem.servicios_precios?.nombre_prestacion
+      if (cod) codPrac = cod
+      if (nom && nom !== 'Prestación médica') nomPrac = nom
+    }
+
+    const moneda = (nuevoPresupuesto.total_usd && nuevoPresupuesto.total_usd > 0) ? 'USD' : 'ARS'
+    const monto = moneda === 'USD' ? Number(nuevoPresupuesto.total_usd) : Number(nuevoPresupuesto.total_ars || nuevoPresupuesto.total || 0)
+
+    const payloadActualizacion: Partial<AsesoriaQuirurgica> = {
       presupuesto_id: nuevoPresupuesto.id,
-      monto_extra: nuevoPresupuesto.total
-    })
+      monto_extra: monto,
+      moneda_extra: moneda
+    }
+
+    if (codPrac && (!caso.practica_codigo || caso.practica_nombre === 'Nueva Cirugía / Procedimiento')) {
+      payloadActualizacion.practica_codigo = codPrac
+    }
+    if (nomPrac && (!caso.practica_nombre || caso.practica_nombre === 'Nueva Cirugía / Procedimiento')) {
+      payloadActualizacion.practica_nombre = nomPrac
+    }
+
+    await handleGuardarCambios(payloadActualizacion)
     setMostrarModalPresupuesto(false)
   }
 

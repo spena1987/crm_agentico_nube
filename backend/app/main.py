@@ -3590,6 +3590,36 @@ def obtener_datos_consentimiento_publico(token: str):
         practica_id = turno.get("practica_id") or ""
         practica_nombre = turno.get("practica_nombre") or ""
         
+        # Si el turno no tiene práctica definida o es genérica, buscar en la asesoría quirúrgica vinculada
+        if (not practica_cod or not practica_nombre or practica_nombre == "Nueva Cirugía / Procedimiento") and turno.get("asesoria_id"):
+            try:
+                res_as = supabase.table("asesorias_quirurgicas").select("practica_codigo, practica_nombre, presupuesto_id").eq("id", turno["asesoria_id"]).limit(1).execute()
+                if res_as.data:
+                    as_row = res_as.data[0]
+                    if as_row.get("practica_codigo"):
+                        practica_cod = as_row["practica_codigo"]
+                    if as_row.get("practica_nombre") and as_row["practica_nombre"] != "Nueva Cirugía / Procedimiento":
+                        practica_nombre = as_row["practica_nombre"]
+                    elif as_row.get("presupuesto_id"):
+                        res_p = supabase.table("presupuestos").select("items_presupuesto(servicios_precios(codigo, nombre_prestacion))").eq("id", as_row["presupuesto_id"]).limit(1).execute()
+                        if res_p.data and res_p.data[0].get("items_presupuesto"):
+                            item_sp = res_p.data[0]["items_presupuesto"][0].get("servicios_precios") or {}
+                            if item_sp.get("codigo"):
+                                practica_cod = item_sp["codigo"]
+                            if item_sp.get("nombre_prestacion"):
+                                practica_nombre = item_sp["nombre_prestacion"]
+                    
+                    # Actualizar turno con los datos reales encontrados
+                    if practica_nombre and practica_nombre != "Nueva Cirugía / Procedimiento":
+                        supabase.table("turnos_quirofano").update({
+                            "practica_nombre": practica_nombre,
+                            "practica_codigo": practica_cod or None
+                        }).eq("id", turno["id"]).execute()
+                        turno["practica_nombre"] = practica_nombre
+                        turno["practica_codigo"] = practica_cod
+            except Exception as e_as:
+                logger.warning(f"Aviso al resolver práctica desde asesoría vinculada: {e_as}")
+
         cuerpo_template = None
         titulo_consentimiento = "Consentimiento Informado Quirúrgico"
         
