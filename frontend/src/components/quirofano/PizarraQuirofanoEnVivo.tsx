@@ -34,7 +34,8 @@ import {
   ShieldCheck,
   Search,
   X,
-  ListFilter
+  ListFilter,
+  Layers
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -44,6 +45,16 @@ import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
+}
+
+const ESTADOS_ORDEN = ['programado', 'en_espera', 'en_operacion', 'operado']
+
+const NOMBRES_ESTADOS: Record<string, string> = {
+  programado: 'Por Llegar',
+  en_espera: 'En Espera',
+  en_operacion: 'En Quirófano',
+  operado: 'Operados',
+  todos: 'Todos'
 }
 
 export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofanoEnVivoProps) {
@@ -60,16 +71,28 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [desvinculandoGeclisaId, setDesvinculandoGeclisaId] = useState<string | null>(null)
   const [subiendoConsentimientoId, setSubiendoConsentimientoId] = useState<string | null>(null)
 
-  // Filtros operativos y búsqueda en tiempo real
-  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'programado' | 'en_espera' | 'en_operacion' | 'operado'>('programado')
+  // Filtros operativos múltiples y búsqueda en tiempo real
+  const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['programado'])
+  const [ultimoEstadoClickeado, setUltimoEstadoClickeado] = useState<string>('programado')
   const [busqueda, setBusqueda] = useState<string>('')
 
   // Restaurar preferencias guardadas del usuario en localStorage al montar el componente
   useEffect(() => {
     try {
-      const savedEstado = localStorage.getItem('quirofano_filtro_estado') as any
-      if (savedEstado && ['todos', 'programado', 'en_espera', 'en_operacion', 'operado'].includes(savedEstado)) {
-        setFiltroEstado(savedEstado)
+      const saved = localStorage.getItem('quirofano_filtros_estado')
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setFiltrosEstado(parsed)
+          if (parsed.length === 1 && parsed[0] !== 'todos') {
+            setUltimoEstadoClickeado(parsed[0])
+          }
+        }
+      } else {
+        const legacy = localStorage.getItem('quirofano_filtro_estado')
+        if (legacy && ['todos', 'programado', 'en_espera', 'en_operacion', 'operado'].includes(legacy)) {
+          setFiltrosEstado([legacy])
+        }
       }
       const savedSala = localStorage.getItem('quirofano_filtro_sala')
       if (savedSala) {
@@ -80,14 +103,81 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     }
   }, [])
 
-  // Cambiar y persistir filtro de estado en localStorage
-  const handleSeleccionarFiltroEstado = (nuevoEstado: 'todos' | 'programado' | 'en_espera' | 'en_operacion' | 'operado') => {
-    setFiltroEstado(nuevoEstado)
+  // Guardar y persistir arreglo de filtros en localStorage
+  const guardarFiltros = (nuevos: string[]) => {
+    setFiltrosEstado(nuevos)
     try {
-      localStorage.setItem('quirofano_filtro_estado', nuevoEstado)
+      localStorage.setItem('quirofano_filtros_estado', JSON.stringify(nuevos))
     } catch (e) {
-      console.warn('Error guardando quirofano_filtro_estado en localStorage:', e)
+      console.warn('Error guardando quirofano_filtros_estado en localStorage:', e)
     }
+  }
+
+  // Manejo de clic en KPI con soporte de Ctrl/Cmd + Clic y Shift + Clic
+  const handleKpiClick = (estado: string, e: React.MouseEvent) => {
+    if (estado === 'todos') {
+      guardarFiltros(['todos'])
+      setUltimoEstadoClickeado('todos')
+      return
+    }
+
+    const esCtrl = e.ctrlKey || e.metaKey
+    const esShift = e.shiftKey
+
+    if (esCtrl) {
+      if (filtrosEstado.includes('todos')) {
+        guardarFiltros([estado])
+        setUltimoEstadoClickeado(estado)
+        return
+      }
+
+      let nuevos: string[] = []
+      if (filtrosEstado.includes(estado)) {
+        nuevos = filtrosEstado.filter((s) => s !== estado)
+        if (nuevos.length === 0) {
+          nuevos = ['todos']
+        }
+      } else {
+        nuevos = [...filtrosEstado, estado]
+        if (ESTADOS_ORDEN.every((st) => nuevos.includes(st))) {
+          nuevos = ['todos']
+        }
+      }
+      guardarFiltros(nuevos)
+      setUltimoEstadoClickeado(estado)
+    } else if (esShift) {
+      const refEstado = ESTADOS_ORDEN.includes(ultimoEstadoClickeado) ? ultimoEstadoClickeado : 'programado'
+      const idx1 = ESTADOS_ORDEN.indexOf(refEstado)
+      const idx2 = ESTADOS_ORDEN.indexOf(estado)
+      if (idx1 !== -1 && idx2 !== -1) {
+        const minIdx = Math.min(idx1, idx2)
+        const maxIdx = Math.max(idx1, idx2)
+        const rango = ESTADOS_ORDEN.slice(minIdx, maxIdx + 1)
+        if (rango.length === ESTADOS_ORDEN.length) {
+          guardarFiltros(['todos'])
+        } else {
+          guardarFiltros(rango)
+        }
+      } else {
+        guardarFiltros([estado])
+      }
+      setUltimoEstadoClickeado(estado)
+    } else {
+      // Clic simple regular: selección exclusiva
+      guardarFiltros([estado])
+      setUltimoEstadoClickeado(estado)
+    }
+  }
+
+  // Helper para verificar si un KPI está activo
+  const esKpiActivo = (estado: string) => {
+    if (estado === 'todos') {
+      return filtrosEstado.includes('todos')
+    }
+    if (filtrosEstado.includes('todos')) {
+      return false
+    }
+    return filtrosEstado.includes(estado)
   }
 
   // Cambiar y persistir filtro de sala en localStorage
@@ -345,7 +435,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     return { total, programados, enEspera, enOperacion, operados }
   }, [turnos])
 
-  // Filtrado reactivo por pestaña de estado y búsqueda en vivo
+  // Filtrado reactivo por pestaña de estado múltiple y búsqueda en vivo
   const turnosFiltrados = useMemo(() => {
     return turnos.filter((t) => {
       const pac = t.pacientes || {}
@@ -360,10 +450,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         if (!matchText) return false
       }
 
-      if (filtroEstado === 'todos') return true
-      return t.estado === filtroEstado
+      if (filtrosEstado.includes('todos')) return true
+      return filtrosEstado.includes(t.estado)
     })
-  }, [turnos, filtroEstado, busqueda])
+  }, [turnos, filtrosEstado, busqueda])
 
   // Calcular tiempo transcurrido en quirófano con alertas de sobretiempo
   const calcularTiempoEnOperacion = (inicioIso?: string, duracionEstimada: number = 20) => {
@@ -386,6 +476,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       minutosExcedidos
     }
   }
+
+  const esMultiseleccionActiva = filtrosEstado.length > 1 && !filtrosEstado.includes('todos')
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -482,127 +574,161 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         </div>
       </div>
 
-      {/* 2. KPI COUNTERS INTERACTIVOS CON FILTRADO RÁPIDO (1 CLIC) */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        {/* KPI 1: Por Llegar / Citados (VISTA POR DEFECTO) */}
-        <button
-          type="button"
-          onClick={() => handleSeleccionarFiltroEstado('programado')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
-            filtroEstado === 'programado'
-              ? 'bg-blue-500/15 border-blue-500 ring-2 ring-blue-500/30 shadow-md'
-              : 'bg-slate-100/60 dark:bg-slate-800/40 border-[var(--border)] hover:border-blue-400/60 opacity-85 hover:opacity-100'
-          }`}
-        >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-blue-500" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-blue-600 dark:text-blue-400">
-                Por Llegar (Citados)
+      {/* 2. KPI COUNTERS INTERACTIVOS CON SOPORTE DE MULTISELECCIÓN (CTRL / SHIFT + CLIC) */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {/* KPI 1: Por Llegar / Citados */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('programado', e)}
+            className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer select-none ${
+              esKpiActivo('programado')
+                ? 'bg-blue-500/15 border-blue-500 ring-2 ring-blue-500/30 shadow-md'
+                : 'bg-slate-100/60 dark:bg-slate-800/40 border-[var(--border)] hover:border-blue-400/60 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo Por Llegar • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-500" />
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-blue-600 dark:text-blue-400">
+                  Por Llegar (Citados)
+                </p>
+              </div>
+              <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-1">
+                {metricas.programados}
               </p>
             </div>
-            <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-1">
-              {metricas.programados}
-            </p>
-          </div>
-          <Clock size={22} className={filtroEstado === 'programado' ? 'text-blue-600' : 'text-blue-400 opacity-60'} />
-        </button>
+            <Clock size={22} className={esKpiActivo('programado') ? 'text-blue-600' : 'text-blue-400 opacity-60'} />
+          </button>
 
-        {/* KPI 2: En Sala de Espera */}
-        <button
-          type="button"
-          onClick={() => handleSeleccionarFiltroEstado('en_espera')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
-            filtroEstado === 'en_espera'
-              ? 'bg-amber-500/20 border-amber-500 ring-2 ring-amber-500/30 shadow-md'
-              : 'bg-amber-500/5 border-amber-500/20 hover:border-amber-400 opacity-85 hover:opacity-100'
-          }`}
-        >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                En Sala de Espera
+          {/* KPI 2: En Sala de Espera */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('en_espera', e)}
+            className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer select-none ${
+              esKpiActivo('en_espera')
+                ? 'bg-amber-500/20 border-amber-500 ring-2 ring-amber-500/30 shadow-md'
+                : 'bg-amber-500/5 border-amber-500/20 hover:border-amber-400 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo En Espera • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                  En Sala de Espera
+                </p>
+              </div>
+              <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 font-mono mt-1">
+                {metricas.enEspera}
               </p>
             </div>
-            <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 font-mono mt-1">
-              {metricas.enEspera}
-            </p>
-          </div>
-          <Activity size={22} className={filtroEstado === 'en_espera' ? 'text-amber-600' : 'text-amber-500 opacity-60'} />
-        </button>
+            <Activity size={22} className={esKpiActivo('en_espera') ? 'text-amber-600' : 'text-amber-500 opacity-60'} />
+          </button>
 
-        {/* KPI 3: En Quirófano */}
-        <button
-          type="button"
-          onClick={() => handleSeleccionarFiltroEstado('en_operacion')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
-            filtroEstado === 'en_operacion'
-              ? 'bg-purple-500/20 border-purple-500 ring-2 ring-purple-500/30 shadow-md'
-              : 'bg-purple-500/5 border-purple-500/20 hover:border-purple-400 opacity-85 hover:opacity-100'
-          }`}
-        >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
-                En Quirófano
+          {/* KPI 3: En Quirófano */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('en_operacion', e)}
+            className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer select-none ${
+              esKpiActivo('en_operacion')
+                ? 'bg-purple-500/20 border-purple-500 ring-2 ring-purple-500/30 shadow-md'
+                : 'bg-purple-500/5 border-purple-500/20 hover:border-purple-400 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo En Quirófano • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                  En Quirófano
+                </p>
+              </div>
+              <p className="text-2xl font-extrabold text-purple-600 dark:text-purple-400 font-mono mt-1">
+                {metricas.enOperacion}
               </p>
             </div>
-            <p className="text-2xl font-extrabold text-purple-600 dark:text-purple-400 font-mono mt-1">
-              {metricas.enOperacion}
-            </p>
-          </div>
-          <Timer size={22} className={filtroEstado === 'en_operacion' ? 'text-purple-600 animate-spin' : 'text-purple-500 opacity-70'} />
-        </button>
+            <Timer size={22} className={esKpiActivo('en_operacion') ? 'text-purple-600 animate-spin' : 'text-purple-500 opacity-70'} />
+          </button>
 
-        {/* KPI 4: Operados / Concluidos */}
-        <button
-          type="button"
-          onClick={() => handleSeleccionarFiltroEstado('operado')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
-            filtroEstado === 'operado'
-              ? 'bg-emerald-500/20 border-emerald-500 ring-2 ring-emerald-500/30 shadow-md'
-              : 'bg-emerald-500/5 border-emerald-500/20 hover:border-emerald-400 opacity-85 hover:opacity-100'
-          }`}
-        >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                Operados (Concluidos)
+          {/* KPI 4: Operados / Concluidos */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('operado', e)}
+            className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer select-none ${
+              esKpiActivo('operado')
+                ? 'bg-emerald-500/20 border-emerald-500 ring-2 ring-emerald-500/30 shadow-md'
+                : 'bg-emerald-500/5 border-emerald-500/20 hover:border-emerald-400 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo Operados • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                  Operados (Concluidos)
+                </p>
+              </div>
+              <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono mt-1">
+                {metricas.operados}
               </p>
             </div>
-            <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono mt-1">
-              {metricas.operados}
-            </p>
-          </div>
-          <CheckCircle2 size={22} className={filtroEstado === 'operado' ? 'text-emerald-600' : 'text-emerald-500 opacity-70'} />
-        </button>
+            <CheckCircle2 size={22} className={esKpiActivo('operado') ? 'text-emerald-600' : 'text-emerald-500 opacity-70'} />
+          </button>
 
-        {/* KPI 5: Todos / Total */}
-        <button
-          type="button"
-          onClick={() => handleSeleccionarFiltroEstado('todos')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
-            filtroEstado === 'todos'
-              ? 'bg-slate-200/80 dark:bg-slate-700/80 border-slate-400 dark:border-slate-500 ring-2 ring-slate-400/30 shadow-md'
-              : 'bg-slate-100/40 dark:bg-slate-800/20 border-[var(--border)] hover:border-slate-400 opacity-80 hover:opacity-100'
-          }`}
-        >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <ListFilter size={12} className="text-slate-500" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                Todos los Turnos
+          {/* KPI 5: Todos / Total */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('todos', e)}
+            className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer select-none ${
+              esKpiActivo('todos')
+                ? 'bg-slate-200/80 dark:bg-slate-700/80 border-slate-400 dark:border-slate-500 ring-2 ring-slate-400/30 shadow-md'
+                : 'bg-slate-100/40 dark:bg-slate-800/20 border-[var(--border)] hover:border-slate-400 opacity-80 hover:opacity-100'
+            }`}
+            title="Ver todos los turnos del día sin filtros"
+          >
+            <div>
+              <div className="flex items-center gap-1.5">
+                <ListFilter size={12} className="text-slate-500" />
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Todos los Turnos
+                </p>
+              </div>
+              <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-1">
+                {metricas.total}
               </p>
             </div>
-            <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-1">
-              {metricas.total}
-            </p>
+            <Calendar size={22} className={esKpiActivo('todos') ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 opacity-60'} />
+          </button>
+        </div>
+
+        {/* Banner Informativo de Selección Múltiple Activa */}
+        {esMultiseleccionActiva && (
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 dark:from-blue-950/40 dark:to-indigo-950/40 border border-blue-300 dark:border-blue-800 rounded-xl px-3.5 py-2 text-xs font-semibold text-blue-900 dark:text-blue-200 shadow-sm animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Layers size={15} className="text-blue-600 dark:text-blue-400" />
+              <span>
+                Filtro múltiple activo (<b>{filtrosEstado.length} estados</b>):{' '}
+                <span className="font-extrabold text-blue-700 dark:text-blue-300">
+                  {filtrosEstado.map((e) => NOMBRES_ESTADOS[e] || e).join(' + ')}
+                </span>{' '}
+                • <b>{turnosFiltrados.length} cirugías</b>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] opacity-75 hidden sm:inline">Tip: Usa Ctrl + Clic para agregar/quitar filtros</span>
+              <button
+                type="button"
+                onClick={() => guardarFiltros(['programado'])}
+                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold transition flex items-center gap-1 shadow-sm"
+              >
+                <X size={12} />
+                <span>Restablecer a Por Llegar</span>
+              </button>
+            </div>
           </div>
-          <Calendar size={22} className={filtroEstado === 'todos' ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 opacity-60'} />
-        </button>
+        )}
       </div>
 
       {/* 3. LISTADO DE CIRUGÍAS FILTRADO EN TIEMPO REAL */}
@@ -620,13 +746,13 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           <p className="text-sm font-bold text-[var(--foreground)]">
             {busqueda
               ? `No se encontraron cirugías que coincidan con "${busqueda}".`
-              : filtroEstado === 'programado'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'programado'
               ? 'No hay pacientes pendientes por llegar en este momento.'
-              : filtroEstado === 'en_espera'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'en_espera'
               ? 'No hay pacientes en sala de espera actualmente.'
-              : filtroEstado === 'en_operacion'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'en_operacion'
               ? 'No hay cirugías en curso en este momento.'
-              : 'No hay cirugías concluidas en esta fecha.'}
+              : 'No hay cirugías que coincidan con los filtros seleccionados.'}
           </p>
           <div className="flex items-center justify-center gap-2">
             {busqueda && (
@@ -638,10 +764,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                 Limpiar Búsqueda
               </button>
             )}
-            {filtroEstado !== 'todos' && (
+            {!filtrosEstado.includes('todos') && (
               <button
                 type="button"
-                onClick={() => setFiltroEstado('todos')}
+                onClick={() => guardarFiltros(['todos'])}
                 className="px-3 py-1.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-sm transition"
               >
                 Ver Todas las Cirugías ({metricas.total})
