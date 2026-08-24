@@ -45,22 +45,41 @@ def is_lid_number(phone_str: str) -> bool:
     """
     if not phone_str:
         return False
-    digits = "".join(filter(str.isdigit, str(phone_str)))
-    if len(digits) >= 15:
+    raw = str(phone_str).strip()
+    if "@lid" in raw or raw.startswith("lid_"):
+        return True
+    digits = "".join(filter(str.isdigit, raw))
+    if len(digits) >= 13 and not digits.startswith("549") and not digits.startswith("54"):
         return True
     return False
 
 def get_paciente_by_lid(lid: str):
     """
-    Busca si algún paciente tiene asociado este LID en su registro o metadata.
+    Busca si algún paciente tiene asociado este LID en su historial de mensajes o registro.
     """
     if not supabase or not lid:
         return None
-    clean_lid = "".join(filter(str.isdigit, str(lid)))
+    clean_lid = str(lid).strip()
+    lid_jid = f"{clean_lid}@lid" if "@" not in clean_lid else clean_lid
     try:
-        resp = supabase.table("pacientes").select("*").ilike("telefono", f"%{clean_lid}%").execute()
+        # 1. Buscar en mensajes anteriores con este LID
+        resp = supabase.table("mensajes").select("conversacion_id").filter("metadata_json->>remote_jid", "eq", lid_jid).limit(1).execute()
         if resp.data and len(resp.data) > 0:
-            return resp.data[0]
+            conv_id = resp.data[0]["conversacion_id"]
+            conv_resp = supabase.table("conversaciones").select("paciente_id, pacientes(*)").eq("id", conv_id).execute()
+            if conv_resp.data and len(conv_resp.data) > 0:
+                p_data = conv_resp.data[0].get("pacientes")
+                if isinstance(p_data, list) and len(p_data) > 0:
+                    return p_data[0]
+                elif isinstance(p_data, dict):
+                    return p_data
+
+        # 2. Búsqueda por dígitos en metadata o teléfono
+        digits = "".join(filter(str.isdigit, clean_lid))
+        if len(digits) >= 8:
+            resp_p = supabase.table("pacientes").select("*").ilike("telefono", f"%{digits}%").limit(1).execute()
+            if resp_p.data and len(resp_p.data) > 0:
+                return resp_p.data[0]
         return None
     except Exception as e:
         logger.warning(f"Error buscando paciente por LID {lid}: {e}")

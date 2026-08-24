@@ -478,6 +478,8 @@ class IncomingWebhookMessage(BaseModel):
     from_me: bool = False
     phone: str
     jid: Optional[str] = None
+    remote_jid_alt: Optional[str] = None
+    addressing_mode: Optional[str] = None
     name: Optional[str] = "Paciente"
     text: str = ""
     message_type: str = "text"
@@ -571,6 +573,14 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                     return {"status": "ignored", "reason": "outgoing_message"}
 
                 remote_jid = key.get("remoteJid", "")
+                remote_jid_alt = (
+                    key.get("remoteJidAlt") 
+                    or data.get("remoteJidAlt") 
+                    or key.get("participant") 
+                    or data.get("participant") 
+                    or ""
+                )
+                addressing_mode = key.get("addressingMode") or data.get("addressingMode") or ""
                 message_id = key.get("id", "")
                 push_name = data.get("pushName", "Paciente")
                 msg_content = data.get("message", {}) or {}
@@ -744,8 +754,28 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                         media_info = {"tipo": "contacto", "nombre": c_name, "vcard": c_vcard}
                         texto = f"👤 {c_name}"
 
-                phone_raw = remote_jid.split("@")[0].split(":")[0] if remote_jid else ""
-                clean_phone = normalize_phone_number(phone_raw)
+                # Resolución inteligente del teléfono real (Soporta LID y remoteJidAlt)
+                real_phone_str = ""
+                if remote_jid_alt and not str(remote_jid_alt).endswith("@lid"):
+                    real_phone_str = str(remote_jid_alt).split("@")[0].split(":")[0]
+                elif remote_jid and not str(remote_jid).endswith("@lid"):
+                    real_phone_str = str(remote_jid).split("@")[0].split(":")[0]
+                else:
+                    pac_by_lid = get_paciente_by_lid(remote_jid)
+                    if pac_by_lid and pac_by_lid.get("telefono"):
+                        real_phone_str = pac_by_lid.get("telefono")
+                    elif push_name and push_name != "Paciente":
+                        pac_by_name = get_paciente_by_nombre_aproximado(push_name)
+                        if pac_by_name and pac_by_name.get("telefono"):
+                            real_phone_str = pac_by_name.get("telefono")
+                        else:
+                            lid_clean = "".join(filter(str.isdigit, str(remote_jid)))
+                            real_phone_str = f"lid_{lid_clean}"
+                    else:
+                        lid_clean = "".join(filter(str.isdigit, str(remote_jid)))
+                        real_phone_str = f"lid_{lid_clean}"
+
+                clean_phone = normalize_phone_number(real_phone_str) if not str(real_phone_str).startswith("lid_") else str(real_phone_str)
                 timestamp = data.get("messageTimestamp", int(time.time()))
                 
                 payload = IncomingWebhookMessage(
@@ -753,6 +783,8 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
                     from_me=from_me,
                     phone=clean_phone,
                     jid=remote_jid,
+                    remote_jid_alt=remote_jid_alt,
+                    addressing_mode=addressing_mode,
                     name=push_name,
                     text=texto or "",
                     message_type=message_type,
@@ -767,17 +799,24 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
         if payload.from_me:
             return {"status": "ignored", "reason": "outgoing_message"}
 
-        clean_phone = normalize_phone_number(payload.phone) if payload.phone else ""
+        clean_phone = normalize_phone_number(payload.phone) if payload.phone and not payload.phone.startswith("lid_") else (payload.phone or "")
         texto = payload.text.strip() if payload.text else ""
         incoming_jid = payload.jid or payload.phone
 
-        logger.info(f"Mensaje entrante WhatsApp desde {clean_phone} (JID: {incoming_jid}) [{payload.message_type}]: {texto[:50]}")
+        logger.info(f"Mensaje entrante WhatsApp desde {clean_phone} (JID: {incoming_jid}, Alt: {payload.remote_jid_alt}) [{payload.message_type}]: {texto[:50]}")
 
         if not clean_phone:
             return {"status": "ignored", "reason": "empty_phone"}
 
-        # 1. Obtener o crear paciente
-        paciente = get_paciente_by_telefono(clean_phone)
+        # 1. Obtener o crear paciente (con resolución multicriterio por teléfono, LID o nombre)
+        paciente = None
+        if clean_phone and not clean_phone.startswith("lid_"):
+            paciente = get_paciente_by_telefono(clean_phone)
+        if not paciente and incoming_jid:
+            paciente = get_paciente_by_lid(incoming_jid)
+        if not paciente and payload.name and payload.name != "Paciente":
+            paciente = get_paciente_by_nombre_aproximado(payload.name)
+
         if not paciente:
             nombre = payload.name if payload.name and payload.name != "Paciente" else f"Paciente {clean_phone[-4:] if len(clean_phone) >= 4 else clean_phone}"
             paciente = crear_paciente(telefono=clean_phone, nombre=nombre)
@@ -830,6 +869,9 @@ async def receive_incoming_whatsapp_message(request: Request, background_tasks: 
         meta = {
             "whatsapp_message_id": payload.message_id,
             "remote_jid": incoming_jid,
+            "remote_jid_alt": payload.remote_jid_alt or None,
+            "addressing_mode": payload.addressing_mode or None,
+            "push_name": payload.name,
             "gateway": "evolution_api_v2",
             "tipo": payload.message_type
         }
