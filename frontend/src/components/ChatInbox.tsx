@@ -34,7 +34,8 @@ import {
   Info,
   Smile,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Reply
 } from 'lucide-react'
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
@@ -44,6 +45,7 @@ import ChatFloatingFormatToolbar from './chat/ChatFloatingFormatToolbar'
 import ChatPatientSidebar from './chat/ChatPatientSidebar'
 import ChatQuickRepliesMenu from './chat/ChatQuickRepliesMenu'
 import ChatEmojiPicker from './chat/ChatEmojiPicker'
+import ChatMessageContextMenu from './chat/ChatMessageContextMenu'
 import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
 import { BACKEND_URL } from '@/lib/api'

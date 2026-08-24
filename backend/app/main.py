@@ -193,6 +193,11 @@ class SendMessageRequest(BaseModel):
     paciente_id: Optional[str] = None
     conversacion_id: Optional[str] = None
     is_internal_note: Optional[bool] = False
+    quoted_message_id: Optional[str] = None
+    quoted_message_data: Optional[Dict[str, Any]] = None
+
+class ReactMessageRequest(BaseModel):
+    emoji: str
 
 class CopilotSugerirRequest(BaseModel):
     conversacion_id: Optional[str] = None
@@ -1105,11 +1110,67 @@ def send_message_api(payload: SendMessageRequest):
         telefono_o_jid=telefono_final,
         texto=texto_final,
         conversacion_id=conversacion_id,
-        emisor="operador"
+        emisor="operador",
+        quoted_message_id=payload.quoted_message_id,
+        quoted_message_data=payload.quoted_message_data
     )
     if "error" in result and not result.get("guardado_db"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+@app.post("/api/mensajes/{mensaje_id}/reaccionar")
+def reaccionar_mensaje_api(mensaje_id: str, payload: ReactMessageRequest):
+    """
+    Envía una reacción de emoji a un mensaje por WhatsApp y actualiza Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible")
+
+    res = supabase.table("mensajes").select("id, emisor, whatsapp_message_id, conversacion_id, metadata_json").eq("id", mensaje_id).execute()
+    if not res.data or len(res.data) == 0:
+        raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+
+    msg = res.data[0]
+    wa_msg_id = msg.get("whatsapp_message_id")
+    conv_id = msg.get("conversacion_id")
+    meta = msg.get("metadata_json") or {}
+    
+    if wa_msg_id and not meta.get("is_internal_note"):
+        active_jid = meta.get("dispatched_jid")
+        if not active_jid:
+            active_jid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conv_id)
+        
+        if active_jid:
+            whatsapp_manager.enviar_reaccion(
+                message_id=wa_msg_id,
+                remote_jid=str(active_jid),
+                emoji=payload.emoji,
+                from_me=(msg.get("emisor") == "operador")
+            )
+
+    reactions = meta.get("reactions") or []
+    reactions = [r for r in reactions if r.get("emisor") != "operador"]
+    if payload.emoji:
+        reactions.append({
+            "emisor": "operador",
+            "emoji": payload.emoji,
+            "created_at": datetime.now().isoformat()
+        })
+    meta["reactions"] = reactions
+
+    supabase.table("mensajes").update({"metadata_json": meta}).eq("id", mensaje_id).execute()
+    return {"success": True, "reactions": reactions, "mensaje_id": mensaje_id}
+
+@app.delete("/api/mensajes/{mensaje_id}")
+def eliminar_mensaje_api(mensaje_id: str):
+    """
+    Elimina un mensaje del chat en el CRM.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible")
+
+    supabase.table("mensajes").delete().eq("id", mensaje_id).execute()
+    return {"success": True, "mensaje_id": mensaje_id}
 
 @app.get("/api/whatsapp/chequeo-canal")
 def chequeo_canal_whatsapp_api(telefono: str):

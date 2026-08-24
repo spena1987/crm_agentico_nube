@@ -64,6 +64,42 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [filtroEstado, setFiltroEstado] = useState<'todos' | 'programado' | 'en_espera' | 'en_operacion' | 'operado'>('programado')
   const [busqueda, setBusqueda] = useState<string>('')
 
+  // Restaurar preferencias guardadas del usuario en localStorage al montar el componente
+  useEffect(() => {
+    try {
+      const savedEstado = localStorage.getItem('quirofano_filtro_estado') as any
+      if (savedEstado && ['todos', 'programado', 'en_espera', 'en_operacion', 'operado'].includes(savedEstado)) {
+        setFiltroEstado(savedEstado)
+      }
+      const savedSala = localStorage.getItem('quirofano_filtro_sala')
+      if (savedSala) {
+        setQuirofanoFiltro(savedSala)
+      }
+    } catch (e) {
+      console.warn('Error cargando preferencias de quirofano en localStorage:', e)
+    }
+  }, [])
+
+  // Cambiar y persistir filtro de estado en localStorage
+  const handleSeleccionarFiltroEstado = (nuevoEstado: 'todos' | 'programado' | 'en_espera' | 'en_operacion' | 'operado') => {
+    setFiltroEstado(nuevoEstado)
+    try {
+      localStorage.setItem('quirofano_filtro_estado', nuevoEstado)
+    } catch (e) {
+      console.warn('Error guardando quirofano_filtro_estado en localStorage:', e)
+    }
+  }
+
+  // Cambiar y persistir filtro de sala en localStorage
+  const handleSeleccionarSala = (salaId: string) => {
+    setQuirofanoFiltro(salaId)
+    try {
+      localStorage.setItem('quirofano_filtro_sala', salaId)
+    } catch (e) {
+      console.warn('Error guardando quirofano_filtro_sala en localStorage:', e)
+    }
+  }
+
   // Ticker de hora actual para cronómetros cada 1 segundo
   useEffect(() => {
     const timer = setInterval(() => setHoraActual(new Date()), 1000)
@@ -424,7 +460,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           {/* Filtro por Quirófano */}
           <select
             value={quirofanoFiltro}
-            onChange={(e) => setQuirofanoFiltro(e.target.value)}
+            onChange={(e) => handleSeleccionarSala(e.target.value)}
             className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
           >
             <option value="todos">Todas las Salas</option>
@@ -451,7 +487,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         {/* KPI 1: Por Llegar / Citados (VISTA POR DEFECTO) */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('programado')}
+          onClick={() => handleSeleccionarFiltroEstado('programado')}
           className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
             filtroEstado === 'programado'
               ? 'bg-blue-500/15 border-blue-500 ring-2 ring-blue-500/30 shadow-md'
@@ -475,7 +511,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         {/* KPI 2: En Sala de Espera */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('en_espera')}
+          onClick={() => handleSeleccionarFiltroEstado('en_espera')}
           className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
             filtroEstado === 'en_espera'
               ? 'bg-amber-500/20 border-amber-500 ring-2 ring-amber-500/30 shadow-md'
@@ -499,7 +535,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         {/* KPI 3: En Quirófano */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('en_operacion')}
+          onClick={() => handleSeleccionarFiltroEstado('en_operacion')}
           className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
             filtroEstado === 'en_operacion'
               ? 'bg-purple-500/20 border-purple-500 ring-2 ring-purple-500/30 shadow-md'
@@ -523,7 +559,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         {/* KPI 4: Operados / Concluidos */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('operado')}
+          onClick={() => handleSeleccionarFiltroEstado('operado')}
           className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
             filtroEstado === 'operado'
               ? 'bg-emerald-500/20 border-emerald-500 ring-2 ring-emerald-500/30 shadow-md'
@@ -547,7 +583,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         {/* KPI 5: Todos / Total */}
         <button
           type="button"
-          onClick={() => setFiltroEstado('todos')}
+          onClick={() => handleSeleccionarFiltroEstado('todos')}
           className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
             filtroEstado === 'todos'
               ? 'bg-slate-200/80 dark:bg-slate-700/80 border-slate-400 dark:border-slate-500 ring-2 ring-slate-400/30 shadow-md'

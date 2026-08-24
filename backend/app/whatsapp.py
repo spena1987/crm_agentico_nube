@@ -309,11 +309,13 @@ class WhatsAppManager:
         texto: str,
         conversacion_id: Optional[str] = None,
         emisor: str = "operador",
-        remote_jid: Optional[str] = None
+        remote_jid: Optional[str] = None,
+        quoted_message_id: Optional[str] = None,
+        quoted_message_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Envía un mensaje de texto saliente por WhatsApp mediante Evolution API v2
-        y lo registra en la conversación correspondiente del CRM.
+        y lo registra en la conversación correspondiente del CRM (con soporte para citas / reply).
         """
         if not texto or not texto.strip():
             return {"error": "El mensaje no puede estar vacío"}
@@ -352,6 +354,13 @@ class WhatsAppManager:
             "linkPreview": True
         }
 
+        if quoted_message_id:
+            payload_send["quoted"] = {
+                "key": {
+                    "id": quoted_message_id
+                }
+            }
+
         try:
             r = httpx.post(
                 f"{self.evo_url}/message/sendText/{self.evo_instance}",
@@ -366,17 +375,23 @@ class WhatsAppManager:
                 dispatched_jid = msg_key.get("remoteJid") or target_number
 
                 if conversacion_id:
+                    meta_to_save: Dict[str, Any] = {
+                        "delivery_status": "enviado",
+                        "dispatched_jid": dispatched_jid,
+                        "gateway": "evolution_api_v2"
+                    }
+                    if quoted_message_data:
+                        meta_to_save["quoted_message"] = quoted_message_data
+                    if quoted_message_id:
+                        meta_to_save["quoted_message_id"] = quoted_message_id
+
                     try:
                         guardar_mensaje(
                             conversacion_id=conversacion_id,
                             emisor=emisor,
                             contenido=texto,
                             whatsapp_message_id=msg_id,
-                            metadata_json={
-                                "delivery_status": "enviado",
-                                "dispatched_jid": dispatched_jid,
-                                "gateway": "evolution_api_v2"
-                            }
+                            metadata_json=meta_to_save
                         )
                     except Exception as db_err:
                         self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
@@ -427,6 +442,42 @@ class WhatsAppManager:
             return {"success": False, "error": r.text}
         except Exception as e:
             logger.warning(f"Error marcando mensajes como leídos en Evolution API: {e}")
+            return {"success": False, "error": str(e)}
+
+    def enviar_reaccion(
+        self,
+        message_id: str,
+        remote_jid: str,
+        emoji: str,
+        from_me: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Envía una reacción de emoji a un mensaje específico mediante Evolution API v2.
+        """
+        if not message_id or not emoji:
+            return {"error": "Se requiere message_id y emoji para reaccionar"}
+
+        payload = {
+            "key": {
+                "remoteJid": remote_jid,
+                "fromMe": from_me,
+                "id": message_id
+            },
+            "reaction": emoji
+        }
+
+        try:
+            r = httpx.post(
+                f"{self.evo_url}/message/sendReaction/{self.evo_instance}",
+                headers=self._headers,
+                json=payload,
+                timeout=8.0
+            )
+            if r.status_code in [200, 201]:
+                return {"success": True, "reaction": emoji, "message_id": message_id}
+            return {"success": False, "error": r.text}
+        except Exception as e:
+            self.add_log("WARNING", f"Error enviando reacción a Evolution API: {e}")
             return {"success": False, "error": str(e)}
 
     def get_media_base64(self, message_id: str) -> Optional[Dict[str, Any]]:
