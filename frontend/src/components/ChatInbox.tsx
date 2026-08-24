@@ -35,7 +35,11 @@ import {
   Smile,
   ChevronRight,
   ChevronDown,
-  Reply
+  Reply,
+  Pin,
+  PinOff,
+  Mail,
+  MailCheck
 } from 'lucide-react'
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
@@ -46,6 +50,7 @@ import ChatPatientSidebar from './chat/ChatPatientSidebar'
 import ChatQuickRepliesMenu from './chat/ChatQuickRepliesMenu'
 import ChatEmojiPicker from './chat/ChatEmojiPicker'
 import ChatMessageContextMenu from './chat/ChatMessageContextMenu'
+import ChatContactContextMenu from './chat/ChatContactContextMenu'
 import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
 import { BACKEND_URL } from '@/lib/api'
@@ -74,6 +79,7 @@ interface Conversacion {
   ultimo_mensaje: string | null
   updated_at: string
   unread_count?: number
+  metadata_json?: any
   pacientes: Paciente | Paciente[] | null
 }
 
@@ -172,6 +178,7 @@ export default function ChatInbox() {
   const [unreadNewCount, setUnreadNewCount] = useState<number>(0)
   const [replyingToMessage, setReplyingToMessage] = useState<Mensaje | null>(null)
   const [contextMenu, setContextMenu] = useState<{ message: Mensaje; position: { x: number; y: number } } | null>(null)
+  const [contactContextMenu, setContactContextMenu] = useState<{ conversacion: Conversacion; position: { x: number; y: number } } | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
@@ -637,6 +644,97 @@ export default function ChatInbox() {
     }
   }
 
+  // Handlers del Menú Contextual de Contactos/Conversaciones
+  const handleOpenContactContextMenu = (e: React.MouseEvent, conv: Conversacion) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContactContextMenu({
+      conversacion: conv,
+      position: { x: e.clientX, y: e.clientY }
+    })
+  }
+
+  const handleToggleUnreadContact = async (conv: Conversacion) => {
+    const currentlyUnread = (conv.unread_count || 0) > 0
+    const newCount = currentlyUnread ? 0 : 1
+    setConversaciones((prev) =>
+      prev.map((c) => (c.id === conv.id ? { ...c, unread_count: newCount } : c))
+    )
+    try {
+      if (currentlyUnread) {
+        await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/leer`, { method: 'POST' })
+      } else {
+        await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/marcar-no-leido`, { method: 'POST' })
+      }
+    } catch (err) {
+      console.error('Error alternando estado de no leído:', err)
+    }
+  }
+
+  const handleTogglePinContact = async (conv: Conversacion) => {
+    const isPinned = Boolean(conv.metadata_json?.is_pinned)
+    const newPinned = !isPinned
+    setConversaciones((prev) =>
+      prev.map((c) =>
+        c.id === conv.id
+          ? { ...c, metadata_json: { ...(c.metadata_json || {}), is_pinned: newPinned } }
+          : c
+      )
+    )
+    try {
+      await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/fijar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fijada: newPinned })
+      })
+    } catch (err) {
+      console.error('Error fijando conversación:', err)
+    }
+  }
+
+  const handleToggleArchiveContact = async (conv: Conversacion) => {
+    handleToggleArchivar(conv.id, conv.archivada)
+  }
+
+  const handleToggleBotContact = async (conv: Conversacion) => {
+    const newDisabled = !conv.bot_disabled
+    setConversaciones((prev) =>
+      prev.map((c) => (c.id === conv.id ? { ...c, bot_disabled: newDisabled } : c))
+    )
+    try {
+      await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/toggle-bot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot_disabled: newDisabled })
+      })
+    } catch (err) {
+      console.error('Error alternando bot:', err)
+    }
+  }
+
+  const handleCopyPhoneContact = (phone: string) => {
+    if (!phone) return
+    navigator.clipboard.writeText(phone).catch(() => {})
+  }
+
+  const handleOpenPatientFileContact = (conv: Conversacion) => {
+    const p = getPatient(conv)
+    if (p) {
+      setSelectedPacienteHistoriaClinica(p)
+    }
+  }
+
+  const handleDeleteContact = async (conv: Conversacion) => {
+    if (!confirm('¿Deseas eliminar esta conversación completa y su historial del CRM?')) return
+    try {
+      setConversaciones((prev) => prev.filter((c) => c.id !== conv.id))
+      if (selectedConvId === conv.id) setSelectedConvId(null)
+      await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}`, { method: 'DELETE' })
+    } catch (err) {
+      console.error('Error eliminando conversación:', err)
+    }
+  }
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
@@ -935,22 +1033,30 @@ export default function ChatInbox() {
     }
   }, [noLeidosCount])
 
-  const filteredConversaciones = conversaciones.filter((conv) => {
-    const paciente = getPatient(conv)
-    const nombre = (paciente?.nombre || '').toLowerCase()
-    const telefono = (paciente?.telefono || '').toLowerCase()
-    const ultimoMsg = (conv.ultimo_mensaje || '').toLowerCase()
-    const q = searchQuery.trim().toLowerCase()
+  const filteredConversaciones = conversaciones
+    .filter((conv) => {
+      const paciente = getPatient(conv)
+      const nombre = (paciente?.nombre || '').toLowerCase()
+      const telefono = (paciente?.telefono || '').toLowerCase()
+      const ultimoMsg = (conv.ultimo_mensaje || '').toLowerCase()
+      const q = searchQuery.trim().toLowerCase()
 
-    const matchesSearch = !q || nombre.includes(q) || telefono.includes(q) || ultimoMsg.includes(q)
-    if (!matchesSearch) return false
+      const matchesSearch = !q || nombre.includes(q) || telefono.includes(q) || ultimoMsg.includes(q)
+      if (!matchesSearch) return false
 
-    if (activeTab === 'no_leidos') return (conv.unread_count || 0) > 0 && !conv.archivada
-    if (activeTab === 'derivados') return Boolean(conv.bot_disabled) && !conv.archivada
-    if (activeTab === 'bot') return !conv.bot_disabled && !conv.archivada
-    if (activeTab === 'archivados') return Boolean(conv.archivada)
-    return !conv.archivada
-  })
+      if (activeTab === 'no_leidos') return (conv.unread_count || 0) > 0 && !conv.archivada
+      if (activeTab === 'derivados') return Boolean(conv.bot_disabled) && !conv.archivada
+      if (activeTab === 'bot') return !conv.bot_disabled && !conv.archivada
+      if (activeTab === 'archivados') return Boolean(conv.archivada)
+      return !conv.archivada
+    })
+    .sort((a, b) => {
+      const aPinned = Boolean(a.metadata_json?.is_pinned)
+      const bPinned = Boolean(b.metadata_json?.is_pinned)
+      if (aPinned && !bPinned) return -1
+      if (!aPinned && bPinned) return 1
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    })
 
   const isWaConnected = waStatus?.is_logged_in || waStatus?.status === 'CONNECTED'
   const currentPaciente = getPatient(selectedConv)
@@ -1196,12 +1302,14 @@ export default function ChatInbox() {
               const snippet = formatMessageSnippet(conv.ultimo_mensaje)
               const isDerivado = Boolean(conv.bot_disabled)
               const isArchivada = Boolean(conv.archivada)
+              const isPinned = Boolean(conv.metadata_json?.is_pinned)
               const unread = conv.unread_count || 0
               const hasUnread = unread > 0
               
               return (
                 <div
                   key={conv.id}
+                  onContextMenu={(e) => handleOpenContactContextMenu(e, conv)}
                   onClick={() => {
                     if (hasUnread) {
                       setConversaciones((prev) =>
@@ -1210,11 +1318,13 @@ export default function ChatInbox() {
                     }
                     setSelectedConvId(conv.id)
                   }}
-                  className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 ${
+                  className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 group ${
                     active 
                       ? 'bg-[#162547] border-l-blue-500 shadow-xs' 
                       : hasUnread
                       ? 'bg-[#0f1d38]/80 hover:bg-[#142345] border-l-emerald-500 shadow-inner'
+                      : isPinned
+                      ? 'bg-[#11192e]/60 hover:bg-[#152038] border-l-blue-400/60'
                       : 'bg-transparent hover:bg-[#111c33] border-l-transparent'
                   }`}
                 >
@@ -1251,9 +1361,17 @@ export default function ChatInbox() {
                       }`}>
                         {paciente?.nombre || `Paciente (${paciente?.telefono ? paciente.telefono.slice(-4) : '...' })`}
                       </p>
-                      <span className={`text-[10px] shrink-0 font-medium ${hasUnread ? 'text-emerald-400 font-bold' : 'text-slate-400'}`}>
-                        {formattedTime}
-                      </span>
+                      
+                      <div className="flex items-center gap-1 shrink-0">
+                        {isPinned && (
+                          <span title="Conversación fijada">
+                            <Pin size={11} className="text-blue-400 shrink-0" />
+                          </span>
+                        )}
+                        <span className={`text-[10px] font-medium ${hasUnread ? 'text-emerald-400 font-bold' : 'text-slate-400'}`}>
+                          {formattedTime}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Fila de Teléfono e Insignia */}
@@ -1278,16 +1396,29 @@ export default function ChatInbox() {
                       )}
                     </div>
 
-                    {/* Último Mensaje Snippet con Badge de Mensajes No Leídos */}
+                    {/* Último Mensaje Snippet con Badge de No Leídos y Botón Hover Desplegable */}
                     <div className="flex items-center justify-between gap-1 mt-1">
                       <p className={`text-[11px] truncate leading-tight flex-1 ${hasUnread ? 'text-slate-100 font-medium' : 'text-slate-400'}`}>
                         {snippet}
                       </p>
-                      {hasUnread && (
-                        <span className="shrink-0 bg-emerald-500 text-white font-bold text-[9.5px] px-1.5 py-0.2 rounded-full min-w-[18px] text-center shadow-xs animate-pulse">
-                          {unread > 99 ? '99+' : unread}
-                        </span>
-                      )}
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {hasUnread && (
+                          <span className="bg-emerald-500 text-white font-bold text-[9.5px] px-1.5 py-0.2 rounded-full min-w-[18px] text-center shadow-xs animate-pulse">
+                            {unread > 99 ? '99+' : unread}
+                          </span>
+                        )}
+
+                        {/* Botón flotante Hover para Menú de Conversación */}
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenContactContextMenu(e, conv)}
+                          className="p-1 rounded-full text-slate-400 hover:text-white hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-opacity duration-150 shrink-0 cursor-pointer"
+                          title="Opciones de la conversación"
+                        >
+                          <ChevronDown size={13} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1890,6 +2021,22 @@ export default function ChatInbox() {
           onSaveClinicalNote={handleSaveClinicalNote}
           onConvertToInternalNote={handleConvertToInternalNote}
           onDelete={handleDeleteMessage}
+        />
+      )}
+
+      {/* MENÚ CONTEXTUAL DE CONTACTOS/CONVERSACIONES (CLIC DERECHO Y HOVER) */}
+      {contactContextMenu && (
+        <ChatContactContextMenu
+          conversacion={contactContextMenu.conversacion}
+          position={contactContextMenu.position}
+          onClose={() => setContactContextMenu(null)}
+          onToggleUnread={handleToggleUnreadContact}
+          onTogglePin={handleTogglePinContact}
+          onToggleArchive={handleToggleArchiveContact}
+          onToggleBot={handleToggleBotContact}
+          onCopyPhone={handleCopyPhoneContact}
+          onOpenPatientFile={handleOpenPatientFileContact}
+          onDelete={handleDeleteContact}
         />
       )}
     </div>

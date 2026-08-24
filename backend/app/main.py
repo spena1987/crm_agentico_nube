@@ -940,6 +940,71 @@ def marcar_conversacion_leida_api(conversacion_id: str):
         logger.error(f"Error marcando conversación {conversacion_id} como leída: {e}")
         return {"success": False, "error": str(e)}
 
+@app.post("/api/conversaciones/{conversacion_id}/marcar-no-leido")
+def marcar_conversacion_no_leida_api(conversacion_id: str):
+    """
+    Marca una conversación como no leída por el operador para dejarla pendiente de atención.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible")
+    try:
+        res = supabase.table("conversaciones").select("id, metadata_json").eq("id", conversacion_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada")
+        
+        meta = res.data[0].get("metadata_json") or {}
+        meta["manual_unread"] = True
+        
+        supabase.table("conversaciones").update({
+            "unread_count": 1,
+            "metadata_json": meta
+        }).eq("id", conversacion_id).execute()
+
+        return {"success": True, "unread_count": 1}
+    except Exception as e:
+        logger.error(f"Error marcando conversación {conversacion_id} como no leída: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/conversaciones/{conversacion_id}/fijar")
+def fijar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Fija o desfija una conversación para que aparezca prioritariamente al tope de la lista.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible")
+    try:
+        fijada = payload.get("fijada", True)
+        res = supabase.table("conversaciones").select("id, metadata_json").eq("id", conversacion_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada")
+        
+        meta = res.data[0].get("metadata_json") or {}
+        meta["is_pinned"] = fijada
+
+        supabase.table("conversaciones").update({
+            "metadata_json": meta
+        }).eq("id", conversacion_id).execute()
+
+        return {"success": True, "is_pinned": fijada}
+    except Exception as e:
+        logger.error(f"Error fijando conversación {conversacion_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/conversaciones/{conversacion_id}")
+def eliminar_conversacion_api(conversacion_id: str):
+    """
+    Elimina una conversación y sus mensajes asociados del CRM.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible")
+    try:
+        supabase.table("mensajes").delete().eq("conversacion_id", conversacion_id).execute()
+        supabase.table("conversaciones").delete().eq("id", conversacion_id).execute()
+        return {"success": True, "conversacion_id": conversacion_id}
+    except Exception as e:
+        logger.error(f"Error eliminando conversación {conversacion_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/mensajes/{mensaje_id}/transcribir")
 def transcribir_mensaje_api(mensaje_id: str):
     """
