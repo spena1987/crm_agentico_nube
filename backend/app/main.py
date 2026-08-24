@@ -3874,12 +3874,13 @@ def registrar_checklist_seguridad(turno_id: str, payload: Dict[str, Any] = Body(
     except Exception as e:
         logger.error(f"Error guardando checklist para turno {turno_id}: {e}")
 @app.post("/api/turnos-quirofano/{turno_id}/subir-consentimiento-geclisa")
-def subir_consentimiento_geclisa_endpoint(turno_id: str):
+def subir_consentimiento_geclisa_endpoint(turno_id: str, payload: Optional[Dict[str, Any]] = None):
     """
     Sube el Consentimiento Informado firmado digitalmente a la Historia Clínica de Geclisa.
     """
     try:
-        res = subir_consentimiento_turno_a_geclisa(turno_id)
+        usuario_crm = (payload or {}).get("usuario_crm") if isinstance(payload, dict) else None
+        res = subir_consentimiento_turno_a_geclisa(turno_id, usuario_crm=usuario_crm)
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error") or "Error al subir consentimiento a Geclisa.")
         return res
@@ -3890,12 +3891,13 @@ def subir_consentimiento_geclisa_endpoint(turno_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/turnos-quirofano/{turno_id}/subir-parte-quirurgico-geclisa")
-def subir_parte_quirurgico_geclisa_endpoint(turno_id: str):
+def subir_parte_quirurgico_geclisa_endpoint(turno_id: str, payload: Optional[Dict[str, Any]] = None):
     """
     Sube el Protocolo / Parte Quirúrgico Oficial a la Historia Clínica de Geclisa.
     """
     try:
-        res = subir_parte_quirurgico_turno_a_geclisa(turno_id)
+        usuario_crm = (payload or {}).get("usuario_crm") if isinstance(payload, dict) else None
+        res = subir_parte_quirurgico_turno_a_geclisa(turno_id, usuario_crm=usuario_crm)
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error") or "Error al subir protocolo quirúrgico a Geclisa.")
         return res

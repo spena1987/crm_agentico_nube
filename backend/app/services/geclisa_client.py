@@ -1022,7 +1022,8 @@ class GeclisaClient:
         me_id: Optional[int] = None,
         turno_id: Optional[int] = None,
         clase_id: int = 1,
-        fecha_iso: Optional[str] = None
+        fecha_iso: Optional[str] = None,
+        hora: Optional[int] = None
     ) -> dict:
         """
         Sube un archivo PDF o imagen a la historia clínica del paciente en Geclisa.
@@ -1035,8 +1036,12 @@ class GeclisaClient:
             "Accept": "application/json"
         }
         
-        from datetime import datetime
-        hoy_str = datetime.now().strftime("%Y-%m-%d")
+        from datetime import datetime, timezone, timedelta
+        # Zona horaria Argentina/Mendoza (UTC-3)
+        tz_mza = timezone(timedelta(hours=-3))
+        now_mza = datetime.now(tz_mza)
+        hoy_str = now_mza.strftime("%Y-%m-%d")
+        
         if fecha_iso:
             fecha_parte = fecha_iso.split("T")[0]
             if fecha_parte > hoy_str:
@@ -1045,7 +1050,12 @@ class GeclisaClient:
             fecha_parte = hoy_str
             
         fecha_str = f"{fecha_parte}T00:00:00"
-        hora_int = 0
+        
+        # Calcular hora entera en formato HHmm (ej: 09:20 -> 920, 14:35 -> 1435)
+        if hora is not None:
+            hora_int = int(hora)
+        else:
+            hora_int = now_mza.hour * 100 + now_mza.minute
         
         import unicodedata, re
         def _clean_str(s: str, max_len: int = 45) -> str:
@@ -1102,7 +1112,11 @@ class GeclisaClient:
             # Si no devolvió ID explícito o vino bool True, buscar el archivo recién subido en la historia clínica
             if not archivo_id or not as_id or isinstance(archivo_id, bool):
                 try:
-                    archivos_recientes = self.listar_archivos_historia_clinica(ficha_id)
+                    archivos_recientes = sorted(
+                        self.listar_archivos_historia_clinica(ficha_id),
+                        key=lambda x: int(x.get("asId") or x.get("id") or 0),
+                        reverse=True
+                    )
                     for a in archivos_recientes:
                         if a.get("titulo") == titulo_limpio or a.get("titulo") == (titulo or filename).strip():
                             archivo_id = a.get("id")

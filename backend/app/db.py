@@ -3791,9 +3791,32 @@ def _resolver_ficha_geclisa_paciente(paciente: Dict[str, Any]) -> Optional[int]:
 def _resolver_pre_id_geclisa(cirujano_nombre: Optional[str], cirujano_id: Optional[Any] = None) -> Optional[int]:
     """
     Resuelve el ID de Prestador (PreId) en Geclisa para asociar el archivo en la historia clínica.
-    Si cirujano_id ya es numérico, lo utiliza. Si no, busca por nombre en Geclisa.
-    Si no encuentra coincidencia exacta, retorna None para asegurar que Geclisa acepte el archivo sin error 400.
+    Busca por nombre en el catálogo de prestadores de Geclisa para máxima precisión.
     """
+    if cirujano_nombre:
+        try:
+            from app.services.geclisa_client import geclisa_client
+            partes = cirujano_nombre.replace("Dr.", "").replace("Dra.", "").replace("Dr", "").replace("Dra", "").strip().split()
+            query = partes[0].rstrip(",") if partes else cirujano_nombre
+            matches = geclisa_client.buscar_prestadores(query)
+            if matches:
+                # 1. Priorizar coincidencia completa de todos los nombres/apellidos
+                for m in matches:
+                    m_nom = (m.get("nombre") or "").lower().replace(",", " ")
+                    if all(part.lower().rstrip(",") in m_nom for part in partes):
+                        return int(m["pre_id"])
+                # 2. Priorizar coincidencia de primeros 2 nombres/apellidos
+                for m in matches:
+                    m_nom = (m.get("nombre") or "").lower().replace(",", " ")
+                    if all(part.lower().rstrip(",") in m_nom for part in partes[:2]):
+                        return int(m["pre_id"])
+                for m in matches:
+                    if query.lower() in (m.get("nombre") or "").lower():
+                        return int(m["pre_id"])
+                return int(matches[0]["pre_id"])
+        except Exception as e:
+            logger.warning(f"Aviso resolviendo pre_id para cirujano '{cirujano_nombre}': {e}")
+
     if cirujano_id:
         try:
             val = int(cirujano_id)
@@ -3802,24 +3825,9 @@ def _resolver_pre_id_geclisa(cirujano_nombre: Optional[str], cirujano_id: Option
         except (ValueError, TypeError):
             pass
             
-    if cirujano_nombre:
-        try:
-            from app.services.geclisa_client import geclisa_client
-            partes = cirujano_nombre.replace("Dr.", "").replace("Dra.", "").replace("Dr", "").replace("Dra", "").strip().split()
-            query = partes[0].rstrip(",") if partes else cirujano_nombre
-            matches = geclisa_client.buscar_prestadores(query)
-            if matches:
-                # Priorizar coincidencia más cercana
-                for m in matches:
-                    if query.lower() in m.get("nombre", "").lower():
-                        return int(m["pre_id"])
-                return int(matches[0]["pre_id"])
-        except Exception as e:
-            logger.warning(f"Aviso resolviendo pre_id para cirujano '{cirujano_nombre}': {e}")
-            
     return None
 
-def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
+def subir_consentimiento_turno_a_geclisa(turno_id: str, usuario_crm: Optional[str] = None) -> Dict[str, Any]:
     """
     Sube el Consentimiento Informado firmado en PDF a la Historia Clínica en Geclisa.
     """
@@ -3873,18 +3881,19 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         titulo = titulo[:45]
             
         firmado_at = turno.get("consentimiento_firmado_at") or datetime.now().isoformat()
-        obs = f"Consentimiento firmado digitalmente. Paciente: {paciente.get('nombre')} - Cirujano: {turno.get('cirujano_nombre') or 'No especificado'}."
+        user_info = f" (Subido vía CRM por {usuario_crm})" if usuario_crm else ""
+        obs = f"Consentimiento firmado digitalmente. Paciente: {paciente.get('nombre')} - Cirujano: {turno.get('cirujano_nombre') or 'No especificado'}{user_info}."
         
         cirujano_id_geclisa = _resolver_pre_id_geclisa(turno.get("cirujano_nombre"), turno.get("cirujano_id"))
                 
-        # 3. Invocar API de Geclisa (pre_id=None para asociar via usuario API sin conflicto 400)
+        # 3. Invocar API de Geclisa con el cirujano asignado (PreId) y la hora actual
         res_g = geclisa_client.adjuntar_archivo_historia_clinica(
             ficha_id=ficha_id,
             file_bytes=file_bytes,
             filename=f"Consentimiento_{paciente.get('nombre', 'Paciente').replace(' ', '_')}_{turno_id[:8]}.pdf",
             titulo=titulo,
             observaciones=obs,
-            pre_id=None,
+            pre_id=cirujano_id_geclisa,
             clase_id=1,
             fecha_iso=firmado_at[:19] if firmado_at else None
         )
@@ -3918,7 +3927,7 @@ def subir_consentimiento_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
         logger.error(f"Error subiendo consentimiento a Geclisa para turno {turno_id}: {e}")
         return {"success": False, "error": str(e)}
 
-def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
+def subir_parte_quirurgico_turno_a_geclisa(turno_id: str, usuario_crm: Optional[str] = None) -> Dict[str, Any]:
     """
     Sube el Protocolo / Parte Quirúrgico Oficial en PDF a la Historia Clínica en Geclisa.
     """
@@ -3971,20 +3980,23 @@ def subir_parte_quirurgico_turno_a_geclisa(turno_id: str) -> Dict[str, Any]:
             titulo += f" ({ojo})"
         titulo = titulo[:45]
             
+        user_info = f" (Subido vía CRM por {usuario_crm})" if usuario_crm else ""
         lente_info = f"LIO: {turno.get('lente_tipo') or 'N/A'} ({turno.get('lente_dioptria') or 'N/A'} D) - Lote: {turno.get('lente_lote') or 'N/A'}"
-        obs = f"Cirugía completada. {lente_info} - Cirujano: {turno.get('cirujano_nombre') or 'N/A'}."
+        obs = f"Cirugía completada. {lente_info} - Cirujano: {turno.get('cirujano_nombre') or 'N/A'}{user_info}."
         
         fecha_cirugia = turno.get("fecha_cirugia")
         fecha_iso = f"{fecha_cirugia}T12:00:00" if fecha_cirugia else None
         
-        # 3. Invocar API de Geclisa (pre_id=None para evitar conflictos de prestadores externos)
+        cirujano_id_geclisa = _resolver_pre_id_geclisa(turno.get("cirujano_nombre"), turno.get("cirujano_id"))
+        
+        # 3. Invocar API de Geclisa con cirujano asignado (PreId) y hora actual
         res_g = geclisa_client.adjuntar_archivo_historia_clinica(
             ficha_id=ficha_id,
             file_bytes=file_bytes,
             filename=f"ProtocoloQuirurgico_{paciente.get('nombre', 'Paciente').replace(' ', '_')}_{turno_id[:8]}.pdf",
             titulo=titulo,
             observaciones=obs,
-            pre_id=None,
+            pre_id=cirujano_id_geclisa,
             clase_id=1,
             fecha_iso=fecha_iso
         )
