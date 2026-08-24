@@ -38,10 +38,12 @@ export default function PanelAsesoriaQuirurgica({
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
   // Cargar todos los casos quirúrgicos del paciente
-  const fetchAsesorias = async () => {
+  const fetchAsesorias = async (silencioso = false) => {
     if (!pacienteId) return
     try {
-      setLoading(true)
+      if (!silencioso) {
+        setLoading(true)
+      }
       setError(null)
       const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/paciente/${pacienteId}`)
       const data = await res.json()
@@ -66,15 +68,19 @@ export default function PanelAsesoriaQuirurgica({
       // Todas las cirugías inician colapsadas por defecto para una vista panorámica limpia
     } catch (err: any) {
       console.error('Error cargando asesorías:', err)
-      setError(err.message || 'Error al cargar los casos quirúrgicos.')
+      if (!silencioso) {
+        setError(err.message || 'Error al cargar los casos quirúrgicos.')
+      }
     } finally {
-      setLoading(false)
+      if (!silencioso) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
     setDesplegados({})
-    fetchAsesorias()
+    fetchAsesorias(false)
 
     // Suscripción Realtime a asesorías quirúrgicas de este paciente
     const channel = supabase
@@ -88,7 +94,7 @@ export default function PanelAsesoriaQuirurgica({
           filter: `paciente_id=eq.${pacienteId}`
         },
         () => {
-          fetchAsesorias()
+          fetchAsesorias(true) // Refresco silencioso para no desmontar modales ni cerrar acordeones
         }
       )
       .subscribe()
