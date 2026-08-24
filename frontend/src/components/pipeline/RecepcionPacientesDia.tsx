@@ -5,42 +5,103 @@ import {
   Calendar,
   Clock,
   User,
-  Activity,
-  CheckCircle2,
-  AlertCircle,
+  Phone,
   FileCheck2,
-  Download,
   Send,
-  Radio,
+  Download,
+  AlertCircle,
+  CheckCircle2,
+  Search,
+  Filter,
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  Eye,
-  Check,
-  Building2,
   Loader2,
-  ExternalLink,
-  MessageSquare
+  Activity,
+  Check,
+  Radio,
+  X,
+  Stethoscope
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 
-export default function RecepcionPacientesDia() {
-  const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10))
-  const [turnos, setTurnos] = useState<any[]>([])
-  const [cargando, setCargando] = useState(true)
-  const [procesandoId, setProcesandoId] = useState<string | null>(null)
+interface TurnoRecepcion {
+  id: string
+  paciente_id: string
+  paciente_nombre?: string
+  paciente_dni?: string
+  paciente_telefono?: string
+  fecha_cirugia: string
+  hora_inicio: string
+  practica_nombre: string
+  practica_codigo?: string
+  ojo: 'OD' | 'OI' | 'AO'
+  cirujano_nombre?: string
+  tipo_anestesia?: string
+  estado: 'programado' | 'en_espera' | 'en_operacion' | 'operado' | 'cancelado'
+  consentimiento_token?: string
+  consentimiento_estado?: string
+  consentimiento_pdf_url?: string
+  lente_tipo?: string
+  lente_dioptria?: string
+  lente_lote?: string
+  quirofanos?: {
+    id: string
+    nombre: string
+    codigo: string
+  }
+  pacientes?: {
+    id: string
+    nombre: string
+    dni: string
+    telefono?: string
+    obra_social?: string
+    nro_afiliado?: string
+  }
+}
 
+type FiltroEstado = 'todos' | 'programado' | 'en_espera' | 'en_operacion' | 'operado'
+
+export default function RecepcionPacientesDia() {
+  const [fecha, setFecha] = useState<string>(() => new Date().toISOString().slice(0, 10))
+  const [turnos, setTurnos] = useState<TurnoRecepcion[]>([])
+  const [cargando, setCargando] = useState<boolean>(true)
+  const [procesandoId, setProcesandoId] = useState<string | null>(null)
+  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
+  const [busqueda, setBusqueda] = useState<string>('')
+
+  // Cargar turnos del día seleccionado
   const fetchTurnosHoy = async () => {
     try {
       setCargando(true)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano-dia?fecha=${fecha}`)
-      const data = await res.json()
-      if (data.success && data.turnos) {
-        setTurnos(data.turnos)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fecha}&fecha_hasta=${fecha}`, {
+        cache: 'no-store'
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && Array.isArray(data.turnos)) {
+          setTurnos(data.turnos)
+          return
+        }
+      }
+
+      // Fallback Supabase directo
+      const { data: sbData, error } = await supabase
+        .from('turnos_quirofano' as any)
+        .select('*, pacientes(*), quirofanos(id, nombre, codigo)')
+        .eq('fecha_cirugia', fecha)
+        .order('hora_inicio', { ascending: true })
+
+      if (!error && sbData) {
+        setTurnos(sbData as any)
+      } else {
+        setTurnos([])
       }
     } catch (err) {
       console.error('Error cargando turnos de recepción:', err)
+      setTurnos([])
     } finally {
       setCargando(false)
     }
@@ -48,15 +109,13 @@ export default function RecepcionPacientesDia() {
 
   useEffect(() => {
     fetchTurnosHoy()
-  }, [fecha])
 
-  // Suscripción Realtime a Supabase
-  useEffect(() => {
+    // Suscripción Realtime para actualizar la recepción al instante
     const channel = supabase
-      .channel('realtime-recepcion-asesoria')
+      .channel(`recepcion-turnos-${fecha}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'turnos_quirofano' },
+        { event: '*', schema: 'public', table: 'turnos_quirofano', filter: `fecha_cirugia=eq.${fecha}` },
         () => {
           fetchTurnosHoy()
         }
@@ -68,20 +127,26 @@ export default function RecepcionPacientesDia() {
     }
   }, [fecha])
 
-  // Recepcionar paciente (marcar en espera)
+  // Recepcionar Paciente: Pasa a 'en_espera'
   const handleRecepcionar = async (turnoId: string) => {
     try {
       setProcesandoId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/estado`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ estado: 'en_espera' })
       })
-      const data = await res.json()
-      if (res.ok && data.success) {
+
+      if (res.ok) {
         setTurnos((prev) =>
-          prev.map((t) => (t.id === turnoId ? { ...t, estado: 'en_espera', ...data.turno } : t))
+          prev.map((t) => (t.id === turnoId ? { ...t, estado: 'en_espera' } : t))
         )
+      } else {
+        await supabase
+          .from('turnos_quirofano' as any)
+          .update({ estado: 'en_espera', updated_at: new Date().toISOString() })
+          .eq('id', turnoId)
+        fetchTurnosHoy()
       }
     } catch (err) {
       console.error('Error al recepcionar paciente:', err)
@@ -90,7 +155,7 @@ export default function RecepcionPacientesDia() {
     }
   }
 
-  // Enviar consentimiento por WhatsApp si aún no lo firmó
+  // Enviar consentimiento por WhatsApp
   const handleReenviarConsentimientoWA = async (turnoId: string) => {
     try {
       setProcesandoId(turnoId)
@@ -117,6 +182,7 @@ export default function RecepcionPacientesDia() {
     setFecha(d.toISOString().slice(0, 10))
   }
 
+  // Métricas del día
   const metricas = useMemo(() => {
     const total = turnos.length
     const citados = turnos.filter((t) => t.estado === 'programado').length
@@ -126,163 +192,336 @@ export default function RecepcionPacientesDia() {
     return { total, citados, recepcionados, enQx, operados }
   }, [turnos])
 
+  // Filtrado reactivo por pestaña y por buscador de texto
+  const turnosFiltrados = useMemo(() => {
+    return turnos.filter((t) => {
+      // 1. Filtro por estado operativo
+      if (filtroEstado !== 'todos' && t.estado !== filtroEstado) {
+        return false
+      }
+
+      // 2. Filtro por buscador de texto (DNI, Nombre, Teléfono, Práctica)
+      if (busqueda.trim()) {
+        const q = busqueda.toLowerCase().trim()
+        const pacNombre = (t.pacientes?.nombre || t.paciente_nombre || '').toLowerCase()
+        const pacDni = (t.pacientes?.dni || t.paciente_dni || '').toLowerCase()
+        const pacTel = (t.pacientes?.telefono || t.paciente_telefono || '').toLowerCase()
+        const pracNom = (t.practica_nombre || '').toLowerCase()
+        const cirujNom = (t.cirujano_nombre || '').toLowerCase()
+
+        return (
+          pacNombre.includes(q) ||
+          pacDni.includes(q) ||
+          pacTel.includes(q) ||
+          pracNom.includes(q) ||
+          cirujNom.includes(q)
+        )
+      }
+
+      return true
+    })
+  }, [turnos, filtroEstado, busqueda])
+
   return (
-    <div className="space-y-5 animate-fade-in">
-      {/* Barra de Control de Fecha & Realtime */}
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-[var(--border)]">
+    <div className="space-y-4 animate-fade-in">
+      
+      {/* ==================================================================== */}
+      {/* 1. BARRA SUPERIOR DE CONTROL: FECHA, ESTADO REALTIME Y BUSCADOR */}
+      {/* ==================================================================== */}
+      <div className="bg-neutral-900/90 border border-[var(--border)] rounded-2xl p-4 shadow-md flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        
+        {/* Selector de Día */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center bg-neutral-950 rounded-xl p-1 border border-[var(--border)]">
             <button
+              type="button"
               onClick={() => cambiarDia(-1)}
-              className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded-lg text-[var(--secondary)] transition"
+              className="p-1.5 hover:bg-neutral-800 rounded-lg text-gray-300 transition"
+              title="Día anterior"
             >
               <ChevronLeft size={16} />
             </button>
             <button
+              type="button"
               onClick={() => setFecha(new Date().toISOString().slice(0, 10))}
               className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
                 fecha === new Date().toISOString().slice(0, 10)
                   ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-[var(--secondary)] hover:bg-white dark:hover:bg-slate-700'
+                  : 'text-gray-400 hover:bg-neutral-800 hover:text-white'
               }`}
             >
               Hoy
             </button>
             <button
+              type="button"
               onClick={() => cambiarDia(1)}
-              className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded-lg text-[var(--secondary)] transition"
+              className="p-1.5 hover:bg-neutral-800 rounded-lg text-gray-300 transition"
+              title="Día siguiente"
             >
               <ChevronRight size={16} />
             </button>
           </div>
 
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl border border-[var(--border)] text-xs font-mono font-bold outline-none"
-          />
+          <div className="flex items-center gap-2 bg-neutral-950 px-3 py-1.5 rounded-xl border border-[var(--border)]">
+            <Calendar size={14} className="text-blue-400" />
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="bg-transparent text-xs font-mono font-bold text-white outline-none"
+            />
+          </div>
 
-          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[10px] font-bold">
-            <Radio size={12} className="animate-pulse" />
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
+            <Radio size={12} className="animate-pulse text-emerald-400" />
             <span>Sincronizado con Quirófano</span>
           </div>
         </div>
 
+        {/* Buscador Rápido y Refresco */}
+        <div className="flex items-center gap-2 flex-1 lg:max-w-md justify-end">
+          <div className="relative w-full">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar por DNI, Nombre o Práctica..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              className="w-full pl-9 pr-8 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+            />
+            {busqueda && (
+              <button
+                type="button"
+                onClick={() => setBusqueda('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={fetchTurnosHoy}
+            className="p-2 bg-neutral-950 hover:bg-neutral-800 border border-[var(--border)] rounded-xl text-gray-300 hover:text-white transition shadow-sm shrink-0"
+            title="Refrescar listado"
+          >
+            <RefreshCw size={14} className={cargando ? 'animate-spin text-blue-400' : ''} />
+          </button>
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
+      {/* 2. TARJETAS KPIS INTERACTIVAS (TABS OPERATIVAS) */}
+      {/* ==================================================================== */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+        
+        {/* Tab 1: Todos */}
         <button
-          onClick={fetchTurnosHoy}
-          className="px-3.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-[var(--border)] self-end sm:self-auto"
+          type="button"
+          onClick={() => setFiltroEstado('todos')}
+          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+            filtroEstado === 'todos'
+              ? 'bg-neutral-800 border-blue-500 shadow-md ring-2 ring-blue-500/30'
+              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-neutral-800/80'
+          }`}
         >
-          <RefreshCw size={13} className={cargando ? 'animate-spin text-blue-600' : ''} />
-          <span>Actualizar</span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Todos</span>
+            <Filter size={13} className={filtroEstado === 'todos' ? 'text-blue-400' : 'text-gray-500'} />
+          </div>
+          <p className="text-xl font-black text-white font-mono mt-1">{metricas.total}</p>
+          <span className="text-[10px] text-gray-400 block mt-0.5">Visión del día</span>
+        </button>
+
+        {/* Tab 2: Citados / Por Llegar */}
+        <button
+          type="button"
+          onClick={() => setFiltroEstado('programado')}
+          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+            filtroEstado === 'programado'
+              ? 'bg-blue-950/60 border-blue-500 shadow-md ring-2 ring-blue-500/40'
+              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-blue-950/20'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-400">Por Llegar</span>
+            <Clock size={13} className="text-blue-400" />
+          </div>
+          <p className="text-xl font-black text-blue-400 font-mono mt-1">{metricas.citados}</p>
+          <span className="text-[10px] text-blue-300/70 block mt-0.5">Pendientes recepción</span>
+        </button>
+
+        {/* Tab 3: En Sala de Espera */}
+        <button
+          type="button"
+          onClick={() => setFiltroEstado('en_espera')}
+          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+            filtroEstado === 'en_espera'
+              ? 'bg-amber-950/60 border-amber-500 shadow-md ring-2 ring-amber-500/40'
+              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-amber-950/20'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">En Espera</span>
+            <Activity size={13} className="text-amber-400" />
+          </div>
+          <p className="text-xl font-black text-amber-400 font-mono mt-1">{metricas.recepcionados}</p>
+          <span className="text-[10px] text-amber-300/70 block mt-0.5">Listos para quirófano</span>
+        </button>
+
+        {/* Tab 4: En Mesa Quirúrgica */}
+        <button
+          type="button"
+          onClick={() => setFiltroEstado('en_operacion')}
+          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+            filtroEstado === 'en_operacion'
+              ? 'bg-purple-950/60 border-purple-500 shadow-md ring-2 ring-purple-500/40'
+              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-purple-950/20'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-400">En Quirófano</span>
+            <Activity size={13} className="text-purple-400 animate-spin" />
+          </div>
+          <p className="text-xl font-black text-purple-400 font-mono mt-1">{metricas.enQx}</p>
+          <span className="text-[10px] text-purple-300/70 block mt-0.5">En operación</span>
+        </button>
+
+        {/* Tab 5: Cirugías Finalizadas */}
+        <button
+          type="button"
+          onClick={() => setFiltroEstado('operado')}
+          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
+            filtroEstado === 'operado'
+              ? 'bg-emerald-950/60 border-emerald-500 shadow-md ring-2 ring-emerald-500/40'
+              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-emerald-950/20'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400">Finalizadas</span>
+            <CheckCircle2 size={13} className="text-emerald-400" />
+          </div>
+          <p className="text-xl font-black text-emerald-400 font-mono mt-1">{metricas.operados}</p>
+          <span className="text-[10px] text-emerald-300/70 block mt-0.5">Postoperatorio</span>
         </button>
       </div>
 
-      {/* Tarjetas KPI */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="p-3.5 rounded-2xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40">
-          <p className="text-[10px] font-bold uppercase text-blue-600">Pacientes Citados</p>
-          <p className="text-xl font-extrabold text-[var(--foreground)] font-mono mt-0.5">{metricas.total}</p>
-        </div>
-        <div className="p-3.5 rounded-2xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40">
-          <p className="text-[10px] font-bold uppercase text-amber-600">En Sala de Espera</p>
-          <p className="text-xl font-extrabold text-amber-600 font-mono mt-0.5">{metricas.recepcionados}</p>
-        </div>
-        <div className="p-3.5 rounded-2xl bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800/40">
-          <p className="text-[10px] font-bold uppercase text-purple-600">En Mesa Quirúrgica</p>
-          <p className="text-xl font-extrabold text-purple-600 font-mono mt-0.5">{metricas.enQx}</p>
-        </div>
-        <div className="p-3.5 rounded-2xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40">
-          <p className="text-[10px] font-bold uppercase text-emerald-600">Cirugías Finalizadas</p>
-          <p className="text-xl font-extrabold text-emerald-600 font-mono mt-0.5">{metricas.operados}</p>
-        </div>
-      </div>
-
-      {/* Listado de Pacientes para Recepción */}
+      {/* ==================================================================== */}
+      {/* 3. LISTADO DE TURNOS CON SEMAFORIZACIÓN DE ALTO CONTRASTE */}
+      {/* ==================================================================== */}
       {cargando ? (
-        <div className="p-12 text-center text-xs text-[var(--secondary)] flex flex-col items-center justify-center gap-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl">
-          <Loader2 size={24} className="animate-spin text-blue-600" />
-          <span>Cargando pacientes del día...</span>
+        <div className="p-16 text-center text-xs text-gray-400 flex flex-col items-center justify-center gap-2 bg-neutral-900/80 border border-[var(--border)] rounded-2xl">
+          <Loader2 size={26} className="animate-spin text-blue-500" />
+          <span>Cargando programación del día...</span>
         </div>
-      ) : turnos.length === 0 ? (
-        <div className="p-12 text-center text-xs text-[var(--secondary)] bg-[var(--card)] border border-dashed rounded-2xl">
-          No hay cirugías programadas para el día ({fecha}).
+      ) : turnosFiltrados.length === 0 ? (
+        <div className="p-12 text-center text-xs text-gray-400 bg-neutral-900/60 border border-dashed border-gray-800 rounded-2xl space-y-2">
+          <p className="text-sm font-bold text-gray-300">No se encontraron turnos quirúrgicos</p>
+          <p className="text-xs text-gray-500 max-w-md mx-auto">
+            {busqueda
+              ? `No hay coincidencias para "${busqueda}" en la categoría seleccionada.`
+              : filtroEstado !== 'todos'
+              ? 'No hay pacientes en este estado operativo para el día seleccionado.'
+              : `No hay cirugías programadas para el día ${fecha}.`}
+          </p>
+          {(filtroEstado !== 'todos' || busqueda) && (
+            <button
+              type="button"
+              onClick={() => {
+                setFiltroEstado('todos')
+                setBusqueda('')
+              }}
+              className="mt-2 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold transition shadow"
+            >
+              Restablecer Filtros
+            </button>
+          )}
         </div>
       ) : (
-        <div className="space-y-3.5">
-          {turnos.map((t) => {
-            const pac = t.pacientes || {}
-            const q = t.quirofanos || {}
+        <div className="space-y-3">
+          {turnosFiltrados.map((t) => {
+            const pac = (t.pacientes as any) || {}
+            const q = (t.quirofanos as any) || {}
             const esOperado = t.estado === 'operado'
             const esEnOperacion = t.estado === 'en_operacion'
             const esEnEspera = t.estado === 'en_espera'
+            const esProgramado = t.estado === 'programado'
             const tieneConsentimiento = t.consentimiento_estado === 'firmado_digital'
+            const telefonoValido = pac.telefono || t.paciente_telefono
+
+            // Determinación de Borde Lateral y Estilo Cromático de Alto Impacto
+            let cardClasses = 'border-l-4 border-l-blue-500 bg-neutral-900/90 border-gray-800 hover:border-gray-700'
+            let badgeEstadoClasses = 'bg-blue-600/20 text-blue-300 border-blue-500/40'
+            let estadoLabel = 'Citado / Por Llegar'
+
+            if (esEnEspera) {
+              cardClasses = 'border-l-[6px] border-l-amber-500 bg-amber-950/20 border-amber-500/40 shadow-lg shadow-amber-950/20'
+              badgeEstadoClasses = 'bg-amber-500 text-black font-black border-amber-400'
+              estadoLabel = '🟡 En Sala de Espera'
+            } else if (esEnOperacion) {
+              cardClasses = 'border-l-[6px] border-l-purple-500 bg-purple-950/25 border-purple-500/50 shadow-xl shadow-purple-950/30 animate-pulse'
+              badgeEstadoClasses = 'bg-purple-600 text-white font-black border-purple-400'
+              estadoLabel = '🟣 En Mesa Quirúrgica'
+            } else if (esOperado) {
+              cardClasses = 'border-l-4 border-l-emerald-500 bg-emerald-950/15 border-emerald-500/30 opacity-90'
+              badgeEstadoClasses = 'bg-emerald-600/20 text-emerald-300 border-emerald-500/40'
+              estadoLabel = '✔ Cirugía Finalizada'
+            }
 
             return (
               <div
                 key={t.id}
-                className={`p-4 rounded-2xl border transition-all duration-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                  esEnOperacion
-                    ? 'border-purple-500 bg-purple-50/20 dark:bg-purple-950/10'
-                    : esEnEspera
-                    ? 'border-amber-400 bg-amber-50/20 dark:bg-amber-950/10'
-                    : esOperado
-                    ? 'border-emerald-500/40 bg-emerald-50/10 dark:bg-emerald-950/5 opacity-80'
-                    : 'border-[var(--border)] bg-[var(--card)]'
-                }`}
+                className={`p-4 rounded-2xl border transition-all duration-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 ${cardClasses}`}
               >
+                {/* Información Principal del Paciente y Quirófano */}
                 <div className="space-y-2 flex-1 min-w-0">
+                  
+                  {/* Encabezado: Horario, Quirófano y Badge de Estado */}
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-2.5 py-1 rounded-xl bg-blue-600 text-white text-xs font-mono font-extrabold">
+                    <span className="px-2.5 py-1 rounded-xl bg-neutral-950 border border-gray-700 text-white text-xs font-mono font-extrabold flex items-center gap-1.5 shadow-sm">
+                      <Clock size={12} className="text-blue-400" />
                       {String(t.hora_inicio).slice(0, 5)} hs
                     </span>
-                    <span className="text-xs font-bold text-[var(--foreground)] px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800">
-                      {q.nombre || 'Quirófano'}
+
+                    <span className="text-xs font-bold text-gray-300 px-2.5 py-1 rounded-xl bg-neutral-950 border border-gray-800">
+                      {q.nombre || 'Quirófano Central'}
                     </span>
-                    <span
-                      className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full flex items-center gap-1 ${
-                        esEnOperacion
-                          ? 'bg-purple-600 text-white animate-pulse'
-                          : esEnEspera
-                          ? 'bg-amber-500 text-white'
-                          : esOperado
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                    >
+
+                    <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-xl border flex items-center gap-1 ${badgeEstadoClasses}`}>
                       {esEnOperacion && <Activity size={11} className="animate-spin" />}
                       {esEnEspera && <Activity size={11} />}
                       {esOperado && <Check size={11} />}
-                      <span>
-                        {esEnOperacion
-                          ? 'En Mesa Quirúrgica'
-                          : esEnEspera
-                          ? 'En Sala de Espera'
-                          : esOperado
-                          ? 'Cirugía Finalizada'
-                          : 'Citado'}
-                      </span>
+                      <span>{estadoLabel}</span>
                     </span>
+
+                    {t.cirujano_nombre && (
+                      <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1 ml-auto md:ml-0">
+                        <Stethoscope size={12} className="text-indigo-400" />
+                        {t.cirujano_nombre}
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-3">
-                    <h4 className="text-sm font-extrabold text-[var(--foreground)] truncate">
-                      {pac.nombre || t.paciente_nombre}
+                  {/* Fila del Paciente y Práctica */}
+                  <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-3 flex-wrap">
+                    <h4 className="text-sm sm:text-base font-extrabold text-white truncate">
+                      {pac.nombre || t.paciente_nombre || 'Paciente sin nombre'}
                     </h4>
-                    <span className="text-xs text-[var(--secondary)] font-mono">
-                      DNI: {pac.dni || t.paciente_dni || 'S/D'} • Tel: {pac.telefono || t.paciente_telefono || 'S/D'}
+                    <span className="text-xs text-gray-400 font-mono">
+                      DNI: <strong className="text-gray-200">{pac.dni || t.paciente_dni || 'S/D'}</strong> • Tel: <strong className="text-gray-200">{telefonoValido || 'S/D'}</strong>
                     </span>
-                    <span className="text-xs font-bold text-blue-600 dark:text-blue-400 truncate">
+                    <span className="text-xs font-bold text-blue-400 truncate">
                       {t.practica_nombre} ({t.ojo})
                     </span>
                   </div>
 
-                  {/* ALERTA DE CONSENTIMIENTO INFORMADO */}
+                  {/* BANNER / ACCIONES DE CONSENTIMIENTO INFORMADO */}
                   <div className="pt-1">
                     {!tieneConsentimiento ? (
-                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-2 text-amber-700 dark:text-amber-300 text-xs">
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-wrap items-center justify-between gap-2 text-amber-300 text-xs">
                         <div className="flex items-center gap-1.5 font-semibold">
-                          <AlertCircle size={14} className="shrink-0 text-amber-600" />
+                          <AlertCircle size={14} className="shrink-0 text-amber-400" />
                           <span>⚠ El paciente aún no ha firmado el Consentimiento Informado.</span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -291,7 +530,7 @@ export default function RecepcionPacientesDia() {
                               href={`/consentimiento/${t.consentimiento_token}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm"
+                              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
                             >
                               <FileCheck2 size={12} />
                               <span>Firmar en Tablet / Celular</span>
@@ -299,9 +538,9 @@ export default function RecepcionPacientesDia() {
                           )}
                           <button
                             type="button"
-                            disabled={procesandoId === t.id || !(pac.telefono || t.paciente_telefono)}
+                            disabled={procesandoId === t.id || !telefonoValido}
                             onClick={() => handleReenviarConsentimientoWA(t.id)}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50 transition-all"
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50 transition"
                           >
                             <Send size={11} />
                             <span>Reenviar WhatsApp</span>
@@ -309,14 +548,14 @@ export default function RecepcionPacientesDia() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-bold">
+                      <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold">
                         <CheckCircle2 size={14} />
                         <span>Consentimiento Firmado Digitalmente</span>
                         <a
                           href={`${BACKEND_URL}${t.consentimiento_pdf_url || '/static/consentimiento_' + t.id + '.pdf'}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
+                          className="text-[11px] text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
                         >
                           <Download size={11} />
                           <span>Ver PDF</span>
@@ -326,36 +565,36 @@ export default function RecepcionPacientesDia() {
                   </div>
                 </div>
 
-                {/* Acciones de Recepción */}
+                {/* Acciones de Recepción a la derecha */}
                 <div className="flex items-center gap-2 shrink-0 self-end md:self-center">
-                  {t.estado === 'programado' && (
+                  {esProgramado && (
                     <button
                       type="button"
                       disabled={procesandoId === t.id}
                       onClick={() => handleRecepcionar(t.id)}
-                      className="px-4 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
+                      className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition-all disabled:opacity-50"
                     >
                       {procesandoId === t.id ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
                       <span>🟡 Recepcionar Paciente</span>
                     </button>
                   )}
-
                   {esEnEspera && (
-                    <div className="px-3 py-1.5 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 text-xs font-bold border border-amber-300 dark:border-amber-800">
-                      En Sala de Espera
-                    </div>
+                    <span className="px-3 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1">
+                      <Activity size={12} className="text-amber-400" />
+                      Esperando Quirófano
+                    </span>
                   )}
-
                   {esEnOperacion && (
-                    <div className="px-3 py-1.5 rounded-xl bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 text-xs font-bold border border-purple-300 dark:border-purple-800 animate-pulse">
-                      En Mesa de Quirófano
-                    </div>
+                    <span className="px-3 py-1.5 bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-bold flex items-center gap-1">
+                      <Activity size={12} className="animate-spin text-purple-400" />
+                      Cirugía en Curso
+                    </span>
                   )}
-
                   {esOperado && (
-                    <div className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-300 dark:border-emerald-800">
-                      Operado ✔
-                    </div>
+                    <span className="px-3 py-1.5 bg-emerald-950/60 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center gap-1">
+                      <Check size={12} />
+                      Operado
+                    </span>
                   )}
                 </div>
               </div>
@@ -363,6 +602,7 @@ export default function RecepcionPacientesDia() {
           })}
         </div>
       )}
+
     </div>
   )
 }

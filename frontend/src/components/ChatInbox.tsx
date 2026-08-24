@@ -33,7 +33,8 @@ import {
   Copy,
   Info,
   Smile,
-  ChevronRight
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react'
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
@@ -161,6 +162,13 @@ export default function ChatInbox() {
   const [subiendoArchivo, setSubiendoArchivo] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const isNearBottomRef = useRef<boolean>(true)
+  const isInitialLoadRef = useRef<boolean>(true)
+  const prevMessagesLengthRef = useRef<number>(0)
+  const [showScrollBottom, setShowScrollBottom] = useState<boolean>(false)
+  const [unreadNewCount, setUnreadNewCount] = useState<number>(0)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -329,8 +337,43 @@ export default function ChatInbox() {
     }
   }, [])
 
+  // Control inteligente de posición de scroll
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current
+    const isNear = scrollHeight - scrollTop - clientHeight < 120
+    isNearBottomRef.current = isNear
+    if (isNear) {
+      setShowScrollBottom(false)
+      setUnreadNewCount(0)
+    } else {
+      setShowScrollBottom(true)
+    }
+  }
+
+  const scrollToBottom = (smooth = true) => {
+    if (messagesContainerRef.current) {
+      if (smooth) {
+        messagesContainerRef.current.scrollTo({
+          top: messagesContainerRef.current.scrollHeight,
+          behavior: 'smooth'
+        })
+      } else {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+      }
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' })
+    }
+    setShowScrollBottom(false)
+    setUnreadNewCount(0)
+    isNearBottomRef.current = true
+  }
+
   useEffect(() => {
     if (!selectedConvId) return
+    isInitialLoadRef.current = true
+    setShowScrollBottom(false)
+    setUnreadNewCount(0)
     fetchMensajes(selectedConvId)
     // Notificar a WhatsApp y marcar mensajes como leídos (doble tilde azul en el celular del paciente)
     fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
@@ -349,16 +392,57 @@ export default function ChatInbox() {
               const dedupKey = m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id
               uniqueMap.set(dedupKey, m)
             }
-            setMensajes(Array.from(uniqueMap.values()))
+            const newArr = Array.from(uniqueMap.values())
+            setMensajes((prev) => {
+              // Si no hay cambios reales en mensajes o estados de entrega, no crear nueva referencia de array
+              if (prev.length === newArr.length && prev.length > 0) {
+                const lastPrev = prev[prev.length - 1]
+                const lastNew = newArr[newArr.length - 1]
+                const sameLastId = lastPrev.id === lastNew.id
+                const sameDelivery = lastPrev.metadata_json?.delivery_status === lastNew.metadata_json?.delivery_status
+                if (sameLastId && sameDelivery) {
+                  return prev
+                }
+              }
+              return newArr
+            })
           }
         })
-    }, 2500)
+    }, 4000)
 
     return () => clearInterval(intervalMsgs)
   }, [selectedConvId])
 
+  // Desplazamiento inteligente condicional al cambiar mensajes
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (mensajes.length === 0) return
+
+    if (isInitialLoadRef.current) {
+      // 1. Carga inicial: Posicionamiento instantáneo al fondo sin animación de deslizamiento
+      requestAnimationFrame(() => {
+        scrollToBottom(false)
+      })
+      isInitialLoadRef.current = false
+      prevMessagesLengthRef.current = mensajes.length
+      return
+    }
+
+    // 2. Si aumentaron los mensajes (mensaje nuevo)
+    if (mensajes.length > prevMessagesLengthRef.current) {
+      const lastMsg = mensajes[mensajes.length - 1]
+      const isMine = lastMsg?.emisor === 'operador'
+
+      if (isNearBottomRef.current || isMine) {
+        requestAnimationFrame(() => {
+          scrollToBottom(true)
+        })
+      } else {
+        // El usuario está leyendo arriba: no mover la pantalla, mostrar botón flotante con badge
+        setShowScrollBottom(true)
+        setUnreadNewCount((prev) => prev + (mensajes.length - prevMessagesLengthRef.current))
+      }
+    }
+    prevMessagesLengthRef.current = mensajes.length
   }, [mensajes])
 
   useEffect(() => {
@@ -1186,125 +1270,148 @@ export default function ChatInbox() {
               </div>
             </div>
 
-            {/* Historial de Mensajes */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#090e1a] panel-scroll">
-              {cargandoMensajes ? (
-                <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
-                  <Loader2 size={20} className="animate-spin text-blue-400" />
-                  <span>Cargando historial de mensajes...</span>
-                </div>
-              ) : mensajes.length === 0 ? (
-                <div className="text-center text-xs text-slate-400 py-12 flex flex-col items-center justify-center gap-2.5">
-                  <div className="p-3 bg-[#131d35] border border-slate-700/60 rounded-full">
-                    <MessageCircle size={24} className="text-slate-400" />
+            {/* Historial de Mensajes con Contenedor Relativo y Botón Flotante */}
+            <div className="flex-1 relative overflow-hidden flex flex-col">
+              <div 
+                ref={messagesContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#090e1a] panel-scroll"
+              >
+                {cargandoMensajes ? (
+                  <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
+                    <Loader2 size={20} className="animate-spin text-blue-400" />
+                    <span>Cargando historial de mensajes...</span>
                   </div>
-                  <span className="font-semibold text-slate-200 text-sm">No hay mensajes en esta conversación</span>
-                  <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
-                </div>
-              ) : (
-                mensajes.map((msg) => {
-                  const isOperator = msg.emisor === 'operador'
-                  const isBot = msg.emisor === 'bot'
-                  const isSystem = msg.metadata_json?.sistema === true
-                  const isInternal = Boolean(msg.metadata_json?.is_internal_note || msg.metadata_json?.tipo === 'nota_interna')
-                  
-                  if (isSystem) {
-                    return (
-                      <div key={msg.id} className="flex justify-center my-2">
-                        <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs">
-                          {msg.contenido}
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 1. NOTA INTERNA PRIVADA (ÁMBAR)
-                  if (isInternal) {
-                    return (
-                      <div key={msg.id} className="flex justify-center my-2">
-                        <div className="max-w-md w-full bg-[#241a06] border border-amber-500/50 text-amber-200 rounded-2xl p-3 shadow-md text-xs">
-                          <div className="flex items-center justify-between gap-1 text-[9.5px] font-bold text-amber-400 mb-1.5 pb-1 border-b border-amber-800/40">
-                            <span className="flex items-center gap-1">
-                              <Lock size={11} /> NOTA INTERNA (Privado del Equipo Médico)
-                            </span>
-                            <span className="text-[8.5px] opacity-70">
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed text-amber-100" />
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // 2. MENSAJE NORMAL DE WHATSAPP
-                  return (
-                    <div
-                      key={msg.id}
-                      className={`flex ${isOperator ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
-                          isOperator
-                            ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
-                            : isBot
-                            ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
-                            : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
-                        }`}
-                      >
-                        {/* Badge del emisor */}
-                        <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider">
-                          {isOperator ? (
-                            <>
-                              <User size={10} className="text-blue-200" /> Operador Humano (CRM)
-                            </>
-                          ) : isBot ? (
-                            <>
-                              <Bot size={10} className="text-emerald-400" />
-                              <Sparkles size={8} className="text-emerald-300 animate-pulse" />
-                              Bot Gemini
-                            </>
-                          ) : (
-                            <>
-                              <User size={10} className="text-slate-300" /> Paciente
-                            </>
-                          )}
-                        </div>
-                        
-                        {/* Contenido textual con formato enriquecido */}
-                        {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
-                          <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
-                        )}
-                        
-                        {/* Visualizador Multimedia */}
-                        <ChatMediaViewer 
-                          metadata={msg.metadata_json} 
-                          isOperator={isOperator} 
-                          mensajeId={msg.id}
-                          onTranscribeSuccess={(mId, transcript) => {
-                            setMensajes((prev) =>
-                              prev.map((m) =>
-                                m.id === mId
-                                  ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
-                                  : m
-                              )
-                            )
-                          }}
-                        />
-                        
-                        {/* Pie con Hora y Tildes */}
-                        <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
-                          <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          {(isOperator || isBot) && (
-                            <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
-                          )}
-                        </div>
-                      </div>
+                ) : mensajes.length === 0 ? (
+                  <div className="text-center text-xs text-slate-400 py-12 flex flex-col items-center justify-center gap-2.5">
+                    <div className="p-3 bg-[#131d35] border border-slate-700/60 rounded-full">
+                      <MessageCircle size={24} className="text-slate-400" />
                     </div>
-                  )
-                })
+                    <span className="font-semibold text-slate-200 text-sm">No hay mensajes en esta conversación</span>
+                    <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
+                  </div>
+                ) : (
+                  mensajes.map((msg) => {
+                    const isOperator = msg.emisor === 'operador'
+                    const isBot = msg.emisor === 'bot'
+                    const isSystem = msg.metadata_json?.sistema === true
+                    const isInternal = Boolean(msg.metadata_json?.is_internal_note || msg.metadata_json?.tipo === 'nota_interna')
+                    
+                    if (isSystem) {
+                      return (
+                        <div key={msg.id} className="flex justify-center my-2">
+                          <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs">
+                            {msg.contenido}
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    // 1. NOTA INTERNA PRIVADA (ÁMBAR)
+                    if (isInternal) {
+                      return (
+                        <div key={msg.id} className="flex justify-center my-2">
+                          <div className="max-w-md w-full bg-[#241a06] border border-amber-500/50 text-amber-200 rounded-2xl p-3 shadow-md text-xs">
+                            <div className="flex items-center justify-between gap-1 text-[9.5px] font-bold text-amber-400 mb-1.5 pb-1 border-b border-amber-800/40">
+                              <span className="flex items-center gap-1">
+                                <Lock size={11} /> NOTA INTERNA (Privado del Equipo Médico)
+                              </span>
+                              <span className="text-[8.5px] opacity-70">
+                                {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed text-amber-100" />
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    // 2. MENSAJE NORMAL DE WHATSAPP
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex ${isOperator ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
+                            isOperator
+                              ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                              : isBot
+                              ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
+                              : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
+                          }`}
+                        >
+                          {/* Badge del emisor */}
+                          <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider">
+                            {isOperator ? (
+                              <>
+                                <User size={10} className="text-blue-200" /> Operador Humano (CRM)
+                              </>
+                            ) : isBot ? (
+                              <>
+                                <Bot size={10} className="text-emerald-400" />
+                                <Sparkles size={8} className="text-emerald-300 animate-pulse" />
+                                Bot Gemini
+                              </>
+                            ) : (
+                              <>
+                                <User size={10} className="text-slate-300" /> Paciente
+                              </>
+                            )}
+                          </div>
+                          
+                          {/* Contenido textual con formato enriquecido */}
+                          {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
+                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
+                          )}
+                          
+                          {/* Visualizador Multimedia */}
+                          <ChatMediaViewer 
+                            metadata={msg.metadata_json} 
+                            isOperator={isOperator} 
+                            mensajeId={msg.id}
+                            onTranscribeSuccess={(mId, transcript) => {
+                              setMensajes((prev) =>
+                                prev.map((m) =>
+                                  m.id === mId
+                                    ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
+                                    : m
+                                )
+                              )
+                            }}
+                          />
+                          
+                          {/* Pie con Hora y Tildes */}
+                          <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
+                            <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            {(isOperator || isBot) && (
+                              <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* Botón flotante para scroll al fondo (Estilo WhatsApp Web) */}
+              {showScrollBottom && (
+                <button
+                  type="button"
+                  onClick={() => scrollToBottom(true)}
+                  className="absolute bottom-4 right-4 z-20 bg-[#162340] hover:bg-[#20325b] text-white border border-blue-500/50 shadow-2xl rounded-full p-2.5 flex items-center gap-1.5 transition-all duration-200 hover:scale-105 active:scale-95 group cursor-pointer"
+                  title="Ir al último mensaje"
+                >
+                  <ChevronDown size={18} className="text-blue-300 group-hover:text-white transition-colors" />
+                  {unreadNewCount > 0 && (
+                    <span className="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-xs animate-pulse">
+                      {unreadNewCount}
+                    </span>
+                  )}
+                </button>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
             {/* Caja de Entrada de Mensajes y Barra de Copiloto IA (Tema Oscuro) */}
