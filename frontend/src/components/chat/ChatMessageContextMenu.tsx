@@ -20,15 +20,15 @@ export interface Mensaje {
 }
 
 interface ChatMessageContextMenuProps {
-  message: Mensaje
+  message: any
   position: { x: number; y: number }
   onClose: () => void
-  onReply: (msg: Mensaje) => void
+  onReply: (msg: any) => void
   onCopy: (text: string) => void
-  onReact: (msg: Mensaje, emoji: string) => void
-  onSaveClinicalNote: (msg: Mensaje) => void
-  onConvertToInternalNote: (msg: Mensaje) => void
-  onDelete: (msg: Mensaje) => void
+  onReact: (msg: any, emoji: string) => void | Promise<any>
+  onSaveClinicalNote: (msg: any) => void | Promise<any>
+  onConvertToInternalNote: (msg: any) => void | Promise<any>
+  onDelete: (msg: any) => void | Promise<any>
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏']
