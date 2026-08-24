@@ -21,7 +21,9 @@ import {
   Check,
   Radio,
   X,
-  Stethoscope
+  Stethoscope,
+  Layers,
+  ListFilter
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -61,56 +63,142 @@ interface TurnoRecepcion {
   }
 }
 
-type FiltroEstado = 'todos' | 'programado' | 'en_espera' | 'en_operacion' | 'operado'
+const ESTADOS_ORDEN = ['programado', 'en_espera', 'en_operacion', 'operado']
+
+const NOMBRES_ESTADOS: Record<string, string> = {
+  programado: 'Por Llegar',
+  en_espera: 'En Sala de Espera',
+  en_operacion: 'En Quirófano',
+  operado: 'Operados',
+  todos: 'Todos'
+}
 
 export default function RecepcionPacientesDia() {
   const [fecha, setFecha] = useState<string>(() => new Date().toISOString().slice(0, 10))
   const [turnos, setTurnos] = useState<TurnoRecepcion[]>([])
   const [cargando, setCargando] = useState<boolean>(true)
   const [procesandoId, setProcesandoId] = useState<string | null>(null)
-  const [filtroEstado, setFiltroEstado] = useState<FiltroEstado>('todos')
+  
+  // Multiselección de filtros de estado (soporta Ctrl/Cmd y Shift + Clic)
+  const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['todos'])
+  const [ultimoEstadoClickeado, setUltimoEstadoClickeado] = useState<string>('todos')
   const [busqueda, setBusqueda] = useState<string>('')
 
-  // Restaurar pestaña activa desde URL o localStorage al cargar
+  // Restaurar estado de filtros desde URL o localStorage al cargar
   useEffect(() => {
     try {
       const urlParams = new URLSearchParams(window.location.search)
-      const tabUrl = urlParams.get('tab') as FiltroEstado
-      const tabStorage = localStorage.getItem('crm_recepcion_tab_activa') as FiltroEstado
+      const tabsUrl = urlParams.get('tabs') || urlParams.get('tab')
+      const stored = localStorage.getItem('crm_recepcion_filtros_estado')
 
-      const tabsValidas: FiltroEstado[] = ['todos', 'programado', 'en_espera', 'en_operacion', 'operado']
+      if (tabsUrl) {
+        const parts = tabsUrl.split(',').filter((s) => s === 'todos' || ESTADOS_ORDEN.includes(s))
+        if (parts.length > 0) {
+          setFiltrosEstado(parts)
+          localStorage.setItem('crm_recepcion_filtros_estado', JSON.stringify(parts))
+          return
+        }
+      }
 
-      if (tabUrl && tabsValidas.includes(tabUrl)) {
-        setFiltroEstado(tabUrl)
-        localStorage.setItem('crm_recepcion_tab_activa', tabUrl)
-      } else if (tabStorage && tabsValidas.includes(tabStorage)) {
-        setFiltroEstado(tabStorage)
-        if (tabStorage !== 'todos') {
-          const url = new URL(window.location.href)
-          url.searchParams.set('tab', tabStorage)
-          window.history.replaceState({}, '', url.toString())
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setFiltrosEstado(parsed)
+          if (!parsed.includes('todos')) {
+            const url = new URL(window.location.href)
+            url.searchParams.set('tabs', parsed.join(','))
+            window.history.replaceState({}, '', url.toString())
+          }
         }
       }
     } catch (e) {
-      console.warn('No se pudo restaurar la pestaña activa de recepción:', e)
+      console.warn('Error restaurando filtros de recepción:', e)
     }
   }, [])
 
-  // Cambiar pestaña con persistencia automática
-  const handleCambiarTab = (nuevaTab: FiltroEstado) => {
-    setFiltroEstado(nuevaTab)
+  // Guardar filtros en estado, localStorage y URL
+  const guardarFiltros = (nuevos: string[]) => {
+    setFiltrosEstado(nuevos)
     try {
-      localStorage.setItem('crm_recepcion_tab_activa', nuevaTab)
+      localStorage.setItem('crm_recepcion_filtros_estado', JSON.stringify(nuevos))
       const url = new URL(window.location.href)
-      if (nuevaTab === 'todos') {
+      if (nuevos.includes('todos') || nuevos.length === 0) {
+        url.searchParams.delete('tabs')
         url.searchParams.delete('tab')
       } else {
-        url.searchParams.set('tab', nuevaTab)
+        url.searchParams.set('tabs', nuevos.join(','))
       }
       window.history.replaceState({}, '', url.toString())
     } catch (e) {
-      // Silencioso
+      console.warn('Error guardando filtros de recepción:', e)
     }
+  }
+
+  // Manejo de clic en KPI con soporte de Ctrl/Cmd + Clic y Shift + Clic
+  const handleKpiClick = (estado: string, e: React.MouseEvent) => {
+    if (estado === 'todos') {
+      guardarFiltros(['todos'])
+      setUltimoEstadoClickeado('todos')
+      return
+    }
+
+    const esCtrl = e.ctrlKey || e.metaKey
+    const esShift = e.shiftKey
+
+    if (esCtrl) {
+      if (filtrosEstado.includes('todos')) {
+        guardarFiltros([estado])
+        setUltimoEstadoClickeado(estado)
+        return
+      }
+
+      let nuevos: string[] = []
+      if (filtrosEstado.includes(estado)) {
+        nuevos = filtrosEstado.filter((s) => s !== estado)
+        if (nuevos.length === 0) {
+          nuevos = ['todos']
+        }
+      } else {
+        nuevos = [...filtrosEstado, estado]
+        if (ESTADOS_ORDEN.every((st) => nuevos.includes(st))) {
+          nuevos = ['todos']
+        }
+      }
+      guardarFiltros(nuevos)
+      setUltimoEstadoClickeado(estado)
+    } else if (esShift) {
+      const refEstado = ESTADOS_ORDEN.includes(ultimoEstadoClickeado) ? ultimoEstadoClickeado : 'programado'
+      const idx1 = ESTADOS_ORDEN.indexOf(refEstado)
+      const idx2 = ESTADOS_ORDEN.indexOf(estado)
+      if (idx1 !== -1 && idx2 !== -1) {
+        const minIdx = Math.min(idx1, idx2)
+        const maxIdx = Math.max(idx1, idx2)
+        const rango = ESTADOS_ORDEN.slice(minIdx, maxIdx + 1)
+        if (rango.length === ESTADOS_ORDEN.length) {
+          guardarFiltros(['todos'])
+        } else {
+          guardarFiltros(rango)
+        }
+      } else {
+        guardarFiltros([estado])
+      }
+      setUltimoEstadoClickeado(estado)
+    } else {
+      // Clic simple: Selección exclusiva
+      guardarFiltros([estado])
+      setUltimoEstadoClickeado(estado)
+    }
+  }
+
+  // Helper para verificar si un KPI está activo
+  const esKpiActivo = (estado: string) => {
+    if (estado === 'todos') {
+      return filtrosEstado.includes('todos')
+    }
+    if (filtrosEstado.includes('todos')) {
+      return false
+    }
+    return filtrosEstado.includes(estado)
   }
 
   // Cargar turnos del día seleccionado
@@ -237,12 +325,12 @@ export default function RecepcionPacientesDia() {
   // Filtrado reactivo por pestaña y por buscador de texto
   const turnosFiltrados = useMemo(() => {
     return turnos.filter((t) => {
-      // 1. Filtro por estado operativo
-      if (filtroEstado !== 'todos' && t.estado !== filtroEstado) {
+      // 1. Filtro por multiselección de estado
+      if (!filtrosEstado.includes('todos') && !filtrosEstado.includes(t.estado)) {
         return false
       }
 
-      // 2. Filtro por buscador de texto (DNI, Nombre, Teléfono, Práctica)
+      // 2. Filtro por buscador de texto (DNI, Nombre, Teléfono, Práctica, Cirujano)
       if (busqueda.trim()) {
         const q = busqueda.toLowerCase().trim()
         const pacNombre = (t.pacientes?.nombre || t.paciente_nombre || '').toLowerCase()
@@ -262,7 +350,9 @@ export default function RecepcionPacientesDia() {
 
       return true
     })
-  }, [turnos, filtroEstado, busqueda])
+  }, [turnos, filtrosEstado, busqueda])
+
+  const esMultiseleccionActiva = filtrosEstado.length > 1 && !filtrosEstado.includes('todos')
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -326,7 +416,7 @@ export default function RecepcionPacientesDia() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              placeholder="Buscar por DNI, Nombre o Práctica..."
+              placeholder="Buscar por DNI, Nombre, Cirujano..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               className="w-full pl-9 pr-8 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
@@ -354,99 +444,133 @@ export default function RecepcionPacientesDia() {
       </div>
 
       {/* ==================================================================== */}
-      {/* 2. TARJETAS KPIS INTERACTIVAS (TABS OPERATIVAS) */}
+      {/* 2. TARJETAS KPIS INTERACTIVAS (CON SOPORTE CTRL/SHIFT + CLIC) */}
       {/* ==================================================================== */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-        
-        {/* Tab 1: Todos */}
-        <button
-          type="button"
-          onClick={() => handleCambiarTab('todos')}
-          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
-            filtroEstado === 'todos'
-              ? 'bg-neutral-800 border-blue-500 shadow-md ring-2 ring-blue-500/30'
-              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-neutral-800/80'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Todos</span>
-            <Filter size={13} className={filtroEstado === 'todos' ? 'text-blue-400' : 'text-gray-500'} />
-          </div>
-          <p className="text-xl font-black text-white font-mono mt-1">{metricas.total}</p>
-          <span className="text-[10px] text-gray-400 block mt-0.5">Visión del día</span>
-        </button>
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+          
+          {/* Tab 1: Todos */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('todos', e)}
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden select-none cursor-pointer ${
+              esKpiActivo('todos')
+                ? 'bg-neutral-800 border-slate-400 shadow-md ring-2 ring-slate-400/40'
+                : 'bg-neutral-900/90 border-[var(--border)] hover:bg-neutral-800/80 opacity-80 hover:opacity-100'
+            }`}
+            title="Ver todos los turnos del día sin filtros"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-gray-400">Todos</span>
+              <ListFilter size={13} className={esKpiActivo('todos') ? 'text-slate-200' : 'text-gray-500'} />
+            </div>
+            <p className="text-xl font-black text-white font-mono mt-1">{metricas.total}</p>
+            <span className="text-[10px] text-gray-400 block mt-0.5">Visión del día</span>
+          </button>
 
-        {/* Tab 2: Citados / Por Llegar */}
-        <button
-          type="button"
-          onClick={() => handleCambiarTab('programado')}
-          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
-            filtroEstado === 'programado'
-              ? 'bg-blue-950/60 border-blue-500 shadow-md ring-2 ring-blue-500/40'
-              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-blue-950/20'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-400">Por Llegar</span>
-            <Clock size={13} className="text-blue-400" />
-          </div>
-          <p className="text-xl font-black text-blue-400 font-mono mt-1">{metricas.citados}</p>
-          <span className="text-[10px] text-blue-300/70 block mt-0.5">Pendientes recepción</span>
-        </button>
+          {/* Tab 2: Citados / Por Llegar */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('programado', e)}
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden select-none cursor-pointer ${
+              esKpiActivo('programado')
+                ? 'bg-blue-950/70 border-blue-500 shadow-md ring-2 ring-blue-500/50'
+                : 'bg-neutral-900/90 border-[var(--border)] hover:bg-blue-950/20 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo Por Llegar • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-400">Por Llegar</span>
+              <Clock size={13} className="text-blue-400" />
+            </div>
+            <p className="text-xl font-black text-blue-400 font-mono mt-1">{metricas.citados}</p>
+            <span className="text-[10px] text-blue-300/70 block mt-0.5">Pendientes recepción</span>
+          </button>
 
-        {/* Tab 3: En Sala de Espera */}
-        <button
-          type="button"
-          onClick={() => handleCambiarTab('en_espera')}
-          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
-            filtroEstado === 'en_espera'
-              ? 'bg-amber-950/60 border-amber-500 shadow-md ring-2 ring-amber-500/40'
-              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-amber-950/20'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">En Espera</span>
-            <Activity size={13} className="text-amber-400" />
-          </div>
-          <p className="text-xl font-black text-amber-400 font-mono mt-1">{metricas.recepcionados}</p>
-          <span className="text-[10px] text-amber-300/70 block mt-0.5">Listos para quirófano</span>
-        </button>
+          {/* Tab 3: En Sala de Espera */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('en_espera', e)}
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden select-none cursor-pointer ${
+              esKpiActivo('en_espera')
+                ? 'bg-amber-950/70 border-amber-500 shadow-md ring-2 ring-amber-500/50'
+                : 'bg-neutral-900/90 border-[var(--border)] hover:bg-amber-950/20 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo En Espera • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">En Espera</span>
+              <Activity size={13} className="text-amber-400" />
+            </div>
+            <p className="text-xl font-black text-amber-400 font-mono mt-1">{metricas.recepcionados}</p>
+            <span className="text-[10px] text-amber-300/70 block mt-0.5">Listos para quirófano</span>
+          </button>
 
-        {/* Tab 4: En Mesa Quirúrgica */}
-        <button
-          type="button"
-          onClick={() => handleCambiarTab('en_operacion')}
-          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
-            filtroEstado === 'en_operacion'
-              ? 'bg-purple-950/60 border-purple-500 shadow-md ring-2 ring-purple-500/40'
-              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-purple-950/20'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-400">En Quirófano</span>
-            <Activity size={13} className="text-purple-400 animate-spin" />
-          </div>
-          <p className="text-xl font-black text-purple-400 font-mono mt-1">{metricas.enQx}</p>
-          <span className="text-[10px] text-purple-300/70 block mt-0.5">En operación</span>
-        </button>
+          {/* Tab 4: En Mesa Quirúrgica */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('en_operacion', e)}
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden select-none cursor-pointer ${
+              esKpiActivo('en_operacion')
+                ? 'bg-purple-950/70 border-purple-500 shadow-md ring-2 ring-purple-500/50'
+                : 'bg-neutral-900/90 border-[var(--border)] hover:bg-purple-950/20 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo En Quirófano • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-400">En Quirófano</span>
+              <Activity size={13} className="text-purple-400 animate-spin" />
+            </div>
+            <p className="text-xl font-black text-purple-400 font-mono mt-1">{metricas.enQx}</p>
+            <span className="text-[10px] text-purple-300/70 block mt-0.5">En operación</span>
+          </button>
 
-        {/* Tab 5: Cirugías Finalizadas */}
-        <button
-          type="button"
-          onClick={() => handleCambiarTab('operado')}
-          className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden ${
-            filtroEstado === 'operado'
-              ? 'bg-emerald-950/60 border-emerald-500 shadow-md ring-2 ring-emerald-500/40'
-              : 'bg-neutral-900/90 border-[var(--border)] hover:bg-emerald-950/20'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400">Finalizadas</span>
-            <CheckCircle2 size={13} className="text-emerald-400" />
+          {/* Tab 5: Cirugías Finalizadas */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('operado', e)}
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden select-none cursor-pointer ${
+              esKpiActivo('operado')
+                ? 'bg-emerald-950/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/50'
+                : 'bg-neutral-900/90 border-[var(--border)] hover:bg-emerald-950/20 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo Operados • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400">Finalizadas</span>
+              <CheckCircle2 size={13} className="text-emerald-400" />
+            </div>
+            <p className="text-xl font-black text-emerald-400 font-mono mt-1">{metricas.operados}</p>
+            <span className="text-[10px] text-emerald-300/70 block mt-0.5">Postoperatorio</span>
+          </button>
+        </div>
+
+        {/* Banner Informativo de Selección Múltiple Activa */}
+        {esMultiseleccionActiva && (
+          <div className="flex flex-wrap items-center justify-between gap-2 bg-gradient-to-r from-blue-950/60 to-indigo-950/60 border border-blue-500/40 rounded-xl px-3.5 py-2 text-xs font-semibold text-blue-200 shadow-md animate-fade-in">
+            <div className="flex items-center gap-2">
+              <Layers size={15} className="text-blue-400" />
+              <span>
+                Filtro múltiple activo (<b>{filtrosEstado.length} estados</b>):{' ' }
+                <span className="font-extrabold text-white">
+                  {filtrosEstado.map((e) => NOMBRES_ESTADOS[e] || e).join(' + ')}
+                </span>{' ' }
+                • <b>{turnosFiltrados.length} pacientes</b>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-blue-300/75 hidden sm:inline">💡 Tip: Usa Ctrl + Clic para agregar/quitar estados</span>
+              <button
+                type="button"
+                onClick={() => guardarFiltros(['programado'])}
+                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold transition flex items-center gap-1 shadow-sm"
+              >
+                <X size={12} />
+                <span>Restablecer a Por Llegar</span>
+              </button>
+            </div>
           </div>
-          <p className="text-xl font-black text-emerald-400 font-mono mt-1">{metricas.operados}</p>
-          <span className="text-[10px] text-emerald-300/70 block mt-0.5">Postoperatorio</span>
-        </button>
+        )}
       </div>
 
       {/* ==================================================================== */}
@@ -462,16 +586,16 @@ export default function RecepcionPacientesDia() {
           <p className="text-sm font-bold text-gray-300">No se encontraron turnos quirúrgicos</p>
           <p className="text-xs text-gray-500 max-w-md mx-auto">
             {busqueda
-              ? `No hay coincidencias para "${busqueda}" en la categoría seleccionada.`
-              : filtroEstado !== 'todos'
-              ? 'No hay pacientes en este estado operativo para el día seleccionado.'
+              ? `No hay coincidencias para "${busqueda}" en los estados seleccionados.`
+              : !filtrosEstado.includes('todos')
+              ? 'No hay pacientes en los estados operativos seleccionados para hoy.'
               : `No hay cirugías programadas para el día ${fecha}.`}
           </p>
-          {(filtroEstado !== 'todos' || busqueda) && (
+          {(!filtrosEstado.includes('todos') || busqueda) && (
             <button
               type="button"
               onClick={() => {
-                handleCambiarTab('todos')
+                guardarFiltros(['todos'])
                 setBusqueda('')
               }}
               className="mt-2 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold transition shadow"
@@ -483,8 +607,8 @@ export default function RecepcionPacientesDia() {
       ) : (
         <div className="space-y-3">
           {turnosFiltrados.map((t) => {
-            const pac = (t.pacientes as any) || {}
-            const q = (t.quirofanos as any) || {}
+            const pac: any = t.pacientes || {}
+            const q: any = t.quirofanos || {}
             const esOperado = t.estado === 'operado'
             const esEnOperacion = t.estado === 'en_operacion'
             const esEnEspera = t.estado === 'en_espera'
