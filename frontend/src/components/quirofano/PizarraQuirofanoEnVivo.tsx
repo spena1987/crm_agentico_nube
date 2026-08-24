@@ -729,13 +729,29 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         </button>
 
                         {t.parte_quirurgico_geclisa_archivo_id ? (
-                          <span
-                            className="px-2.5 py-1 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1 shadow-sm"
-                            title={`Documento adjuntado en Geclisa (ID #${t.parte_quirurgico_geclisa_archivo_id})`}
-                          >
-                            <CheckCheck size={13} />
-                            <span>✔ Subido a Geclisa (#{t.parte_quirurgico_geclisa_archivo_id})</span>
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <span
+                              className="px-2.5 py-1 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[11px] font-bold flex items-center gap-1 shadow-sm"
+                              title={`Documento adjuntado en Geclisa (ID #${t.parte_quirurgico_geclisa_archivo_id})`}
+                            >
+                              <CheckCheck size={13} />
+                              <span>✔ Geclisa (#{t.parte_quirurgico_geclisa_archivo_id})</span>
+                            </span>
+                            <button
+                              type="button"
+                              disabled={desvinculandoGeclisaId === t.id}
+                              onClick={(e) => handleEliminarProtocoloGeclisa(t.id, e)}
+                              className="px-2 py-1 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-500 dark:text-red-400 border border-red-500/30 text-[11px] font-bold flex items-center gap-1 transition disabled:opacity-50"
+                              title="Eliminar protocolo de la Historia Clínica de Geclisa para corregir"
+                            >
+                              {desvinculandoGeclisaId === t.id ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={12} />
+                              )}
+                              <span>Eliminar</span>
+                            </button>
+                          </div>
                         ) : (
                           <button
                             type="button"

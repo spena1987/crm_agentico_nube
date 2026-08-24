@@ -21,11 +21,16 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   Receipt,
-  Layers
+  Layers,
+  FolderDown,
+  Trash2,
+  Download,
+  ExternalLink,
+  FileCheck
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
-type TabTipo = 'evoluciones' | 'indicaciones'
+type TabTipo = 'evoluciones' | 'indicaciones' | 'archivos'
 
 interface EvolucionClinica {
   hc_id: number
@@ -50,6 +55,16 @@ interface IndicacionMedica {
   titulo: string
   texto: string
   plantilla: string
+}
+
+interface ArchivoGeclisa {
+  as_id: number
+  fecha: string
+  titulo: string
+  prestador: string
+  clase: string
+  formato: string
+  url?: string
 }
 
 interface HistoriaClinicaResponse {
@@ -77,6 +92,16 @@ interface IndicacionesResponse {
   total_indicaciones?: number
 }
 
+interface ArchivosResponse {
+  success: boolean
+  encontrado: boolean
+  ficha_id?: number
+  paciente_nombre?: string
+  archivos: ArchivoGeclisa[]
+  total_archivos?: number
+  mensaje?: string
+}
+
 interface ModalHistoriaClinicaProps {
   isOpen: boolean
   onClose: () => void
@@ -95,20 +120,24 @@ export default function ModalHistoriaClinica({
   onClose,
   paciente
 }: ModalHistoriaClinicaProps) {
-  // Pestaña activa (Evolución vs Indicaciones)
+  // Pestaña activa (Evolución vs Indicaciones vs Archivos)
   const [activeTab, setActiveTab] = useState<TabTipo | null>(null)
 
   // Estados de carga por pestaña (Carga Lazy / On-Demand)
   const [cargandoEvoluciones, setCargandoEvoluciones] = useState<boolean>(false)
   const [cargandoIndicaciones, setCargandoIndicaciones] = useState<boolean>(false)
+  const [cargandoArchivos, setCargandoArchivos] = useState<boolean>(false)
+  const [eliminandoArchivoId, setEliminandoArchivoId] = useState<number | null>(null)
 
   // Datos cacheados en sesión del modal
   const [dataHc, setDataHc] = useState<HistoriaClinicaResponse | null>(null)
   const [dataInd, setDataInd] = useState<IndicacionesResponse | null>(null)
+  const [dataArchivos, setDataArchivos] = useState<ArchivosResponse | null>(null)
 
   // Errores locales
   const [errorHc, setErrorHc] = useState<string>('')
   const [errorInd, setErrorInd] = useState<string>('')
+  const [errorArchivos, setErrorArchivos] = useState<string>('')
 
   // Búsqueda
   const [busqueda, setBusqueda] = useState<string>('')
@@ -128,8 +157,10 @@ export default function ModalHistoriaClinica({
       setActiveTab(null)
       setDataHc(null)
       setDataInd(null)
+      setDataArchivos(null)
       setErrorHc('')
       setErrorInd('')
+      setErrorArchivos('')
       setBusqueda('')
       setExpandedItems({})
     }
@@ -208,6 +239,67 @@ export default function ModalHistoriaClinica({
     }
   }
 
+  // 3. Cargar Archivos / Documentos de Geclisa
+  const cargarArchivos = async (force: boolean = false) => {
+    const queryId = paciente?.id
+    if (!queryId) {
+      setErrorArchivos('El paciente no cuenta con ID para consultar archivos.')
+      return
+    }
+
+    if (dataArchivos && !force) return
+
+    setCargandoArchivos(true)
+    setErrorArchivos('')
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/archivos`)
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        throw new Error(errorData.detail || errorData.mensaje || `Error al consultar archivos en Geclisa (HTTP ${res.status})`)
+      }
+      const data: ArchivosResponse = await res.json()
+      setDataArchivos(data)
+    } catch (err: any) {
+      console.error('Error al obtener archivos de Geclisa:', err)
+      setErrorArchivos(err.message || 'No se pudo conectar con el servidor de Geclisa.')
+    } finally {
+      setCargandoArchivos(false)
+    }
+  }
+
+  // Eliminar archivo de Geclisa
+  const handleEliminarArchivo = async (asId: number) => {
+    if (!confirm(`¿Está seguro de eliminar el archivo #${asId} de la Historia Clínica en Geclisa? Esta acción borrará el registro hospitalario.`)) {
+      return
+    }
+    try {
+      setEliminandoArchivoId(asId)
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/archivos/${asId}`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setDataArchivos((prev) => {
+          if (!prev) return prev
+          const filtrados = prev.archivos.filter((a) => a.as_id !== asId)
+          return {
+            ...prev,
+            archivos: filtrados,
+            total_archivos: filtrados.length
+          }
+        })
+      } else {
+        alert(data.detail || data.error || 'Error al eliminar archivo de Geclisa')
+      }
+    } catch (err: any) {
+      console.error('Error eliminando archivo de Geclisa:', err)
+      alert(err.message || 'Error de conexión.')
+    } finally {
+      setEliminandoArchivoId(null)
+    }
+  }
+
   // Cambio de Pestaña con llamada On-Demand
   const handleSelectTab = (tab: TabTipo) => {
     setActiveTab(tab)
@@ -216,6 +308,8 @@ export default function ModalHistoriaClinica({
       cargarEvoluciones()
     } else if (tab === 'indicaciones' && !dataInd) {
       cargarIndicaciones()
+    } else if (tab === 'archivos' && !dataArchivos) {
+      cargarArchivos()
     }
   }
 
@@ -258,10 +352,25 @@ export default function ModalHistoriaClinica({
     )
   })
 
+  const archivos = dataArchivos?.archivos || []
+  const archivosFiltrados = archivos.filter((arc) => {
+    if (!busqueda.trim()) return true
+    const q = busqueda.toLowerCase()
+    return (
+      (arc.titulo && arc.titulo.toLowerCase().includes(q)) ||
+      (arc.prestador && arc.prestador.toLowerCase().includes(q)) ||
+      (arc.clase && arc.clase.toLowerCase().includes(q)) ||
+      (arc.fecha && arc.fecha.includes(q)) ||
+      (arc.as_id && String(arc.as_id).includes(q))
+    )
+  })
+
   // Control Expandir / Contraer Todo
   const currentItemsList = activeTab === 'evoluciones' 
     ? evolucionesFiltradas.map((e) => String(e.hc_id))
-    : indicacionesFiltradas.map((i, idx) => String(i.id || idx))
+    : activeTab === 'indicaciones'
+    ? indicacionesFiltradas.map((i, idx) => String(i.id || idx))
+    : []
 
   const allExpanded = currentItemsList.length > 0 && currentItemsList.every((k) => !!expandedItems[k])
 
@@ -274,9 +383,19 @@ export default function ModalHistoriaClinica({
     setExpandedItems(updated)
   }
 
-  const fichaIdActual = dataHc?.ficha_id || dataInd?.ficha_id || paciente.geclisa_ficha_id
-  const estaCargando = activeTab === 'evoluciones' ? cargandoEvoluciones : cargandoIndicaciones
-  const errorActual = activeTab === 'evoluciones' ? errorHc : errorInd
+  const fichaIdActual = dataHc?.ficha_id || dataInd?.ficha_id || dataArchivos?.ficha_id || paciente.geclisa_ficha_id
+  const estaCargando = 
+    activeTab === 'evoluciones' 
+      ? cargandoEvoluciones 
+      : activeTab === 'indicaciones' 
+      ? cargandoIndicaciones 
+      : cargandoArchivos
+  const errorActual = 
+    activeTab === 'evoluciones' 
+      ? errorHc 
+      : activeTab === 'indicaciones' 
+      ? errorInd 
+      : errorArchivos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
@@ -311,6 +430,7 @@ export default function ModalHistoriaClinica({
               onClick={() => {
                 if (activeTab === 'evoluciones') cargarEvoluciones(true)
                 if (activeTab === 'indicaciones') cargarIndicaciones(true)
+                if (activeTab === 'archivos') cargarArchivos(true)
               }}
               disabled={estaCargando}
               title="Actualizar datos en vivo desde Geclisa"
@@ -328,14 +448,14 @@ export default function ModalHistoriaClinica({
           </div>
         </div>
 
-        {/* Barra de Selección de Modo (2 Botones Principales: Evolución e Indicaciones) */}
+        {/* Barra de Selección de Modo (3 Botones Principales: Evolución, Indicaciones y Archivos) */}
         <div className="p-3 bg-neutral-950/60 border-b border-[var(--border)] flex items-center justify-between gap-2">
-          <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
+          <div className="grid grid-cols-3 gap-2 w-full sm:w-auto">
             {/* Botón 1: Evolución */}
             <button
               type="button"
               onClick={() => handleSelectTab('evoluciones')}
-              className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all border ${
+              className={`px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all border ${
                 activeTab === 'evoluciones'
                   ? 'bg-rose-600 text-white border-rose-500 shadow-md shadow-rose-950/40'
                   : 'bg-neutral-900/80 text-gray-300 border-[var(--border)] hover:bg-neutral-800 hover:text-white'
@@ -356,7 +476,7 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => handleSelectTab('indicaciones')}
-              className={`px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all border ${
+              className={`px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all border ${
                 activeTab === 'indicaciones'
                   ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-950/40'
                   : 'bg-neutral-900/80 text-gray-300 border-[var(--border)] hover:bg-neutral-800 hover:text-white'
@@ -372,9 +492,30 @@ export default function ModalHistoriaClinica({
                 </span>
               )}
             </button>
+
+            {/* Botón 3: Archivos y Documentos */}
+            <button
+              type="button"
+              onClick={() => handleSelectTab('archivos')}
+              className={`px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all border ${
+                activeTab === 'archivos'
+                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-950/40'
+                  : 'bg-neutral-900/80 text-gray-300 border-[var(--border)] hover:bg-neutral-800 hover:text-white'
+              }`}
+            >
+              <FolderDown size={15} className={activeTab === 'archivos' ? 'text-white' : 'text-blue-400'} />
+              <span>Archivos / PDFs</span>
+              {dataArchivos?.total_archivos !== undefined && (
+                <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
+                  activeTab === 'archivos' ? 'bg-blue-700 text-white' : 'bg-neutral-800 text-gray-400'
+                }`}>
+                  {dataArchivos.total_archivos}
+                </span>
+              )}
+            </button>
           </div>
 
-          {/* Botón Expandir / Contraer Todo */}
+          {/* Botón Expandir / Contraer Todo (solo en Evoluciones e Indicaciones) */}
           {((activeTab === 'evoluciones' && evolucionesFiltradas.length > 0) ||
             (activeTab === 'indicaciones' && indicacionesFiltradas.length > 0)) && (
             <button
@@ -399,7 +540,8 @@ export default function ModalHistoriaClinica({
 
         {/* Barra de Filtro / Búsqueda */}
         {((activeTab === 'evoluciones' && evoluciones.length > 0) ||
-          (activeTab === 'indicaciones' && indicaciones.length > 0)) && (
+          (activeTab === 'indicaciones' && indicaciones.length > 0) ||
+          (activeTab === 'archivos' && archivos.length > 0)) && (
           <div className="px-5 py-2.5 border-b border-[var(--border)] bg-neutral-900/30 flex items-center justify-between gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={13} />
@@ -408,7 +550,9 @@ export default function ModalHistoriaClinica({
                 placeholder={
                   activeTab === 'evoluciones'
                     ? "Buscar en evoluciones por diagnóstico, médico, texto..."
-                    : "Buscar en indicaciones por fármaco, dosis, médico..."
+                    : activeTab === 'indicaciones'
+                    ? "Buscar en indicaciones por fármaco, dosis, médico..."
+                    : "Buscar en archivos por título, médico, ID..."
                 }
                 value={busqueda}
                 onChange={(e) => setBusqueda(e.target.value)}
@@ -424,9 +568,9 @@ export default function ModalHistoriaClinica({
               )}
             </div>
             <span className="text-[11px] font-medium text-gray-400 shrink-0">
-              {activeTab === 'evoluciones'
-                ? `${evolucionesFiltradas.length} de ${evoluciones.length} notas`
-                : `${indicacionesFiltradas.length} de ${indicaciones.length} indicaciones`}
+              {activeTab === 'evoluciones' && `${evolucionesFiltradas.length} de ${evoluciones.length}`}
+              {activeTab === 'indicaciones' && `${indicacionesFiltradas.length} de ${indicaciones.length}`}
+              {activeTab === 'archivos' && `${archivosFiltrados.length} de ${archivos.length}`}
             </span>
           </div>
         )}
@@ -444,7 +588,9 @@ export default function ModalHistoriaClinica({
                 <p className="text-sm font-semibold text-white">
                   {activeTab === 'evoluciones'
                     ? 'Consultando evoluciones médicas en Geclisa...'
-                    : 'Consultando indicaciones y esquemas de medicación en Geclisa...'}
+                    : activeTab === 'indicaciones'
+                    ? 'Consultando indicaciones y esquemas de medicación en Geclisa...'
+                    : 'Consultando archivos y documentos en Geclisa...'}
                 </p>
                 <p className="text-xs text-[var(--secondary)] mt-0.5">
                   Conexión segura de solo lectura en vivo.
@@ -749,6 +895,138 @@ export default function ModalHistoriaClinica({
                       </div>
                     )
                   })}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ========================================================================= */}
+          {/* PESTAÑA 3: ARCHIVOS Y DOCUMENTOS GECLISA */}
+          {/* ========================================================================= */}
+          {!estaCargando && !errorActual && activeTab === 'archivos' && (
+            <>
+              {/* Sin Ficha en Geclisa */}
+              {dataArchivos && !dataArchivos.encontrado && (
+                <div className="py-12 px-4 flex flex-col items-center justify-center text-center space-y-3 max-w-md mx-auto">
+                  <div className="p-3.5 rounded-2xl bg-neutral-900 border border-[var(--border)] text-blue-400 shadow-inner">
+                    <FileQuestion size={28} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h4 className="text-sm font-bold text-white">Sin Archivos en Geclisa</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      {dataArchivos.mensaje || 'El paciente no posee Ficha en Geclisa para listar archivos adjuntos.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Ficha encontrada pero sin archivos */}
+              {dataArchivos?.encontrado && archivos.length === 0 && (
+                <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
+                  <div className="p-3 rounded-2xl bg-neutral-900 border border-[var(--border)] text-gray-400">
+                    <FolderDown size={24} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Sin Archivos Adjuntos</h4>
+                    <p className="text-xs text-[var(--secondary)] mt-1 max-w-sm">
+                      El paciente posee Ficha activa (#{dataArchivos.ficha_id}), pero aún no registra documentos, consentimientos ni protocolos subidos.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Lista filtrada vacía */}
+              {dataArchivos?.encontrado && archivos.length > 0 && archivosFiltrados.length === 0 && (
+                <div className="py-10 text-center space-y-2">
+                  <p className="text-xs text-gray-400 font-medium">
+                    No se encontraron archivos que coincidan con "<span className="text-white">{busqueda}</span>".
+                  </p>
+                  <button onClick={() => setBusqueda('')} className="text-xs text-blue-400 hover:underline font-semibold">
+                    Restablecer filtro
+                  </button>
+                </div>
+              )}
+
+              {/* Listado de Archivos en Geclisa */}
+              {dataArchivos?.encontrado && archivosFiltrados.length > 0 && (
+                <div className="space-y-2.5">
+                  {archivosFiltrados.map((arc) => (
+                    <div
+                      key={arc.as_id}
+                      className="p-3.5 rounded-2xl border bg-neutral-900/60 border-[var(--border)] hover:border-blue-500/40 transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm"
+                    >
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                          <FileText size={18} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-bold text-white text-xs truncate">
+                              {arc.titulo || 'Documento sin título'}
+                            </span>
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/60 font-bold">
+                              ID #{arc.as_id}
+                            </span>
+                            {arc.clase && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-gray-300 border border-[var(--border)]">
+                                {arc.clase}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400 font-mono mt-1">
+                            {arc.fecha && (
+                              <span className="inline-flex items-center gap-1">
+                                <Calendar size={10} className="text-gray-400" />
+                                {arc.fecha}
+                              </span>
+                            )}
+                            {arc.prestador && (
+                              <span className="inline-flex items-center gap-1 text-emerald-400">
+                                <UserCheck size={10} />
+                                {arc.prestador}
+                              </span>
+                            )}
+                            {arc.formato && (
+                              <span className="text-gray-500 uppercase">
+                                .{arc.formato}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Acciones de Archivo */}
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        {arc.url && (
+                          <a
+                            href={arc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow transition-all"
+                            title="Descargar o visualizar archivo"
+                          >
+                            <ExternalLink size={12} />
+                            <span>Ver</span>
+                          </a>
+                        )}
+
+                        <button
+                          type="button"
+                          disabled={eliminandoArchivoId === arc.as_id}
+                          onClick={() => handleEliminarArchivo(arc.as_id)}
+                          className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                          title="Eliminar este archivo de la Historia Clínica de Geclisa"
+                        >
+                          {eliminandoArchivoId === arc.as_id ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Trash2 size={12} />
+                          )}
+                          <span>Eliminar</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </>

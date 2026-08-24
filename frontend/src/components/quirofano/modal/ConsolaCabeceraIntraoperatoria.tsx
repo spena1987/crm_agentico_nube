@@ -12,7 +12,8 @@ import {
   FileText,
   UploadCloud,
   CheckCheck,
-  Check
+  Check,
+  Trash2
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
@@ -34,6 +35,7 @@ export default function ConsolaCabeceraIntraoperatoria({
   const [modalPausaAbierto, setModalPausaAbierto] = useState(false)
   const [descargandoPdf, setDescargandoPdf] = useState(false)
   const [subiendoGeclisa, setSubiendoGeclisa] = useState(false)
+  const [desvinculandoGeclisa, setDesvinculandoGeclisa] = useState(false)
 
   const estado = turno.estado || 'programado'
   const esProgramado = estado === 'programado'
@@ -88,6 +90,36 @@ export default function ConsolaCabeceraIntraoperatoria({
       alert(e.message || 'Error de conexión.')
     } finally {
       setSubiendoGeclisa(false)
+    }
+  }
+
+  const handleEliminarGeclisa = async () => {
+    if (!confirm('¿Está seguro de eliminar el Protocolo Quirúrgico de la Historia Clínica en Geclisa? Podrá volver a subirlo tras realizar correcciones.')) {
+      return
+    }
+    try {
+      setDesvinculandoGeclisa(true)
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/parte_quirurgico`, {
+        method: 'DELETE'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        if (onTurnoActualizado) {
+          onTurnoActualizado({
+            ...turno,
+            ...data.turno,
+            parte_quirurgico_geclisa_archivo_id: null,
+            parte_quirurgico_geclisa_sincronizado_at: null
+          })
+        }
+      } else {
+        alert(data.detail || data.error || 'Error al eliminar protocolo de Geclisa')
+      }
+    } catch (e: any) {
+      console.error('Error eliminando protocolo de Geclisa:', e)
+      alert(e.message || 'Error de conexión.')
+    } finally {
+      setDesvinculandoGeclisa(false)
     }
   }
 
@@ -205,13 +237,29 @@ export default function ConsolaCabeceraIntraoperatoria({
               </button>
 
               {turno.parte_quirurgico_geclisa_archivo_id ? (
-                <span
-                  className="px-3.5 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 shadow-sm"
-                  title={`Sincronizado en Geclisa (ID #${turno.parte_quirurgico_geclisa_archivo_id})`}
-                >
-                  <CheckCheck size={15} className="text-emerald-400" />
-                  <span>✔ Subido a Geclisa (#{turno.parte_quirurgico_geclisa_archivo_id})</span>
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className="px-3 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                    title={`Sincronizado en Geclisa (ID #${turno.parte_quirurgico_geclisa_archivo_id})`}
+                  >
+                    <CheckCheck size={15} className="text-emerald-400" />
+                    <span>✔ Geclisa (#{turno.parte_quirurgico_geclisa_archivo_id})</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={desvinculandoGeclisa}
+                    onClick={handleEliminarGeclisa}
+                    className="px-2.5 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold flex items-center gap-1 transition disabled:opacity-50"
+                    title="Eliminar protocolo de Geclisa para corregir"
+                  >
+                    {desvinculandoGeclisa ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Trash2 size={13} />
+                    )}
+                    <span>Eliminar</span>
+                  </button>
+                </div>
               ) : (
                 <button
                   type="button"
