@@ -299,9 +299,9 @@ export default function RecepcionPacientesDia() {
                           )}
                           <button
                             type="button"
-                            disabled={procesandoId === t.id || !t.paciente_telefono}
+                            disabled={procesandoId === t.id || !(pac.telefono || t.paciente_telefono)}
                             onClick={() => handleReenviarConsentimientoWA(t.id)}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50"
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50 transition-all"
                           >
                             <Send size={11} />
                             <span>Reenviar WhatsApp</span>

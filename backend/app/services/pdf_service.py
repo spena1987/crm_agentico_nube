@@ -2,7 +2,7 @@ import os
 import re
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
@@ -12,6 +12,49 @@ from reportlab.lib import colors
 from app.services.config_service import load_settings
 
 logger = logging.getLogger(__name__)
+
+# Zona Horaria Oficial de Argentina: UTC-3 (America/Argentina/Buenos_Aires)
+TZ_ARGENTINA = timezone(timedelta(hours=-3))
+
+def parsear_hora_argentina(iso_val: Optional[str], fallback: str = "--:--") -> str:
+    """
+    Convierte un timestamp ISO (UTC o con offset) a formato de hora local 'HH:MM hs' de Argentina (UTC-3).
+    Si ya es una hora plana (ej '08:30'), la preserva con el sufijo 'hs'.
+    """
+    if not iso_val:
+        return fallback
+    try:
+        s = str(iso_val).strip()
+        # Si no tiene 'T' pero tiene formato HH:MM o HH:MM:SS
+        if "T" not in s and ":" in s:
+            return s[:5] + " hs"
+        s_clean = s.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s_clean)
+        if dt.tzinfo is None:
+            # Si viene sin zona horaria, se asume UTC
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_arg = dt.astimezone(TZ_ARGENTINA)
+        return dt_arg.strftime("%H:%M") + " hs"
+    except Exception as e:
+        logger.warning(f"Error parseando hora argentina para '{iso_val}': {e}")
+        return str(iso_val)[:5] + " hs"
+
+def parsear_fecha_hora_argentina(iso_val: Optional[str] = None) -> str:
+    """
+    Retorna fecha y hora 'DD/MM/YYYY HH:MM' en zona horaria oficial de Argentina (UTC-3).
+    Si iso_val es None, retorna el momento actual en Argentina.
+    """
+    if not iso_val:
+        return datetime.now(TZ_ARGENTINA).strftime("%d/%m/%Y %H:%M")
+    try:
+        s = str(iso_val).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_arg = dt.astimezone(TZ_ARGENTINA)
+        return dt_arg.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return datetime.now(TZ_ARGENTINA).strftime("%d/%m/%Y %H:%M")
 
 # Directorio local para guardar los archivos PDF generados
 PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
@@ -1159,7 +1202,7 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
     header_data = [
         [
             Paragraph(f"<b><font size=12 color='{color_primario_hex}'>{nombre_inst.upper()}</font></b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal),
-            Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=8 color='#64748B'>Doc Ref: PQ-{str(turno_id)[:8].upper()}</font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {datetime.now().strftime('%d/%m/%Y %H:%M')}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
+            Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=8 color='#64748B'>Doc Ref: PQ-{str(turno_id)[:8].upper()}</font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {parsear_fecha_hora_argentina()}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
         ]
     ]
     t_head = Table(header_data, colWidths=[270, 270])
@@ -1229,17 +1272,9 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
     fecha = str(turno.get("fecha_cirugia") or "")
     anestesia = turno.get("tipo_anestesia") or "Tópica + Sedación"
 
-    def formatear_iso_hora(iso_val, fallback=""):
-        if not iso_val:
-            return fallback
-        try:
-            return str(iso_val)[11:16] + " hs"
-        except Exception:
-            return str(iso_val)
-
-    hora_llegada = formatear_iso_hora(turno.get("llegada_at"), fallback="--:--")
-    hora_inicio = formatear_iso_hora(turno.get("inicio_cirugia_at"), fallback=str(turno.get("hora_inicio") or "")[:5] + " hs")
-    hora_fin = formatear_iso_hora(turno.get("fin_cirugia_at"), fallback="--:--")
+    hora_llegada = parsear_hora_argentina(turno.get("llegada_at"), fallback="--:--")
+    hora_inicio = parsear_hora_argentina(turno.get("inicio_cirugia_at"), fallback=parsear_hora_argentina(turno.get("hora_inicio"), fallback="--:--"))
+    hora_fin = parsear_hora_argentina(turno.get("fin_cirugia_at"), fallback="--:--")
 
     story.append(make_section_header("2. Intervención y Trazabilidad Cronológica"))
     act_data = [
