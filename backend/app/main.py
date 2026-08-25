@@ -4151,23 +4151,61 @@ def desvincular_documento_geclisa_endpoint(turno_id: str, tipo_doc: str):
 def listar_archivos_paciente_geclisa(paciente_id: str):
     """
     Lista todos los documentos y archivos adjuntos en la Historia Clínica de Geclisa para el paciente.
+    Soporta paciente_id como UUID del CRM, DNI o Ficha ID directamente.
     """
     try:
         from app.services.geclisa_client import geclisa_client
-        p_resp = supabase.table("pacientes").select("id, nombre, dni, geclisa_ficha_id").eq("id", paciente_id).limit(1).execute()
-        if not p_resp.data:
-            raise HTTPException(status_code=404, detail="Paciente no encontrado en el CRM.")
-        paciente = p_resp.data[0]
-        
-        ficha_id = paciente.get("geclisa_ficha_id")
-        if not ficha_id and paciente.get("dni"):
-            res_d = geclisa_client.buscar_paciente_por_dni(str(paciente["dni"]))
+        ficha_id = None
+        paciente_nombre = ""
+        paciente_crm_id = None
+        dni = None
+
+        # 1. Intentar buscar en Supabase (por UUID, DNI o ficha_id)
+        if supabase:
+            try:
+                res_paciente = None
+                # Búsqueda por UUID solo si tiene formato UUID válido
+                if len(str(paciente_id)) == 36 and '-' in str(paciente_id):
+                    res_paciente = supabase.table("pacientes").select("id, nombre, dni, geclisa_ficha_id").eq("id", paciente_id).execute()
+
+                if not res_paciente or not res_paciente.data:
+                    # Búsqueda por geclisa_ficha_id si es numérico
+                    if str(paciente_id).isdigit():
+                        res_paciente = supabase.table("pacientes").select("id, nombre, dni, geclisa_ficha_id").eq("geclisa_ficha_id", int(paciente_id)).execute()
+
+                if not res_paciente or not res_paciente.data:
+                    # Búsqueda por DNI
+                    res_paciente = supabase.table("pacientes").select("id, nombre, dni, geclisa_ficha_id").ilike("dni", f"%{paciente_id}%").execute()
+
+                if res_paciente and res_paciente.data and len(res_paciente.data) > 0:
+                    pac = res_paciente.data[0]
+                    paciente_crm_id = pac.get("id")
+                    ficha_id = pac.get("geclisa_ficha_id")
+                    dni = pac.get("dni")
+                    paciente_nombre = pac.get("nombre") or ""
+            except Exception as db_err:
+                logger.warning(f"Aviso al consultar paciente en Supabase para archivos: {db_err}")
+
+        # 2. Si no se resolvió ficha_id pero tenemos DNI o entrada numérica
+        if not ficha_id:
+            if str(paciente_id).isdigit():
+                if len(str(paciente_id)) < 7:
+                    ficha_id = int(paciente_id)
+                else:
+                    dni = str(paciente_id)
+
+        if not ficha_id and dni:
+            res_d = geclisa_client.buscar_paciente_por_dni(str(dni))
             if res_d.get("encontrado") and res_d.get("ficha_id"):
                 ficha_id = int(res_d["ficha_id"])
-                supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente["id"]).execute()
-                
+                if paciente_crm_id and supabase:
+                    try:
+                        supabase.table("pacientes").update({"geclisa_ficha_id": ficha_id}).eq("id", paciente_crm_id).execute()
+                    except Exception as upd_err:
+                        logger.warning(f"No se pudo guardar geclisa_ficha_id: {upd_err}")
+
         if not ficha_id:
-            return {"success": False, "encontrado": False, "mensaje": "El paciente no tiene Ficha en Geclisa.", "archivos": []}
+            return {"success": False, "encontrado": False, "mensaje": "El paciente no tiene Ficha registrada en Geclisa.", "archivos": []}
             
         archivos_raw = geclisa_client.listar_archivos_historia_clinica(ficha_id)
         archivos_norm = []
@@ -4199,7 +4237,7 @@ def listar_archivos_paciente_geclisa(paciente_id: str):
             "success": True,
             "encontrado": True,
             "ficha_id": ficha_id,
-            "paciente_nombre": paciente.get("nombre"),
+            "paciente_nombre": paciente_nombre,
             "archivos": archivos_norm,
             "total_archivos": len(archivos_norm)
         }
