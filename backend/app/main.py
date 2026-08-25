@@ -4169,19 +4169,103 @@ def listar_archivos_paciente_geclisa(paciente_id: str):
         if not ficha_id:
             return {"success": False, "encontrado": False, "mensaje": "El paciente no tiene Ficha en Geclisa.", "archivos": []}
             
-        archivos = geclisa_client.listar_archivos_historia_clinica(ficha_id)
+        archivos_raw = geclisa_client.listar_archivos_historia_clinica(ficha_id)
+        archivos_norm = []
+        for arc in archivos_raw:
+            as_id = arc.get("asId") or arc.get("id")
+            if not as_id:
+                continue
+            ext = (arc.get("extension") or "pdf").lower().replace(".", "")
+            titulo = arc.get("titulo") or f"Documento #{as_id}"
+            archivos_norm.append({
+                "id": arc.get("id") or as_id,
+                "as_id": as_id,
+                "asId": as_id,
+                "titulo": titulo,
+                "fecha": arc.get("fecha") or "",
+                "hora": arc.get("hora") or "",
+                "prestador": arc.get("preNombre") or arc.get("prestador") or "",
+                "preNombre": arc.get("preNombre") or "",
+                "clase": arc.get("acNombre") or arc.get("clase") or "Clínicos",
+                "acNombre": arc.get("acNombre") or "Clínicos",
+                "observaciones": arc.get("observaciones") or "",
+                "formato": ext,
+                "extension": ext,
+                "url": f"/api/geclisa/archivos/{as_id}/ver",
+                "download_url": f"/api/geclisa/archivos/{as_id}/descargar"
+            })
+            
         return {
             "success": True,
             "encontrado": True,
             "ficha_id": ficha_id,
             "paciente_nombre": paciente.get("nombre"),
-            "archivos": archivos,
-            "total_archivos": len(archivos)
+            "archivos": archivos_norm,
+            "total_archivos": len(archivos_norm)
         }
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error al listar archivos de Geclisa para paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geclisa/archivos/{as_id}/ver")
+def ver_archivo_geclisa_endpoint(as_id: int):
+    """
+    Transmite el contenido binario del archivo de Geclisa para visualización directa en navegadores / iframe.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        file_bytes, content_type, filename = geclisa_client.descargar_archivo_historia_clinica(as_id)
+        if not file_bytes:
+            raise HTTPException(status_code=404, detail=f"No se pudo obtener el archivo #{as_id} desde Geclisa.")
+        return Response(
+            content=file_bytes,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"inline; filename=\"{filename}\"",
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al visualizar archivo #{as_id} de Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geclisa/archivos/{as_id}/descargar")
+def descargar_archivo_geclisa_endpoint(as_id: int, nombre: Optional[str] = None):
+    """
+    Transmite el archivo de Geclisa forzando la descarga con un nombre de archivo legible.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        import re
+        file_bytes, content_type, filename = geclisa_client.descargar_archivo_historia_clinica(as_id)
+        if not file_bytes:
+            raise HTTPException(status_code=404, detail=f"No se pudo descargar el archivo #{as_id} desde Geclisa.")
+            
+        download_name = filename
+        if nombre:
+            ext = filename.split(".")[-1] if "." in filename else "pdf"
+            clean_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', nombre).strip('_')
+            if clean_name:
+                if not clean_name.lower().endswith(f".{ext.lower()}"):
+                    clean_name += f".{ext}"
+                download_name = clean_name
+                
+        return Response(
+            content=file_bytes,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=\"{download_name}\"",
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al descargar archivo #{as_id} de Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/geclisa/archivos/{as_id}")

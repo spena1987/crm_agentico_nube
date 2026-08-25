@@ -26,7 +26,10 @@ import {
   Trash2,
   Download,
   ExternalLink,
-  FileCheck
+  FileCheck,
+  Eye,
+  Maximize2,
+  Minimize2
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -58,13 +61,21 @@ interface IndicacionMedica {
 }
 
 interface ArchivoGeclisa {
+  id?: number
   as_id: number
+  asId?: number
   fecha: string
+  hora?: string
   titulo: string
   prestador: string
+  preNombre?: string
   clase: string
+  acNombre?: string
   formato: string
+  extension?: string
+  observaciones?: string
   url?: string
+  download_url?: string
 }
 
 interface HistoriaClinicaResponse {
@@ -129,6 +140,11 @@ export default function ModalHistoriaClinica({
   const [cargandoArchivos, setCargandoArchivos] = useState<boolean>(false)
   const [eliminandoArchivoId, setEliminandoArchivoId] = useState<number | null>(null)
 
+  // Visor integrado In-App
+  const [archivoVisor, setArchivoVisor] = useState<ArchivoGeclisa | null>(null)
+  const [visorPantallaCompleta, setVisorPantallaCompleta] = useState<boolean>(false)
+  const [cargandoVisor, setCargandoVisor] = useState<boolean>(true)
+
   // Datos cacheados en sesión del modal
   const [dataHc, setDataHc] = useState<HistoriaClinicaResponse | null>(null)
   const [dataInd, setDataInd] = useState<IndicacionesResponse | null>(null)
@@ -151,6 +167,8 @@ export default function ModalHistoriaClinica({
       setActiveTab('evoluciones')
       setBusqueda('')
       setExpandedItems({})
+      setArchivoVisor(null)
+      setVisorPantallaCompleta(false)
       // Cargar evoluciones de inicio
       cargarEvoluciones()
     } else {
@@ -163,6 +181,8 @@ export default function ModalHistoriaClinica({
       setErrorArchivos('')
       setBusqueda('')
       setExpandedItems({})
+      setArchivoVisor(null)
+      setVisorPantallaCompleta(false)
     }
   }, [isOpen, paciente?.id])
 
@@ -997,24 +1017,37 @@ export default function ModalHistoriaClinica({
 
                       {/* Acciones de Archivo */}
                       <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                        {arc.url && (
-                          <a
-                            href={arc.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 shadow transition-all"
-                            title="Descargar o visualizar archivo"
-                          >
-                            <ExternalLink size={12} />
-                            <span>Ver</span>
-                          </a>
-                        )}
+                        {/* Botón Ver (Abre Visor In-App) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setArchivoVisor(arc)
+                            setCargandoVisor(true)
+                          }}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-900/30 transition-all hover:scale-105 active:scale-95"
+                          title="Visualizar documento en pantalla completa"
+                        >
+                          <Eye size={13} />
+                          <span>Ver</span>
+                        </button>
 
+                        {/* Botón Descargar con 1-clic */}
+                        <a
+                          href={`${BACKEND_URL}/api/geclisa/archivos/${arc.as_id}/descargar?nombre=${encodeURIComponent(arc.titulo || 'documento')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 hover:text-white border border-[var(--border)] rounded-xl text-xs font-bold flex items-center justify-center transition-all"
+                          title="Descargar archivo al disco"
+                        >
+                          <Download size={14} />
+                        </a>
+
+                        {/* Botón Eliminar de Geclisa */}
                         <button
                           type="button"
                           disabled={eliminandoArchivoId === arc.as_id}
                           onClick={() => handleEliminarArchivo(arc.as_id)}
-                          className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                          className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1 transition-all disabled:opacity-50"
                           title="Eliminar este archivo de la Historia Clínica de Geclisa"
                         >
                           {eliminandoArchivoId === arc.as_id ? (
@@ -1022,7 +1055,7 @@ export default function ModalHistoriaClinica({
                           ) : (
                             <Trash2 size={12} />
                           )}
-                          <span>Eliminar</span>
+                          <span className="hidden sm:inline">Eliminar</span>
                         </button>
                       </div>
                     </div>
@@ -1051,6 +1084,112 @@ export default function ModalHistoriaClinica({
         </div>
 
       </div>
+
+      {/* ========================================================================= */}
+      {/* VISOR MODAL IN-APP DE ARCHIVOS Y ESTUDIOS GECLISA */}
+      {/* ========================================================================= */}
+      {archivoVisor && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-150">
+          <div
+            className={`bg-neutral-950 border border-neutral-800 flex flex-col shadow-2xl transition-all duration-200 overflow-hidden ${
+              visorPantallaCompleta
+                ? 'w-full h-full rounded-none'
+                : 'w-full max-w-5xl h-[90vh] rounded-2xl'
+            }`}
+          >
+            {/* Cabecera del Visor */}
+            <div className="px-4 py-3 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                  <FileText size={18} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-sm font-bold text-white truncate">
+                      {archivoVisor.titulo || 'Estudio Clínico'}
+                    </h4>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/60 font-bold">
+                      ID #{archivoVisor.as_id}
+                    </span>
+                    {archivoVisor.clase && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-gray-300 border border-neutral-700">
+                        {archivoVisor.clase}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5 truncate">
+                    <span className="text-gray-200 font-medium">{paciente.nombre}</span>
+                    {archivoVisor.fecha && <span>• Fecha: {archivoVisor.fecha} {archivoVisor.hora || ''}</span>}
+                    {archivoVisor.prestador && <span className="text-emerald-400">• {archivoVisor.prestador}</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Botones de Acción del Visor */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <a
+                  href={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/descargar?nombre=${encodeURIComponent(archivoVisor.titulo || 'estudio')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 hover:text-white border border-neutral-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Descargar archivo al ordenador"
+                >
+                  <Download size={13} />
+                  <span className="hidden sm:inline">Descargar</span>
+                </a>
+
+                <a
+                  href={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-1.5 sm:px-3 sm:py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 hover:text-white border border-neutral-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+                  title="Abrir en pestaña nueva del navegador"
+                >
+                  <ExternalLink size={13} />
+                  <span className="hidden sm:inline">Pestaña</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setVisorPantallaCompleta(!visorPantallaCompleta)}
+                  className="p-2 text-gray-400 hover:text-white hover:bg-neutral-800 rounded-xl transition-colors"
+                  title={visorPantallaCompleta ? 'Restaurar tamaño' : 'Pantalla completa'}
+                >
+                  {visorPantallaCompleta ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setArchivoVisor(null)}
+                  className="p-2 text-gray-400 hover:text-rose-400 hover:bg-neutral-800 rounded-xl transition-colors ml-1"
+                  title="Cerrar visor"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Cuerpo del Visor con Iframe */}
+            <div className="flex-1 bg-neutral-900 relative flex items-center justify-center overflow-hidden">
+              {cargandoVisor && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-neutral-950/80 gap-3 text-center p-4">
+                  <Loader2 size={32} className="text-blue-500 animate-spin" />
+                  <p className="text-xs text-gray-300 font-medium">
+                    Cargando documento en alta resolución desde Geclisa...
+                  </p>
+                </div>
+              )}
+
+              <iframe
+                src={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
+                className="w-full h-full border-0 bg-white"
+                title={archivoVisor.titulo || 'Visor de Archivo'}
+                onLoad={() => setCargandoVisor(false)}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

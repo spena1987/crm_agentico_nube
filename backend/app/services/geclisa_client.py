@@ -1235,6 +1235,35 @@ class GeclisaClient:
             logger.error(f"Error listando archivos de historia clínica para Ficha #{ficha_id}: {e}")
             return []
 
+    def descargar_archivo_historia_clinica(self, as_id: int, am_id: int = 1) -> tuple:
+        """
+        Descarga el contenido binario de un archivo o estudio de la historia clínica en Geclisa.
+        Ruta: GET /api/Archivo/archivos-modulos/{asId}?amId={amId}
+        Retorna: (contenido_bytes, content_type, filename_sugerido)
+        """
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/Archivo/archivos-modulos/{as_id}?amId={am_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        t_start = time.time()
+        try:
+            res = self._do_request("GET", url, headers=headers, timeout=30)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            
+            content_type = res.headers.get("Content-Type") or "application/pdf"
+            ext = "pdf"
+            if "jpeg" in content_type.lower() or "jpg" in content_type.lower():
+                ext = "jpg"
+            elif "png" in content_type.lower():
+                ext = "png"
+                
+            filename = f"Archivo_Geclisa_{as_id}.{ext}"
+            return (res.content, content_type, filename)
+        except Exception as e:
+            logger.error(f"Error descargando archivo #{as_id} de Geclisa: {e}")
+            return (None, "application/octet-stream", f"Archivo_{as_id}.bin")
+
     # ====================================================================
     # SCRIPT DE DIAGNÓSTICO E INICIALIZACIÓN
     # ====================================================================
