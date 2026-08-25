@@ -136,7 +136,12 @@ export default function ConsolaCabeceraIntraoperatoria({
           <div className="flex items-center gap-1.5 text-slate-300">
             <Clock size={15} className="text-blue-400" />
             <span>Llegada:</span>
-            <b className="text-white font-mono">{formatearHoraDesdeIso(turno.llegada_at, 'Pendiente')}</b>
+            <b className="text-white font-mono">
+              {formatearHoraDesdeIso(
+                turno.llegada_at || (esEnOperacion || esOperado ? turno.inicio_cirugia_at : null),
+                'Pendiente'
+              )}
+            </b>
           </div>
 
           <div className="flex items-center gap-1.5 text-slate-300">

@@ -3704,11 +3704,20 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         ahora_iso = datetime.now(timezone.utc).isoformat()
         
         if nuevo_estado == "en_espera":
-            update_payload["llegada_at"] = ahora_iso
+            if not turno_actual.get("llegada_at"):
+                update_payload["llegada_at"] = ahora_iso
         elif nuevo_estado == "en_operacion":
-            update_payload["inicio_cirugia_at"] = ahora_iso
+            if not turno_actual.get("llegada_at"):
+                update_payload["llegada_at"] = ahora_iso
+            if not turno_actual.get("inicio_cirugia_at"):
+                update_payload["inicio_cirugia_at"] = ahora_iso
         elif nuevo_estado == "operado":
-            update_payload["fin_cirugia_at"] = ahora_iso
+            if not turno_actual.get("llegada_at"):
+                update_payload["llegada_at"] = ahora_iso
+            if not turno_actual.get("inicio_cirugia_at"):
+                update_payload["inicio_cirugia_at"] = ahora_iso
+            if not turno_actual.get("fin_cirugia_at"):
+                update_payload["fin_cirugia_at"] = ahora_iso
             
         # 3. Actualizar turnos_quirofano
         t_upd = supabase.table("turnos_quirofano").update(update_payload).eq("id", turno_id).execute()

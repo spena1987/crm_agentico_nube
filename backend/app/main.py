@@ -4258,6 +4258,7 @@ def listar_turnos_dia_endpoint(
 class CambiarEstadoPayload(BaseModel):
     estado: str
 
+@app.put("/api/turnos-quirofano/{turno_id}/estado")
 @app.put("/api/turnos-quirofano/{turno_id}/cambiar-estado")
 def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
     try:

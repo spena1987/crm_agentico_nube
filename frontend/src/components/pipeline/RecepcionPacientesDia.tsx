@@ -261,20 +261,23 @@ export default function RecepcionPacientesDia() {
   const handleRecepcionar = async (turnoId: string) => {
     try {
       setProcesandoId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/estado`, {
+      const ahoraIso = new Date().toISOString()
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ estado: 'en_espera' })
       })
 
       if (res.ok) {
+        const data = await res.json()
+        const turnoActualizado = data.turno || {}
         setTurnos((prev) =>
-          prev.map((t) => (t.id === turnoId ? { ...t, estado: 'en_espera' } : t))
+          prev.map((t) => (t.id === turnoId ? { ...t, estado: 'en_espera', llegada_at: ahoraIso, ...turnoActualizado } : t))
         )
       } else {
         await supabase
           .from('turnos_quirofano' as any)
-          .update({ estado: 'en_espera', updated_at: new Date().toISOString() })
+          .update({ estado: 'en_espera', llegada_at: ahoraIso, updated_at: ahoraIso })
           .eq('id', turnoId)
         fetchTurnosHoy()
       }
