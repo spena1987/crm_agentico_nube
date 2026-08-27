@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { 
   Calendar, 
   ChevronLeft, 
@@ -27,7 +27,9 @@ import {
   Filter,
   MapPin,
   DoorOpen,
-  RotateCcw
+  RotateCcw,
+  Check,
+  X
 } from 'lucide-react'
 
 import { BACKEND_URL } from '@/lib/api'
@@ -91,9 +93,14 @@ export default function AgendaGeclisaPage() {
   const getTodayISO = () => new Date().toISOString().split('T')[0]
   const [fecha, setFecha] = useState<string>(getTodayISO())
 
-  // Prestador Seleccionado (Inicializado estrictamente con el prestador del usuario o 969 por defecto)
+  // Prestador Seleccionado
   const [selectedPreId, setSelectedPreId] = useState<string>('969')
   const [prestadorInfo, setPrestadorInfo] = useState<{ pre_id: number; nombre: string; matricula?: string } | null>(null)
+  
+  // Custom Dark Dropdown para Prestador en Header
+  const [headerDropdownOpen, setHeaderDropdownOpen] = useState(false)
+  const [headerSearchTerm, setHeaderSearchTerm] = useState('')
+  const headerDropdownRef = useRef<HTMLDivElement>(null)
 
   // Filtros Secundarios (Por defecto: 'todos')
   const [selectedServicio, setSelectedServicio] = useState<string>('todos')
@@ -135,6 +142,17 @@ export default function AgendaGeclisaPage() {
     dni?: string | null
     geclisa_ficha_id?: number | null
   } | null>(null)
+
+  // Cerrar dropdown al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (headerDropdownRef.current && !headerDropdownRef.current.contains(event.target as Node)) {
+        setHeaderDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // 1. Cargar lista completa de prestadores mediante el proxy seguro
   const cargarCatalogoPrestadores = async () => {
@@ -245,6 +263,23 @@ export default function AgendaGeclisaPage() {
 
   const hayFiltrosActivos = selectedServicio !== 'todos' || selectedUbicacion !== 'todos' || selectedConsultorio !== 'todos' || filtroEstado !== 'todos' || search !== ''
 
+  // Prestadores filtrados para el Searchable Dropdown del Header
+  const prestadoresHeaderFiltrados = useMemo(() => {
+    if (!headerSearchTerm.trim()) return catalogoPrestadores
+    const q = headerSearchTerm.toLowerCase().trim()
+    return catalogoPrestadores.filter(
+      p => p.nombre.toLowerCase().includes(q) || (p.matricula && p.matricula.includes(q))
+    )
+  }, [catalogoPrestadores, headerSearchTerm])
+
+  // Prestador actualmente seleccionado
+  const prestadorActual = useMemo(() => {
+    const encontrado = catalogoPrestadores.find(p => String(p.pre_id) === String(selectedPreId))
+    if (encontrado) return encontrado
+    if (prestadorInfo) return { pre_id: prestadorInfo.pre_id, nombre: prestadorInfo.nombre, matricula: prestadorInfo.matricula }
+    return { pre_id: Number(selectedPreId) || 969, nombre: 'ASESORAMIENTO', matricula: '99991' }
+  }, [catalogoPrestadores, selectedPreId, prestadorInfo])
+
   // Cambiar estado de un turno
   const handleCambiarEstado = async (turnoId: number, nuevoEstado: string) => {
     try {
@@ -322,7 +357,7 @@ export default function AgendaGeclisaPage() {
           cardBg: 'bg-blue-500/10 dark:bg-blue-950/30 border-blue-400/50 dark:border-blue-700/60 shadow-blue-500/5',
           headerBadge: 'bg-blue-600 text-white',
           practicaBadge: 'bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-700',
-          selectBg: 'bg-blue-100/80 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 border-blue-300 dark:border-blue-700',
+          selectBg: 'bg-slate-900 text-blue-200 border-blue-500/50',
           label: 'Confirmado',
           dot: 'bg-blue-500'
         }
@@ -331,7 +366,7 @@ export default function AgendaGeclisaPage() {
           cardBg: 'bg-purple-500/10 dark:bg-purple-950/30 border-purple-400/50 dark:border-purple-700/60 shadow-purple-500/5',
           headerBadge: 'bg-purple-600 text-white',
           practicaBadge: 'bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-700',
-          selectBg: 'bg-purple-100/80 dark:bg-purple-900/50 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-700',
+          selectBg: 'bg-slate-900 text-purple-200 border-purple-500/50',
           label: 'En Sala / Ingresado',
           dot: 'bg-purple-500'
         }
@@ -340,7 +375,7 @@ export default function AgendaGeclisaPage() {
           cardBg: 'bg-emerald-500/10 dark:bg-emerald-950/30 border-emerald-400/50 dark:border-emerald-700/60 shadow-emerald-500/5',
           headerBadge: 'bg-emerald-600 text-white',
           practicaBadge: 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700',
-          selectBg: 'bg-emerald-100/80 dark:bg-emerald-900/50 text-emerald-800 dark:text-emerald-200 border-emerald-300 dark:border-emerald-700',
+          selectBg: 'bg-slate-900 text-emerald-200 border-emerald-500/50',
           label: 'Atendido',
           dot: 'bg-emerald-500'
         }
@@ -349,7 +384,7 @@ export default function AgendaGeclisaPage() {
           cardBg: 'bg-red-500/10 dark:bg-red-950/20 border-red-300/40 dark:border-red-800/40 opacity-75 shadow-red-500/5',
           headerBadge: 'bg-red-500 text-white',
           practicaBadge: 'bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-300 border-red-200 dark:border-red-800',
-          selectBg: 'bg-red-100/80 dark:bg-red-900/40 text-red-800 dark:text-red-300 border-red-200 dark:border-red-800',
+          selectBg: 'bg-slate-900 text-red-300 border-red-500/50',
           label: 'Cancelado',
           dot: 'bg-red-500'
         }
@@ -358,7 +393,7 @@ export default function AgendaGeclisaPage() {
           cardBg: 'bg-amber-500/10 dark:bg-amber-950/30 border-amber-400/50 dark:border-amber-700/60 shadow-amber-500/5',
           headerBadge: 'bg-amber-500 text-white',
           practicaBadge: 'bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700',
-          selectBg: 'bg-amber-100/80 dark:bg-amber-900/50 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700',
+          selectBg: 'bg-slate-900 text-amber-200 border-amber-500/50',
           label: 'Reservado',
           dot: 'bg-amber-500'
         }
@@ -382,9 +417,9 @@ export default function AgendaGeclisaPage() {
                 </span>
               </h1>
               <p className="text-xs text-[var(--secondary)]">
-                {prestadorInfo ? (
+                {prestadorActual ? (
                   <span>
-                    Agenda de: <strong>{prestadorInfo.nombre}</strong> {prestadorInfo.matricula ? `(Mat: ${prestadorInfo.matricula})` : ''}
+                    Agenda de: <strong className="text-blue-500">{prestadorActual.nombre}</strong> {prestadorActual.matricula ? `(Mat: ${prestadorActual.matricula})` : ''}
                   </span>
                 ) : (
                   'Consulta hospitalaria en tiempo real del profesional asignado.'
@@ -394,35 +429,93 @@ export default function AgendaGeclisaPage() {
           </div>
         </div>
 
-        {/* Selector de Prestador & Fechas */}
+        {/* Selector de Prestador Dark Mode & Fechas */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Selector de Prestador */}
-          <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 border border-[var(--border)] px-3 py-1.5 rounded-xl shadow-sm">
-            <Stethoscope size={14} className="text-blue-600 shrink-0" />
-            <select
-              value={selectedPreId}
-              onChange={(e) => setSelectedPreId(e.target.value)}
-              className="text-xs font-bold bg-transparent border-0 text-[var(--foreground)] focus:outline-none focus:ring-0 max-w-[200px] truncate"
+          {/* Custom Searchable Dropdown de Prestador con Diseño Dark Mode Impecable */}
+          <div className="relative" ref={headerDropdownRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setHeaderDropdownOpen(!headerDropdownOpen)
+                setHeaderSearchTerm('')
+              }}
+              className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-100 shadow-md transition-all min-w-[200px] justify-between"
             >
-              {catalogoPrestadores.length > 0 ? (
-                catalogoPrestadores.map((p) => (
-                  <option key={p.pre_id} value={String(p.pre_id)}>
-                    {p.nombre} {p.matricula ? `(${p.matricula})` : ''}
-                  </option>
-                ))
-              ) : (
-                <option value={selectedPreId}>
-                  {prestadorInfo?.nombre || `Prestador #${selectedPreId}`}
-                </option>
-              )}
-            </select>
+              <div className="flex items-center gap-2 truncate">
+                <Stethoscope size={15} className="text-blue-400 shrink-0" />
+                <span className="truncate">
+                  {prestadorActual.nombre} {prestadorActual.matricula ? `(${prestadorActual.matricula})` : ''}
+                </span>
+              </div>
+              <ChevronDown size={14} className={`text-slate-400 transition-transform ${headerDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Menú Desplegable Dark Mode con Buscador */}
+            {headerDropdownOpen && (
+              <div className="absolute right-0 mt-2 w-80 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl z-50 overflow-hidden animate-scale-up">
+                <div className="p-3 border-b border-slate-800">
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Buscar por nombre o matrícula..."
+                      value={headerSearchTerm}
+                      autoFocus
+                      onChange={(e) => setHeaderSearchTerm(e.target.value)}
+                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/60 p-1">
+                  {prestadoresHeaderFiltrados.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400">
+                      No se encontraron prestadores
+                    </div>
+                  ) : (
+                    prestadoresHeaderFiltrados.map((p) => {
+                      const isSelected = String(p.pre_id) === String(selectedPreId)
+                      return (
+                        <button
+                          key={p.pre_id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPreId(String(p.pre_id))
+                            setHeaderDropdownOpen(false)
+                            setHeaderSearchTerm('')
+                          }}
+                          className={`w-full text-left p-2.5 rounded-xl transition-all flex items-center justify-between text-xs ${
+                            isSelected
+                              ? 'bg-blue-600/20 text-blue-400 font-bold border border-blue-500/30'
+                              : 'hover:bg-slate-800/80 text-slate-200'
+                          }`}
+                        >
+                          <div>
+                            <p className="font-semibold text-slate-100">{p.nombre}</p>
+                            <p className="text-[10px] text-slate-400">
+                              {p.especialidad || 'Médico'} • Mat: {p.matricula || 'S/N'}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono text-slate-400 font-bold">
+                              #{p.pre_id}
+                            </span>
+                            {isSelected && <Check size={14} className="text-blue-400" />}
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Navegación por Días */}
           <div className="flex items-center gap-1">
             <button
               onClick={() => cambiarDia(-1)}
-              className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold"
+              className="p-2 border border-[var(--border)] rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all text-xs font-bold"
               title="Día anterior"
             >
               <ChevronLeft size={16} />
@@ -433,7 +526,7 @@ export default function AgendaGeclisaPage() {
               className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
                 fecha === getTodayISO()
                   ? 'bg-blue-600 text-white border-blue-600 shadow glow-primary'
-                  : 'border-[var(--border)] text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  : 'border-[var(--border)] text-slate-300 hover:bg-slate-800'
               }`}
             >
               Hoy
@@ -441,7 +534,7 @@ export default function AgendaGeclisaPage() {
 
             <button
               onClick={() => cambiarDia(1)}
-              className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold"
+              className="p-2 border border-[var(--border)] rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all text-xs font-bold"
               title="Día siguiente"
             >
               <ChevronRight size={16} />
@@ -451,16 +544,16 @@ export default function AgendaGeclisaPage() {
               type="date"
               value={fecha}
               onChange={(e) => setFecha(e.target.value)}
-              className="px-2.5 py-1.5 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="px-2.5 py-1.5 text-xs font-bold border border-slate-700 rounded-xl bg-slate-900 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
 
             <button
               onClick={() => cargarAgenda()}
               disabled={loading}
-              className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all shadow-sm"
+              className="p-2 border border-slate-700 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-all shadow-sm"
               title="Actualizar agenda en vivo"
             >
-              <RefreshCw size={16} className={loading ? 'animate-spin text-blue-600' : ''} />
+              <RefreshCw size={16} className={loading ? 'animate-spin text-blue-500' : ''} />
             </button>
           </div>
         </div>
@@ -470,7 +563,7 @@ export default function AgendaGeclisaPage() {
       <div className="bg-[var(--card)] p-4 rounded-2xl border border-[var(--border)] shadow-sm space-y-3">
         <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
           <div className="flex items-center gap-2">
-            <Filter size={15} className="text-blue-600" />
+            <Filter size={15} className="text-blue-500" />
             <span className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider">
               Filtros Operativos
             </span>
@@ -482,7 +575,7 @@ export default function AgendaGeclisaPage() {
           {hayFiltrosActivos && (
             <button
               onClick={limpiarFiltros}
-              className="text-[11px] font-bold text-red-600 hover:text-red-700 flex items-center gap-1 hover:underline transition-all"
+              className="text-[11px] font-bold text-red-400 hover:text-red-300 flex items-center gap-1 hover:underline transition-all"
             >
               <RotateCcw size={12} />
               <span>Limpiar Filtros</span>
@@ -494,16 +587,16 @@ export default function AgendaGeclisaPage() {
           {/* 1. Selector de Servicio */}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-              <Building2 size={11} className="text-purple-600" /> Servicio / Especialidad
+              <Building2 size={11} className="text-purple-400" /> Servicio / Especialidad
             </label>
             <select
               value={selectedServicio}
               onChange={(e) => setSelectedServicio(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+              className="w-full px-3 py-2 text-xs font-bold border border-slate-700 rounded-xl bg-slate-900 text-slate-100 focus:outline-none focus:ring-2 focus:ring-purple-500"
             >
-              <option value="todos">Todos los Servicios</option>
+              <option value="todos" className="bg-slate-900 text-slate-100">Todos los Servicios</option>
               {catalogos.servicios.map((s) => (
-                <option key={s} value={s}>
+                <option key={s} value={s} className="bg-slate-900 text-slate-100">
                   {s}
                 </option>
               ))}
@@ -513,16 +606,16 @@ export default function AgendaGeclisaPage() {
           {/* 2. Selector de Ubicación / Sede */}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-              <MapPin size={11} className="text-emerald-600" /> Ubicación / Sede
+              <MapPin size={11} className="text-emerald-400" /> Ubicación / Sede
             </label>
             <select
               value={selectedUbicacion}
               onChange={(e) => setSelectedUbicacion(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+              className="w-full px-3 py-2 text-xs font-bold border border-slate-700 rounded-xl bg-slate-900 text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="todos">Todas las Sedes</option>
+              <option value="todos" className="bg-slate-900 text-slate-100">Todas las Sedes</option>
               {catalogos.ubicaciones.map((u) => (
-                <option key={u} value={u}>
+                <option key={u} value={u} className="bg-slate-900 text-slate-100">
                   {u}
                 </option>
               ))}
@@ -532,16 +625,16 @@ export default function AgendaGeclisaPage() {
           {/* 3. Selector de Consultorio */}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-              <DoorOpen size={11} className="text-amber-600" /> Consultorio / Sala
+              <DoorOpen size={11} className="text-amber-400" /> Consultorio / Sala
             </label>
             <select
               value={selectedConsultorio}
               onChange={(e) => setSelectedConsultorio(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+              className="w-full px-3 py-2 text-xs font-bold border border-slate-700 rounded-xl bg-slate-900 text-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
             >
-              <option value="todos">Todos los Consultorios</option>
+              <option value="todos" className="bg-slate-900 text-slate-100">Todos los Consultorios</option>
               {catalogos.consultorios.map((c) => (
-                <option key={c} value={c}>
+                <option key={c} value={c} className="bg-slate-900 text-slate-100">
                   {c}
                 </option>
               ))}
@@ -555,15 +648,15 @@ export default function AgendaGeclisaPage() {
         <div
           className={`p-4 rounded-xl text-xs font-semibold flex items-center justify-between gap-3 border animate-fade-in ${
             feedback.type === 'success'
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800'
-              : 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800'
+              ? 'bg-emerald-950/50 text-emerald-300 border-emerald-800'
+              : 'bg-red-950/50 text-red-300 border-red-800'
           }`}
         >
           <div className="flex items-center gap-2">
             {feedback.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
             <span>{feedback.message}</span>
           </div>
-          <button onClick={() => setFeedback(null)} className="text-slate-400 hover:text-slate-600">
+          <button onClick={() => setFeedback(null)} className="text-slate-400 hover:text-slate-200">
             <XCircle size={16} />
           </button>
         </div>
@@ -572,12 +665,12 @@ export default function AgendaGeclisaPage() {
       {/* Métricas y Filtros de Estado */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {[
-          { key: 'todos', label: 'Todos', count: metricas.total, color: 'border-slate-300 text-slate-700 dark:text-slate-200 bg-[var(--card)]' },
-          { key: 'reservado', label: 'Reservados', count: metricas.reservado, color: 'border-amber-300 text-amber-700 dark:text-amber-300 bg-amber-50/50 dark:bg-amber-950/20' },
-          { key: 'confirmado', label: 'Confirmados', count: metricas.confirmado, color: 'border-blue-300 text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-950/20' },
-          { key: 'ingresado', label: 'En Sala / Espera', count: metricas.ingresado, color: 'border-purple-300 text-purple-700 dark:text-purple-300 bg-purple-50/50 dark:bg-purple-950/20' },
-          { key: 'atendido', label: 'Atendidos', count: metricas.atendido, color: 'border-emerald-300 text-emerald-700 dark:text-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20' },
-          { key: 'cancelado', label: 'Cancelados', count: metricas.cancelado, color: 'border-red-300 text-red-700 dark:text-red-300 bg-red-50/50 dark:bg-red-950/20' },
+          { key: 'todos', label: 'Todos', count: metricas.total, color: 'border-slate-700 text-slate-200 bg-[var(--card)]' },
+          { key: 'reservado', label: 'Reservados', count: metricas.reservado, color: 'border-amber-700/60 text-amber-300 bg-amber-950/20' },
+          { key: 'confirmado', label: 'Confirmados', count: metricas.confirmado, color: 'border-blue-700/60 text-blue-300 bg-blue-950/20' },
+          { key: 'ingresado', label: 'En Sala / Espera', count: metricas.ingresado, color: 'border-purple-700/60 text-purple-300 bg-purple-950/20' },
+          { key: 'atendido', label: 'Atendidos', count: metricas.atendido, color: 'border-emerald-700/60 text-emerald-300 bg-emerald-950/20' },
+          { key: 'cancelado', label: 'Cancelados', count: metricas.cancelado, color: 'border-red-800/60 text-red-300 bg-red-950/20' },
         ].map((f) => {
           const isActive = filtroEstado === f.key
           return (
@@ -591,7 +684,7 @@ export default function AgendaGeclisaPage() {
               <p className="text-[11px] uppercase tracking-wider font-semibold opacity-75">{f.label}</p>
               <p className="text-xl font-bold mt-1">{f.count}</p>
               {isActive && (
-                <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+                <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
               )}
             </button>
           )
@@ -606,10 +699,10 @@ export default function AgendaGeclisaPage() {
           placeholder="Buscar turno por paciente, DNI, Ficha, práctica médica (ej: OCT, Cirugía) o cobertura..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full text-xs bg-transparent border-0 focus:outline-none focus:ring-0 text-[var(--foreground)]"
+          className="w-full text-xs bg-transparent border-0 focus:outline-none focus:ring-0 text-[var(--foreground)] placeholder-slate-500"
         />
         {search && (
-          <button onClick={() => setSearch('')} className="text-slate-400 hover:text-slate-600 text-xs">
+          <button onClick={() => setSearch('')} className="text-slate-400 hover:text-slate-200 text-xs">
             <XCircle size={16} />
           </button>
         )}
@@ -618,12 +711,12 @@ export default function AgendaGeclisaPage() {
       {/* Lista de Turnos / Grilla Tematizada por Colores de Estadio */}
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 bg-[var(--card)] rounded-2xl border border-[var(--border)] text-slate-400 gap-3">
-          <Loader2 size={36} className="animate-spin text-blue-600" />
+          <Loader2 size={36} className="animate-spin text-blue-500" />
           <p className="text-xs font-semibold">Consultando agenda en tiempo real en Geclisa...</p>
         </div>
       ) : turnosFiltrados.length === 0 ? (
         <div className="text-center py-16 bg-[var(--card)] rounded-2xl border border-[var(--border)] text-slate-400 space-y-2">
-          <Calendar size={42} className="mx-auto opacity-40 text-blue-600" />
+          <Calendar size={42} className="mx-auto opacity-40 text-blue-500" />
           <p className="text-sm font-bold text-[var(--foreground)]">No hay turnos registrados</p>
           <p className="text-xs text-[var(--secondary)]">
             No se encontraron turnos para la fecha ({fecha}) con los filtros actuales.
@@ -657,29 +750,29 @@ export default function AgendaGeclisaPage() {
                       <span>{t.hora}</span>
                     </div>
                     {t.es_sobreturno && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-bold border border-amber-300">
+                      <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-950/60 text-amber-300 font-bold border border-amber-700">
                         Sobreturno
                       </span>
                     )}
                   </div>
 
-                  {/* Selector interactivo de estado */}
+                  {/* Selector interactivo de estado con Dark Mode Styling */}
                   <div className="relative">
                     <select
                       value={t.estado_key}
                       disabled={isUpdating}
                       onChange={(e) => handleCambiarEstado(t.turno_id, e.target.value)}
-                      className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border appearance-none pr-6 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all ${theme.selectBg}`}
+                      className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border appearance-none pr-6 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${theme.selectBg}`}
                     >
-                      <option value="reservado">🟡 Reservado</option>
-                      <option value="confirmado">🔵 Confirmado</option>
-                      <option value="ingresado">🟣 En Sala (Ingresado)</option>
-                      <option value="atendido">🟢 Atendido</option>
-                      <option value="cancelado">🔴 Cancelado</option>
+                      <option value="reservado" className="bg-slate-900 text-amber-300">🟡 Reservado</option>
+                      <option value="confirmado" className="bg-slate-900 text-blue-300">🔵 Confirmado</option>
+                      <option value="ingresado" className="bg-slate-900 text-purple-300">🟣 En Sala (Ingresado)</option>
+                      <option value="atendido" className="bg-slate-900 text-emerald-300">🟢 Atendido</option>
+                      <option value="cancelado" className="bg-slate-900 text-red-300">🔴 Cancelado</option>
                     </select>
                     <div className="absolute inset-y-0 right-0 flex items-center pr-1.5 pointer-events-none text-slate-400">
                       {isUpdating ? (
-                        <Loader2 size={12} className="animate-spin text-blue-600" />
+                        <Loader2 size={12} className="animate-spin text-blue-500" />
                       ) : (
                         <ChevronDown size={12} />
                       )}
@@ -696,7 +789,7 @@ export default function AgendaGeclisaPage() {
 
                   {/* Datos del Paciente */}
                   <div className="flex items-start justify-between gap-2 pt-1">
-                    <h3 className="font-bold text-xs text-[var(--foreground)] group-hover:text-blue-600 transition-colors line-clamp-1">
+                    <h3 className="font-bold text-xs text-[var(--foreground)] group-hover:text-blue-400 transition-colors line-clamp-1">
                       {t.paciente}
                     </h3>
                     <span className="text-[10px] font-mono text-slate-400 shrink-0">
@@ -707,7 +800,7 @@ export default function AgendaGeclisaPage() {
                   {/* Detalles Operativos: Obra Social, Sede & Consultorio */}
                   <div className="space-y-1 text-[11px] text-[var(--secondary)]">
                     <div className="flex items-center gap-1.5">
-                      <ShieldCheck size={13} className="text-emerald-600 shrink-0" />
+                      <ShieldCheck size={13} className="text-emerald-400 shrink-0" />
                       <span className="truncate">{t.obra_social}</span>
                     </div>
 
@@ -717,7 +810,7 @@ export default function AgendaGeclisaPage() {
                     </div>
 
                     {t.observaciones && (
-                      <p className="text-[10px] italic text-slate-500 bg-white/60 dark:bg-slate-800/60 p-1.5 rounded-lg border border-slate-200/50 dark:border-slate-700/60 line-clamp-2">
+                      <p className="text-[10px] italic text-slate-400 bg-slate-800/80 p-1.5 rounded-lg border border-slate-700/60 line-clamp-2">
                         {t.observaciones}
                       </p>
                     )}
@@ -736,16 +829,16 @@ export default function AgendaGeclisaPage() {
                       })
                       setHistoriaModalOpen(true)
                     }}
-                    className="flex-1 py-1.5 px-2 bg-white/80 dark:bg-slate-800/80 hover:bg-white dark:hover:bg-slate-700 text-[var(--foreground)] rounded-xl text-[11px] font-bold transition-all border border-[var(--border)] flex items-center justify-center gap-1.5 shadow-sm"
+                    className="flex-1 py-1.5 px-2 bg-slate-800/90 hover:bg-slate-700 text-slate-100 rounded-xl text-[11px] font-bold transition-all border border-slate-700 flex items-center justify-center gap-1.5 shadow-sm"
                     title="Ver Historia Clínica, Evoluciones y Visor de PDFs"
                   >
-                    <FileText size={13} className="text-blue-600" />
+                    <FileText size={13} className="text-blue-400" />
                     <span>Expediente</span>
                   </button>
 
                   <a
                     href={`/chat`}
-                    className="p-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-700 dark:text-emerald-300 rounded-xl border border-emerald-200 dark:border-emerald-800 transition-all flex items-center justify-center shadow-sm"
+                    className="p-1.5 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 rounded-xl border border-emerald-800 transition-all flex items-center justify-center shadow-sm"
                     title="Abrir WhatsApp"
                   >
                     <MessageSquare size={14} />
@@ -753,7 +846,7 @@ export default function AgendaGeclisaPage() {
 
                   <a
                     href={`/pipeline-quirurgico`}
-                    className="p-1.5 bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 text-purple-700 dark:text-purple-300 rounded-xl border border-purple-200 dark:border-purple-800 transition-all flex items-center justify-center shadow-sm"
+                    className="p-1.5 bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 rounded-xl border border-purple-800 transition-all flex items-center justify-center shadow-sm"
                     title="Pipeline Quirúrgico / Asesoría"
                   >
                     <ExternalLink size={14} />
