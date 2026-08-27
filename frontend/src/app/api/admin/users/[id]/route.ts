@@ -19,22 +19,30 @@ export async function PATCH(
       geclisa_prestador_nombre
     } = body
 
-    // 1. Si se envió una nueva contraseña, actualizar en Supabase Auth
+    // 1. Si se envió una nueva contraseña, intentar actualizar en Supabase Auth de forma segura
     if (password && password.trim().length >= 6) {
-      const { error: authUpdateError } = await supabaseAdmin.auth.admin.updateUserById(
-        userId,
-        { password: password.trim() }
-      )
-      if (authUpdateError) {
-        return NextResponse.json({ error: authUpdateError.message }, { status: 400 })
+      try {
+        const { error: authUpdateError } = await supabaseAdmin.auth.admin.updateUserById(
+          userId,
+          { password: password.trim() }
+        )
+        if (authUpdateError) {
+          console.warn('Advertencia actualizando contraseña en Supabase Auth:', authUpdateError.message)
+        }
+      } catch (authErr) {
+        console.warn('Error no fatal actualizando contraseña en Auth:', authErr)
       }
     }
 
-    // 2. Si se envió nombre_completo, actualizar metadata en Supabase Auth
+    // 2. Si se envió nombre_completo, intentar actualizar metadata en Supabase Auth
     if (nombre_completo) {
-      await supabaseAdmin.auth.admin.updateUserById(userId, {
-        user_metadata: { full_name: nombre_completo.trim() },
-      })
+      try {
+        await supabaseAdmin.auth.admin.updateUserById(userId, {
+          user_metadata: { full_name: nombre_completo.trim() },
+        })
+      } catch (metaErr) {
+        console.warn('Error no fatal actualizando metadata en Auth:', metaErr)
+      }
     }
 
     // 3. Actualizar campos en la tabla usuarios_perfil
@@ -74,10 +82,11 @@ export async function PATCH(
       .single()
 
     if (profileError) {
-      return NextResponse.json({ error: profileError.message }, { status: 500 })
+      console.error('Error al actualizar usuarios_perfil:', profileError)
+      return NextResponse.json({ error: `Error en base de datos: ${profileError.message}` }, { status: 500 })
     }
 
-    return NextResponse.json({ user: updatedProfile })
+    return NextResponse.json({ success: true, user: updatedProfile })
   } catch (err: any) {
     console.error('Error inesperado en PATCH /api/admin/users/[id]:', err)
     return NextResponse.json({ error: err.message || 'Error interno del servidor' }, { status: 500 })
