@@ -4559,6 +4559,7 @@ class GuardarCalculoLioPayload(BaseModel):
     paciente_id: Optional[str] = None
     lio_calculado_por: str
     opciones: List[Dict[str, Any]]
+    confirmar: bool = True
     formula: Optional[str] = None
     target_refractivo: Optional[str] = None
     observaciones: Optional[str] = None
@@ -4769,10 +4770,12 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
             torico_valor_ppal = ppal.get("torico_valor")
             torico_eje_ppal = ppal.get("torico_eje")
 
+        es_confirmado = bool(payload.confirmar)
+
         upd_data = {
-            "lio_calculado": True,
-            "lio_calculado_at": ahora_iso,
-            "lio_calculado_por": payload.lio_calculado_por,
+            "lio_calculado": es_confirmado,
+            "lio_calculado_at": ahora_iso if es_confirmado else None,
+            "lio_calculado_por": payload.lio_calculado_por if es_confirmado else None,
             "lio_calculo_opciones": opciones
         }
 
@@ -4805,23 +4808,62 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
                 as_upd["ojo"] = payload.ojo
             supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
 
+        accion_log = "CALCULO_LIO_CONFIRMADO" if es_confirmado else "CALCULO_LIO_BORRADOR"
+        mensaje_log = f"Cálculo de LIO {'confirmado' if es_confirmado else 'guardado como borrador'} ({len(opciones)} opciones) por {payload.lio_calculado_por}"
+
         log_event(
             nivel="INFO",
             modulo="QUIROFANO",
-            accion="CALCULO_LIO_GUARDADO",
-            mensaje=f"Cálculo de LIO guardado ({len(opciones)} opciones) por {payload.lio_calculado_por}",
-            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id, "opciones_count": len(opciones)}
+            accion=accion_log,
+            mensaje=mensaje_log,
+            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id, "opciones_count": len(opciones), "confirmado": es_confirmado}
         )
 
         return {
             "success": True,
-            "mensaje": "Cálculo de LIO guardado y sellado exitosamente.",
-            "lio_calculado": True,
-            "lio_calculado_at": ahora_iso,
+            "mensaje": "Cálculo de LIO confirmado y sellado exitosamente." if es_confirmado else "Borrador de cálculo de LIO guardado.",
+            "lio_calculado": es_confirmado,
+            "lio_calculado_at": ahora_iso if es_confirmado else None,
             "opciones": opciones
         }
     except Exception as e:
         logger.error(f"Error al guardar cálculo de LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ReabrirCalculoPayload(BaseModel):
+    turno_id: Optional[str] = None
+    asesoria_id: Optional[str] = None
+    usuario: Optional[str] = None
+
+@app.post("/api/calculo-lio/reabrir")
+def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload):
+    """
+    Reabre un cálculo de LIO confirmado para permitir su rectificación o ajuste médico.
+    """
+    try:
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        
+        upd = {
+            "lio_calculado": False,
+            "updated_at": ahora_iso
+        }
+        
+        if payload.turno_id:
+            supabase.table("turnos_quirofano").update(upd).eq("id", payload.turno_id).execute()
+        if payload.asesoria_id:
+            supabase.table("asesorias_quirurgicas").update(upd).eq("id", payload.asesoria_id).execute()
+            
+        log_event(
+            nivel="INFO",
+            modulo="QUIROFANO",
+            accion="CALCULO_LIO_REABIERTO",
+            mensaje=f"Cálculo de LIO reabierto para edición por {payload.usuario or 'Cirujano'}",
+            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id}
+        )
+        return {"success": True, "mensaje": "Cálculo reabierto para edición.", "lio_calculado": False}
+    except Exception as e:
+        logger.error(f"Error al reabrir cálculo de LIO: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class ReservarStockPayload(BaseModel):

@@ -4,7 +4,6 @@ import React, { useState, useEffect, useMemo } from 'react'
 import {
   Eye,
   Search,
-  Filter,
   CheckCircle2,
   AlertCircle,
   Clock,
@@ -32,7 +31,11 @@ import {
   Phone,
   HelpCircle,
   Copy,
-  ChevronRight
+  ChevronRight,
+  Lock,
+  Unlock,
+  Edit3,
+  ShieldCheck
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso } from '@/lib/dateUtils'
@@ -92,12 +95,15 @@ export default function CalculoLioPage() {
   const [estadoFiltro, setEstadoFiltro] = useState<string>('todos') // 'todos' | 'pendientes' | 'calculados' | 'stock_pendiente'
   const [busqueda, setBusqueda] = useState<string>('')
   const [cargando, setCargando] = useState<boolean>(true)
-  const [guardando, setGuardando] = useState<boolean>(false)
+  const [guardandoBorrador, setGuardandoBorrador] = useState<boolean>(false)
+  const [confirmandoCalculo, setConfirmandoCalculo] = useState<boolean>(false)
+  const [reabriendo, setReabriendo] = useState<boolean>(false)
   const [reservandoStock, setReservandoStock] = useState<boolean>(false)
 
   const [pacienteActivo, setPacienteActivo] = useState<any | null>(null)
   const [opcionesLio, setOpcionesLio] = useState<OpcionLio[]>([])
   const [modelosLio, setModelosLio] = useState<any[]>([])
+  const [modoEdicion, setModoEdicion] = useState<boolean>(false)
 
   // Visor de Documentos Geclisa
   const [modalArchivosAbierto, setModalArchivosAbierto] = useState<boolean>(false)
@@ -175,12 +181,16 @@ export default function CalculoLioPage() {
       setOpcionesLio(ops)
     } else {
       // Inicializar con Opción Principal por defecto
+      const modeloDefault =
+        modelosLio.length > 0
+          ? `${modelosLio[0].modelo} (${modelosLio[0].marca})`
+          : p.lente_tipo || 'AcrySof IQ SN60WF (Alcon)'
       setOpcionesLio([
         {
           id: `opt-${Date.now()}-1`,
           tipo_opcion: 'principal',
           etiqueta: 'Plan A (Principal)',
-          modelo: p.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
+          modelo: modeloDefault,
           dioptria: p.lente_dioptria || '+21.50',
           es_torico: Boolean(p.es_torico),
           torico_valor: p.lente_torico_valor || null,
@@ -192,6 +202,9 @@ export default function CalculoLioPage() {
         }
       ])
     }
+
+    // Si ya está confirmado, por defecto entra en modo protegido/lectura
+    setModoEdicion(!p.lio_calculado)
   }
 
   // Agregar nueva opción de lente
@@ -206,11 +219,13 @@ export default function CalculoLioPage() {
         ? `Opción Sulcus / 3 Piezas (MA60AC)`
         : `Opción ${num} (Alternativa ${num > 2 ? '+0.50D' : '-0.50D'})`
 
+    const modeloBase = opcionesLio[0]?.modelo || (modelosLio.length > 0 ? `${modelosLio[0].modelo} (${modelosLio[0].marca})` : 'AcrySof IQ SN60WF (Alcon)')
+
     const nueva: OpcionLio = {
       id: `opt-${Date.now()}-${num}`,
       tipo_opcion: tipo,
       etiqueta,
-      modelo: tipo === 'sulcus' ? 'AcrySof MA60AC (Alcon)' : opcionesLio[0]?.modelo || 'AcrySof IQ SN60WF (Alcon)',
+      modelo: tipo === 'sulcus' ? 'AcrySof MA60AC (Alcon)' : modeloBase,
       dioptria: opcionesLio[0]?.dioptria || '+21.50',
       es_torico: tipo === 'torico',
       torico_valor: tipo === 'torico' ? 3 : null,
@@ -253,8 +268,8 @@ export default function CalculoLioPage() {
     )
   }
 
-  // Guardar cálculo de LIO
-  const handleGuardarCalculo = async () => {
+  // Acción 1: Guardar Borrador (no confirma, sigue en Pendiente LIO)
+  const handleGuardarBorrador = async () => {
     if (!pacienteActivo) return
     if (opcionesLio.length === 0) {
       alert('Debe cargar al menos una opción de lente.')
@@ -262,7 +277,7 @@ export default function CalculoLioPage() {
     }
 
     try {
-      setGuardando(true)
+      setGuardandoBorrador(true)
       const cirujano = pacienteActivo.cirujano_nombre || 'Cirujano'
       const payload = {
         turno_id: pacienteActivo.turno_id,
@@ -270,6 +285,7 @@ export default function CalculoLioPage() {
         paciente_id: pacienteActivo.paciente_id,
         lio_calculado_por: cirujano,
         opciones: opcionesLio,
+        confirmar: false,
         ojo: pacienteActivo.ojo
       }
 
@@ -281,16 +297,99 @@ export default function CalculoLioPage() {
       const data = await res.json()
 
       if (res.ok && data.success) {
-        alert('✔ Cálculo de LIO guardado y sellado exitosamente.')
+        alert('💾 Borrador guardado exitosamente. El paciente permanece en estado "Pendiente LIO".')
         fetchPacientes()
       } else {
-        alert(data.detail || data.error || 'Error al guardar cálculo de LIO.')
+        alert(data.detail || data.error || 'Error al guardar borrador.')
       }
     } catch (e: any) {
-      console.error('Error guardando cálculo:', e)
+      console.error('Error guardando borrador:', e)
       alert(e.message || 'Error de conexión.')
     } finally {
-      setGuardando(false)
+      setGuardandoBorrador(false)
+    }
+  }
+
+  // Acción 2: Confirmar y Sellar Cálculo (cierra selección y pasa a Confirmado)
+  const handleConfirmarCalculo = async () => {
+    if (!pacienteActivo) return
+    if (opcionesLio.length === 0) {
+      alert('Debe cargar al menos una opción de lente.')
+      return
+    }
+
+    // Validar que las opciones tengan modelo y dioptría
+    const opIncompleta = opcionesLio.find((o) => !o.modelo || !o.dioptria)
+    if (opIncompleta) {
+      alert('Todas las opciones deben tener un Modelo y una Dioptría definidos.')
+      return
+    }
+
+    try {
+      setConfirmandoCalculo(true)
+      const cirujano = pacienteActivo.cirujano_nombre || 'Cirujano'
+      const payload = {
+        turno_id: pacienteActivo.turno_id,
+        asesoria_id: pacienteActivo.asesoria_id,
+        paciente_id: pacienteActivo.paciente_id,
+        lio_calculado_por: cirujano,
+        opciones: opcionesLio,
+        confirmar: true,
+        ojo: pacienteActivo.ojo
+      }
+
+      const res = await fetch(`${BACKEND_URL}/api/calculo-lio/guardar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        alert('✔ Cálculo de LIO confirmado y sellado. La selección ha sido bloqueada y está lista para quirófano.')
+        setModoEdicion(false)
+        fetchPacientes()
+      } else {
+        alert(data.detail || data.error || 'Error al confirmar cálculo de LIO.')
+      }
+    } catch (e: any) {
+      console.error('Error confirmando cálculo:', e)
+      alert(e.message || 'Error de conexión.')
+    } finally {
+      setConfirmandoCalculo(false)
+    }
+  }
+
+  // Reabrir Cálculo Confirmado para Rectificación Médica
+  const handleReabrirCalculo = async () => {
+    if (!pacienteActivo) return
+    if (!confirm('¿Deseas reabrir este cálculo para realizar modificaciones? El paciente volverá a estado de edición.')) {
+      return
+    }
+
+    try {
+      setReabriendo(true)
+      const res = await fetch(`${BACKEND_URL}/api/calculo-lio/reabrir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          turno_id: pacienteActivo.turno_id,
+          asesoria_id: pacienteActivo.asesoria_id,
+          usuario: pacienteActivo.cirujano_nombre || 'Cirujano'
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setModoEdicion(true)
+        setPacienteActivo({ ...pacienteActivo, lio_calculado: false })
+        fetchPacientes()
+      } else {
+        alert(data.detail || 'Error al reabrir cálculo.')
+      }
+    } catch (e) {
+      console.error('Error al reabrir cálculo:', e)
+    } finally {
+      setReabriendo(false)
     }
   }
 
@@ -444,7 +543,7 @@ export default function CalculoLioPage() {
           <AlertCircle size={22} className="text-amber-500" />
         </button>
 
-        {/* KPI 3: LIO Calculados */}
+        {/* KPI 3: LIO Calculados / Confirmados */}
         <button
           type="button"
           onClick={() => setEstadoFiltro('calculados')}
@@ -458,7 +557,7 @@ export default function CalculoLioPage() {
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-cyan-500" />
               <p className="text-[10px] font-extrabold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">
-                LIO Calculados
+                LIO Confirmados
               </p>
             </div>
             <p className="text-2xl font-extrabold text-cyan-600 dark:text-cyan-400 font-mono mt-0.5">
@@ -537,6 +636,8 @@ export default function CalculoLioPage() {
                   ((p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
                     (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id))
 
+                const tieneBorrador = !p.lio_calculado && p.lio_calculo_opciones && p.lio_calculo_opciones.length > 0
+
                 return (
                   <div
                     key={p.turno_id || p.asesoria_id}
@@ -561,12 +662,17 @@ export default function CalculoLioPage() {
                       {p.lio_calculado ? (
                         <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 text-[10px] font-extrabold flex items-center gap-1">
                           <CheckCircle2 size={11} />
-                          <span>Calculado ({p.lio_calculo_opciones?.length || 1})</span>
+                          <span>Confirmado ({p.lio_calculo_opciones?.length || 1})</span>
+                        </span>
+                      ) : tieneBorrador ? (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-extrabold flex items-center gap-1">
+                          <Clock size={11} />
+                          <span>Borrador ({p.lio_calculo_opciones.length})</span>
                         </span>
                       ) : (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-extrabold flex items-center gap-1">
+                        <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-[10px] font-extrabold flex items-center gap-1">
                           <AlertCircle size={11} />
-                          <span>Pendiente</span>
+                          <span>Sin Iniciar</span>
                         </span>
                       )}
                     </div>
@@ -605,11 +711,11 @@ export default function CalculoLioPage() {
               <Eye size={40} className="text-slate-400 mx-auto opacity-50" />
               <h3 className="text-base font-bold text-[var(--foreground)]">Selecciona un paciente para calcular LIO</h3>
               <p className="text-xs text-[var(--secondary)] max-w-md mx-auto">
-                Elige un paciente de la lista izquierda para cargar las opciones biométricas de lentes intraoculares, consultar estudios y guardar el cálculo.
+                Elige un paciente de la lista izquierda para cargar las opciones biométricas de lentes intraoculares, consultar estudios y guardar o confirmar el cálculo.
               </p>
             </div>
           ) : (
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 md:p-6 shadow-sm space-y-6">
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 md:p-6 shadow-sm space-y-5">
               {/* ENCABEZADO DEL PACIENTE SELECCIONADO */}
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
                 <div>
@@ -620,10 +726,15 @@ export default function CalculoLioPage() {
                     <span className="text-xs font-bold text-[var(--secondary)]">
                       {pacienteActivo.fecha_cirugia ? `Fecha Qx: ${pacienteActivo.fecha_cirugia}` : 'Caso en Asesoramiento'}
                     </span>
-                    {pacienteActivo.lio_calculado && (
+                    {pacienteActivo.lio_calculado ? (
                       <span className="px-2.5 py-0.5 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 text-xs font-extrabold flex items-center gap-1">
                         <CheckCircle2 size={13} />
-                        <span>Calculado</span>
+                        <span>Confirmado</span>
+                      </span>
+                    ) : (
+                      <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-xs font-extrabold flex items-center gap-1">
+                        <Clock size={13} />
+                        <span>Pendiente LIO</span>
                       </span>
                     )}
                   </div>
@@ -649,6 +760,38 @@ export default function CalculoLioPage() {
                 </div>
               </div>
 
+              {/* BANNER DE ESTADO CONFIRMADO Y MODO PROTEGIDO */}
+              {pacienteActivo.lio_calculado && !modoEdicion && (
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/40 to-blue-950/40 border border-cyan-500/40 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
+                      <Lock size={18} />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                        <span>Cálculo de LIO Confirmado y Sellado</span>
+                        <ShieldCheck size={14} className="text-cyan-400" />
+                      </h4>
+                      <p className="text-[11px] text-cyan-200/80 mt-0.5">
+                        Definido por <b>{pacienteActivo.lio_calculado_por || pacienteActivo.cirujano_nombre}</b>
+                        {pacienteActivo.lio_calculado_at && ` • ${formatearHoraDesdeIso(pacienteActivo.lio_calculado_at)}`}
+                        {' ' }— Los campos están protegidos para el acto quirúrgico.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={reabriendo}
+                    onClick={handleReabrirCalculo}
+                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 border border-cyan-500/40 transition shadow-sm"
+                  >
+                    {reabriendo ? <Loader2 size={13} className="animate-spin" /> : <Edit3 size={13} />}
+                    <span>✏ Modificar / Reabrir Cálculo</span>
+                  </button>
+                </div>
+              )}
+
               {/* GESTOR DINÁMICO DE OPCIONES MULTILENTE */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -658,34 +801,39 @@ export default function CalculoLioPage() {
                       <span>Opciones de Lente Intraocular ({opcionesLio.length})</span>
                     </h3>
                     <p className="text-[11px] text-[var(--secondary)]">
-                      Carga el Plan Principal y las opciones alternativas (dioptría limítrofe, lente tórico con eje o sulcus).
+                      {pacienteActivo.lio_calculado && !modoEdicion
+                        ? 'Opciones definitivas selladas por el cirujano para la intervención.'
+                        : 'Carga el Plan Principal y las opciones alternativas (dioptría limítrofe, lente tórico con eje o sulcus).'}
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => agregarOpcionLio('alternativa')}
-                      className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)] rounded-xl text-xs font-bold flex items-center gap-1.5 border border-[var(--border)] transition"
-                    >
-                      <Plus size={13} />
-                      <span>+ Opción Alternativa</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => agregarOpcionLio('torico')}
-                      className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border border-indigo-200 dark:border-indigo-800 transition"
-                    >
-                      <Plus size={13} />
-                      <span>+ Opción Tórica</span>
-                    </button>
-                  </div>
+                  {(modoEdicion || !pacienteActivo.lio_calculado) && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => agregarOpcionLio('alternativa')}
+                        className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)] rounded-xl text-xs font-bold flex items-center gap-1.5 border border-[var(--border)] transition"
+                      >
+                        <Plus size={13} />
+                        <span>+ Opción Alternativa</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => agregarOpcionLio('torico')}
+                        className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border border-indigo-200 dark:border-indigo-800 transition"
+                      >
+                        <Plus size={13} />
+                        <span>+ Opción Tórica</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Listado de Tarjetas de Opciones */}
                 <div className="space-y-3.5">
                   {opcionesLio.map((op, index) => {
                     const esPpal = op.tipo_opcion === 'principal' || index === 0
+                    const deshabilitado = pacienteActivo.lio_calculado && !modoEdicion
 
                     return (
                       <div
@@ -713,27 +861,37 @@ export default function CalculoLioPage() {
                               {esPpal ? 'Plan A (Principal)' : `Opción ${index + 1}`}
                             </span>
 
-                            <input
-                              type="text"
-                              value={op.etiqueta}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'etiqueta', e.target.value)}
-                              className="font-extrabold text-xs text-[var(--foreground)] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-cyan-500 outline-none px-1"
-                            />
+                            {deshabilitado ? (
+                              <span className="font-extrabold text-xs text-[var(--foreground)] px-1">{op.etiqueta}</span>
+                            ) : (
+                              <input
+                                type="text"
+                                value={op.etiqueta}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'etiqueta', e.target.value)}
+                                className="font-extrabold text-xs text-[var(--foreground)] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-cyan-500 outline-none px-1"
+                              />
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2">
-                            <select
-                              value={op.tipo_opcion}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'tipo_opcion', e.target.value)}
-                              className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg border border-[var(--border)] text-[11px] font-bold text-[var(--foreground)] outline-none"
-                            >
-                              <option value="principal">Principal</option>
-                              <option value="alternativa">Alternativa (+/-0.50D)</option>
-                              <option value="torico">Tórica (Astigmatismo)</option>
-                              <option value="sulcus">Sulcus (3 Piezas)</option>
-                            </select>
+                            {deshabilitado ? (
+                              <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-[11px] font-bold uppercase text-[var(--foreground)]">
+                                {op.tipo_opcion}
+                              </span>
+                            ) : (
+                              <select
+                                value={op.tipo_opcion}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'tipo_opcion', e.target.value)}
+                                className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg border border-[var(--border)] text-[11px] font-bold text-[var(--foreground)] outline-none cursor-pointer"
+                              >
+                                <option value="principal">Principal</option>
+                                <option value="alternativa">Alternativa (+/-0.50D)</option>
+                                <option value="torico">Tórica (Astigmatismo)</option>
+                                <option value="sulcus">Sulcus (3 Piezas)</option>
+                              </select>
+                            )}
 
-                            {opcionesLio.length > 1 && (
+                            {!deshabilitado && opcionesLio.length > 1 && (
                               <button
                                 type="button"
                                 onClick={() => eliminarOpcionLio(op.id)}
@@ -751,56 +909,74 @@ export default function CalculoLioPage() {
                           {/* Modelo de LIO */}
                           <div className="sm:col-span-2 space-y-1">
                             <label className="text-[11px] font-bold text-[var(--secondary)]">Modelo / Tipo de LIO</label>
-                            <select
-                              value={op.modelo}
-                              onChange={(e) => {
-                                const val = e.target.value
-                                const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
-                                actualizarOpcionLio(op.id, 'modelo', val)
-                                if (modObj && modObj.tipo_optica && modObj.tipo_optica.toLowerCase().includes('tóric')) {
-                                  actualizarOpcionLio(op.id, 'es_torico', true)
-                                }
-                              }}
-                              className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-sm"
-                            >
-                              <option value="">-- Seleccionar LIO del Catálogo ({modelosLio.length} disponibles) --</option>
-                              {modelosLio.map((m) => (
-                                <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
-                                  {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
-                                </option>
-                              ))}
-                              {op.modelo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === op.modelo) && (
-                                <option value={op.modelo}>{op.modelo}</option>
-                              )}
-                            </select>
+                            {deshabilitado ? (
+                              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-extrabold text-[var(--foreground)]">
+                                {op.modelo || 'Sin especificar'}
+                              </div>
+                            ) : (
+                              <select
+                                value={op.modelo}
+                                onChange={(e) => {
+                                  const val = e.target.value
+                                  const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
+                                  actualizarOpcionLio(op.id, 'modelo', val)
+                                  if (modObj && modObj.tipo_optica && modObj.tipo_optica.toLowerCase().includes('tóric')) {
+                                    actualizarOpcionLio(op.id, 'es_torico', true)
+                                  }
+                                }}
+                                className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-sm"
+                              >
+                                <option value="">-- Seleccionar LIO del Catálogo ({modelosLio.length} disponibles) --</option>
+                                {modelosLio.map((m) => (
+                                  <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                                    {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
+                                  </option>
+                                ))}
+                                {op.modelo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === op.modelo) && (
+                                  <option value={op.modelo}>{op.modelo}</option>
+                                )}
+                              </select>
+                            )}
                           </div>
 
                           {/* Dioptría (Poder) */}
                           <div className="space-y-1">
                             <label className="text-[11px] font-bold text-[var(--secondary)]">Dioptría (Poder)</label>
-                            <input
-                              type="text"
-                              value={op.dioptria}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'dioptria', e.target.value)}
-                              placeholder="+21.50"
-                              className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-extrabold text-blue-600 dark:text-blue-400 outline-none focus:border-cyan-500 font-mono"
-                            />
+                            {deshabilitado ? (
+                              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-black text-blue-600 dark:text-blue-400 font-mono">
+                                {op.dioptria} D
+                              </div>
+                            ) : (
+                              <input
+                                type="text"
+                                value={op.dioptria}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'dioptria', e.target.value)}
+                                placeholder="+21.50"
+                                className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-extrabold text-blue-600 dark:text-blue-400 outline-none focus:border-cyan-500 font-mono"
+                              />
+                            )}
                           </div>
 
                           {/* Target Refractivo */}
                           <div className="space-y-1">
                             <label className="text-[11px] font-bold text-[var(--secondary)]">Target Refractivo</label>
-                            <select
-                              value={op.target_refractivo}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'target_refractivo', e.target.value)}
-                              className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500"
-                            >
-                              {TARGETS_REFRACTIVOS.map((tg) => (
-                                <option key={tg} value={tg}>
-                                  {tg}
-                                </option>
-                              ))}
-                            </select>
+                            {deshabilitado ? (
+                              <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-semibold text-[var(--foreground)]">
+                                {op.target_refractivo}
+                              </div>
+                            ) : (
+                              <select
+                                value={op.target_refractivo}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'target_refractivo', e.target.value)}
+                                className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer"
+                              >
+                                {TARGETS_REFRACTIVOS.map((tg) => (
+                                  <option key={tg} value={tg}>
+                                    {tg}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </div>
                         </div>
 
@@ -811,17 +987,23 @@ export default function CalculoLioPage() {
                               <label className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
                                 Valor Tórico (Cilindro)
                               </label>
-                              <select
-                                value={op.torico_valor || 3}
-                                onChange={(e) => actualizarOpcionLio(op.id, 'torico_valor', parseInt(e.target.value) || 0)}
-                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-300 dark:border-indigo-700 text-xs font-bold text-indigo-900 dark:text-indigo-200 outline-none"
-                              >
-                                {TORICOS_OPCIONES.map((to) => (
-                                  <option key={to.valor} value={to.valor}>
-                                    {to.label}
-                                  </option>
-                                ))}
-                              </select>
+                              {deshabilitado ? (
+                                <div className="px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                                  T{op.torico_valor}
+                                </div>
+                              ) : (
+                                <select
+                                  value={op.torico_valor || 3}
+                                  onChange={(e) => actualizarOpcionLio(op.id, 'torico_valor', parseInt(e.target.value) || 0)}
+                                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-300 dark:border-indigo-700 text-xs font-bold text-indigo-900 dark:text-indigo-200 outline-none cursor-pointer"
+                                >
+                                  {TORICOS_OPCIONES.map((to) => (
+                                    <option key={to.valor} value={to.valor}>
+                                      {to.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
                             </div>
 
                             <div className="space-y-1">
@@ -833,14 +1015,20 @@ export default function CalculoLioPage() {
                                   {op.torico_eje || 90}°
                                 </span>
                               </div>
-                              <input
-                                type="number"
-                                min={0}
-                                max={180}
-                                value={op.torico_eje || 90}
-                                onChange={(e) => actualizarOpcionLio(op.id, 'torico_eje', parseInt(e.target.value) || 0)}
-                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-300 dark:border-indigo-700 text-xs font-mono font-bold text-[var(--foreground)] outline-none"
-                              />
+                              {deshabilitado ? (
+                                <div className="px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg text-xs font-mono font-bold text-indigo-600">
+                                  {op.torico_eje || 90}°
+                                </div>
+                              ) : (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={180}
+                                  value={op.torico_eje || 90}
+                                  onChange={(e) => actualizarOpcionLio(op.id, 'torico_eje', parseInt(e.target.value) || 0)}
+                                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-300 dark:border-indigo-700 text-xs font-mono font-bold text-[var(--foreground)] outline-none"
+                                />
+                              )}
                             </div>
                           </div>
                         )}
@@ -849,28 +1037,40 @@ export default function CalculoLioPage() {
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
                           <div className="space-y-1">
                             <label className="text-[10px] font-bold text-[var(--secondary)]">Fórmula Utilizada</label>
-                            <select
-                              value={op.formula}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'formula', e.target.value)}
-                              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none"
-                            >
-                              {FORMULAS_LIO.map((f) => (
-                                <option key={f} value={f}>
-                                  {f}
-                                </option>
-                              ))}
-                            </select>
+                            {deshabilitado ? (
+                              <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs text-[var(--foreground)]">
+                                {op.formula}
+                              </div>
+                            ) : (
+                              <select
+                                value={op.formula}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'formula', e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none cursor-pointer"
+                              >
+                                {FORMULAS_LIO.map((f) => (
+                                  <option key={f} value={f}>
+                                    {f}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </div>
 
                           <div className="sm:col-span-2 space-y-1">
                             <label className="text-[10px] font-bold text-[var(--secondary)]">Notas para Quirófano</label>
-                            <input
-                              type="text"
-                              value={op.observaciones}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'observaciones', e.target.value)}
-                              placeholder="Ej: Si ACD < 3.0mm o en caso de desgarro capsular..."
-                              className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500"
-                            />
+                            {deshabilitado ? (
+                              <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs text-[var(--foreground)]">
+                                {op.observaciones || 'Sin notas especiales'}
+                              </div>
+                            ) : (
+                              <input
+                                type="text"
+                                value={op.observaciones}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'observaciones', e.target.value)}
+                                placeholder="Ej: Si ACD < 3.0mm o en caso de desgarro capsular..."
+                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500"
+                              />
+                            )}
                           </div>
                         </div>
                       </div>
@@ -879,10 +1079,10 @@ export default function CalculoLioPage() {
                 </div>
               </div>
 
-              {/* BARRA INFERIOR DE ACCIONES Y RESERVA DE STOCK */}
-              <div className="pt-4 border-t border-[var(--border)] flex flex-col sm:flex-row items-center justify-between gap-4">
+              {/* BARRA INFERIOR DE ACCIONES (BOTONERA DUAL & STOCK) */}
+              <div className="pt-4 border-t border-[var(--border)] flex flex-col lg:flex-row items-center justify-between gap-4">
                 {/* Gestión de Reserva de Stock (Quirófano) */}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full lg:w-auto">
                   <button
                     type="button"
                     disabled={reservandoStock || !pacienteActivo.turno_id}
@@ -910,16 +1110,48 @@ export default function CalculoLioPage() {
                   )}
                 </div>
 
-                {/* Guardar Cálculo */}
-                <button
-                  type="button"
-                  disabled={guardando}
-                  onClick={handleGuardarCalculo}
-                  className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white rounded-2xl text-xs font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/20 transition disabled:opacity-50"
-                >
-                  {guardando ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                  <span>💾 Guardar y Confirmar Cálculo de LIO</span>
-                </button>
+                {/* BOTONERA DUAL: GUARDAR BORRADOR & CONFIRMAR */}
+                <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-end">
+                  {(!pacienteActivo.lio_calculado || modoEdicion) && (
+                    <>
+                      {/* Botón 1: Guardar Borrador (no confirma, permanece en Pendientes LIO) */}
+                      <button
+                        type="button"
+                        disabled={guardandoBorrador || confirmandoCalculo}
+                        onClick={handleGuardarBorrador}
+                        className="px-4 py-2.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-[var(--foreground)] rounded-2xl text-xs font-extrabold flex items-center gap-2 border border-[var(--border)] transition disabled:opacity-50"
+                        title="Guarda las opciones cargadas sin sellar. El paciente permanece en Pendientes LIO."
+                      >
+                        {guardandoBorrador ? <Loader2 size={15} className="animate-spin text-blue-500" /> : <Save size={15} />}
+                        <span>💾 Guardar Borrador</span>
+                      </button>
+
+                      {/* Botón 2: Confirmar y Sellar (cierra la selección y pasa a LIO Confirmado) */}
+                      <button
+                        type="button"
+                        disabled={guardandoBorrador || confirmandoCalculo}
+                        onClick={handleConfirmarCalculo}
+                        className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white rounded-2xl text-xs font-black flex items-center gap-2 shadow-lg shadow-cyan-500/25 transition disabled:opacity-50"
+                        title="Confirma y sella la selección de lentes, bloqueando la edición y pasando el caso a LIO Confirmado."
+                      >
+                        {confirmandoCalculo ? <Loader2 size={15} className="animate-spin" /> : <Lock size={15} />}
+                        <span>🔒 Confirmar y Sellar LIO</span>
+                      </button>
+                    </>
+                  )}
+
+                  {pacienteActivo.lio_calculado && !modoEdicion && (
+                    <button
+                      type="button"
+                      disabled={reabriendo}
+                      onClick={handleReabrirCalculo}
+                      className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-2xl text-xs font-extrabold flex items-center gap-2 border border-cyan-500/40 transition"
+                    >
+                      {reabriendo ? <Loader2 size={15} className="animate-spin" /> : <Edit3 size={15} />}
+                      <span>✏ Reabrir para Modificar</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
