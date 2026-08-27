@@ -93,6 +93,7 @@ export default function ModalDetalleCirugiaEnVivo({
     lente_torico_eje: 90,
     lente_lote: '',
     lente_serie: '',
+    lente_vencimiento: '',
     tipo_anestesia: 'Tópica + Sedación',
     observaciones: '',
     observaciones_intraoperatorias: ''
@@ -124,6 +125,7 @@ export default function ModalDetalleCirugiaEnVivo({
         lente_torico_eje: turno.lente_torico_eje || 90,
         lente_lote: turno.lente_lote || '',
         lente_serie: turno.lente_serie || '',
+        lente_vencimiento: turno.lente_vencimiento || '',
         tipo_anestesia: turno.tipo_anestesia || 'Tópica + Sedación',
         observaciones: turno.observaciones || '',
         observaciones_intraoperatorias: turno.observaciones_intraoperatorias || ''
