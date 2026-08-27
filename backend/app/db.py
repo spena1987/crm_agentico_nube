@@ -3608,21 +3608,49 @@ def eliminar_prestador(prestador_id: str) -> bool:
 
 
 # ====================================================================
-# MODELOS DE LENTES INTRAOCULARES (LIO)
+# MODELOS DE LENTES INTRAOCULARES (LIO) Y SKUS GECLISA (GTIN)
 # ====================================================================
 
 def get_modelos_lio(solo_activos: bool = False) -> List[Dict[str, Any]]:
     if not supabase:
         return []
     try:
-        q = supabase.table("modelos_lio").select("*")
+        q = supabase.table("modelos_lio").select("*, modelos_lio_items(count)")
         if solo_activos:
             q = q.eq("activo", True)
         resp = q.order("marca").order("modelo").execute()
-        return resp.data or []
+        modelos = resp.data or []
+        for m in modelos:
+            # Parse count of items
+            items_info = m.get("modelos_lio_items")
+            if isinstance(items_info, list) and len(items_info) > 0 and "count" in items_info[0]:
+                m["items_count"] = items_info[0]["count"]
+            else:
+                m["items_count"] = 0
+            if "modelos_lio_items" in m:
+                del m["modelos_lio_items"]
+        return modelos
     except Exception as e:
-        logger.error(f"Error al listar modelos de LIO: {e}")
-        return []
+        logger.error(f"Error al listar modelos de LIO con conteo: {e}")
+        try:
+            q2 = supabase.table("modelos_lio").select("*")
+            if solo_activos:
+                q2 = q2.eq("activo", True)
+            resp2 = q2.order("marca").order("modelo").execute()
+            return resp2.data or []
+        except Exception as e2:
+            logger.error(f"Error en fallback listar modelos de LIO: {e2}")
+            return []
+
+def get_modelo_lio_por_id(modelo_id: str) -> Optional[Dict[str, Any]]:
+    if not supabase or not modelo_id:
+        return None
+    try:
+        resp = supabase.table("modelos_lio").select("*").eq("id", modelo_id).execute()
+        return resp.data[0] if resp.data else None
+    except Exception as e:
+        logger.error(f"Error al obtener modelo de LIO {modelo_id}: {e}")
+        return None
 
 def crear_modelo_lio(datos: Dict[str, Any]) -> Dict[str, Any]:
     if not supabase:
@@ -3655,6 +3683,83 @@ def eliminar_modelo_lio(modelo_id: str) -> bool:
     except Exception as e:
         logger.error(f"Error al eliminar modelo de LIO {modelo_id}: {e}")
         return False
+
+# --- ÍTEMS / SKUS DE LIO (MAPEADOS POR GTIN / DIOPTRÍA) ---
+
+def get_modelos_lio_items(modelo_lio_id: str) -> List[Dict[str, Any]]:
+    if not supabase or not modelo_lio_id:
+        return []
+    try:
+        resp = supabase.table("modelos_lio_items").select("*").eq("modelo_lio_id", modelo_lio_id).order("dioptria").order("torico_valor").execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al listar items de modelo LIO {modelo_lio_id}: {e}")
+        return []
+
+def crear_modelo_lio_item(datos: Dict[str, Any]) -> Dict[str, Any]:
+    if not supabase:
+        return {}
+    try:
+        payload = {
+            "modelo_lio_id": datos.get("modelo_lio_id"),
+            "geclisa_ele_id": int(datos.get("geclisa_ele_id")),
+            "geclisa_ele_cod": str(datos.get("geclisa_ele_cod", "")).strip(),
+            "geclisa_nombre": datos.get("geclisa_nombre"),
+            "dioptria": float(datos.get("dioptria")),
+            "es_torico": bool(datos.get("es_torico", False)),
+            "torico_valor": datos.get("torico_valor") if datos.get("es_torico") else None,
+            "created_at": "now()",
+            "updated_at": "now()"
+        }
+        resp = supabase.table("modelos_lio_items").insert(payload).execute()
+        return resp.data[0] if resp.data else {}
+    except Exception as e:
+        logger.error(f"Error al crear item de modelo LIO: {e}")
+        raise e
+
+def eliminar_modelo_lio_item(item_id: str) -> bool:
+    if not supabase or not item_id:
+        return False
+    try:
+        supabase.table("modelos_lio_items").delete().eq("id", item_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar item LIO {item_id}: {e}")
+        return False
+
+def resolver_sku_lio(modelo_lio_id: Optional[str], modelo_nombre: Optional[str], dioptria: float, torico_valor: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Busca el SKU / GTIN de Geclisa exacto para un modelo (por ID o nombre), dioptría y toricidad.
+    """
+    if not supabase:
+        return None
+    try:
+        m_id = modelo_lio_id
+        if not m_id and modelo_nombre:
+            # Buscar ID del modelo por nombre
+            m_res = supabase.table("modelos_lio").select("id, constante_a").ilike("modelo", f"%{modelo_nombre.strip()}%").limit(1).execute()
+            if m_res.data:
+                m_id = m_res.data[0]["id"]
+
+        if not m_id:
+            return None
+
+        # Redondear dioptria a 2 decimales
+        diop_val = round(float(dioptria), 2)
+        q = supabase.table("modelos_lio_items").select("*").eq("modelo_lio_id", m_id).eq("dioptria", diop_val)
+        
+        if torico_valor and str(torico_valor).strip() not in ["", "null", "None", "0"]:
+            q = q.eq("torico_valor", str(torico_valor).strip())
+        else:
+            q = q.or_("torico_valor.is.null,es_torico.eq.false")
+
+        resp = q.limit(1).execute()
+        if resp.data:
+            return resp.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error al resolver SKU LIO ({modelo_lio_id}, {dioptria}, {torico_valor}): {e}")
+        return None
 
 
 # ====================================================================

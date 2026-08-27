@@ -1492,6 +1492,86 @@ class GeclisaClient:
             return (None, "application/octet-stream", f"Archivo_{as_id}.bin")
 
     # ====================================================================
+    # MÓDULO ELEMENTOS / LENTES INTRAOCULARES / INSUMOS
+    # ====================================================================
+    def buscar_elementos(self, search_term: str, limite: int = 50) -> List[Dict[str, Any]]:
+        """
+        Busca elementos en Geclisa por nombre, código comercial o GTIN vía /api/Elementos/autocomplete.
+        """
+        if not search_term or not search_term.strip():
+            return []
+        try:
+            token = self._obtener_token()
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            url = f"{self.base_url}/api/Elementos/autocomplete"
+            res = self._do_request("GET", url, params={"search": search_term.strip()}, headers=headers, timeout=10)
+            res.raise_for_status()
+            data = res.json()
+            if isinstance(data, list):
+                return data[:limite]
+            return []
+        except Exception as e:
+            logger.error(f"Error al buscar elementos en Geclisa con término '{search_term}': {e}")
+            return []
+
+    def obtener_stock_elemento(self, ele_id: int, dep_id: int = 1) -> float:
+        """
+        Obtiene el stock actual de un elemento en un depósito específico (1=Quirófano, 3=Consignación, 4=Farmacia).
+        """
+        try:
+            token = self._obtener_token()
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            url = f"{self.base_url}/api/Elementos/stock-ele-deposito"
+            res = self._do_request("GET", url, params={"eleId": ele_id, "depId": dep_id}, headers=headers, timeout=8)
+            res.raise_for_status()
+            data = res.json()
+            if isinstance(data, (int, float)):
+                return float(data)
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error al consultar stock de eleId={ele_id} en depId={dep_id}: {e}")
+            return 0.0
+
+    def obtener_lotes_elemento(self, ele_id: int, dep_id: Optional[int] = 1) -> List[Dict[str, Any]]:
+        """
+        Obtiene los lotes físicos disponibles de un elemento en un depósito.
+        """
+        try:
+            token = self._obtener_token()
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            url = f"{self.base_url}/api/Elementos/lotes"
+            params = {"eleId": ele_id}
+            if dep_id is not None:
+                params["depId"] = dep_id
+            res = self._do_request("GET", url, params=params, headers=headers, timeout=8)
+            res.raise_for_status()
+            data = res.json()
+            if isinstance(data, list):
+                return data
+            return []
+        except Exception as e:
+            logger.error(f"Error al consultar lotes de eleId={ele_id}: {e}")
+            return []
+
+    def obtener_resumen_stock_lotes(self, ele_id: int) -> Dict[str, Any]:
+        """
+        Retorna un resumen consolidado de stock en Quirófano (dep 1) y Consignación (dep 3) con sus lotes activos.
+        """
+        stock_quirofano = self.obtener_stock_elemento(ele_id, dep_id=1)
+        stock_consignacion = self.obtener_stock_elemento(ele_id, dep_id=3)
+        lotes_quirofano = self.obtener_lotes_elemento(ele_id, dep_id=1)
+        lotes_consignacion = self.obtener_lotes_elemento(ele_id, dep_id=3)
+
+        return {
+            "ele_id": ele_id,
+            "stock_quirofano": stock_quirofano,
+            "stock_consignacion": stock_consignacion,
+            "stock_total": stock_quirofano + stock_consignacion,
+            "lotes_quirofano": lotes_quirofano,
+            "lotes_consignacion": lotes_consignacion
+        }
+
+    # ====================================================================
     # SCRIPT DE DIAGNÓSTICO E INICIALIZACIÓN
     # ====================================================================
     def test_read_connection(self) -> bool:

@@ -114,8 +114,14 @@ from app.db import (
     actualizar_prestador,
     eliminar_prestador,
     get_modelos_lio,
+    get_modelo_lio_por_id,
     crear_modelo_lio,
     actualizar_modelo_lio,
+    eliminar_modelo_lio,
+    get_modelos_lio_items,
+    crear_modelo_lio_item,
+    eliminar_modelo_lio_item,
+    resolver_sku_lio,
     get_turnos_dia_ejecucion,
     cambiar_estado_turno_quirofano,
     subir_consentimiento_turno_a_geclisa,
@@ -4323,6 +4329,36 @@ def eliminar_archivo_geclisa_endpoint(as_id: int):
         logger.error(f"Error eliminando archivo #{as_id} de Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ====================================================================
+# ENDPOINTS: INTEGRACIÓN GECLISA ELEMENTOS & LENTES INTRAOCULARES
+# ====================================================================
+
+@app.get("/api/geclisa/elementos/buscar")
+def buscar_elementos_geclisa_endpoint(q: str = Query(..., min_length=1, description="Término de búsqueda o código GTIN")):
+    """
+    Busca elementos en Geclisa por nombre, código comercial o GTIN vía /api/Elementos/autocomplete.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        elementos = geclisa_client.buscar_elementos(q)
+        return {"success": True, "elementos": elementos, "total": len(elementos)}
+    except Exception as e:
+        logger.error(f"Error al buscar elementos en Geclisa con query '{q}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geclisa/elementos/{ele_id}/stock-lotes")
+def obtener_stock_lotes_geclisa_endpoint(ele_id: int):
+    """
+    Obtiene el stock consolidado (Quirófano y Consignación) y lotes activos para un eleId de Geclisa.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        resumen = geclisa_client.obtener_resumen_stock_lotes(ele_id)
+        return {"success": True, "resumen": resumen}
+    except Exception as e:
+        logger.error(f"Error al obtener stock y lotes para eleId {ele_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/modelos-lio")
 def listar_modelos_lio_endpoint(solo_activos: bool = False):
     try:
@@ -4330,6 +4366,21 @@ def listar_modelos_lio_endpoint(solo_activos: bool = False):
         return {"success": True, "modelos": items}
     except Exception as e:
         logger.error(f"Error listando modelos de LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/modelos-lio/{modelo_id}")
+def obtener_modelo_lio_endpoint(modelo_id: str):
+    try:
+        modelo = get_modelo_lio_por_id(modelo_id)
+        if not modelo:
+            raise HTTPException(status_code=404, detail="Modelo de LIO no encontrado.")
+        items = get_modelos_lio_items(modelo_id)
+        modelo["items"] = items
+        return {"success": True, "modelo": modelo}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error obteniendo modelo de LIO {modelo_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/modelos-lio")
@@ -4358,6 +4409,79 @@ def eliminar_modelo_lio_endpoint(modelo_id: str):
     except Exception as e:
         logger.error(f"Error eliminando modelo de LIO {modelo_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- ÍTEMS / SKUS (MAPEADOS POR GTIN / DIOPTRÍA) ---
+
+@app.get("/api/modelos-lio/{modelo_id}/items")
+def listar_items_modelo_lio_endpoint(modelo_id: str):
+    try:
+        items = get_modelos_lio_items(modelo_id)
+        return {"success": True, "items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error listando items para modelo LIO {modelo_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/modelos-lio/{modelo_id}/items")
+def crear_item_modelo_lio_endpoint(modelo_id: str, payload: Dict[str, Any] = Body(...)):
+    try:
+        payload["modelo_lio_id"] = modelo_id
+        nuevo_item = crear_modelo_lio_item(payload)
+        return {"success": True, "item": nuevo_item}
+    except Exception as e:
+        logger.error(f"Error creando item para modelo LIO {modelo_id}: {e}")
+        raise HTTPException(status_code=400, detail=f"No se pudo guardar la graduación (verifique que no esté duplicada): {str(e)}")
+
+@app.delete("/api/modelos-lio/items/{item_id}")
+def eliminar_item_modelo_lio_endpoint(item_id: str):
+    try:
+        ok = eliminar_modelo_lio_item(item_id)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error eliminando item LIO {item_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ResolverSkuPayload(BaseModel):
+    modelo_lio_id: Optional[str] = None
+    modelo_nombre: Optional[str] = None
+    dioptria: float
+    torico_valor: Optional[str] = None
+
+@app.post("/api/modelos-lio/resolver-sku")
+def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
+    """
+    Resuelve el SKU/GTIN de Geclisa para una combinación de Modelo, Dioptría y Toricidad,
+    y consulta en tiempo real el stock en Quirófano (Dep 1) y Consignación (Dep 3) con sus lotes.
+    """
+    try:
+        item = resolver_sku_lio(
+            modelo_lio_id=payload.modelo_lio_id,
+            modelo_nombre=payload.modelo_nombre,
+            dioptria=payload.dioptria,
+            torico_valor=payload.torico_valor
+        )
+        if not item:
+            return {
+                "success": True,
+                "mapeado": False,
+                "mensaje": "Graduación no mapeada a código GTIN Geclisa.",
+                "item": None,
+                "stock": None
+            }
+
+        # Consultar stock y lotes en vivo en Geclisa para este eleId
+        from app.services.geclisa_client import geclisa_client
+        resumen_stock = geclisa_client.obtener_resumen_stock_lotes(item["geclisa_ele_id"])
+
+        return {
+            "success": True,
+            "mapeado": True,
+            "item": item,
+            "stock": resumen_stock
+        }
+    except Exception as e:
+        logger.error(f"Error resolviendo SKU LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 
