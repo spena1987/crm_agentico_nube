@@ -697,6 +697,36 @@ class GeclisaClient:
                 elif t.get("hsIni"):
                     h = str(t.get("hsIni")).zfill(4)
                     hora_str = f"{h[:2]}:{h[2:]}"
+
+                # Extraer práctica o estudio médico
+                practica_str = (t.get("nombrePractica") or t.get("practica") or t.get("nomNombre") or "").strip()
+                if not practica_str:
+                    nom_cod = (t.get("nomCod") or "").strip()
+                    if nom_cod:
+                        practica_str = f"Práctica {nom_cod}"
+                    else:
+                        practica_str = t.get("servicioNombre") or "Consulta Médica"
+
+                # Desglosar consultorio y ubicación
+                raw_cons = (t.get("nombreConsultorio") or t.get("consultorio") or "MENDOZA Mitre 540").strip()
+                if "Mitre 540" in raw_cons or "MENDOZA" in raw_cons.upper():
+                    consultorio_str = "Consultorio Mendoza"
+                    ubicacion_str = "Sede Central (Mitre 540)"
+                elif "Boedo" in raw_cons or "LUJAN" in raw_cons.upper():
+                    consultorio_str = "Consultorio Luján"
+                    ubicacion_str = "Sede Luján de Cuyo"
+                elif "Mitre 538" in raw_cons or "3er Piso" in raw_cons:
+                    consultorio_str = "Consultorio Estudios (3er Piso)"
+                    ubicacion_str = "Sede Mitre 538"
+                elif "Palmares" in raw_cons.upper():
+                    consultorio_str = "Consultorio Palmares"
+                    ubicacion_str = "Sede Palmares"
+                elif "Roca" in raw_cons:
+                    consultorio_str = "Consultorio Roca"
+                    ubicacion_str = "Sede Roca (Luján)"
+                else:
+                    consultorio_str = raw_cons
+                    ubicacion_str = "CentroVisión Mendoza"
                     
                 turnos_normalizados.append({
                     "turno_id": t.get("turnoId") or t.get("id"),
@@ -708,7 +738,9 @@ class GeclisaClient:
                     "telefono": t.get("telefono") or t.get("celular"),
                     "obra_social": t.get("osPlan") or "Particular",
                     "servicio": t.get("servicioNombre") or "Consultas",
-                    "consultorio": t.get("nombreConsultorio") or "Sede Central",
+                    "practica": practica_str,
+                    "consultorio": consultorio_str,
+                    "ubicacion": ubicacion_str,
                     "prestador_id": t.get("preId") or pre_id,
                     "prestador_nombre": t.get("nombrePrestador") or "",
                     "observaciones": t.get("observaciones") or "",
@@ -727,6 +759,52 @@ class GeclisaClient:
         except Exception as e:
             logger.error(f"Error al obtener agenda para prestador #{pre_id} en fecha {fecha_iso}: {e}")
             return []
+
+    def obtener_agenda_global(self, fecha_iso: str) -> list:
+        """
+        Consulta en paralelo la agenda de los prestadores activos de la clínica
+        para consolidar la vista global del día.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        prestadores = self.buscar_prestadores("")
+        if not prestadores:
+            prestadores = [
+                {"pre_id": 969, "nombre": "ASESORAMIENTO"},
+                {"pre_id": 961, "nombre": "BONANNO, PABLO ANTONIO"},
+                {"pre_id": 945, "nombre": "GRAS, HERNAN"},
+                {"pre_id": 1025, "nombre": "GRAS, HERNAN (Cirugía)"},
+                {"pre_id": 1067, "nombre": "ABRAHAM, GABRIELA"},
+                {"pre_id": 2084, "nombre": "ASESORAMIENTO LUJAN"},
+                {"pre_id": 2090, "nombre": "TECNICO OFTALMOLOGO"},
+            ]
+        
+        all_turnos = []
+        with ThreadPoolExecutor(max_workers=12) as executor:
+            future_to_pre = {
+                executor.submit(self.obtener_agenda_prestador, p.get("pre_id"), fecha_iso): p 
+                for p in prestadores if p.get("pre_id")
+            }
+            for future in as_completed(future_to_pre):
+                try:
+                    res_turnos = future.result()
+                    if res_turnos:
+                        all_turnos.extend(res_turnos)
+                except Exception as e:
+                    logger.warning(f"Error consultando turnos para prestador en agenda global: {e}")
+                    
+        # Eliminar duplicados por turno_id y ordenar cronológicamente
+        seen_ids = set()
+        unique_turnos = []
+        for t in all_turnos:
+            t_id = t.get("turno_id")
+            if t_id and t_id not in seen_ids:
+                seen_ids.add(t_id)
+                unique_turnos.append(t)
+            elif not t_id:
+                unique_turnos.append(t)
+                
+        unique_turnos.sort(key=lambda x: x.get("hora") or "00:00")
+        return unique_turnos
 
     def cambiar_estado_turno(
         self,

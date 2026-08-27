@@ -4418,37 +4418,46 @@ def obtener_agenda_geclisa_endpoint(
     usuario_crm_id: Optional[str] = Query(None, description="ID del usuario en el CRM para resolver prestador por defecto")
 ):
     """
-    Obtiene la agenda de turnos en vivo de Geclisa para un prestador y fecha específicos.
-    Si pre_id no se especifica, intenta resolver el prestador asignado al usuario en el CRM.
+    Obtiene la agenda de turnos en vivo de Geclisa para un prestador o global de toda la clínica.
+    Si pre_id no se especifica o es 0/None, obtiene la agenda global consolidada del día.
     """
     try:
         from app.services.geclisa_client import geclisa_client
         from datetime import datetime
         
-        target_pre_id = pre_id
+        fecha_iso = fecha or datetime.now().strftime("%Y-%m-%d")
         prestador_info = None
         
-        # 1. Si no viene pre_id, buscar en el perfil del usuario del CRM
-        if not target_pre_id and usuario_crm_id:
-            p_resp = supabase.table("usuarios_perfil").select("geclisa_pre_id, geclisa_matricula, geclisa_prestador_nombre").eq("id", usuario_crm_id).limit(1).execute()
-            if p_resp.data and p_resp.data[0].get("geclisa_pre_id"):
-                target_pre_id = int(p_resp.data[0]["geclisa_pre_id"])
+        # 1. Si viene un prestador específico
+        if pre_id and pre_id > 0:
+            target_pre_id = pre_id
+            turnos = geclisa_client.obtener_agenda_prestador(pre_id=target_pre_id, fecha_iso=fecha_iso)
+            p_data = geclisa_client.obtener_prestador_por_id(target_pre_id)
+            if p_data.get("encontrado"):
                 prestador_info = {
                     "pre_id": target_pre_id,
-                    "matricula": p_resp.data[0].get("geclisa_matricula"),
-                    "nombre": p_resp.data[0].get("geclisa_prestador_nombre")
+                    "nombre": p_data.get("nombre"),
+                    "matricula": p_data.get("matricula")
                 }
-                
-        # 2. Fallback por defecto: Prestador Asesoramiento Quirúrgico (preId 969)
-        if not target_pre_id:
-            target_pre_id = 969
-            
-        fecha_iso = fecha or datetime.now().strftime("%Y-%m-%d")
+            elif turnos:
+                prestador_info = {
+                    "pre_id": target_pre_id,
+                    "nombre": turnos[0].get("prestador_nombre") or f"Prestador #{target_pre_id}",
+                    "matricula": ""
+                }
+            else:
+                prestador_info = {"pre_id": target_pre_id, "nombre": f"Prestador #{target_pre_id}", "matricula": ""}
+        else:
+            # 2. Modo Global: Toda la clínica
+            target_pre_id = 0
+            turnos = geclisa_client.obtener_agenda_global(fecha_iso=fecha_iso)
+            prestador_info = {
+                "pre_id": 0,
+                "nombre": "Todos los Prestadores (Clínica Completa)",
+                "matricula": ""
+            }
         
-        # 3. Consultar turnos en Geclisa
-        turnos = geclisa_client.obtener_agenda_prestador(pre_id=target_pre_id, fecha_iso=fecha_iso)
-        
-        # 4. Calcular métricas agregadas de estados
+        # 3. Calcular métricas agregadas de estados
         metricas = {
             "total": len(turnos),
             "reservado": sum(1 for t in turnos if t.get("estado_key") == "reservado"),
@@ -4458,31 +4467,35 @@ def obtener_agenda_geclisa_endpoint(
             "cancelado": sum(1 for t in turnos if t.get("estado_key") == "cancelado")
         }
         
-        # 5. Obtener nombre del prestador si no está cargado
-        if not prestador_info and turnos:
-            prestador_info = {
-                "pre_id": target_pre_id,
-                "nombre": turnos[0].get("prestador_nombre") or "Prestador Geclisa",
-                "matricula": ""
-            }
-        elif not prestador_info:
-            p_data = geclisa_client.obtener_prestador_por_id(target_pre_id)
-            if p_data.get("encontrado"):
-                prestador_info = {
-                    "pre_id": target_pre_id,
-                    "nombre": p_data.get("nombre"),
-                    "matricula": p_data.get("matricula")
-                }
-            else:
-                prestador_info = {"pre_id": target_pre_id, "nombre": f"Prestador #{target_pre_id}", "matricula": ""}
-                
+        # 4. Extraer catálogos dinámicos presentes en los turnos
+        servicios_set = set()
+        ubicaciones_set = set()
+        consultorios_set = set()
+        prestadores_dict = {}
+
+        for t in turnos:
+            if t.get("servicio"):
+                servicios_set.add(t["servicio"])
+            if t.get("ubicacion"):
+                ubicaciones_set.add(t["ubicacion"])
+            if t.get("consultorio"):
+                consultorios_set.add(t["consultorio"])
+            if t.get("prestador_id"):
+                prestadores_dict[t["prestador_id"]] = t.get("prestador_nombre") or f"Prestador #{t['prestador_id']}"
+
         return {
             "success": True,
             "pre_id": target_pre_id,
             "prestador": prestador_info,
             "fecha": fecha_iso,
             "turnos": turnos,
-            "metricas": metricas
+            "metricas": metricas,
+            "catalogos": {
+                "servicios": sorted(list(servicios_set)),
+                "ubicaciones": sorted(list(ubicaciones_set)),
+                "consultorios": sorted(list(consultorios_set)),
+                "prestadores": [{"pre_id": k, "nombre": v} for k, v in sorted(prestadores_dict.items(), key=lambda x: x[1])]
+            }
         }
     except Exception as e:
         logger.error(f"Error al obtener agenda de Geclisa: {e}")

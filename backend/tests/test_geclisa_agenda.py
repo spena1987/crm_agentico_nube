@@ -17,7 +17,7 @@ def test_listar_prestadores_geclisa_endpoint():
         assert len(data["prestadores"]) == 1
         assert data["prestadores"][0]["pre_id"] == 969
 
-def test_obtener_agenda_geclisa_endpoint():
+def test_obtener_agenda_geclisa_endpoint_individual():
     with patch("app.services.geclisa_client.geclisa_client.obtener_agenda_prestador") as mock_agenda, \
          patch("app.services.geclisa_client.geclisa_client.obtener_prestador_por_id") as mock_prestador:
         
@@ -32,7 +32,9 @@ def test_obtener_agenda_geclisa_endpoint():
                 "telefono": None,
                 "obra_social": "PARTICULAR",
                 "servicio": "CIRUGIA",
-                "consultorio": "MENDOZA Mitre 540",
+                "practica": "Consulta Quirúrgica",
+                "consultorio": "Consultorio Mendoza",
+                "ubicacion": "Sede Central (Mitre 540)",
                 "prestador_id": 969,
                 "prestador_nombre": "ASESORAMIENTO",
                 "observaciones": "",
@@ -57,8 +59,78 @@ def test_obtener_agenda_geclisa_endpoint():
         assert data["success"] is True
         assert data["pre_id"] == 969
         assert len(data["turnos"]) == 1
+        assert data["turnos"][0]["practica"] == "Consulta Quirúrgica"
         assert data["metricas"]["total"] == 1
         assert data["metricas"]["reservado"] == 1
+        assert "CIRUGIA" in data["catalogos"]["servicios"]
+        assert "Sede Central (Mitre 540)" in data["catalogos"]["ubicaciones"]
+
+def test_obtener_agenda_geclisa_endpoint_global():
+    with patch("app.services.geclisa_client.geclisa_client.obtener_agenda_global") as mock_global:
+        mock_global.return_value = [
+            {
+                "turno_id": 1386147,
+                "fecha_hora": "2026-08-27T09:00:00",
+                "hora": "09:00",
+                "paciente": "OROZCO JORGE DIEGO",
+                "ficha_id": 389148,
+                "dni": None,
+                "telefono": None,
+                "obra_social": "PARTICULAR",
+                "servicio": "CIRUGIA",
+                "practica": "OCT MACULAR",
+                "consultorio": "Consultorio Mendoza",
+                "ubicacion": "Sede Central (Mitre 540)",
+                "prestador_id": 969,
+                "prestador_nombre": "ASESORAMIENTO",
+                "observaciones": "",
+                "es_sobreturno": False,
+                "estado_key": "confirmado",
+                "estado_label": "Confirmado",
+                "confirmado": True,
+                "en_espera": False,
+                "asistio": False,
+                "cancelado": False,
+            },
+            {
+                "turno_id": 1386148,
+                "fecha_hora": "2026-08-27T09:15:00",
+                "hora": "09:15",
+                "paciente": "PEREZ JUAN",
+                "ficha_id": 389149,
+                "dni": None,
+                "telefono": None,
+                "obra_social": "OSDE",
+                "servicio": "ESTUDIOS",
+                "practica": "CAMPIMETRIA",
+                "consultorio": "Consultorio Luján",
+                "ubicacion": "Sede Luján de Cuyo",
+                "prestador_id": 961,
+                "prestador_nombre": "BONANNO, PABLO",
+                "observaciones": "",
+                "es_sobreturno": False,
+                "estado_key": "ingresado",
+                "estado_label": "Ingresado",
+                "confirmado": True,
+                "en_espera": True,
+                "asistio": False,
+                "cancelado": False,
+            }
+        ]
+        
+        # Petición sin pre_id => modo global clínica completa
+        res = client.get("/api/geclisa/agenda?fecha=2026-08-27")
+        assert res.status_code == 200
+        data = res.json()
+        assert data["success"] is True
+        assert data["pre_id"] == 0
+        assert len(data["turnos"]) == 2
+        assert data["metricas"]["total"] == 2
+        assert data["metricas"]["confirmado"] == 1
+        assert data["metricas"]["ingresado"] == 1
+        assert len(data["catalogos"]["servicios"]) == 2
+        assert len(data["catalogos"]["ubicaciones"]) == 2
+        assert len(data["catalogos"]["prestadores"]) == 2
 
 def test_cambiar_estado_turno_geclisa_endpoint():
     with patch("app.services.geclisa_client.geclisa_client.cambiar_estado_turno") as mock_cambio, \
