@@ -13,6 +13,9 @@ export async function GET() {
         rol_id,
         activo,
         avatar_url,
+        geclisa_pre_id,
+        geclisa_matricula,
+        geclisa_prestador_nombre,
         created_at,
         updated_at,
         roles (
@@ -41,7 +44,16 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { email, password, nombre_completo, rol_id, activo = true } = body
+    const { 
+      email, 
+      password, 
+      nombre_completo, 
+      rol_id, 
+      activo = true,
+      geclisa_pre_id = null,
+      geclisa_matricula = null,
+      geclisa_prestador_nombre = null
+    } = body
 
     if (!email || !password || !nombre_completo) {
       return NextResponse.json(
@@ -83,6 +95,9 @@ export async function POST(request: Request) {
         nombre_completo: nombre_completo.trim(),
         rol_id: rol_id || null,
         activo,
+        geclisa_pre_id: geclisa_pre_id ? parseInt(String(geclisa_pre_id)) : null,
+        geclisa_matricula: geclisa_matricula ? String(geclisa_matricula).trim() : null,
+        geclisa_prestador_nombre: geclisa_prestador_nombre ? String(geclisa_prestador_nombre).trim() : null,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -92,6 +107,9 @@ export async function POST(request: Request) {
         nombre_completo,
         rol_id,
         activo,
+        geclisa_pre_id,
+        geclisa_matricula,
+        geclisa_prestador_nombre,
         created_at,
         roles (
           id,

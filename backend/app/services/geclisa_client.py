@@ -643,6 +643,155 @@ class GeclisaClient:
             )
             return {"success": False, "turnos": [], "error": str(e)}
 
+    def obtener_agenda_prestador(self, pre_id: int, fecha_iso: str) -> list:
+        """
+        Obtiene la agenda de turnos asignados a un prestador específico para una fecha determinada.
+        Ruta: GET /api/Turnos/prestador/{preId}?fechaDesde={fecha_iso}T00:00:00
+        """
+        token = self._obtener_token()
+        from datetime import datetime
+        fecha_limpia = fecha_iso.split("T")[0] if fecha_iso else datetime.now().strftime("%Y-%m-%d")
+        url = f"{self.base_url}/api/Turnos/prestador/{pre_id}?fechaDesde={fecha_limpia}T00:00:00"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        
+        t_start = time.time()
+        try:
+            res = self._do_request("GET", url, headers=headers, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
+            res.raise_for_status()
+            data = res.json()
+            items = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
+            
+            turnos_normalizados = []
+            for t in items:
+                fecha_tur = t.get("fecha") or ""
+                # Filtrar solo los turnos que correspondan al día solicitado
+                if fecha_limpia and fecha_tur and not fecha_tur.startswith(fecha_limpia):
+                    continue
+                    
+                cancelado = bool(t.get("cancelado"))
+                asistio = bool(t.get("asistio"))
+                en_espera = bool(t.get("enEspera"))
+                confirmado = bool(t.get("confirmado"))
+                
+                if cancelado:
+                    estado_key = "cancelado"
+                    estado_label = "Cancelado"
+                elif asistio:
+                    estado_key = "atendido"
+                    estado_label = "Atendido"
+                elif en_espera:
+                    estado_key = "ingresado"
+                    estado_label = "Ingresado"
+                elif confirmado:
+                    estado_key = "confirmado"
+                    estado_label = "Confirmado"
+                else:
+                    estado_key = "reservado"
+                    estado_label = "Reservado"
+                    
+                # Extraer hora HH:mm
+                hora_str = ""
+                if fecha_tur and "T" in fecha_tur:
+                    hora_str = fecha_tur.split("T")[1][:5]
+                elif t.get("hsIni"):
+                    h = str(t.get("hsIni")).zfill(4)
+                    hora_str = f"{h[:2]}:{h[2:]}"
+                    
+                turnos_normalizados.append({
+                    "turno_id": t.get("turnoId") or t.get("id"),
+                    "fecha_hora": fecha_tur,
+                    "hora": hora_str or "00:00",
+                    "paciente": t.get("paciente") or f"Paciente #{t.get('fichaId')}",
+                    "ficha_id": t.get("fichaId"),
+                    "dni": str(t.get("nroDoc") or "").strip() if t.get("nroDoc") else None,
+                    "telefono": t.get("telefono") or t.get("celular"),
+                    "obra_social": t.get("osPlan") or "Particular",
+                    "servicio": t.get("servicioNombre") or "Consultas",
+                    "consultorio": t.get("nombreConsultorio") or "Sede Central",
+                    "prestador_id": t.get("preId") or pre_id,
+                    "prestador_nombre": t.get("nombrePrestador") or "",
+                    "observaciones": t.get("observaciones") or "",
+                    "es_sobreturno": bool(t.get("esSobreturno")),
+                    "estado_key": estado_key,
+                    "estado_label": estado_label,
+                    "confirmado": confirmado,
+                    "en_espera": en_espera,
+                    "asistio": asistio,
+                    "cancelado": cancelado,
+                    "raw": t
+                })
+                
+            turnos_normalizados.sort(key=lambda x: x.get("hora") or "00:00")
+            return turnos_normalizados
+        except Exception as e:
+            logger.error(f"Error al obtener agenda para prestador #{pre_id} en fecha {fecha_iso}: {e}")
+            return []
+
+    def cambiar_estado_turno(
+        self,
+        turno_id: int,
+        nuevo_estado: str,
+        canal: int = 7,
+        motivo_id: int = 1,
+        obs: Optional[str] = None
+    ) -> dict:
+        """
+        Cambia el estado de un turno en Geclisa:
+        - 'confirmado': POST /api/Turnos/{turnoId}/confirmar?canal={canal}
+        - 'reservado': POST /api/Turnos/{turnoId}/cancelar-confirmacion
+        - 'ingresado': POST /api/Turnos/NumeroRecepcion (salaId=1)
+        - 'atendido': PUT /api/Turnos/marcar-atendido/{turnoId}
+        - 'cancelado': POST /api/Turnos/{turnoId}/cancelar?mctId={motivo_id}
+        """
+        token = self._obtener_token()
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"}
+        estado = nuevo_estado.lower().strip()
+        t_start = time.time()
+        
+        try:
+            if estado == "confirmado":
+                url = f"{self.base_url}/api/Turnos/{turno_id}/confirmar?canal={canal}"
+                res = self._do_request("POST", url, headers=headers, timeout=15)
+                res.raise_for_status()
+                return {"success": True, "estado": "confirmado", "mensaje": "Turno confirmado en Geclisa."}
+                
+            elif estado == "reservado":
+                url = f"{self.base_url}/api/Turnos/{turno_id}/cancelar-confirmacion"
+                res = self._do_request("POST", url, headers=headers, timeout=15)
+                res.raise_for_status()
+                return {"success": True, "estado": "reservado", "mensaje": "Confirmación cancelada. Turno en estado Reservado."}
+                
+            elif estado == "ingresado":
+                url = f"{self.base_url}/api/Turnos/NumeroRecepcion"
+                payload = {
+                    "salaId": 1,
+                    "turnoId": int(turno_id),
+                    "motivo": 1000
+                }
+                res = self._do_request("POST", url, headers=headers, json=payload, timeout=15)
+                res.raise_for_status()
+                return {"success": True, "estado": "ingresado", "mensaje": "Paciente ingresado a Sala de Espera en Geclisa."}
+                
+            elif estado == "atendido":
+                url = f"{self.base_url}/api/Turnos/marcar-atendido/{turno_id}"
+                res = self._do_request("PUT", url, headers=headers, timeout=15)
+                res.raise_for_status()
+                return {"success": True, "estado": "atendido", "mensaje": "Turno marcado como Atendido en Geclisa."}
+                
+            elif estado == "cancelado":
+                url = f"{self.base_url}/api/Turnos/{turno_id}/cancelar?mctId={motivo_id}&forceDelete=false"
+                res = self._do_request("POST", url, headers=headers, timeout=15)
+                res.raise_for_status()
+                return {"success": True, "estado": "cancelado", "mensaje": "Turno cancelado en Geclisa."}
+                
+            else:
+                return {"success": False, "error": f"Estado '{nuevo_estado}' no reconocido."}
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Error cambiando estado de turno #{turno_id} a '{nuevo_estado}': {e}")
+            return {"success": False, "error": str(e)}
+
     # ====================================================================
     # MÉTODOS DE NOMENCLADOR Y VALORIZACIÓN (PRESUPUESTOS)
     # ====================================================================

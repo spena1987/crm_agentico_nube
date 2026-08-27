@@ -10,6 +10,9 @@ export interface UserProfile {
   nombre_completo: string
   rol_id: string | null
   activo: boolean
+  geclisa_pre_id?: number | null
+  geclisa_matricula?: string | null
+  geclisa_prestador_nombre?: string | null
   roles?: {
     id: string
     codigo: string
@@ -49,6 +52,9 @@ export function usePermissions() {
           nombre_completo,
           rol_id,
           activo,
+          geclisa_pre_id,
+          geclisa_matricula,
+          geclisa_prestador_nombre,
           roles (
             id,
             codigo,

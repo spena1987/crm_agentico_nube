@@ -4393,3 +4393,133 @@ def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
     except Exception as e:
         logger.error(f"Error en endpoint cambiar estado {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: AGENDA HOSPITALARIA GECLISA & GESTIÓN DE TURNOS
+# ====================================================================
+
+@app.get("/api/geclisa/prestadores")
+def listar_prestadores_geclisa_endpoint(query: str = Query("", description="Término de búsqueda por nombre o matrícula")):
+    """
+    Lista el catálogo de prestadores activos de Geclisa para selección en usuarios y agenda.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        prestadores = geclisa_client.buscar_prestadores(query)
+        return {"success": True, "prestadores": prestadores, "total": len(prestadores)}
+    except Exception as e:
+        logger.error(f"Error al listar prestadores de Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/geclisa/agenda")
+def obtener_agenda_geclisa_endpoint(
+    pre_id: Optional[int] = Query(None, description="ID del prestador en Geclisa"),
+    fecha: Optional[str] = Query(None, description="Fecha en formato YYYY-MM-DD"),
+    usuario_crm_id: Optional[str] = Query(None, description="ID del usuario en el CRM para resolver prestador por defecto")
+):
+    """
+    Obtiene la agenda de turnos en vivo de Geclisa para un prestador y fecha específicos.
+    Si pre_id no se especifica, intenta resolver el prestador asignado al usuario en el CRM.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        from datetime import datetime
+        
+        target_pre_id = pre_id
+        prestador_info = None
+        
+        # 1. Si no viene pre_id, buscar en el perfil del usuario del CRM
+        if not target_pre_id and usuario_crm_id:
+            p_resp = supabase.table("usuarios_perfil").select("geclisa_pre_id, geclisa_matricula, geclisa_prestador_nombre").eq("id", usuario_crm_id).limit(1).execute()
+            if p_resp.data and p_resp.data[0].get("geclisa_pre_id"):
+                target_pre_id = int(p_resp.data[0]["geclisa_pre_id"])
+                prestador_info = {
+                    "pre_id": target_pre_id,
+                    "matricula": p_resp.data[0].get("geclisa_matricula"),
+                    "nombre": p_resp.data[0].get("geclisa_prestador_nombre")
+                }
+                
+        # 2. Fallback por defecto: Prestador Asesoramiento Quirúrgico (preId 969)
+        if not target_pre_id:
+            target_pre_id = 969
+            
+        fecha_iso = fecha or datetime.now().strftime("%Y-%m-%d")
+        
+        # 3. Consultar turnos en Geclisa
+        turnos = geclisa_client.obtener_agenda_prestador(pre_id=target_pre_id, fecha_iso=fecha_iso)
+        
+        # 4. Calcular métricas agregadas de estados
+        metricas = {
+            "total": len(turnos),
+            "reservado": sum(1 for t in turnos if t.get("estado_key") == "reservado"),
+            "confirmado": sum(1 for t in turnos if t.get("estado_key") == "confirmado"),
+            "ingresado": sum(1 for t in turnos if t.get("estado_key") == "ingresado"),
+            "atendido": sum(1 for t in turnos if t.get("estado_key") == "atendido"),
+            "cancelado": sum(1 for t in turnos if t.get("estado_key") == "cancelado")
+        }
+        
+        # 5. Obtener nombre del prestador si no está cargado
+        if not prestador_info and turnos:
+            prestador_info = {
+                "pre_id": target_pre_id,
+                "nombre": turnos[0].get("prestador_nombre") or "Prestador Geclisa",
+                "matricula": ""
+            }
+        elif not prestador_info:
+            p_data = geclisa_client.obtener_prestador_por_id(target_pre_id)
+            if p_data.get("encontrado"):
+                prestador_info = {
+                    "pre_id": target_pre_id,
+                    "nombre": p_data.get("nombre"),
+                    "matricula": p_data.get("matricula")
+                }
+            else:
+                prestador_info = {"pre_id": target_pre_id, "nombre": f"Prestador #{target_pre_id}", "matricula": ""}
+                
+        return {
+            "success": True,
+            "pre_id": target_pre_id,
+            "prestador": prestador_info,
+            "fecha": fecha_iso,
+            "turnos": turnos,
+            "metricas": metricas
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener agenda de Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class CambiarEstadoTurnoGeclisaPayload(BaseModel):
+    nuevo_estado: str # 'reservado' | 'confirmado' | 'ingresado' | 'atendido' | 'cancelado'
+    canal: Optional[int] = 7 # 7: WhatsApp, 1: Teléfono, 4: Personal
+    motivo_id: Optional[int] = 1
+    usuario_crm: Optional[str] = None
+
+@app.put("/api/geclisa/agenda/turnos/{turno_id}/estado")
+def cambiar_estado_turno_geclisa_endpoint(turno_id: int, payload: CambiarEstadoTurnoGeclisaPayload):
+    """
+    Cambia el estado de un turno en Geclisa (Reservado, Confirmado, Ingresado, Atendido, Cancelado).
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        res = geclisa_client.cambiar_estado_turno(
+            turno_id=turno_id,
+            nuevo_estado=payload.nuevo_estado,
+            canal=payload.canal or 7,
+            motivo_id=payload.motivo_id or 1
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al actualizar estado en Geclisa.")
+            
+        log_event(
+            nivel="INFO",
+            modulo="GECLISA",
+            accion="CAMBIO_ESTADO_TURNO",
+            mensaje=f"Turno #{turno_id} cambiado a estado '{payload.nuevo_estado}' por {payload.usuario_crm or 'Usuario'}",
+            detalles={"turno_id": turno_id, "nuevo_estado": payload.nuevo_estado, "usuario": payload.usuario_crm}
+        )
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al cambiar estado de turno #{turno_id} en Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

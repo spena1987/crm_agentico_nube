@@ -17,7 +17,8 @@ import {
   EyeOff, 
   RefreshCw,
   AlertCircle,
-  Users
+  Users,
+  Stethoscope
 } from 'lucide-react'
 
 interface Role {
@@ -27,12 +28,22 @@ interface Role {
   es_sistema: boolean
 }
 
+interface PrestadorGeclisa {
+  pre_id: number
+  nombre: string
+  matricula: string
+  especialidad?: string
+}
+
 interface UserItem {
   id: string
   email: string
   nombre_completo: string
   rol_id: string | null
   activo: boolean
+  geclisa_pre_id?: number | null
+  geclisa_matricula?: string | null
+  geclisa_prestador_nombre?: string | null
   created_at: string
   roles?: Role | null
 }
@@ -40,6 +51,8 @@ interface UserItem {
 export default function UsuariosPage() {
   const [users, setUsers] = useState<UserItem[]>([])
   const [roles, setRoles] = useState<Role[]>([])
+  const [prestadores, setPrestadores] = useState<PrestadorGeclisa[]>([])
+  const [cargandoPrestadores, setCargandoPrestadores] = useState(false)
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
@@ -57,6 +70,9 @@ export default function UsuariosPage() {
   const [createPassword, setCreatePassword] = useState('')
   const [createRolId, setCreateRolId] = useState('')
   const [createActivo, setCreateActivo] = useState(true)
+  const [createPreId, setCreatePreId] = useState<number | null>(null)
+  const [createMatricula, setCreateMatricula] = useState('')
+  const [createPrestadorNombre, setCreatePrestadorNombre] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [copiedPassword, setCopiedPassword] = useState(false)
 
@@ -65,6 +81,9 @@ export default function UsuariosPage() {
   const [editRolId, setEditRolId] = useState('')
   const [editActivo, setEditActivo] = useState(true)
   const [editPassword, setEditPassword] = useState('')
+  const [editPreId, setEditPreId] = useState<number | null>(null)
+  const [editMatricula, setEditMatricula] = useState('')
+  const [editPrestadorNombre, setEditPrestadorNombre] = useState('')
 
   // Cargar datos
   const loadData = async () => {
@@ -93,8 +112,26 @@ export default function UsuariosPage() {
     }
   }
 
+  // Cargar catálogo de prestadores de Geclisa
+  const cargarPrestadores = async (termino = '') => {
+    try {
+      setCargandoPrestadores(true)
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000'
+      const res = await fetch(`${backendUrl}/api/geclisa/prestadores?query=${encodeURIComponent(termino)}`)
+      if (res.ok) {
+        const data = await res.json()
+        setPrestadores(data.prestadores || [])
+      }
+    } catch (e) {
+      console.error('Error cargando prestadores:', e)
+    } finally {
+      setCargandoPrestadores(false)
+    }
+  }
+
   useEffect(() => {
     loadData()
+    cargarPrestadores()
   }, [])
 
   // Generador de contraseña segura aleatoria
@@ -130,6 +167,9 @@ export default function UsuariosPage() {
           password: createPassword,
           rol_id: createRolId || null,
           activo: createActivo,
+          geclisa_pre_id: createPreId,
+          geclisa_matricula: createMatricula,
+          geclisa_prestador_nombre: createPrestadorNombre,
         }),
       })
 
@@ -141,13 +181,16 @@ export default function UsuariosPage() {
 
       setFeedback({
         type: 'success',
-        message: `Usuario ${createNombre} (${createEmail}) creado exitosamente en Supabase Auth y CRM.`,
+        message: `Usuario ${createNombre} (${createEmail}) creado exitosamente con perfil y prestador Geclisa asignado.`,
       })
       setShowCreateModal(false)
       // Resetear campos
       setCreateNombre('')
       setCreateEmail('')
       setCreatePassword('')
+      setCreatePreId(null)
+      setCreateMatricula('')
+      setCreatePrestadorNombre('')
       await loadData()
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })
@@ -163,6 +206,9 @@ export default function UsuariosPage() {
     setEditRolId(user.rol_id || '')
     setEditActivo(user.activo)
     setEditPassword('')
+    setEditPreId(user.geclisa_pre_id || null)
+    setEditMatricula(user.geclisa_matricula || '')
+    setEditPrestadorNombre(user.geclisa_prestador_nombre || '')
     setShowEditModal(true)
   }
 
@@ -178,6 +224,9 @@ export default function UsuariosPage() {
         nombre_completo: editNombre,
         rol_id: editRolId || null,
         activo: editActivo,
+        geclisa_pre_id: editPreId,
+        geclisa_matricula: editMatricula,
+        geclisa_prestador_nombre: editPrestadorNombre,
       }
       if (editPassword.trim()) {
         payload.password = editPassword.trim()
@@ -246,7 +295,9 @@ export default function UsuariosPage() {
     return (
       u.nombre_completo.toLowerCase().includes(term) ||
       u.email.toLowerCase().includes(term) ||
-      (u.roles?.nombre || '').toLowerCase().includes(term)
+      (u.roles?.nombre || '').toLowerCase().includes(term) ||
+      (u.geclisa_prestador_nombre || '').toLowerCase().includes(term) ||
+      (u.geclisa_matricula || '').includes(term)
     )
   })
 
@@ -274,7 +325,7 @@ export default function UsuariosPage() {
           <Search size={18} className="text-slate-400 shrink-0" />
           <input
             type="text"
-            placeholder="Buscar por nombre, correo o perfil..."
+            placeholder="Buscar por nombre, correo, rol o prestador Geclisa..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full text-xs bg-transparent border-0 focus:outline-none focus:ring-0"
@@ -343,6 +394,7 @@ export default function UsuariosPage() {
                   <th className="py-3.5 px-4">Usuario</th>
                   <th className="py-3.5 px-4">Correo Electrónico</th>
                   <th className="py-3.5 px-4">Perfil / Rol</th>
+                  <th className="py-3.5 px-4">Prestador Geclisa</th>
                   <th className="py-3.5 px-4">Estado</th>
                   <th className="py-3.5 px-4">Fecha de Alta</th>
                   <th className="py-3.5 px-4 text-right">Acciones</th>
@@ -378,6 +430,19 @@ export default function UsuariosPage() {
                           <Shield size={12} />
                           {user.roles?.nombre || 'Sin Rol Asignado'}
                         </span>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        {user.geclisa_prestador_nombre ? (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                            <Stethoscope size={13} className="text-blue-600 shrink-0" />
+                            <span>{user.geclisa_prestador_nombre}</span>
+                            {user.geclisa_matricula && (
+                              <span className="text-[10px] opacity-75 font-mono">({user.geclisa_matricula})</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">Sin prestador vinculado</span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         {user.activo ? (
@@ -520,6 +585,39 @@ export default function UsuariosPage() {
                 </div>
               </div>
 
+              {/* Prestador Geclisa Asignado */}
+              <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
+                <label className="block text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5">
+                  <Stethoscope size={14} /> Prestador Geclisa por Defecto
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  Asigna la matrícula y prestador de Geclisa para precargar su agenda y auditar interacciones hospitalarias.
+                </p>
+                <select
+                  value={createPreId || ''}
+                  onChange={(e) => {
+                    const val = e.target.value ? parseInt(e.target.value) : null
+                    setCreatePreId(val)
+                    const p = prestadores.find((item) => item.pre_id === val)
+                    if (p) {
+                      setCreateMatricula(p.matricula || '')
+                      setCreatePrestadorNombre(p.nombre || '')
+                    } else {
+                      setCreateMatricula('')
+                      setCreatePrestadorNombre('')
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="">-- Sin prestador asignado (Acceso general) --</option>
+                  {prestadores.map((p) => (
+                    <option key={p.pre_id} value={p.pre_id}>
+                      {p.nombre} {p.matricula ? `(Mat: ${p.matricula})` : ''} - {p.especialidad || 'Médico'}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
@@ -583,7 +681,7 @@ export default function UsuariosPage() {
       {/* Modal: Editar Usuario */}
       {showEditModal && selectedUser && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-[var(--card)] border border-[var(--border)] w-full max-w-lg p-6 rounded-2xl shadow-xl space-y-4 relative">
+          <div className="bg-[var(--card)] border border-[var(--border)] w-full max-w-lg p-6 rounded-2xl shadow-xl space-y-4 relative max-h-[90vh] overflow-y-auto panel-scroll">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
               <h2 className="text-sm font-bold flex items-center gap-2 text-[var(--foreground)]">
                 <Edit className="text-blue-600" size={18} />
@@ -609,6 +707,36 @@ export default function UsuariosPage() {
                   onChange={(e) => setEditNombre(e.target.value)}
                   className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
+              </div>
+
+              {/* Prestador Geclisa Asignado */}
+              <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
+                <label className="block text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5">
+                  <Stethoscope size={14} /> Prestador Geclisa por Defecto
+                </label>
+                <select
+                  value={editPreId || ''}
+                  onChange={(e) => {
+                    const val = e.target.value ? parseInt(e.target.value) : null
+                    setEditPreId(val)
+                    const p = prestadores.find((item) => item.pre_id === val)
+                    if (p) {
+                      setEditMatricula(p.matricula || '')
+                      setEditPrestadorNombre(p.nombre || '')
+                    } else {
+                      setEditMatricula('')
+                      setEditPrestadorNombre('')
+                    }
+                  }}
+                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="">-- Sin prestador asignado (Acceso general) --</option>
+                  {prestadores.map((p) => (
+                    <option key={p.pre_id} value={p.pre_id}>
+                      {p.nombre} {p.matricula ? `(Mat: ${p.matricula})` : ''} - {p.especialidad || 'Médico'}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

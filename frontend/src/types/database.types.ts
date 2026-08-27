@@ -919,6 +919,9 @@ export type Database = {
           avatar_url: string | null
           created_at: string
           email: string
+          geclisa_matricula: string | null
+          geclisa_pre_id: number | null
+          geclisa_prestador_nombre: string | null
           id: string
           nombre_completo: string
           rol_id: string | null
@@ -929,6 +932,9 @@ export type Database = {
           avatar_url?: string | null
           created_at?: string
           email: string
+          geclisa_matricula?: string | null
+          geclisa_pre_id?: number | null
+          geclisa_prestador_nombre?: string | null
           id: string
           nombre_completo: string
           rol_id?: string | null
@@ -939,6 +945,9 @@ export type Database = {
           avatar_url?: string | null
           created_at?: string
           email?: string
+          geclisa_matricula?: string | null
+          geclisa_pre_id?: number | null
+          geclisa_prestador_nombre?: string | null
           id?: string
           nombre_completo?: string
           rol_id?: string | null

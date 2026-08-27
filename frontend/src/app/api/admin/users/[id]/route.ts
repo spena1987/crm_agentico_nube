@@ -9,7 +9,15 @@ export async function PATCH(
   try {
     const userId = params.id
     const body = await request.json()
-    const { nombre_completo, rol_id, activo, password } = body
+    const { 
+      nombre_completo, 
+      rol_id, 
+      activo, 
+      password,
+      geclisa_pre_id,
+      geclisa_matricula,
+      geclisa_prestador_nombre
+    } = body
 
     // 1. Si se envió una nueva contraseña, actualizar en Supabase Auth
     if (password && password.trim().length >= 6) {
@@ -36,6 +44,9 @@ export async function PATCH(
     if (nombre_completo !== undefined) updateFields.nombre_completo = nombre_completo.trim()
     if (rol_id !== undefined) updateFields.rol_id = rol_id || null
     if (activo !== undefined) updateFields.activo = activo
+    if (geclisa_pre_id !== undefined) updateFields.geclisa_pre_id = geclisa_pre_id ? parseInt(String(geclisa_pre_id)) : null
+    if (geclisa_matricula !== undefined) updateFields.geclisa_matricula = geclisa_matricula ? String(geclisa_matricula).trim() : null
+    if (geclisa_prestador_nombre !== undefined) updateFields.geclisa_prestador_nombre = geclisa_prestador_nombre ? String(geclisa_prestador_nombre).trim() : null
 
     const { data: updatedProfile, error: profileError } = await supabaseAdmin
       .from('usuarios_perfil')
@@ -47,6 +58,9 @@ export async function PATCH(
         nombre_completo,
         rol_id,
         activo,
+        geclisa_pre_id,
+        geclisa_matricula,
+        geclisa_prestador_nombre,
         created_at,
         updated_at,
         roles (
