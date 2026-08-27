@@ -751,19 +751,28 @@ export default function CalculoLioPage() {
                           {/* Modelo de LIO */}
                           <div className="sm:col-span-2 space-y-1">
                             <label className="text-[11px] font-bold text-[var(--secondary)]">Modelo / Tipo de LIO</label>
-                            <input
-                              type="text"
+                            <select
                               value={op.modelo}
-                              onChange={(e) => actualizarOpcionLio(op.id, 'modelo', e.target.value)}
-                              list={`modelos-list-${op.id}`}
-                              placeholder="Ej: AcrySof IQ SN60WF (Alcon)"
-                              className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500"
-                            />
-                            <datalist id={`modelos-list-${op.id}`}>
+                              onChange={(e) => {
+                                const val = e.target.value
+                                const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
+                                actualizarOpcionLio(op.id, 'modelo', val)
+                                if (modObj && modObj.tipo_optica && modObj.tipo_optica.toLowerCase().includes('tóric')) {
+                                  actualizarOpcionLio(op.id, 'es_torico', true)
+                                }
+                              }}
+                              className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-sm"
+                            >
+                              <option value="">-- Seleccionar LIO del Catálogo ({modelosLio.length} disponibles) --</option>
                               {modelosLio.map((m) => (
-                                <option key={m.id} value={`${m.modelo} (${m.marca})`} />
+                                <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                                  {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
+                                </option>
                               ))}
-                            </datalist>
+                              {op.modelo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === op.modelo) && (
+                                <option value={op.modelo}>{op.modelo}</option>
+                              )}
+                            </select>
                           </div>
 
                           {/* Dioptría (Poder) */}

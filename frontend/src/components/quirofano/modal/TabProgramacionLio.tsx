@@ -242,19 +242,29 @@ export default function TabProgramacionLio({
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1 animate-fade-in text-xs">
             <div>
               <label className="block font-bold text-[var(--foreground)] mb-1">Modelo de LIO</label>
-              <input
-                type="text"
-                list="modelos-lio-list"
+              <select
                 value={formData.lente_tipo}
-                onChange={(e) => setFormData({ ...formData, lente_tipo: e.target.value })}
-                placeholder="Ej: Alcon AcrySof IQ"
-                className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <datalist id="modelos-lio-list">
+                onChange={(e) => {
+                  const val = e.target.value
+                  const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
+                  setFormData((prev: any) => ({
+                    ...prev,
+                    lente_tipo: val,
+                    es_torico: modObj && modObj.tipo_optica && modObj.tipo_optica.toLowerCase().includes('tóric') ? true : prev.es_torico
+                  }))
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer text-xs"
+              >
+                <option value="">-- Seleccionar Modelo de LIO --</option>
                 {modelosLio.map((m) => (
-                  <option key={m.id} value={`${m.modelo} (${m.marca})`} />
+                  <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                    {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
+                  </option>
                 ))}
-              </datalist>
+                {formData.lente_tipo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === formData.lente_tipo) && (
+                  <option value={formData.lente_tipo}>{formData.lente_tipo}</option>
+                )}
+              </select>
             </div>
 
             <div>
