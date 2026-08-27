@@ -35,7 +35,8 @@ import {
   Search,
   X,
   ListFilter,
-  Layers
+  Layers,
+  ArrowRight
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -47,11 +48,12 @@ interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
 }
 
-const ESTADOS_ORDEN = ['programado', 'en_espera', 'en_operacion', 'operado']
+const ESTADOS_ORDEN = ['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado']
 
 const NOMBRES_ESTADOS: Record<string, string> = {
   programado: 'Por Llegar',
   en_espera: 'En Espera',
+  pre_quirofano: 'Pre-Quirófano',
   en_operacion: 'En Quirófano',
   operado: 'Operados',
   todos: 'Todos'
@@ -90,7 +92,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         }
       } else {
         const legacy = localStorage.getItem('quirofano_filtro_estado')
-        if (legacy && ['todos', 'programado', 'en_espera', 'en_operacion', 'operado'].includes(legacy)) {
+        if (legacy && ['todos', 'programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado'].includes(legacy)) {
           setFiltrosEstado([legacy])
         }
       }
@@ -256,7 +258,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     }
   }, [fecha, quirofanoFiltro])
 
-  // Cambiar estado del turno (en_espera, en_operacion, operado, cancelado)
+  // Cambiar estado del turno (en_espera, pre_quirofano, en_operacion, operado, cancelado)
   const handleCambiarEstado = async (turnoId: string, nuevoEstado: string) => {
     try {
       setProcesandoId(turnoId)
@@ -425,14 +427,15 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     setFecha(d.toISOString().slice(0, 10))
   }
 
-  // Métricas del día
+  // Métricas del día (6 KPIs)
   const metricas = useMemo(() => {
     const total = turnos.length
     const programados = turnos.filter((t) => t.estado === 'programado').length
     const enEspera = turnos.filter((t) => t.estado === 'en_espera').length
+    const preQuirofano = turnos.filter((t) => t.estado === 'pre_quirofano').length
     const enOperacion = turnos.filter((t) => t.estado === 'en_operacion').length
     const operados = turnos.filter((t) => t.estado === 'operado').length
-    return { total, programados, enEspera, enOperacion, operados }
+    return { total, programados, enEspera, preQuirofano, enOperacion, operados }
   }, [turnos])
 
   // Filtrado reactivo por pestaña de estado múltiple y búsqueda en vivo
@@ -574,9 +577,9 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         </div>
       </div>
 
-      {/* 2. KPI COUNTERS INTERACTIVOS CON SOPORTE DE MULTISELECCIÓN (CTRL / SHIFT + CLIC) */}
+      {/* 2. KPI COUNTERS INTERACTIVOS (6 KPIs: Por Llegar, Espera, Pre-Qx, Quirófano, Operados, Todos) */}
       <div className="space-y-2">
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* KPI 1: Por Llegar / Citados */}
           <button
             type="button"
@@ -592,7 +595,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
                 <p className="text-[10px] font-extrabold uppercase tracking-wide text-blue-600 dark:text-blue-400">
-                  Por Llegar (Citados)
+                  Por Llegar
                 </p>
               </div>
               <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-1">
@@ -617,7 +620,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
                 <p className="text-[10px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                  En Sala de Espera
+                  En Espera
                 </p>
               </div>
               <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 font-mono mt-1">
@@ -627,7 +630,32 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             <Activity size={22} className={esKpiActivo('en_espera') ? 'text-amber-600' : 'text-amber-500 opacity-60'} />
           </button>
 
-          {/* KPI 3: En Quirófano */}
+          {/* KPI 3: Pre-Quirófano (NUEVO) */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('pre_quirofano', e)}
+            className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer select-none ${
+              esKpiActivo('pre_quirofano')
+                ? 'bg-cyan-500/20 border-cyan-500 ring-2 ring-cyan-500/30 shadow-md'
+                : 'bg-cyan-500/5 border-cyan-500/20 hover:border-cyan-400 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo Pre-Quirófano • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+                <p className="text-[10px] font-extrabold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">
+                  Pre-Quirófano
+                </p>
+              </div>
+              <p className="text-2xl font-extrabold text-cyan-600 dark:text-cyan-400 font-mono mt-1">
+                {metricas.preQuirofano}
+              </p>
+            </div>
+            <Sparkles size={22} className={esKpiActivo('pre_quirofano') ? 'text-cyan-600' : 'text-cyan-500 opacity-70'} />
+          </button>
+
+          {/* KPI 4: En Quirófano */}
           <button
             type="button"
             onClick={(e) => handleKpiClick('en_operacion', e)}
@@ -652,7 +680,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             <Timer size={22} className={esKpiActivo('en_operacion') ? 'text-purple-600 animate-spin' : 'text-purple-500 opacity-70'} />
           </button>
 
-          {/* KPI 4: Operados / Concluidos */}
+          {/* KPI 5: Operados / Concluidos */}
           <button
             type="button"
             onClick={(e) => handleKpiClick('operado', e)}
@@ -667,7 +695,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-500" />
                 <p className="text-[10px] font-extrabold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                  Operados (Concluidos)
+                  Operados
                 </p>
               </div>
               <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 font-mono mt-1">
@@ -677,7 +705,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             <CheckCircle2 size={22} className={esKpiActivo('operado') ? 'text-emerald-600' : 'text-emerald-500 opacity-70'} />
           </button>
 
-          {/* KPI 5: Todos / Total */}
+          {/* KPI 6: Todos / Total */}
           <button
             type="button"
             onClick={(e) => handleKpiClick('todos', e)}
@@ -692,7 +720,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               <div className="flex items-center gap-1.5">
                 <ListFilter size={12} className="text-slate-500" />
                 <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                  Todos los Turnos
+                  Todos
                 </p>
               </div>
               <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-1">
@@ -750,6 +778,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               ? 'No hay pacientes pendientes por llegar en este momento.'
               : filtrosEstado.length === 1 && filtrosEstado[0] === 'en_espera'
               ? 'No hay pacientes en sala de espera actualmente.'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'pre_quirofano'
+              ? 'No hay pacientes en pre-quirófano en este momento.'
               : filtrosEstado.length === 1 && filtrosEstado[0] === 'en_operacion'
               ? 'No hay cirugías en curso en este momento.'
               : 'No hay cirugías que coincidan con los filtros seleccionados.'}
@@ -784,12 +814,15 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             const tiempoOp = calcularTiempoEnOperacion(t.inicio_cirugia_at, duracionEstimada)
             const esProgramado = t.estado === 'programado'
             const esEnEspera = t.estado === 'en_espera'
+            const esPreQuirofano = t.estado === 'pre_quirofano'
             const esEnOperacion = t.estado === 'en_operacion'
             const esOperado = t.estado === 'operado'
 
             // Borde Lateral de Alto Contraste (5px) según Estado
             const borderCls = esEnOperacion
               ? 'border-l-[5px] border-l-purple-600 border-y-purple-200 dark:border-y-purple-900 border-r-purple-200 dark:border-r-purple-900 bg-purple-50/25 dark:bg-purple-950/15 ring-2 ring-purple-500/20'
+              : esPreQuirofano
+              ? 'border-l-[5px] border-l-cyan-500 border-y-cyan-200 dark:border-y-cyan-900 border-r-cyan-200 dark:border-r-cyan-900 bg-cyan-50/20 dark:bg-cyan-950/10'
               : esEnEspera
               ? 'border-l-[5px] border-l-amber-500 border-y-amber-200 dark:border-y-amber-900 border-r-amber-200 dark:border-r-amber-900 bg-amber-50/20 dark:bg-amber-950/10'
               : esOperado
@@ -797,6 +830,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               : 'border-l-[5px] border-l-blue-500 border-y-[var(--border)] border-r-[var(--border)] bg-[var(--card)]'
 
             const minutosEsperando = esEnEspera ? calcularMinutosTranscurridos(t.llegada_at) : 0
+            const minutosPreQx = esPreQuirofano ? calcularMinutosTranscurridos(t.ingreso_pre_quirofano_at || t.llegada_at) : 0
 
             return (
               <div
@@ -843,6 +877,18 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       }`}>
                         <Clock size={12} />
                         <span>Esperando hace {minutosEsperando} min</span>
+                      </span>
+                    )}
+
+                    {/* Badge Dinámico de Tiempo en Pre-Quirófano */}
+                    {esPreQuirofano && (
+                      <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold flex items-center gap-1 border ${
+                        minutosPreQx > 30
+                          ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 animate-pulse'
+                          : 'bg-cyan-100 dark:bg-cyan-950 text-cyan-800 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700'
+                      }`}>
+                        <Sparkles size={12} />
+                        <span>En Pre-Qx hace {minutosPreQx} min</span>
                       </span>
                     )}
                   </div>
@@ -987,7 +1033,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
                   {/* Botonera de Acción Directa */}
                   <div className="flex items-center gap-2">
-                    {/* Botón 1: Recepcionar (marcar en espera) */}
+                    {/* Botón 1: Recepcionar (pasa a en_espera) */}
                     {esProgramado && (
                       <button
                         type="button"
@@ -997,15 +1043,32 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                           handleCambiarEstado(t.id, 'en_espera')
                         }}
                         className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow transition disabled:opacity-50"
-                        title="Marcar llegada del paciente a la clínica"
+                        title="Marcar llegada del paciente a la clínica (pasa a Sala de Espera)"
                       >
                         {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Clock size={14} />}
                         <span>Recepcionar</span>
                       </button>
                     )}
 
-                    {/* Botón 2: Iniciar Cirugía (dispara Pausa Quirúrgica OMS) */}
+                    {/* Botón 2: Pasar a Pre-Quirófano (pasa a pre_quirofano) */}
                     {esEnEspera && (
+                      <button
+                        type="button"
+                        disabled={procesandoId === t.id}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleCambiarEstado(t.id, 'pre_quirofano')
+                        }}
+                        className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-cyan-500/20 transition disabled:opacity-50"
+                        title="Ingresar paciente al circuito de Pre-Quirófano (Dilatación y Chequeos)"
+                      >
+                        {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={14} />}
+                        <span>🩵 Pasar a Pre-Qx</span>
+                      </button>
+                    )}
+
+                    {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS y pasa a en_operacion) */}
+                    {esPreQuirofano && (
                       <button
                         type="button"
                         disabled={procesandoId === t.id}
@@ -1014,14 +1077,14 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                           setTurnoParaPausaOms(t)
                         }}
                         className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-purple-500/20 transition disabled:opacity-50"
-                        title="Iniciar Cirugía (Abre Checklist de Pausa Quirúrgica OMS)"
+                        title="Iniciar Cirugía (Abre Checklist de Pausa Quirúrgica OMS y pasa a En Quirófano)"
                       >
                         {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={14} />}
                         <span>🟣 Iniciar Cirugía</span>
                       </button>
                     )}
 
-                    {/* Botón 3: Finalizar Cirugía (marcar operado) */}
+                    {/* Botón 4: Finalizar Cirugía (marcar operado) */}
                     {esEnOperacion && (
                       <button
                         type="button"

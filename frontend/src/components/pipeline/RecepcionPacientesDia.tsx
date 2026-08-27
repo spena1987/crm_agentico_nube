@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Loader2,
   Activity,
+  Sparkles,
   Check,
   Radio,
   X,
@@ -41,7 +42,7 @@ interface TurnoRecepcion {
   ojo: 'OD' | 'OI' | 'AO'
   cirujano_nombre?: string
   tipo_anestesia?: string
-  estado: 'programado' | 'en_espera' | 'en_operacion' | 'operado' | 'cancelado'
+  estado: 'programado' | 'en_espera' | 'pre_quirofano' | 'en_operacion' | 'operado' | 'cancelado'
   consentimiento_token?: string
   consentimiento_estado?: string
   consentimiento_pdf_url?: string
@@ -63,11 +64,12 @@ interface TurnoRecepcion {
   }
 }
 
-const ESTADOS_ORDEN = ['programado', 'en_espera', 'en_operacion', 'operado']
+const ESTADOS_ORDEN = ['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado']
 
 const NOMBRES_ESTADOS: Record<string, string> = {
   programado: 'Por Llegar',
   en_espera: 'En Sala de Espera',
+  pre_quirofano: 'En Pre-Quirófano',
   en_operacion: 'En Quirófano',
   operado: 'Operados',
   todos: 'Todos'
@@ -320,9 +322,10 @@ export default function RecepcionPacientesDia() {
     const total = turnos.length
     const citados = turnos.filter((t) => t.estado === 'programado').length
     const recepcionados = turnos.filter((t) => t.estado === 'en_espera').length
+    const preQuirofano = turnos.filter((t) => t.estado === 'pre_quirofano').length
     const enQx = turnos.filter((t) => t.estado === 'en_operacion').length
     const operados = turnos.filter((t) => t.estado === 'operado').length
-    return { total, citados, recepcionados, enQx, operados }
+    return { total, citados, recepcionados, preQuirofano, enQx, operados }
   }, [turnos])
 
   // Filtrado reactivo por pestaña y por buscador de texto
@@ -614,6 +617,7 @@ export default function RecepcionPacientesDia() {
             const q: any = t.quirofanos || {}
             const esOperado = t.estado === 'operado'
             const esEnOperacion = t.estado === 'en_operacion'
+            const esPreQuirofano = t.estado === 'pre_quirofano'
             const esEnEspera = t.estado === 'en_espera'
             const esProgramado = t.estado === 'programado'
             const tieneConsentimiento = t.consentimiento_estado === 'firmado_digital'
@@ -628,6 +632,10 @@ export default function RecepcionPacientesDia() {
               cardClasses = 'border-l-[6px] border-l-amber-500 bg-amber-950/20 border-amber-500/40 shadow-lg shadow-amber-950/20'
               badgeEstadoClasses = 'bg-amber-500 text-black font-black border-amber-400'
               estadoLabel = '🟡 En Sala de Espera'
+            } else if (esPreQuirofano) {
+              cardClasses = 'border-l-[6px] border-l-cyan-500 bg-cyan-950/20 border-cyan-500/40 shadow-lg shadow-cyan-950/20'
+              badgeEstadoClasses = 'bg-cyan-500 text-black font-black border-cyan-400'
+              estadoLabel = '🩵 En Pre-Quirófano'
             } else if (esEnOperacion) {
               cardClasses = 'border-l-[6px] border-l-purple-500 bg-purple-950/25 border-purple-500/50 shadow-xl shadow-purple-950/30 animate-pulse'
               badgeEstadoClasses = 'bg-purple-600 text-white font-black border-purple-400'

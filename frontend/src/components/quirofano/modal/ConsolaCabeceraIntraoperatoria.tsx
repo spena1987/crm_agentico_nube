@@ -13,7 +13,8 @@ import {
   UploadCloud,
   CheckCheck,
   Check,
-  Trash2
+  Trash2,
+  Sparkles
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
@@ -40,6 +41,7 @@ export default function ConsolaCabeceraIntraoperatoria({
   const estado = turno.estado || 'programado'
   const esProgramado = estado === 'programado'
   const esEnEspera = estado === 'en_espera'
+  const esPreQuirofano = estado === 'pre_quirofano'
   const esEnOperacion = estado === 'en_operacion'
   const esOperado = estado === 'operado'
 
@@ -138,11 +140,24 @@ export default function ConsolaCabeceraIntraoperatoria({
             <span>Llegada:</span>
             <b className="text-white font-mono">
               {formatearHoraDesdeIso(
-                turno.llegada_at || (esEnOperacion || esOperado ? turno.inicio_cirugia_at : null),
+                turno.llegada_at || (esPreQuirofano || esEnOperacion || esOperado ? turno.inicio_cirugia_at : null),
                 'Pendiente'
               )}
             </b>
           </div>
+
+          {(turno.ingreso_pre_quirofano_at || esPreQuirofano || esEnOperacion || esOperado) && (
+            <div className="flex items-center gap-1.5 text-slate-300">
+              <Sparkles size={15} className="text-cyan-400" />
+              <span>Pre-Quirófano:</span>
+              <b className="text-white font-mono">
+                {formatearHoraDesdeIso(
+                  turno.ingreso_pre_quirofano_at || (esEnOperacion || esOperado ? turno.inicio_cirugia_at : null),
+                  'En preparación'
+                )}
+              </b>
+            </div>
+          )}
 
           <div className="flex items-center gap-1.5 text-slate-300">
             <Timer size={15} className="text-purple-400" />
@@ -196,8 +211,21 @@ export default function ConsolaCabeceraIntraoperatoria({
             </button>
           )}
 
-          {/* Botón 2: Iniciar Cirugía (dispara Pausa Quirúrgica OMS) */}
+          {/* Botón 2: Pasar a Pre-Quirófano */}
           {esEnEspera && (
+            <button
+              type="button"
+              disabled={procesandoEstado}
+              onClick={() => onCambiarEstado('pre_quirofano')}
+              className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-cyan-500/30 transition disabled:opacity-50"
+            >
+              {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              <span>🩵 Ingresar a Pre-Quirófano</span>
+            </button>
+          )}
+
+          {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS) */}
+          {esPreQuirofano && (
             <button
               type="button"
               disabled={procesandoEstado}
@@ -209,7 +237,7 @@ export default function ConsolaCabeceraIntraoperatoria({
             </button>
           )}
 
-          {/* Botón 3: Finalizar Cirugía */}
+          {/* Botón 4: Finalizar Cirugía */}
           {esEnOperacion && (
             <button
               type="button"

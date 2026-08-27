@@ -1153,6 +1153,17 @@ export default function PipelineQuirurgicoPage() {
                                 </Link>
                               )}
 
+                              {caso.estado === 'pre_quirofano' && (
+                                <Link
+                                  href="/quirofano-en-vivo"
+                                  className="px-2 py-0.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-cyan-500/30 transition-colors"
+                                  title="Paciente en Pre-Quirófano (Área Limpia / Dilatación). Clic para ver Pizarra en Vivo."
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                                  <span>Pre-Qx</span>
+                                </Link>
+                              )}
+
                               {caso.estado === 'en_operacion' && (
                                 <Link
                                   href="/quirofano-en-vivo"

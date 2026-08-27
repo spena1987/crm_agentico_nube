@@ -3220,7 +3220,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 COLUMN_KEYS_TURNOS_QUIROFANO = {
-    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje", "llegada_at", "inicio_cirugia_at", "fin_cirugia_at",
+    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje", "llegada_at", "ingreso_pre_quirofano_at", "inicio_cirugia_at", "fin_cirugia_at",
     "instrumentador_nombre", "medico_derivador_nombre", "observaciones_intraoperatorias",
     "asesoria_id", "paciente_id", "quirofano_id", "fecha_cirugia", "hora_inicio",
     "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
@@ -3706,14 +3706,23 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         if nuevo_estado == "en_espera":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
+        elif nuevo_estado == "pre_quirofano":
+            if not turno_actual.get("llegada_at"):
+                update_payload["llegada_at"] = ahora_iso
+            if not turno_actual.get("ingreso_pre_quirofano_at"):
+                update_payload["ingreso_pre_quirofano_at"] = ahora_iso
         elif nuevo_estado == "en_operacion":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
+            if not turno_actual.get("ingreso_pre_quirofano_at"):
+                update_payload["ingreso_pre_quirofano_at"] = ahora_iso
             if not turno_actual.get("inicio_cirugia_at"):
                 update_payload["inicio_cirugia_at"] = ahora_iso
         elif nuevo_estado == "operado":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
+            if not turno_actual.get("ingreso_pre_quirofano_at"):
+                update_payload["ingreso_pre_quirofano_at"] = ahora_iso
             if not turno_actual.get("inicio_cirugia_at"):
                 update_payload["inicio_cirugia_at"] = ahora_iso
             if not turno_actual.get("fin_cirugia_at"):
@@ -3726,7 +3735,7 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         # 4. Sincronizar bidireccionalmente con asesorias_quirurgicas
         if not asesoria_id and turno_actual.get("paciente_id"):
             try:
-                res_a = supabase.table("asesorias_quirurgicas").select("id").eq("paciente_id", turno_actual["paciente_id"]).in_("estado", ["programado", "en_espera", "en_operacion", "confirmado"]).order("created_at", desc=True).limit(1).execute()
+                res_a = supabase.table("asesorias_quirurgicas").select("id").eq("paciente_id", turno_actual["paciente_id"]).in_("estado", ["programado", "en_espera", "pre_quirofano", "en_operacion", "confirmado"]).order("created_at", desc=True).limit(1).execute()
                 if res_a.data and len(res_a.data) > 0:
                     asesoria_id = res_a.data[0]["id"]
                     supabase.table("turnos_quirofano").update({"asesoria_id": asesoria_id}).eq("id", turno_id).execute()
