@@ -458,7 +458,7 @@ export default function RecepcionPacientesDia() {
       {/* 2. TARJETAS KPIS INTERACTIVAS (CON SOPORTE CTRL/SHIFT + CLIC) */}
       {/* ==================================================================== */}
       <div className="space-y-2">
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           
           {/* Tab 1: Todos */}
           <button
@@ -517,7 +517,26 @@ export default function RecepcionPacientesDia() {
             <span className="text-[10px] text-amber-300/70 block mt-0.5">Listos para quirófano</span>
           </button>
 
-          {/* Tab 4: En Mesa Quirúrgica */}
+          {/* Tab 4: En Pre-Quirófano (NUEVO) */}
+          <button
+            type="button"
+            onClick={(e) => handleKpiClick('pre_quirofano', e)}
+            className={`p-3 rounded-2xl border text-left transition-all relative overflow-hidden select-none cursor-pointer ${
+              esKpiActivo('pre_quirofano')
+                ? 'bg-cyan-950/70 border-cyan-500 shadow-md ring-2 ring-cyan-500/50'
+                : 'bg-neutral-900/90 border-[var(--border)] hover:bg-cyan-950/20 opacity-85 hover:opacity-100'
+            }`}
+            title="💡 Clic simple: Ver solo Pre-Quirófano • Ctrl + Clic: Sumar a selección • Shift + Clic: Selección de rango"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-400">Pre-Quirófano</span>
+              <Sparkles size={13} className="text-cyan-400" />
+            </div>
+            <p className="text-xl font-black text-cyan-400 font-mono mt-1">{metricas.preQuirofano}</p>
+            <span className="text-[10px] text-cyan-300/70 block mt-0.5">En preparación</span>
+          </button>
+
+          {/* Tab 5: En Mesa Quirúrgica */}
           <button
             type="button"
             onClick={(e) => handleKpiClick('en_operacion', e)}
@@ -536,7 +555,7 @@ export default function RecepcionPacientesDia() {
             <span className="text-[10px] text-purple-300/70 block mt-0.5">En operación</span>
           </button>
 
-          {/* Tab 5: Cirugías Finalizadas */}
+          {/* Tab 6: Cirugías Finalizadas */}
           <button
             type="button"
             onClick={(e) => handleKpiClick('operado', e)}
