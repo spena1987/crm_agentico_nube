@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 
 interface TurnoRecepcion {
   id: string
@@ -43,6 +44,10 @@ interface TurnoRecepcion {
   cirujano_nombre?: string
   tipo_anestesia?: string
   estado: 'programado' | 'en_espera' | 'pre_quirofano' | 'en_operacion' | 'operado' | 'cancelado'
+  llegada_at?: string
+  ingreso_pre_quirofano_at?: string
+  inicio_cirugia_at?: string
+  fin_cirugia_at?: string
   consentimiento_token?: string
   consentimiento_estado?: string
   consentimiento_pdf_url?: string
@@ -593,6 +598,16 @@ export default function RecepcionPacientesDia() {
           <p className="text-xs text-gray-500 max-w-md mx-auto">
             {busqueda
               ? `No hay coincidencias para "${busqueda}" en los estados seleccionados.`
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'programado'
+              ? 'No hay pacientes pendientes por llegar en este momento.'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'en_espera'
+              ? 'No hay pacientes en sala de espera actualmente.'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'pre_quirofano'
+              ? 'No hay pacientes en Pre-Quirófano en este momento.'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'en_operacion'
+              ? 'No hay cirugías en curso en este momento.'
+              : filtrosEstado.length === 1 && filtrosEstado[0] === 'operado'
+              ? 'No hay pacientes operados registrados para esta fecha.'
               : !filtrosEstado.includes('todos')
               ? 'No hay pacientes en los estados operativos seleccionados para hoy.'
               : `No hay cirugías programadas para el día ${fecha}.`}
@@ -667,10 +682,24 @@ export default function RecepcionPacientesDia() {
 
                     <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-xl border flex items-center gap-1 ${badgeEstadoClasses}`}>
                       {esEnOperacion && <Activity size={11} className="animate-spin" />}
+                      {esPreQuirofano && <Sparkles size={11} />}
                       {esEnEspera && <Activity size={11} />}
                       {esOperado && <Check size={11} />}
                       <span>{estadoLabel}</span>
                     </span>
+
+                    {/* Timestamps de Trazabilidad */}
+                    {t.llegada_at && (
+                      <span className="text-[11px] font-mono text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20">
+                        Llegó: {formatearHoraDesdeIso(t.llegada_at)}
+                      </span>
+                    )}
+
+                    {t.ingreso_pre_quirofano_at && (
+                      <span className="text-[11px] font-mono text-cyan-400 font-semibold px-2 py-0.5 rounded bg-cyan-950/40 border border-cyan-500/20">
+                        Pre-Qx: {formatearHoraDesdeIso(t.ingreso_pre_quirofano_at)}
+                      </span>
+                    )}
 
                     {t.cirujano_nombre && (
                       <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1 ml-auto md:ml-0">
@@ -758,19 +787,25 @@ export default function RecepcionPacientesDia() {
                   {esEnEspera && (
                     <span className="px-3 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1">
                       <Activity size={12} className="text-amber-400" />
-                      Esperando Quirófano
+                      <span>En Sala de Espera</span>
+                    </span>
+                  )}
+                  {esPreQuirofano && (
+                    <span className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                      <Sparkles size={13} className="text-cyan-400" />
+                      <span>En Pre-Quirófano (Preparación)</span>
                     </span>
                   )}
                   {esEnOperacion && (
                     <span className="px-3 py-1.5 bg-purple-500/20 text-purple-300 border border-purple-500/40 rounded-xl text-xs font-bold flex items-center gap-1">
                       <Activity size={12} className="animate-spin text-purple-400" />
-                      Cirugía en Curso
+                      <span>Cirugía en Curso</span>
                     </span>
                   )}
                   {esOperado && (
                     <span className="px-3 py-1.5 bg-emerald-950/60 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-bold flex items-center gap-1">
                       <Check size={12} />
-                      Operado
+                      <span>Operado</span>
                     </span>
                   )}
                 </div>
