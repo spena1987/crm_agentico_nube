@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { 
   UserPlus, 
   Search, 
@@ -18,21 +18,17 @@ import {
   RefreshCw,
   AlertCircle,
   Users,
-  Stethoscope
+  Stethoscope,
+  ChevronDown,
+  X
 } from 'lucide-react'
 
 interface Role {
   id: string
   codigo: string
   nombre: string
+  descripcion: string | null
   es_sistema: boolean
-}
-
-interface PrestadorGeclisa {
-  pre_id: number
-  nombre: string
-  matricula: string
-  especialidad?: string
 }
 
 interface UserItem {
@@ -45,7 +41,15 @@ interface UserItem {
   geclisa_matricula?: string | null
   geclisa_prestador_nombre?: string | null
   created_at: string
+  updated_at?: string
   roles?: Role | null
+}
+
+interface PrestadorGeclisa {
+  pre_id: number
+  nombre: string
+  matricula?: string
+  especialidad?: string
 }
 
 export default function UsuariosPage() {
@@ -85,7 +89,13 @@ export default function UsuariosPage() {
   const [editMatricula, setEditMatricula] = useState('')
   const [editPrestadorNombre, setEditPrestadorNombre] = useState('')
 
-  // Cargar datos
+  // Búsqueda interna para Combobox de Prestadores
+  const [searchPreCreate, setSearchPreCreate] = useState('')
+  const [dropdownOpenCreate, setDropdownOpenCreate] = useState(false)
+  const [searchPreEdit, setSearchPreEdit] = useState('')
+  const [dropdownOpenEdit, setDropdownOpenEdit] = useState(false)
+
+  // Cargar datos principales
   const loadData = async () => {
     try {
       setLoading(true)
@@ -112,12 +122,11 @@ export default function UsuariosPage() {
     }
   }
 
-  // Cargar catálogo de prestadores de Geclisa
+  // Cargar catálogo de prestadores de Geclisa mediante Proxy Interno de Next.js
   const cargarPrestadores = async (termino = '') => {
     try {
       setCargandoPrestadores(true)
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000'
-      const res = await fetch(`${backendUrl}/api/geclisa/prestadores?query=${encodeURIComponent(termino)}`)
+      const res = await fetch(`/api/admin/geclisa-prestadores?query=${encodeURIComponent(termino)}`)
       if (res.ok) {
         const data = await res.json()
         setPrestadores(data.prestadores || [])
@@ -138,7 +147,7 @@ export default function UsuariosPage() {
   const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*'
     let pass = ''
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 12; i++) {
       pass += chars.charAt(Math.floor(Math.random() * chars.length))
     }
     setCreatePassword(pass)
@@ -191,6 +200,7 @@ export default function UsuariosPage() {
       setCreatePreId(null)
       setCreateMatricula('')
       setCreatePrestadorNombre('')
+      setSearchPreCreate('')
       await loadData()
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })
@@ -209,6 +219,8 @@ export default function UsuariosPage() {
     setEditPreId(user.geclisa_pre_id || null)
     setEditMatricula(user.geclisa_matricula || '')
     setEditPrestadorNombre(user.geclisa_prestador_nombre || '')
+    setSearchPreEdit('')
+    setDropdownOpenEdit(false)
     setShowEditModal(true)
   }
 
@@ -249,7 +261,6 @@ export default function UsuariosPage() {
         message: `Perfil de ${editNombre} actualizado correctamente.`,
       })
       setShowEditModal(false)
-      setSelectedUser(null)
       await loadData()
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })
@@ -277,7 +288,7 @@ export default function UsuariosPage() {
 
       setFeedback({
         type: 'success',
-        message: `Usuario ${selectedUser.nombre_completo} eliminado de Supabase Auth y CRM.`,
+        message: `Usuario ${selectedUser.nombre_completo} eliminado correctamente.`,
       })
       setShowDeleteModal(false)
       setSelectedUser(null)
@@ -289,76 +300,76 @@ export default function UsuariosPage() {
     }
   }
 
-  // Filtrado de usuarios
-  const filteredUsers = users.filter((u) => {
-    const term = search.toLowerCase()
-    return (
-      u.nombre_completo.toLowerCase().includes(term) ||
-      u.email.toLowerCase().includes(term) ||
-      (u.roles?.nombre || '').toLowerCase().includes(term) ||
-      (u.geclisa_prestador_nombre || '').toLowerCase().includes(term) ||
-      (u.geclisa_matricula || '').includes(term)
+  // Filtrado de usuarios por búsqueda en tabla
+  const filteredUsers = useMemo(() => {
+    return users.filter(
+      (u) =>
+        u.nombre_completo?.toLowerCase().includes(search.toLowerCase()) ||
+        u.email?.toLowerCase().includes(search.toLowerCase()) ||
+        u.roles?.nombre?.toLowerCase().includes(search.toLowerCase()) ||
+        u.geclisa_prestador_nombre?.toLowerCase().includes(search.toLowerCase()) ||
+        u.geclisa_matricula?.includes(search)
     )
-  })
+  }, [users, search])
 
-  // Obtener color distintivo para badge de rol
-  const getRoleBadgeStyle = (rolCodigo?: string) => {
-    switch (rolCodigo) {
-      case 'admin':
-        return 'bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 border-purple-200 dark:border-purple-800'
-      case 'medico':
-        return 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 border-blue-200 dark:border-blue-800'
-      case 'recepcion':
-        return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
-      case 'auditor':
-        return 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-      default:
-        return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-    }
-  }
+  // Filtrado de prestadores para modal de creación
+  const prestadoresFiltradosCreate = useMemo(() => {
+    if (!searchPreCreate.trim()) return prestadores
+    const q = searchPreCreate.toLowerCase().trim()
+    return prestadores.filter(
+      (p) =>
+        p.nombre.toLowerCase().includes(q) ||
+        (p.matricula && p.matricula.includes(q)) ||
+        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+    )
+  }, [prestadores, searchPreCreate])
+
+  // Filtrado de prestadores para modal de edición
+  const prestadoresFiltradosEdit = useMemo(() => {
+    if (!searchPreEdit.trim()) return prestadores
+    const q = searchPreEdit.toLowerCase().trim()
+    return prestadores.filter(
+      (p) =>
+        p.nombre.toLowerCase().includes(q) ||
+        (p.matricula && p.matricula.includes(q)) ||
+        (p.especialidad && p.especialidad.toLowerCase().includes(q))
+    )
+  }, [prestadores, searchPreEdit])
 
   return (
-    <div className="space-y-6">
-      {/* Barra de Acciones y Búsqueda */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3 bg-[var(--card)] border border-[var(--border)] px-4 py-2.5 rounded-2xl max-w-md w-full shadow-sm">
-          <Search size={18} className="text-slate-400 shrink-0" />
-          <input
-            type="text"
-            placeholder="Buscar por nombre, correo, rol o prestador Geclisa..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full text-xs bg-transparent border-0 focus:outline-none focus:ring-0"
-          />
+    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[var(--card)] p-6 rounded-2xl border border-[var(--border)] shadow-sm">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold">
+              <Users size={20} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-[var(--foreground)]">Gestión de Usuarios</h1>
+              <p className="text-xs text-[var(--secondary)]">
+                Crea cuentas, asigna roles de acceso y vincula matrículas y prestadores oficiales de Geclisa.
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={loadData}
-            disabled={loading}
-            className="p-2.5 border border-[var(--border)] rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs"
-            title="Recargar usuarios"
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          </button>
-
-          <button
-            onClick={() => {
-              generateRandomPassword()
-              setShowCreateModal(true)
-            }}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs transition-all shadow flex items-center gap-2 glow-primary"
-          >
-            <UserPlus size={16} />
-            <span>Nuevo Usuario</span>
-          </button>
-        </div>
+        <button
+          onClick={() => {
+            setShowCreateModal(true)
+            generateRandomPassword()
+          }}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md glow-primary"
+        >
+          <UserPlus size={16} />
+          <span>Crear Usuario</span>
+        </button>
       </div>
 
-      {/* Alertas de Feedback */}
+      {/* Feedback Alert */}
       {feedback && (
         <div
-          className={`p-4 rounded-xl text-xs font-semibold flex items-center justify-between gap-3 border ${
+          className={`p-4 rounded-xl text-xs font-semibold flex items-center justify-between gap-3 border animate-fade-in ${
             feedback.type === 'success'
               ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800'
               : 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/30 dark:text-red-300 dark:border-red-800'
@@ -374,135 +385,167 @@ export default function UsuariosPage() {
         </div>
       )}
 
+      {/* Barra de Búsqueda y Estadísticas */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="relative w-full sm:w-80">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar por nombre, email, rol o matrícula..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 text-xs border border-[var(--border)] rounded-xl bg-[var(--card)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+          />
+        </div>
+
+        <div className="flex items-center gap-3 text-xs text-[var(--secondary)]">
+          <span>
+            Total: <strong>{users.length}</strong> usuarios
+          </span>
+          <span>•</span>
+          <span>
+            Activos:{' '}
+            <strong className="text-emerald-600">
+              {users.filter((u) => u.activo).length}
+            </strong>
+          </span>
+          <span>•</span>
+          <span>
+            Con Prestador:{' '}
+            <strong className="text-blue-600">
+              {users.filter((u) => u.geclisa_pre_id).length}
+            </strong>
+          </span>
+        </div>
+      </div>
+
       {/* Tabla de Usuarios */}
       <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden shadow-sm">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
-            <Loader2 size={32} className="animate-spin text-blue-600" />
-            <p className="text-xs">Cargando personal y accesos...</p>
+            <Loader2 size={28} className="animate-spin text-blue-600" />
+            <p className="text-xs font-semibold">Cargando usuarios...</p>
           </div>
         ) : filteredUsers.length === 0 ? (
-          <div className="text-center py-16 text-slate-400 text-xs">
-            <Users size={36} className="mx-auto mb-2 opacity-40" />
-            No se encontraron usuarios registrados con los criterios de búsqueda.
+          <div className="text-center py-16 text-slate-400 space-y-1">
+            <Users size={32} className="mx-auto opacity-40 mb-2" />
+            <p className="text-sm font-semibold">No se encontraron usuarios</p>
+            <p className="text-xs text-[var(--secondary)]">
+              {search ? 'Intenta con otro término de búsqueda.' : 'Crea el primer usuario haciendo clic arriba.'}
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 text-[var(--secondary)] font-bold uppercase tracking-wider">
-                  <th className="py-3.5 px-4">Usuario</th>
-                  <th className="py-3.5 px-4">Correo Electrónico</th>
-                  <th className="py-3.5 px-4">Perfil / Rol</th>
-                  <th className="py-3.5 px-4">Prestador Geclisa</th>
-                  <th className="py-3.5 px-4">Estado</th>
-                  <th className="py-3.5 px-4">Fecha de Alta</th>
-                  <th className="py-3.5 px-4 text-right">Acciones</th>
+                <tr className="border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 text-[11px] uppercase tracking-wider font-bold text-[var(--secondary)]">
+                  <th className="py-3 px-4">Usuario</th>
+                  <th className="py-3 px-4">Email</th>
+                  <th className="py-3 px-4">Rol / Permisos</th>
+                  <th className="py-3 px-4">Prestador Geclisa</th>
+                  <th className="py-3 px-4">Estado</th>
+                  <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {filteredUsers.map((user) => {
-                  const initials = user.nombre_completo
-                    ? user.nombre_completo.substring(0, 2).toUpperCase()
-                    : 'US'
-                  return (
-                    <tr key={user.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs shrink-0 glow-primary">
-                            {initials}
-                          </div>
-                          <div>
-                            <p className="font-bold text-[var(--foreground)]">{user.nombre_completo}</p>
-                            <p className="text-[10px] text-[var(--secondary)]">ID: {user.id.substring(0, 8)}...</p>
-                          </div>
+                {filteredUsers.map((u) => (
+                  <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">
+                          {u.nombre_completo.charAt(0).toUpperCase()}
                         </div>
-                      </td>
-                      <td className="py-3.5 px-4 text-[var(--secondary)] font-medium">
-                        {user.email}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold border ${getRoleBadgeStyle(
-                            user.roles?.codigo
-                          )}`}
-                        >
-                          <Shield size={12} />
-                          {user.roles?.nombre || 'Sin Rol Asignado'}
+                        <div>
+                          <p className="font-bold text-[var(--foreground)]">{u.nombre_completo}</p>
+                          <p className="text-[10px] text-slate-400 font-mono">ID: {u.id.slice(0, 8)}...</p>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="py-3 px-4 text-[var(--secondary)] font-mono">{u.email}</td>
+
+                    <td className="py-3 px-4">
+                      {u.roles ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                          <Shield size={12} className="text-indigo-600" />
+                          <span>{u.roles.nombre}</span>
                         </span>
-                      </td>
-                      <td className="py-3.5 px-4">
-                        {user.geclisa_prestador_nombre ? (
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                            <Stethoscope size={13} className="text-blue-600 shrink-0" />
-                            <span>{user.geclisa_prestador_nombre}</span>
-                            {user.geclisa_matricula && (
-                              <span className="text-[10px] opacity-75 font-mono">({user.geclisa_matricula})</span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-slate-400 italic text-[11px]">Sin prestador vinculado</span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4">
-                        {user.activo ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px]">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                            Activo
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-red-500 font-bold text-[11px]">
-                            <span className="w-2 h-2 rounded-full bg-red-500" />
-                            Inactivo / Suspendido
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3.5 px-4 text-[var(--secondary)]">
-                        {new Date(user.created_at).toLocaleDateString('es-ES', {
-                          day: '2-digit',
-                          month: 'short',
-                          year: 'numeric',
-                        })}
-                      </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => openEditModal(user)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors"
-                            title="Editar usuario y permisos"
-                          >
-                            <Edit size={15} />
-                          </button>
-                          <button
-                            onClick={() => {
-                              setSelectedUser(user)
-                              setShowDeleteModal(true)
-                            }}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
-                            title="Eliminar usuario"
-                          >
-                            <Trash2 size={15} />
-                          </button>
+                      ) : (
+                        <span className="text-slate-400 italic">Sin rol asignado</span>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-4">
+                      {u.geclisa_prestador_nombre ? (
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                          <Stethoscope size={13} className="text-blue-600 shrink-0" />
+                          <span>{u.geclisa_prestador_nombre}</span>
+                          {u.geclisa_matricula && (
+                            <span className="text-[10px] opacity-75 font-mono">({u.geclisa_matricula})</span>
+                          )}
                         </div>
-                      </td>
-                    </tr>
-                  )
-                })}
+                      ) : (
+                        <span className="text-slate-400 italic text-[11px]">Acceso General</span>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-4">
+                      {u.activo ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                          Activo
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300 border border-red-200 dark:border-red-800">
+                          Inactivo
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => openEditModal(u)}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-all"
+                          title="Editar usuario"
+                        >
+                          <Edit size={15} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedUser(u)
+                            setShowDeleteModal(true)
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-800 rounded-lg transition-all"
+                          title="Eliminar usuario"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
-      {/* Modal: Crear Usuario */}
+      {/* Modal Crear Usuario */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-[var(--card)] border border-[var(--border)] w-full max-w-lg p-6 rounded-2xl shadow-xl space-y-4 relative">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <h2 className="text-sm font-bold flex items-center gap-2 text-[var(--foreground)]">
-                <UserPlus className="text-blue-600" size={18} />
-                Dar de Alta Nuevo Usuario en CRM & Supabase
-              </h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-xl w-full max-w-lg overflow-hidden animate-scale-up">
+            <div className="p-5 border-b border-[var(--border)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold">
+                  <UserPlus size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--foreground)]">Crear Nuevo Usuario</h3>
+                  <p className="text-[11px] text-[var(--secondary)]">
+                    Genera una cuenta de acceso inmediato al CRM
+                  </p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowCreateModal(false)}
                 className="text-slate-400 hover:text-slate-600"
@@ -511,58 +554,60 @@ export default function UsuariosPage() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateUser} className="space-y-4">
+            <form onSubmit={handleCreateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Nombre Completo
+                  Nombre Completo *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="Ej: Dra. María González"
+                  placeholder="Ej: Dr. Juan Pérez"
                   value={createNombre}
                   onChange={(e) => setCreateNombre(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Correo Electrónico
+                  Correo Electrónico (Login) *
                 </label>
                 <input
                   type="email"
                   required
-                  placeholder="doctora.gonzalez@clinica.com"
+                  placeholder="usuario@centrovision.com.ar"
                   value={createEmail}
                   onChange={(e) => setCreateEmail(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">
-                    Contraseña Inicial
+                  <label className="block text-xs font-bold text-slate-500 uppercase">
+                    Contraseña Inicial *
                   </label>
                   <button
                     type="button"
                     onClick={generateRandomPassword}
-                    className="text-[11px] text-blue-600 hover:underline flex items-center gap-1 font-bold"
+                    className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1"
                   >
-                    <KeyRound size={12} /> Generar segura
+                    <KeyRound size={12} />
+                    <span>Generar Segura</span>
                   </button>
                 </div>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
+                    minLength={6}
+                    placeholder="Mínimo 6 caracteres"
                     value={createPassword}
                     onChange={(e) => setCreatePassword(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
-                    className="w-full pl-3.5 pr-20 py-2.5 text-xs font-mono border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    className="w-full pl-3.5 pr-20 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
-                  <div className="absolute inset-y-0 right-0 pr-2 flex items-center gap-1">
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
@@ -585,37 +630,98 @@ export default function UsuariosPage() {
                 </div>
               </div>
 
-              {/* Prestador Geclisa Asignado */}
-              <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
-                <label className="block text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5">
-                  <Stethoscope size={14} /> Prestador Geclisa por Defecto
+              {/* Selector Buscable de Prestador Geclisa */}
+              <div className="p-3.5 bg-blue-50/40 dark:bg-slate-800/60 border border-blue-200/60 dark:border-slate-700 rounded-xl space-y-2 relative">
+                <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 uppercase flex items-center gap-1.5">
+                  <Stethoscope size={14} className="text-blue-600" /> Prestador Geclisa por Defecto
                 </label>
                 <p className="text-[11px] text-slate-500">
-                  Asigna la matrícula y prestador de Geclisa para precargar su agenda y auditar interacciones hospitalarias.
+                  Asigna el prestador para precargar automáticamente su agenda de turnos en el CRM.
                 </p>
-                <select
-                  value={createPreId || ''}
-                  onChange={(e) => {
-                    const val = e.target.value ? parseInt(e.target.value) : null
-                    setCreatePreId(val)
-                    const p = prestadores.find((item) => item.pre_id === val)
-                    if (p) {
-                      setCreateMatricula(p.matricula || '')
-                      setCreatePrestadorNombre(p.nombre || '')
-                    } else {
-                      setCreateMatricula('')
-                      setCreatePrestadorNombre('')
-                    }
-                  }}
-                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="">-- Sin prestador asignado (Acceso general) --</option>
-                  {prestadores.map((p) => (
-                    <option key={p.pre_id} value={p.pre_id}>
-                      {p.nombre} {p.matricula ? `(Mat: ${p.matricula})` : ''} - {p.especialidad || 'Médico'}
-                    </option>
-                  ))}
-                </select>
+
+                {createPreId ? (
+                  <div className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 rounded-xl shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Stethoscope size={16} className="text-blue-600" />
+                      <div>
+                        <p className="text-xs font-bold text-[var(--foreground)]">{createPrestadorNombre}</p>
+                        <p className="text-[10px] text-slate-500">
+                          Matrícula: <strong>{createMatricula || 'S/N'}</strong> (ID: {createPreId})
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCreatePreId(null)
+                        setCreateMatricula('')
+                        setCreatePrestadorNombre('')
+                      }}
+                      className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-lg text-xs font-semibold flex items-center gap-1"
+                      title="Quitar prestador"
+                    >
+                      <X size={14} />
+                      <span>Quitar</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Buscar médico por nombre o matrícula..."
+                        value={searchPreCreate}
+                        onFocus={() => setDropdownOpenCreate(true)}
+                        onChange={(e) => {
+                          setSearchPreCreate(e.target.value)
+                          setDropdownOpenCreate(true)
+                        }}
+                        className="w-full pl-9 pr-4 py-2 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                    </div>
+
+                    {dropdownOpenCreate && (
+                      <div className="border border-[var(--border)] rounded-xl max-h-48 overflow-y-auto bg-white dark:bg-slate-800 divide-y divide-slate-100 dark:divide-slate-700/60 shadow-lg">
+                        {cargandoPrestadores ? (
+                          <div className="p-3 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                            <Loader2 size={14} className="animate-spin text-blue-600" />
+                            <span>Cargando catálogo...</span>
+                          </div>
+                        ) : prestadoresFiltradosCreate.length === 0 ? (
+                          <div className="p-3 text-center text-xs text-slate-400">
+                            No se encontraron prestadores
+                          </div>
+                        ) : (
+                          prestadoresFiltradosCreate.map((p) => (
+                            <button
+                              key={p.pre_id}
+                              type="button"
+                              onClick={() => {
+                                setCreatePreId(p.pre_id)
+                                setCreateMatricula(p.matricula || '')
+                                setCreatePrestadorNombre(p.nombre || '')
+                                setDropdownOpenCreate(false)
+                                setSearchPreCreate('')
+                              }}
+                              className="w-full text-left p-2.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors flex items-center justify-between text-xs"
+                            >
+                              <div>
+                                <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
+                                <p className="text-[10px] text-slate-400">
+                                  {p.especialidad || 'Médico'} • Mat: {p.matricula || 'S/N'}
+                                </p>
+                              </div>
+                              <span className="text-[10px] font-mono text-blue-600 font-bold">
+                                #{p.pre_id}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -651,10 +757,6 @@ export default function UsuariosPage() {
                 </div>
               </div>
 
-              <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 rounded-xl text-[11px] text-blue-700 dark:text-blue-300">
-                💡 El usuario se creará en <strong>Supabase Auth</strong> con correo confirmado automáticamente y podrá iniciar sesión de inmediato en el CRM con estas credenciales.
-              </div>
-
               <div className="flex gap-2 justify-end pt-2 border-t border-[var(--border)]">
                 <button
                   type="button"
@@ -669,7 +771,7 @@ export default function UsuariosPage() {
                   disabled={actionLoading}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 glow-primary disabled:opacity-50"
                 >
-                  {actionLoading ? <Loader2 size={15} className="animate-spin" /> : <UserPlus size={15} />}
+                  {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
                   <span>Crear Usuario</span>
                 </button>
               </div>
@@ -678,15 +780,20 @@ export default function UsuariosPage() {
         </div>
       )}
 
-      {/* Modal: Editar Usuario */}
+      {/* Modal Editar Usuario */}
       {showEditModal && selectedUser && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-[var(--card)] border border-[var(--border)] w-full max-w-lg p-6 rounded-2xl shadow-xl space-y-4 relative max-h-[90vh] overflow-y-auto panel-scroll">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <h2 className="text-sm font-bold flex items-center gap-2 text-[var(--foreground)]">
-                <Edit className="text-blue-600" size={18} />
-                Editar Perfil y Permisos: {selectedUser.email}
-              </h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-xl w-full max-w-lg overflow-hidden animate-scale-up">
+            <div className="p-5 border-b border-[var(--border)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold">
+                  <Edit size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-[var(--foreground)]">Editar Perfil de Usuario</h3>
+                  <p className="text-[11px] text-[var(--secondary)]">{selectedUser.email}</p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowEditModal(false)}
                 className="text-slate-400 hover:text-slate-600"
@@ -695,48 +802,112 @@ export default function UsuariosPage() {
               </button>
             </div>
 
-            <form onSubmit={handleEditUser} className="space-y-4">
+            <form onSubmit={handleEditUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Nombre Completo
+                  Nombre Completo *
                 </label>
                 <input
                   type="text"
                   required
                   value={editNombre}
                   onChange={(e) => setEditNombre(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
 
-              {/* Prestador Geclisa Asignado */}
-              <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
-                <label className="block text-xs font-bold text-blue-600 uppercase flex items-center gap-1.5">
-                  <Stethoscope size={14} /> Prestador Geclisa por Defecto
+              {/* Selector Buscable de Prestador Geclisa en Edición */}
+              <div className="p-3.5 bg-blue-50/40 dark:bg-slate-800/60 border border-blue-200/60 dark:border-slate-700 rounded-xl space-y-2 relative">
+                <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 uppercase flex items-center gap-1.5">
+                  <Stethoscope size={14} className="text-blue-600" /> Prestador Geclisa Asignado
                 </label>
-                <select
-                  value={editPreId || ''}
-                  onChange={(e) => {
-                    const val = e.target.value ? parseInt(e.target.value) : null
-                    setEditPreId(val)
-                    const p = prestadores.find((item) => item.pre_id === val)
-                    if (p) {
-                      setEditMatricula(p.matricula || '')
-                      setEditPrestadorNombre(p.nombre || '')
-                    } else {
-                      setEditMatricula('')
-                      setEditPrestadorNombre('')
-                    }
-                  }}
-                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="">-- Sin prestador asignado (Acceso general) --</option>
-                  {prestadores.map((p) => (
-                    <option key={p.pre_id} value={p.pre_id}>
-                      {p.nombre} {p.matricula ? `(Mat: ${p.matricula})` : ''} - {p.especialidad || 'Médico'}
-                    </option>
-                  ))}
-                </select>
+                <p className="text-[11px] text-slate-500">
+                  Asigna la matrícula y prestador de Geclisa para precargar su agenda en el CRM.
+                </p>
+
+                {editPreId ? (
+                  <div className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-800 border border-blue-300 dark:border-blue-700 rounded-xl shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <Stethoscope size={16} className="text-blue-600" />
+                      <div>
+                        <p className="text-xs font-bold text-[var(--foreground)]">{editPrestadorNombre}</p>
+                        <p className="text-[10px] text-slate-500">
+                          Matrícula: <strong>{editMatricula || 'S/N'}</strong> (ID: {editPreId})
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditPreId(null)
+                        setEditMatricula('')
+                        setEditPrestadorNombre('')
+                      }}
+                      className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50 rounded-lg text-xs font-semibold flex items-center gap-1"
+                      title="Quitar prestador"
+                    >
+                      <X size={14} />
+                      <span>Quitar</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Buscar médico por nombre o matrícula..."
+                        value={searchPreEdit}
+                        onFocus={() => setDropdownOpenEdit(true)}
+                        onChange={(e) => {
+                          setSearchPreEdit(e.target.value)
+                          setDropdownOpenEdit(true)
+                        }}
+                        className="w-full pl-9 pr-4 py-2 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                    </div>
+
+                    {dropdownOpenEdit && (
+                      <div className="border border-[var(--border)] rounded-xl max-h-48 overflow-y-auto bg-white dark:bg-slate-800 divide-y divide-slate-100 dark:divide-slate-700/60 shadow-lg">
+                        {cargandoPrestadores ? (
+                          <div className="p-3 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                            <Loader2 size={14} className="animate-spin text-blue-600" />
+                            <span>Cargando catálogo...</span>
+                          </div>
+                        ) : prestadoresFiltradosEdit.length === 0 ? (
+                          <div className="p-3 text-center text-xs text-slate-400">
+                            No se encontraron prestadores
+                          </div>
+                        ) : (
+                          prestadoresFiltradosEdit.map((p) => (
+                            <button
+                              key={p.pre_id}
+                              type="button"
+                              onClick={() => {
+                                setEditPreId(p.pre_id)
+                                setEditMatricula(p.matricula || '')
+                                setEditPrestadorNombre(p.nombre || '')
+                                setDropdownOpenEdit(false)
+                                setSearchPreEdit('')
+                              }}
+                              className="w-full text-left p-2.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors flex items-center justify-between text-xs"
+                            >
+                              <div>
+                                <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
+                                <p className="text-[10px] text-slate-400">
+                                  {p.especialidad || 'Médico'} • Mat: {p.matricula || 'S/N'}
+                                </p>
+                              </div>
+                              <span className="text-[10px] font-mono text-blue-600 font-bold">
+                                #{p.pre_id}
+                              </span>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -799,7 +970,7 @@ export default function UsuariosPage() {
                   disabled={actionLoading}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 glow-primary disabled:opacity-50"
                 >
-                  {actionLoading ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                  {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                   <span>Guardar Cambios</span>
                 </button>
               </div>
@@ -808,21 +979,20 @@ export default function UsuariosPage() {
         </div>
       )}
 
-      {/* Modal: Confirmar Eliminación */}
+      {/* Modal Confirmar Eliminación */}
       {showDeleteModal && selectedUser && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-[var(--card)] border border-[var(--border)] w-full max-w-md p-6 rounded-2xl shadow-xl space-y-4">
-            <h2 className="text-sm font-bold text-red-600 flex items-center gap-2">
-              <Trash2 size={18} />
-              ¿Eliminar usuario definitivamente?
-            </h2>
-
-            <p className="text-xs text-[var(--secondary)] leading-relaxed">
-              Estás a punto de dar de baja a <strong>{selectedUser.nombre_completo}</strong> ({selectedUser.email}).
-              Esta acción eliminará su cuenta tanto en <strong>Supabase Auth</strong> como en el CRM y no podrá volver a iniciar sesión.
-            </p>
-
-            <div className="flex gap-2 justify-end pt-2">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-xl w-full max-w-sm overflow-hidden animate-scale-up p-5 space-y-4 text-center">
+            <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 dark:bg-red-950/50 dark:text-red-400 flex items-center justify-center mx-auto">
+              <Trash2 size={24} />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-[var(--foreground)]">¿Eliminar Usuario?</h3>
+              <p className="text-xs text-[var(--secondary)] mt-1">
+                Esta acción eliminará el acceso de <strong>{selectedUser.nombre_completo}</strong> ({selectedUser.email}). Esta acción no se puede deshacer.
+              </p>
+            </div>
+            <div className="flex gap-2 justify-center pt-2 border-t border-[var(--border)]">
               <button
                 type="button"
                 onClick={() => setShowDeleteModal(false)}
@@ -837,8 +1007,8 @@ export default function UsuariosPage() {
                 disabled={actionLoading}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50"
               >
-                {actionLoading ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-                <span>Sí, Eliminar</span>
+                {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                <span>Eliminar Definitivamente</span>
               </button>
             </div>
           </div>

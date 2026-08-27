@@ -91,15 +91,19 @@ export default function AgendaGeclisaPage() {
   const getTodayISO = () => new Date().toISOString().split('T')[0]
   const [fecha, setFecha] = useState<string>(getTodayISO())
 
-  // Filtros Avanzados (Por defecto: 'todos')
-  const [selectedPreId, setSelectedPreId] = useState<string>('todos')
+  // Prestador Seleccionado (Inicializado estrictamente con el prestador del usuario o 969 por defecto)
+  const [selectedPreId, setSelectedPreId] = useState<string>('969')
+  const [prestadorInfo, setPrestadorInfo] = useState<{ pre_id: number; nombre: string; matricula?: string } | null>(null)
+
+  // Filtros Secundarios (Por defecto: 'todos')
   const [selectedServicio, setSelectedServicio] = useState<string>('todos')
   const [selectedUbicacion, setSelectedUbicacion] = useState<string>('todos')
   const [selectedConsultorio, setSelectedConsultorio] = useState<string>('todos')
   const [filtroEstado, setFiltroEstado] = useState<string>('todos')
   const [search, setSearch] = useState('')
 
-  // Catálogos dinámicos
+  // Catálogos
+  const [catalogoPrestadores, setCatalogoPrestadores] = useState<Prestador[]>([])
   const [catalogos, setCatalogos] = useState<Catalogos>({
     servicios: [],
     ubicaciones: [],
@@ -132,19 +136,36 @@ export default function AgendaGeclisaPage() {
     geclisa_ficha_id?: number | null
   } | null>(null)
 
-  // Cargar agenda de Geclisa (Global o por Prestador)
+  // 1. Cargar lista completa de prestadores mediante el proxy seguro
+  const cargarCatalogoPrestadores = async () => {
+    try {
+      const res = await fetch('/api/admin/geclisa-prestadores')
+      if (res.ok) {
+        const data = await res.json()
+        setCatalogoPrestadores(data.prestadores || [])
+      }
+    } catch (e) {
+      console.error('Error cargando catalogo de prestadores:', e)
+    }
+  }
+
+  // 2. Establecer prestador asignado al usuario logueado en el CRM
+  useEffect(() => {
+    cargarCatalogoPrestadores()
+    if (profile?.geclisa_pre_id) {
+      setSelectedPreId(String(profile.geclisa_pre_id))
+    }
+  }, [profile])
+
+  // 3. Cargar agenda estricta de ese prestador
   const cargarAgenda = async (preIdToUse?: string, fechaToUse?: string) => {
     const pId = preIdToUse !== undefined ? preIdToUse : selectedPreId
     const fDate = fechaToUse || fecha
+    if (!pId) return
 
     try {
       setLoading(true)
-      let url = `${BACKEND_URL}/api/geclisa/agenda?fecha=${fDate}`
-      if (pId && pId !== 'todos') {
-        url += `&pre_id=${pId}`
-      }
-
-      const res = await fetch(url)
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/agenda?pre_id=${pId}&fecha=${fDate}`)
       if (!res.ok) {
         throw new Error('No se pudo obtener la agenda de Geclisa.')
       }
@@ -158,6 +179,9 @@ export default function AgendaGeclisaPage() {
         atendido: 0,
         cancelado: 0
       })
+      if (data.prestador) {
+        setPrestadorInfo(data.prestador)
+      }
       if (data.catalogos) {
         setCatalogos({
           servicios: data.catalogos.servicios || [],
@@ -174,9 +198,11 @@ export default function AgendaGeclisaPage() {
     }
   }
 
-  // Cargar al cambiar de fecha o de prestador base
+  // Cargar al cambiar de fecha o de prestador
   useEffect(() => {
-    cargarAgenda(selectedPreId, fecha)
+    if (selectedPreId) {
+      cargarAgenda(selectedPreId, fecha)
+    }
   }, [selectedPreId, fecha])
 
   // Navegación de Fechas
@@ -208,9 +234,8 @@ export default function AgendaGeclisaPage() {
     })
   }, [fecha])
 
-  // Resetear filtros
+  // Resetear filtros secundarios
   const limpiarFiltros = () => {
-    setSelectedPreId('todos')
     setSelectedServicio('todos')
     setSelectedUbicacion('todos')
     setSelectedConsultorio('todos')
@@ -218,7 +243,7 @@ export default function AgendaGeclisaPage() {
     setSearch('')
   }
 
-  const hayFiltrosActivos = selectedPreId !== 'todos' || selectedServicio !== 'todos' || selectedUbicacion !== 'todos' || selectedConsultorio !== 'todos' || filtroEstado !== 'todos' || search !== ''
+  const hayFiltrosActivos = selectedServicio !== 'todos' || selectedUbicacion !== 'todos' || selectedConsultorio !== 'todos' || filtroEstado !== 'todos' || search !== ''
 
   // Cambiar estado de un turno
   const handleCambiarEstado = async (turnoId: number, nuevoEstado: string) => {
@@ -275,10 +300,6 @@ export default function AgendaGeclisaPage() {
       if (selectedConsultorio !== 'todos' && t.consultorio !== selectedConsultorio) {
         return false
       }
-      // Filtro por Prestador
-      if (selectedPreId !== 'todos' && String(t.prestador_id) !== selectedPreId) {
-        return false
-      }
       // Filtro de Búsqueda
       if (search.trim()) {
         const q = search.toLowerCase().trim()
@@ -287,12 +308,11 @@ export default function AgendaGeclisaPage() {
         const matchDNI = t.dni ? t.dni.includes(q) : false
         const matchOS = t.obra_social.toLowerCase().includes(q)
         const matchPractica = t.practica.toLowerCase().includes(q)
-        const matchPrestador = t.prestador_nombre.toLowerCase().includes(q)
-        return matchNombre || matchFicha || matchDNI || matchOS || matchPractica || matchPrestador
+        return matchNombre || matchFicha || matchDNI || matchOS || matchPractica
       }
       return true
     })
-  }, [turnos, filtroEstado, selectedServicio, selectedUbicacion, selectedConsultorio, selectedPreId, search])
+  }, [turnos, filtroEstado, selectedServicio, selectedUbicacion, selectedConsultorio, search])
 
   // Estilos de Tarjetas Coloreadas por Estadio Completo
   const getCardTheme = (estadoKey: string) => {
@@ -362,62 +382,91 @@ export default function AgendaGeclisaPage() {
                 </span>
               </h1>
               <p className="text-xs text-[var(--secondary)]">
-                Consulta hospitalaria en tiempo real, gestión de estados clínicos y filtros combinados.
+                {prestadorInfo ? (
+                  <span>
+                    Agenda de: <strong>{prestadorInfo.nombre}</strong> {prestadorInfo.matricula ? `(Mat: ${prestadorInfo.matricula})` : ''}
+                  </span>
+                ) : (
+                  'Consulta hospitalaria en tiempo real del profesional asignado.'
+                )}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Navegación por Fechas & Botón Refrescar */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => cambiarDia(-1)}
-            className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center gap-1 text-xs font-bold"
-            title="Día anterior"
-          >
-            <ChevronLeft size={16} />
-            <span className="hidden sm:inline">Anterior</span>
-          </button>
+        {/* Selector de Prestador & Fechas */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Selector de Prestador */}
+          <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800 border border-[var(--border)] px-3 py-1.5 rounded-xl shadow-sm">
+            <Stethoscope size={14} className="text-blue-600 shrink-0" />
+            <select
+              value={selectedPreId}
+              onChange={(e) => setSelectedPreId(e.target.value)}
+              className="text-xs font-bold bg-transparent border-0 text-[var(--foreground)] focus:outline-none focus:ring-0 max-w-[200px] truncate"
+            >
+              {catalogoPrestadores.length > 0 ? (
+                catalogoPrestadores.map((p) => (
+                  <option key={p.pre_id} value={String(p.pre_id)}>
+                    {p.nombre} {p.matricula ? `(${p.matricula})` : ''}
+                  </option>
+                ))
+              ) : (
+                <option value={selectedPreId}>
+                  {prestadorInfo?.nombre || `Prestador #${selectedPreId}`}
+                </option>
+              )}
+            </select>
+          </div>
 
-          <button
-            onClick={irAHoy}
-            className={`px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
-              fecha === getTodayISO()
-                ? 'bg-blue-600 text-white border-blue-600 shadow glow-primary'
-                : 'border-[var(--border)] text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
-            }`}
-          >
-            Hoy
-          </button>
+          {/* Navegación por Días */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => cambiarDia(-1)}
+              className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold"
+              title="Día anterior"
+            >
+              <ChevronLeft size={16} />
+            </button>
 
-          <button
-            onClick={() => cambiarDia(1)}
-            className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all flex items-center gap-1 text-xs font-bold"
-            title="Día siguiente"
-          >
-            <span className="hidden sm:inline">Siguiente</span>
-            <ChevronRight size={16} />
-          </button>
+            <button
+              onClick={irAHoy}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                fecha === getTodayISO()
+                  ? 'bg-blue-600 text-white border-blue-600 shadow glow-primary'
+                  : 'border-[var(--border)] text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              Hoy
+            </button>
 
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className="px-3 py-1.5 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-          />
+            <button
+              onClick={() => cambiarDia(1)}
+              className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all text-xs font-bold"
+              title="Día siguiente"
+            >
+              <ChevronRight size={16} />
+            </button>
 
-          <button
-            onClick={() => cargarAgenda()}
-            disabled={loading}
-            className="p-2.5 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all shadow-sm"
-            title="Actualizar agenda en vivo"
-          >
-            <RefreshCw size={16} className={loading ? 'animate-spin text-blue-600' : ''} />
-          </button>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => setFecha(e.target.value)}
+              className="px-2.5 py-1.5 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+
+            <button
+              onClick={() => cargarAgenda()}
+              disabled={loading}
+              className="p-2 border border-[var(--border)] rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all shadow-sm"
+              title="Actualizar agenda en vivo"
+            >
+              <RefreshCw size={16} className={loading ? 'animate-spin text-blue-600' : ''} />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Barra de Filtros Combinados (4 Selectores Inteligentes) */}
+      {/* Barra de Filtros Combinados (Servicio, Ubicación, Consultorio) */}
       <div className="bg-[var(--card)] p-4 rounded-2xl border border-[var(--border)] shadow-sm space-y-3">
         <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-2.5">
           <div className="flex items-center gap-2">
@@ -441,27 +490,8 @@ export default function AgendaGeclisaPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* 1. Selector de Prestador */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-              <Stethoscope size={11} className="text-blue-600" /> Prestador / Profesional
-            </label>
-            <select
-              value={selectedPreId}
-              onChange={(e) => setSelectedPreId(e.target.value)}
-              className="w-full px-3 py-2 text-xs font-bold border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            >
-              <option value="todos">Todos los Prestadores ({turnos.length})</option>
-              {catalogos.prestadores.map((p) => (
-                <option key={p.pre_id} value={String(p.pre_id)}>
-                  {p.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* 2. Selector de Servicio */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* 1. Selector de Servicio */}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
               <Building2 size={11} className="text-purple-600" /> Servicio / Especialidad
@@ -480,7 +510,7 @@ export default function AgendaGeclisaPage() {
             </select>
           </div>
 
-          {/* 3. Selector de Ubicación / Sede */}
+          {/* 2. Selector de Ubicación / Sede */}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
               <MapPin size={11} className="text-emerald-600" /> Ubicación / Sede
@@ -499,7 +529,7 @@ export default function AgendaGeclisaPage() {
             </select>
           </div>
 
-          {/* 4. Selector de Consultorio */}
+          {/* 3. Selector de Consultorio */}
           <div className="space-y-1">
             <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
               <DoorOpen size={11} className="text-amber-600" /> Consultorio / Sala
@@ -573,7 +603,7 @@ export default function AgendaGeclisaPage() {
         <Search size={18} className="text-slate-400 shrink-0" />
         <input
           type="text"
-          placeholder="Buscar turno por paciente, DNI, Ficha, práctica (ej: OCT, Cirugía), médico o cobertura..."
+          placeholder="Buscar turno por paciente, DNI, Ficha, práctica médica (ej: OCT, Cirugía) o cobertura..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full text-xs bg-transparent border-0 focus:outline-none focus:ring-0 text-[var(--foreground)]"
@@ -589,7 +619,7 @@ export default function AgendaGeclisaPage() {
       {loading ? (
         <div className="flex flex-col items-center justify-center py-20 bg-[var(--card)] rounded-2xl border border-[var(--border)] text-slate-400 gap-3">
           <Loader2 size={36} className="animate-spin text-blue-600" />
-          <p className="text-xs font-semibold">Consultando agenda completa en tiempo real en Geclisa...</p>
+          <p className="text-xs font-semibold">Consultando agenda en tiempo real en Geclisa...</p>
         </div>
       ) : turnosFiltrados.length === 0 ? (
         <div className="text-center py-16 bg-[var(--card)] rounded-2xl border border-[var(--border)] text-slate-400 space-y-2">
@@ -604,7 +634,7 @@ export default function AgendaGeclisaPage() {
               className="mt-2 px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-all inline-flex items-center gap-1.5 shadow-sm"
             >
               <RotateCcw size={12} />
-              <span>Ver todos los turnos del día</span>
+              <span>Ver todos los turnos del prestador</span>
             </button>
           )}
         </div>
@@ -674,15 +704,8 @@ export default function AgendaGeclisaPage() {
                     </span>
                   </div>
 
-                  {/* Detalles Operativos: Prestador, Obra Social, Sede & Consultorio */}
+                  {/* Detalles Operativos: Obra Social, Sede & Consultorio */}
                   <div className="space-y-1 text-[11px] text-[var(--secondary)]">
-                    {t.prestador_nombre && (
-                      <div className="flex items-center gap-1.5 font-medium">
-                        <Stethoscope size={13} className="text-blue-600 shrink-0" />
-                        <span className="truncate">{t.prestador_nombre}</span>
-                      </div>
-                    )}
-
                     <div className="flex items-center gap-1.5">
                       <ShieldCheck size={13} className="text-emerald-600 shrink-0" />
                       <span className="truncate">{t.obra_social}</span>

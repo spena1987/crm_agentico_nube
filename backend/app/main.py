@@ -4428,10 +4428,30 @@ def obtener_agenda_geclisa_endpoint(
         fecha_iso = fecha or datetime.now().strftime("%Y-%m-%d")
         prestador_info = None
         
-        # 1. Si viene un prestador específico
-        if pre_id and pre_id > 0:
-            target_pre_id = pre_id
-            turnos = geclisa_client.obtener_agenda_prestador(pre_id=target_pre_id, fecha_iso=fecha_iso)
+        target_pre_id = pre_id
+        prestador_info = None
+
+        # 1. Si no viene pre_id, resolver desde el perfil del usuario del CRM o fallback 969
+        if not target_pre_id and usuario_crm_id:
+            try:
+                p_resp = supabase.table("usuarios_perfil").select("geclisa_pre_id, geclisa_matricula, geclisa_prestador_nombre").eq("id", usuario_crm_id).limit(1).execute()
+                if p_resp.data and p_resp.data[0].get("geclisa_pre_id"):
+                    target_pre_id = int(p_resp.data[0]["geclisa_pre_id"])
+                    prestador_info = {
+                        "pre_id": target_pre_id,
+                        "matricula": p_resp.data[0].get("geclisa_matricula") or "",
+                        "nombre": p_resp.data[0].get("geclisa_prestador_nombre") or f"Prestador #{target_pre_id}"
+                    }
+            except Exception as e:
+                logger.warning(f"Error resolviendo prestador de usuario: {e}")
+
+        if not target_pre_id:
+            target_pre_id = 969
+
+        # 2. Consultar turnos del prestador
+        turnos = geclisa_client.obtener_agenda_prestador(pre_id=target_pre_id, fecha_iso=fecha_iso)
+        
+        if not prestador_info:
             p_data = geclisa_client.obtener_prestador_por_id(target_pre_id)
             if p_data.get("encontrado"):
                 prestador_info = {
@@ -4447,15 +4467,6 @@ def obtener_agenda_geclisa_endpoint(
                 }
             else:
                 prestador_info = {"pre_id": target_pre_id, "nombre": f"Prestador #{target_pre_id}", "matricula": ""}
-        else:
-            # 2. Modo Global: Toda la clínica
-            target_pre_id = 0
-            turnos = geclisa_client.obtener_agenda_global(fecha_iso=fecha_iso)
-            prestador_info = {
-                "pre_id": 0,
-                "nombre": "Todos los Prestadores (Clínica Completa)",
-                "matricula": ""
-            }
         
         # 3. Calcular métricas agregadas de estados
         metricas = {
