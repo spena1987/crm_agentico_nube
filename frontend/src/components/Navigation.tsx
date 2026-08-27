@@ -24,7 +24,8 @@ import {
   CalendarCheck2,
   Calendar,
   Building2,
-  UserCheck
+  UserCheck,
+  Eye
 } from 'lucide-react'
 
 import { BACKEND_URL } from '@/lib/api'
@@ -33,7 +34,7 @@ import { supabase } from '@/lib/supabase'
 interface SubNavItem {
   label: string
   href: string
-  icon?: any
+  icon: any
 }
 
 interface NavItem {
@@ -65,7 +66,8 @@ const allNavItems: NavItem[] = [
     icon: Building2,
     subItems: [
       { label: 'Agenda & Slots', href: '/programacion-quirurgica', icon: CalendarCheck2 },
-      { label: 'Pizarra en Vivo', href: '/quirofano-en-vivo', icon: Activity }
+      { label: 'Pizarra en Vivo', href: '/quirofano-en-vivo', icon: Activity },
+      { label: 'Cálculo de LIO', href: '/calculo-lio', icon: Eye }
     ]
   },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
@@ -201,7 +203,7 @@ export default function Navigation() {
           {visibleNavItems.map((item) => {
             const Icon = item.icon
             const isQuirofano = item.code === 'programacion-quirurgica'
-            const isQuirofanoActive = pathname === '/programacion-quirurgica' || pathname === '/quirofano-en-vivo'
+            const isQuirofanoActive = pathname === '/programacion-quirurgica' || pathname === '/quirofano-en-vivo' || pathname === '/calculo-lio'
             
             const isActive = isQuirofano 
               ? isQuirofanoActive

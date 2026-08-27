@@ -3230,7 +3230,9 @@ COLUMN_KEYS_TURNOS_QUIROFANO = {
     "checklist_seguridad_quirurgica", "parte_quirurgico_pdf_url", "tipo_anestesia",
     "checks_adicionales", "estado", "consentimiento_estado", "consentimiento_token",
     "consentimiento_pdf_url", "consentimiento_enviado_at", "consentimiento_firmado_at",
-    "consentimiento_firma_ip", "consentimiento_firma_img", "observaciones", "usuario_alta"
+    "consentimiento_firma_ip", "consentimiento_firma_img", "observaciones", "usuario_alta",
+    "lio_calculado", "lio_calculado_at", "lio_calculado_por", "lio_calculo_opciones",
+    "lio_stock_reservado", "lio_stock_reservado_at", "lio_stock_observaciones", "lio_opcion_implantada_id"
 }
 
 def verificar_solapamiento_turno_quirofano(quirofano_id: str, fecha_cirugia: str, hora_inicio: str, duracion_minutos: int = 20, excluir_turno_id: Optional[str] = None) -> Optional[Dict[str, Any]]:

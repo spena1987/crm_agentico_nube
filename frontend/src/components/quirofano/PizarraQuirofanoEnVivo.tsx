@@ -36,7 +36,8 @@ import {
   X,
   ListFilter,
   Layers,
-  ArrowRight
+  ArrowRight,
+  PackageCheck
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -937,11 +938,42 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
                     {/* Información del Lente LIO */}
                     {t.lleva_lente && (
-                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-[11px] font-bold">
-                        <span>👁 LIO: {t.lente_tipo || 'Estándar'}</span>
-                        {t.lente_dioptria && <span>• Diop: {t.lente_dioptria}</span>}
-                        {t.es_torico && <span>• Tórico: T{t.lente_torico_valor || 0} (Eje {t.lente_torico_eje || 90}°)</span>}
-                        {t.lente_lote && <span>• Lote: {t.lente_lote}</span>}
+                      <div className="flex flex-wrap items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800/80 text-[11px] font-bold">
+                        {t.lio_calculado ? (
+                          <span className="inline-flex items-center gap-1 text-cyan-600 dark:text-cyan-400 font-extrabold">
+                            <CheckCircle2 size={12} className="text-cyan-500" />
+                            <span>LIO Calculado:</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400 font-extrabold">
+                            <AlertCircle size={12} className="text-amber-500" />
+                            <span>LIO Pendiente:</span>
+                          </span>
+                        )}
+                        <span className="font-extrabold">{t.lente_tipo || 'Estándar'}</span>
+                        {t.lente_dioptria && <span className="font-mono text-blue-600 dark:text-blue-400">({t.lente_dioptria} D)</span>}
+                        {t.es_torico && (
+                          <span className="text-indigo-600 dark:text-indigo-300 font-extrabold">
+                            • T{t.lente_torico_valor || 0} ({t.lente_torico_eje || 90}°)
+                          </span>
+                        )}
+                        {Array.isArray(t.lio_calculo_opciones) && t.lio_calculo_opciones.length > 1 && (
+                          <span className="px-1.5 py-0.2 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 text-[10px] font-extrabold">
+                            {t.lio_calculo_opciones.length} opciones
+                          </span>
+                        )}
+                        {t.lio_stock_reservado ? (
+                          <span className="px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 text-[10px] font-extrabold flex items-center gap-0.5">
+                            <PackageCheck size={10} /> Stock OK
+                          </span>
+                        ) : (
+                          t.lio_calculado && (
+                            <span className="text-amber-600 dark:text-amber-400 text-[10px] font-semibold">
+                              (Stock s/reserva)
+                            </span>
+                          )
+                        )}
+                        {t.lente_lote && <span className="font-mono text-gray-500">• Lote: {t.lente_lote}</span>}
                       </div>
                     )}
 

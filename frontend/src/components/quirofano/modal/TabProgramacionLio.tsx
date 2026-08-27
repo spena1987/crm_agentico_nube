@@ -175,7 +175,71 @@ export default function TabProgramacionLio({
         </div>
 
         {formData.lleva_lente && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1 animate-fade-in text-xs">
+          <>
+            {/* Selector de Opciones Pre-Calculadas por el Cirujano */}
+            {Array.isArray(turno.lio_calculo_opciones) && turno.lio_calculo_opciones.length > 0 && (
+              <div className="p-3 rounded-xl bg-cyan-50/60 dark:bg-cyan-950/30 border border-cyan-200 dark:border-cyan-800/80 space-y-2 animate-fade-in">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-extrabold text-cyan-800 dark:text-cyan-200 flex items-center gap-1.5">
+                    <Sparkles size={13} className="text-cyan-500" />
+                    <span>Opciones Calculadas por el Cirujano ({turno.lio_calculo_opciones.length}):</span>
+                  </span>
+                  <span className="text-[10px] text-cyan-600 dark:text-cyan-400 font-semibold">
+                    1-Clic para cargar a la cirugía
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {turno.lio_calculo_opciones.map((op: any, i: number) => {
+                    const esSeleccionado =
+                      formData.lente_tipo === op.modelo && formData.lente_dioptria === op.dioptria
+
+                    return (
+                      <button
+                        key={op.id || i}
+                        type="button"
+                        onClick={() => {
+                          setFormData((prev: any) => ({
+                            ...prev,
+                            lleva_lente: true,
+                            lente_tipo: op.modelo,
+                            lente_dioptria: op.dioptria,
+                            es_torico: Boolean(op.es_torico),
+                            lente_torico_valor: op.torico_valor || 0,
+                            lente_torico_eje: op.torico_eje || 90
+                          }))
+                        }}
+                        className={`p-2.5 rounded-xl text-left border transition text-xs flex items-center justify-between ${
+                          esSeleccionado
+                            ? 'bg-cyan-500/20 border-cyan-500 ring-2 ring-cyan-500/40 shadow-sm'
+                            : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-cyan-400'
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <span className="font-extrabold text-cyan-900 dark:text-cyan-200 block text-xs truncate">
+                            {op.etiqueta || `Opción ${i + 1}`}
+                          </span>
+                          <span className="text-[11px] text-[var(--secondary)] block truncate">
+                            {op.modelo} <b className="text-blue-600 dark:text-blue-400">({op.dioptria} D)</b>
+                            {op.es_torico ? ` • T${op.torico_valor} (${op.torico_eje}°)` : ''}
+                          </span>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                            esSeleccionado
+                              ? 'bg-cyan-500 text-black'
+                              : 'bg-slate-100 dark:bg-slate-800 text-[var(--foreground)]'
+                          }`}
+                        >
+                          {esSeleccionado ? 'Activo' : 'Cargar'}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1 animate-fade-in text-xs">
             <div>
               <label className="block font-bold text-[var(--foreground)] mb-1">Modelo de LIO</label>
               <input
@@ -268,8 +332,9 @@ export default function TabProgramacionLio({
               )}
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
+    </div>
 
       {/* Equipo Médico */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">

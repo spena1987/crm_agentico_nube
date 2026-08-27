@@ -4547,3 +4547,319 @@ def cambiar_estado_turno_geclisa_endpoint(turno_id: int, payload: CambiarEstadoT
     except Exception as e:
         logger.error(f"Error al cambiar estado de turno #{turno_id} en Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
+# ENDPOINTS: CÁLCULO DE LENTE INTRAOCULAR (LIO) MULTILENTE Y STOCK
+# ====================================================================
+
+class GuardarCalculoLioPayload(BaseModel):
+    turno_id: Optional[str] = None
+    asesoria_id: Optional[str] = None
+    paciente_id: Optional[str] = None
+    lio_calculado_por: str
+    opciones: List[Dict[str, Any]]
+    formula: Optional[str] = None
+    target_refractivo: Optional[str] = None
+    observaciones: Optional[str] = None
+    ojo: Optional[str] = None
+
+@app.get("/api/calculo-lio/pacientes")
+def listar_pacientes_calculo_lio(
+    cirujano_nombre: Optional[str] = None,
+    estado_calculo: Optional[str] = "todos", # 'todos' | 'pendientes' | 'calculados'
+    busqueda: Optional[str] = None
+):
+    """
+    Lista todos los pacientes asignados a un cirujano (tanto turnos agendados como asesorías activas)
+    para la gestión y cálculo de lentes intraoculares.
+    """
+    try:
+        from datetime import datetime, timezone
+        items = []
+        turnos_vistos = set()
+        asesorias_vistas = set()
+
+        # 1. Consultar turnos de quirófano programados / activos
+        q_turnos = supabase.table("turnos_quirofano").select(
+            "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(*)"
+        ).neq("estado", "cancelado").order("fecha_cirugia", desc=False)
+
+        res_turnos = q_turnos.execute()
+        turnos_data = res_turnos.data or []
+
+        for t in turnos_data:
+            pac = t.get("pacientes") or {}
+            as_id = t.get("asesoria_id")
+            if as_id:
+                asesorias_vistas.add(as_id)
+            turnos_vistos.add(t["id"])
+
+            cirujano = t.get("cirujano_nombre") or (t.get("asesorias_quirurgicas") or {}).get("medico_derivador_nombre") or "Sin Asignar"
+            
+            # Filtro por cirujano
+            if cirujano_nombre and cirujano_nombre.lower() != "todos":
+                if cirujano_nombre.lower() not in cirujano.lower():
+                    continue
+
+            es_calculado = bool(t.get("lio_calculado"))
+            opciones = t.get("lio_calculo_opciones") or []
+
+            # Si no tiene opciones pero tiene lente_tipo y lente_dioptria, armar opción 1 por compatibilidad
+            if not opciones and t.get("lente_tipo"):
+                opciones = [{
+                    "id": "opt-base",
+                    "tipo_opcion": "principal",
+                    "etiqueta": "Plan A (Principal)",
+                    "modelo": t.get("lente_tipo"),
+                    "dioptria": t.get("lente_dioptria") or "+21.50",
+                    "es_torico": bool(t.get("es_torico")),
+                    "torico_valor": t.get("lente_torico_valor"),
+                    "torico_eje": t.get("lente_torico_eje"),
+                    "es_implantado": True
+                }]
+
+            item = {
+                "tipo_registro": "turno",
+                "turno_id": t["id"],
+                "asesoria_id": as_id,
+                "paciente_id": t.get("paciente_id"),
+                "paciente": pac,
+                "paciente_nombre": pac.get("nombre") or "Paciente",
+                "paciente_dni": pac.get("dni") or "S/D",
+                "paciente_telefono": pac.get("telefono") or "S/D",
+                "paciente_obra_social": t.get("obra_social") or pac.get("obra_social") or "Particular",
+                "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
+                "fecha_cirugia": t.get("fecha_cirugia"),
+                "hora_inicio": t.get("hora_inicio"),
+                "ojo": t.get("ojo") or "OD",
+                "practica_nombre": t.get("practica_nombre") or "Cirugía Oftalmológica",
+                "cirujano_nombre": cirujano,
+                "quirofano_nombre": (t.get("quirofanos") or {}).get("nombre") or "Quirófano",
+                "estado_turno": t.get("estado"),
+                "lio_calculado": es_calculado,
+                "lio_calculado_at": t.get("lio_calculado_at"),
+                "lio_calculado_por": t.get("lio_calculado_por") or (cirujano if es_calculado else None),
+                "lio_calculo_opciones": opciones,
+                "lio_stock_reservado": bool(t.get("lio_stock_reservado")),
+                "lio_stock_reservado_at": t.get("lio_stock_reservado_at"),
+                "lio_stock_observaciones": t.get("lio_stock_observaciones") or "",
+                "lente_tipo": t.get("lente_tipo"),
+                "lente_dioptria": t.get("lente_dioptria"),
+                "es_torico": bool(t.get("es_torico")),
+                "lente_torico_valor": t.get("lente_torico_valor"),
+                "lente_torico_eje": t.get("lente_torico_eje")
+            }
+            items.append(item)
+
+        # 2. Consultar asesorías confirmadas o en proceso que aún no tengan turno agendado
+        q_asesorias = supabase.table("asesorias_quirurgicas").select(
+            "*, pacientes(*)"
+        ).in_("estado", ["confirmado", "en_asesoramiento", "presupuesto_enviado", "en_analisis"]).order("created_at", desc=True)
+
+        res_as = q_asesorias.execute()
+        for a in (res_as.data or []):
+            if a["id"] in asesorias_vistas:
+                continue
+            
+            pac = a.get("pacientes") or {}
+            cirujano = a.get("medico_derivador_nombre") or "Sin Asignar"
+            
+            if cirujano_nombre and cirujano_nombre.lower() != "todos":
+                if cirujano_nombre.lower() not in cirujano.lower():
+                    continue
+
+            es_calculado = bool(a.get("lio_calculado"))
+            opciones = a.get("lio_calculo_opciones") or []
+
+            item = {
+                "tipo_registro": "asesoria",
+                "turno_id": None,
+                "asesoria_id": a["id"],
+                "paciente_id": a.get("paciente_id"),
+                "paciente": pac,
+                "paciente_nombre": pac.get("nombre") or "Paciente",
+                "paciente_dni": pac.get("dni") or "S/D",
+                "paciente_telefono": pac.get("telefono") or "S/D",
+                "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
+                "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
+                "fecha_cirugia": None,
+                "hora_inicio": None,
+                "ojo": a.get("ojo") or "OD",
+                "practica_nombre": a.get("practica_nombre") or "Cirugía Oftalmológica",
+                "cirujano_nombre": cirujano,
+                "quirofano_nombre": "Pendiente de Agendamiento",
+                "estado_turno": "en_asesoramiento",
+                "lio_calculado": es_calculado,
+                "lio_calculado_at": a.get("lio_calculado_at"),
+                "lio_calculado_por": a.get("lio_calculado_por") or (cirujano if es_calculado else None),
+                "lio_calculo_opciones": opciones,
+                "lio_stock_reservado": False,
+                "lio_stock_reservado_at": None,
+                "lio_stock_observaciones": "",
+                "lente_tipo": None,
+                "lente_dioptria": None,
+                "es_torico": False,
+                "lente_torico_valor": None,
+                "lente_torico_eje": None
+            }
+            items.append(item)
+
+        # 3. Filtrado por estado de cálculo
+        if estado_calculo == "pendientes":
+            items = [it for it in items if not it["lio_calculado"]]
+        elif estado_calculo == "calculados":
+            items = [it for it in items if it["lio_calculado"]]
+        elif estado_calculo == "stock_pendiente":
+            items = [it for it in items if it["lio_calculado"] and not it["lio_stock_reservado"]]
+
+        # 4. Filtro de búsqueda por texto
+        if busqueda and busqueda.strip():
+            b = busqueda.lower().strip()
+            items = [
+                it for it in items
+                if b in it["paciente_nombre"].lower()
+                or b in it["paciente_dni"].lower()
+                or b in it["cirujano_nombre"].lower()
+                or b in it["practica_nombre"].lower()
+            ]
+
+        # Extraer lista de cirujanos disponibles
+        cirujanos_set = set()
+        for it in items:
+            if it["cirujano_nombre"] and it["cirujano_nombre"] != "Sin Asignar":
+                cirujanos_set.add(it["cirujano_nombre"])
+
+        return {
+            "success": True,
+            "total": len(items),
+            "pendientes_count": len([it for it in items if not it["lio_calculado"]]),
+            "calculados_count": len([it for it in items if it["lio_calculado"]]),
+            "stock_pendiente_count": len([it for it in items if it["lio_calculado"] and not it["lio_stock_reservado"]]),
+            "cirujanos": sorted(list(cirujanos_set)),
+            "pacientes": items
+        }
+    except Exception as e:
+        logger.error(f"Error al listar pacientes para cálculo de LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/calculo-lio/guardar")
+def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
+    """
+    Guarda las opciones de LIO calculadas por el médico cirujano y sella el estado lio_calculado.
+    No modifica cotizaciones ni precios del asesoramiento.
+    """
+    try:
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        opciones = payload.opciones or []
+
+        # Determinar valores principales del primer lente / plan A
+        modelo_ppal = None
+        dioptria_ppal = None
+        es_torico_ppal = False
+        torico_valor_ppal = None
+        torico_eje_ppal = None
+
+        if opciones:
+            ppal = next((op for op in opciones if op.get("tipo_opcion") == "principal"), opciones[0])
+            modelo_ppal = ppal.get("modelo")
+            dioptria_ppal = ppal.get("dioptria")
+            es_torico_ppal = bool(ppal.get("es_torico"))
+            torico_valor_ppal = ppal.get("torico_valor")
+            torico_eje_ppal = ppal.get("torico_eje")
+
+        upd_data = {
+            "lio_calculado": True,
+            "lio_calculado_at": ahora_iso,
+            "lio_calculado_por": payload.lio_calculado_por,
+            "lio_calculo_opciones": opciones
+        }
+
+        # 1. Si hay turno_id, actualizar turnos_quirofano
+        if payload.turno_id:
+            turno_upd = {
+                **upd_data,
+                "lleva_lente": True,
+                "updated_at": ahora_iso
+            }
+            if modelo_ppal:
+                turno_upd["lente_tipo"] = modelo_ppal
+            if dioptria_ppal:
+                turno_upd["lente_dioptria"] = dioptria_ppal
+            turno_upd["es_torico"] = es_torico_ppal
+            if torico_valor_ppal is not None:
+                turno_upd["lente_torico_valor"] = int(torico_valor_ppal) if str(torico_valor_ppal).isdigit() else 0
+            if torico_eje_ppal is not None:
+                turno_upd["lente_torico_eje"] = int(torico_eje_ppal) if str(torico_eje_ppal).isdigit() else 90
+
+            supabase.table("turnos_quirofano").update(turno_upd).eq("id", payload.turno_id).execute()
+
+        # 2. Si hay asesoria_id, sincronizar referencia técnica en asesorías (sin tocar presupuesto)
+        if payload.asesoria_id:
+            as_upd = {
+                **upd_data,
+                "updated_at": ahora_iso
+            }
+            if payload.ojo:
+                as_upd["ojo"] = payload.ojo
+            supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
+
+        log_event(
+            nivel="INFO",
+            modulo="QUIROFANO",
+            accion="CALCULO_LIO_GUARDADO",
+            mensaje=f"Cálculo de LIO guardado ({len(opciones)} opciones) por {payload.lio_calculado_por}",
+            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id, "opciones_count": len(opciones)}
+        )
+
+        return {
+            "success": True,
+            "mensaje": "Cálculo de LIO guardado y sellado exitosamente.",
+            "lio_calculado": True,
+            "lio_calculado_at": ahora_iso,
+            "opciones": opciones
+        }
+    except Exception as e:
+        logger.error(f"Error al guardar cálculo de LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ReservarStockPayload(BaseModel):
+    reservado: bool = True
+    observaciones: Optional[str] = None
+    usuario: Optional[str] = None
+
+@app.put("/api/turnos-quirofano/{turno_id}/reservar-stock")
+def reservar_stock_lio_endpoint(turno_id: str, payload: ReservarStockPayload):
+    """
+    Marca o desmarca la reserva física / consignación del lente intraocular en Quirófano.
+    """
+    try:
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat() if payload.reservado else None
+
+        upd = {
+            "lio_stock_reservado": payload.reservado,
+            "lio_stock_reservado_at": ahora_iso,
+            "lio_stock_observaciones": payload.observaciones or "",
+            "updated_at": "now()"
+        }
+
+        res = supabase.table("turnos_quirofano").update(upd).eq("id", turno_id).execute()
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Turno no encontrado")
+
+        log_event(
+            nivel="INFO",
+            modulo="QUIROFANO",
+            accion="RESERVA_STOCK_LIO",
+            mensaje=f"Stock de LIO {'reservado' if payload.reservado else 'desmarcado'} para turno #{turno_id}",
+            detalles={"turno_id": turno_id, "reservado": payload.reservado, "usuario": payload.usuario}
+        )
+
+        return {"success": True, "turno": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reservando stock de LIO para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
