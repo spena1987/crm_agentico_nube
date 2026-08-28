@@ -378,19 +378,19 @@ export default function CalculoLioPage() {
     setOpcionesLio(opcionesLio.filter((o) => o.id !== id))
   }
 
-  // Actualizar campo de una opción
-  const actualizarOpcionLio = (id: string, campo: keyof OpcionLio, valor: any) => {
-    setOpcionesLio(
-      opcionesLio.map((o) => {
+  // Actualizar múltiples campos de una opción de forma atómica
+  const actualizarCamposOpcion = (id: string, updates: Partial<OpcionLio>) => {
+    setOpcionesLio((prev) =>
+      prev.map((o) => {
         if (o.id !== id) return o
-        const act = { ...o, [campo]: valor }
+        const act = { ...o, ...updates }
 
-        if (campo === 'tipo_opcion') {
-          if (valor === 'torico') {
+        if ('tipo_opcion' in updates) {
+          if (updates.tipo_opcion === 'torico') {
             act.es_torico = true
             if (!act.torico_valor) act.torico_valor = 3
             if (!act.torico_eje) act.torico_eje = 90
-          } else if (valor === 'sulcus') {
+          } else if (updates.tipo_opcion === 'sulcus') {
             act.es_torico = false
             const sulcusMod = modelosLio.find((m) => m.apto_sulcus || m.modelo?.includes('MA60'))
             if (sulcusMod) {
@@ -400,8 +400,8 @@ export default function CalculoLioPage() {
           }
         }
 
-        if (campo === 'es_torico') {
-          if (valor === true) {
+        if ('es_torico' in updates) {
+          if (updates.es_torico === true) {
             if (!act.torico_valor) act.torico_valor = 3
             if (!act.torico_eje) act.torico_eje = 90
           } else {
@@ -413,6 +413,11 @@ export default function CalculoLioPage() {
         return act
       })
     )
+  }
+
+  // Actualizar un campo individual de una opción
+  const actualizarOpcionLio = (id: string, campo: keyof OpcionLio, valor: any) => {
+    actualizarCamposOpcion(id, { [campo]: valor })
   }
 
   // Acción 1: Guardar Borrador (no confirma, sigue en Pendiente LIO)
@@ -923,8 +928,24 @@ export default function CalculoLioPage() {
                     const deshabilitado = !modoEdicion
                     const skuData = skusResueltos[op.id]
                     const resolviendo = resolviendoSkus[op.id]
-                    const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === op.modelo || m.modelo === op.modelo)
+                    const modObj = modelosLio.find(
+                      (m) =>
+                        (op.modelo_lio_id && m.id === op.modelo_lio_id) ||
+                        `${m.modelo} (${m.marca})` === op.modelo ||
+                        m.modelo === op.modelo ||
+                        `${m.marca} — ${m.modelo}` === op.modelo ||
+                        (op.modelo && op.modelo.includes(m.modelo))
+                    )
                     const constanteCalculada = op.es_personalizado ? (op.constante_a_custom || 118.9) : (modObj?.constante_a || 118.9)
+                    
+                    const modeloSelectValue = (() => {
+                      if (op.es_personalizado) return '__CUSTOM__'
+                      if (op.modelo_lio_id && modelosLio.some((m) => m.id === op.modelo_lio_id)) {
+                        return op.modelo_lio_id
+                      }
+                      if (modObj) return modObj.id
+                      return op.modelo || ''
+                    })()
 
                     return (
                       <div
@@ -1049,29 +1070,49 @@ export default function CalculoLioPage() {
                               </div>
                             ) : (
                               <select
-                                value={op.modelo}
+                                value={modeloSelectValue}
                                 onChange={(e) => {
                                   const val = e.target.value
-                                  if (val === '__CUSTOM__') {
-                                    actualizarOpcionLio(op.id, 'es_personalizado', true)
-                                    actualizarOpcionLio(op.id, 'modelo', '')
-                                    actualizarOpcionLio(op.id, 'modelo_lio_id', undefined)
+                                  if (!val) {
+                                    actualizarCamposOpcion(op.id, {
+                                      modelo: '',
+                                      modelo_lio_id: undefined,
+                                      es_personalizado: false
+                                    })
                                     return
                                   }
-                                  const found = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
-                                  actualizarOpcionLio(op.id, 'modelo', val)
-                                  if (found?.id) {
-                                    actualizarOpcionLio(op.id, 'modelo_lio_id', found.id)
+                                  if (val === '__CUSTOM__') {
+                                    actualizarCamposOpcion(op.id, {
+                                      es_personalizado: true,
+                                      modelo: '',
+                                      modelo_lio_id: undefined
+                                    })
+                                    return
                                   }
-                                  if (found?.tipo_optica?.toLowerCase().includes('tóric')) {
-                                    actualizarOpcionLio(op.id, 'es_torico', true)
+                                  const found = modelosLio.find((m) => m.id === val || `${m.modelo} (${m.marca})` === val || m.modelo === val)
+                                  if (found) {
+                                    const esTor = Boolean(found.tipo_optica?.toLowerCase().includes('tóric'))
+                                    actualizarCamposOpcion(op.id, {
+                                      modelo: `${found.modelo} (${found.marca})`,
+                                      modelo_lio_id: found.id,
+                                      es_personalizado: false,
+                                      es_torico: esTor ? true : op.es_torico,
+                                      torico_valor: esTor ? (op.torico_valor || 3) : op.torico_valor,
+                                      torico_eje: esTor ? (op.torico_eje || 90) : op.torico_eje,
+                                      constante_a_custom: found.constante_a || undefined
+                                    })
+                                  } else {
+                                    actualizarCamposOpcion(op.id, {
+                                      modelo: val,
+                                      es_personalizado: false
+                                    })
                                   }
                                 }}
                                 className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-xs"
                               >
                                 <option value="">-- Seleccionar LIO de Ajustes ({modelosLio.length} disponibles) --</option>
                                 {modelosLio.map((m) => (
-                                  <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                                  <option key={m.id || m.modelo} value={m.id}>
                                     {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
                                   </option>
                                 ))}
