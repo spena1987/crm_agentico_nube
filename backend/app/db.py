@@ -3727,6 +3727,44 @@ def eliminar_modelo_lio_item(item_id: str) -> bool:
         logger.error(f"Error al eliminar item LIO {item_id}: {e}")
         return False
 
+def get_all_modelos_lio_items(modelo_lio_id: Optional[str] = None, busqueda: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Lista todos los ítems/GTINs mapeados en el CRM, incluyendo la información de su familia.
+    """
+    if not supabase:
+        return []
+    try:
+        q = supabase.table("modelos_lio_items").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)")
+        if modelo_lio_id:
+            q = q.eq("modelo_lio_id", modelo_lio_id)
+        if busqueda and busqueda.strip():
+            b = busqueda.strip()
+            q = q.or_(f"geclisa_ele_cod.ilike.%{b}%,geclisa_nombre.ilike.%{b}%")
+        resp = q.order("created_at", desc=True).execute()
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error al listar todos los items LIO: {e}")
+        return []
+
+def validar_gtin_unico(gtin: str, exclude_item_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Valida si un código GTIN ya se encuentra registrado en el CRM.
+    """
+    if not supabase or not gtin:
+        return {"existe": False}
+    try:
+        clean_gtin = str(gtin).strip()
+        q = supabase.table("modelos_lio_items").select("*, modelos_lio(id, marca, modelo, tipo_optica)").eq("geclisa_ele_cod", clean_gtin)
+        if exclude_item_id:
+            q = q.neq("id", exclude_item_id)
+        resp = q.limit(1).execute()
+        if resp.data and len(resp.data) > 0:
+            return {"existe": True, "item": resp.data[0]}
+        return {"existe": False}
+    except Exception as e:
+        logger.error(f"Error al validar unicidad de GTIN {gtin}: {e}")
+        return {"existe": False}
+
 def resolver_sku_lio(modelo_lio_id: Optional[str], modelo_nombre: Optional[str], dioptria: float, torico_valor: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Busca el SKU / GTIN de Geclisa exacto para un modelo (por ID o nombre), dioptría y toricidad.

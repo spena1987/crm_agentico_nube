@@ -119,6 +119,8 @@ from app.db import (
     actualizar_modelo_lio,
     eliminar_modelo_lio,
     get_modelos_lio_items,
+    get_all_modelos_lio_items,
+    validar_gtin_unico,
     crear_modelo_lio_item,
     eliminar_modelo_lio_item,
     resolver_sku_lio,
@@ -4438,6 +4440,24 @@ def eliminar_item_modelo_lio_endpoint(item_id: str):
         return {"success": ok}
     except Exception as e:
         logger.error(f"Error eliminando item LIO {item_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/modelos-lio-items")
+def listar_todos_items_lio_endpoint(modelo_lio_id: Optional[str] = Query(None), q: Optional[str] = Query(None)):
+    try:
+        items = get_all_modelos_lio_items(modelo_lio_id, q)
+        return {"success": True, "items": items, "total": len(items)}
+    except Exception as e:
+        logger.error(f"Error listando todos los items LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/modelos-lio/validar-gtin")
+def validar_gtin_endpoint(gtin: str = Query(...), exclude_id: Optional[str] = Query(None)):
+    try:
+        res = validar_gtin_unico(gtin, exclude_id)
+        return {"success": True, **res}
+    except Exception as e:
+        logger.error(f"Error validando GTIN {gtin}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class ResolverSkuPayload(BaseModel):
