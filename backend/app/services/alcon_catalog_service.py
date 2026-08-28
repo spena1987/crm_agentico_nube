@@ -88,4 +88,10 @@ class AlconCatalogService:
                 })
         return coincidencias
 
+    def get_catalogo_completo(self) -> List[Dict[str, Any]]:
+        """
+        Retorna la lista completa de los 3.895 SKUs indexados en el catálogo Alcon.
+        """
+        return self._catalog
+
 alcon_catalog_service = AlconCatalogService()

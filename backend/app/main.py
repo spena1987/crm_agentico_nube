@@ -4505,6 +4505,22 @@ def sincronizar_masivo_alcon_endpoint():
         logger.error(f"Error en sincronización masiva Alcon: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/alcon/catalogo-completo")
+def obtener_catalogo_alcon_completo():
+    """
+    Retorna la lista completa de los 3.895 SKUs de Alcon con GTIN, Nombres y Dioptrías.
+    """
+    try:
+        items = alcon_catalog_service.get_catalogo_completo()
+        return {
+            "success": True,
+            "total": len(items),
+            "items": items
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener catálogo Alcon: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 class ResolverSkuPayload(BaseModel):
     modelo_lio_id: Optional[str] = None
     modelo_nombre: Optional[str] = None

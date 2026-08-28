@@ -37,6 +37,7 @@ import {
   FileSpreadsheet
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import AlconCatalogModal from './AlconCatalogModal'
 
 interface ModeloLio {
   id?: string
@@ -174,6 +175,11 @@ export default function LioSettingsCard() {
   const [gtinEsTorico, setGtinEsTorico] = useState<boolean>(false)
   const [gtinToricoValor, setGtinToricoValor] = useState<string>('T3 (Cil 1.50 D)')
   const [guardandoGtin, setGuardandoGtin] = useState(false)
+
+  // ====================================================================
+  // ESTADOS MODAL CATÁLOGO ALCON COMPLETO (3.895 GTINs) Y STICKERS QR
+  // ====================================================================
+  const [mostrandoModalCatalogoAlcon, setMostrandoModalCatalogoAlcon] = useState(false)
 
   // ====================================================================
   // ESTADOS MODAL SINCRONIZACIÓN MASIVA ALCON
@@ -535,10 +541,16 @@ export default function LioSettingsCard() {
               <h2 className="text-lg font-extrabold text-[var(--foreground)] tracking-tight">
                 Lentes Intraoculares (LIO) & Trazabilidad GTIN
               </h2>
-              <span className="px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-black flex items-center gap-1">
-                <Sparkles size={11} />
+              <button
+                type="button"
+                onClick={() => setMostrandoModalCatalogoAlcon(true)}
+                className="px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-600 dark:text-amber-400 border border-amber-500/40 text-[10px] font-black flex items-center gap-1.5 shadow-xs transition cursor-pointer group"
+                title="Abrir explorador del Catálogo Alcon Completo (3.895 GTINs), ver QR y exportar stickers PDF"
+              >
+                <Sparkles size={11} className="text-amber-500 animate-pulse group-hover:rotate-12 transition-transform" />
                 <span>Catálogo Alcon 3.895 GTINs Activo</span>
-              </span>
+                <ExternalLink size={10} className="opacity-70 group-hover:translate-x-0.5 transition-transform" />
+              </button>
             </div>
             <p className="text-xs text-[var(--secondary)] mt-0.5">
               Administra familias clínicas, constantes biométricas y sincroniza de forma masiva o individual desde Geclisa.
@@ -1609,6 +1621,12 @@ export default function LioSettingsCard() {
           )}
         </div>
       )}
+
+      {/* MODAL EXPLORADOR DEL CATÁLOGO COMPLETO ALCON (3.895 GTINs) & GENERADOR DE STICKERS QR */}
+      <AlconCatalogModal
+        abierto={mostrandoModalCatalogoAlcon}
+        onCerrar={() => setMostrandoModalCatalogoAlcon(false)}
+      />
     </div>
   )
 }
