@@ -589,50 +589,70 @@ export default function TabProgramacionLio({
                       </div>
                     </div>
 
-                    {/* Stock Quirófano & Consignación */}
-                    <div className="flex items-center gap-2">
+                    {/* Stock Quirófano, Farmacia & Consignación */}
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1 ${
-                        (skuResuelto.stock?.stock_quirofano ?? 0) > 0
+                        (skuResuelto.stock?.stock_total ?? skuResuelto.stock?.stock_quirofano ?? 0) > 0
                           ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
                           : 'bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400'
                       }`}>
                         <Package size={13} />
-                        <span>Stock Quirófano: {skuResuelto.stock?.stock_quirofano ?? 0} un</span>
+                        <span>Stock Total: {skuResuelto.stock?.stock_total ?? skuResuelto.stock?.stock_quirofano ?? 0} un</span>
                       </span>
 
+                      {(skuResuelto.stock?.stock_farmacia ?? 0) > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-cyan-500/10 border border-cyan-500/30 text-cyan-700 dark:text-cyan-300 flex items-center gap-1" title="En Farmacia / Depósito Central">
+                          <span>Farmacia: {skuResuelto.stock.stock_farmacia} un</span>
+                        </span>
+                      )}
+
+                      {(skuResuelto.stock?.stock_quirofano ?? 0) > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 flex items-center gap-1" title="En Quirófano">
+                          <span>Quirófano: {skuResuelto.stock.stock_quirofano} un</span>
+                        </span>
+                      )}
+
                       {(skuResuelto.stock?.stock_consignacion ?? 0) > 0 && (
-                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 flex items-center gap-1">
                           <span>Consignación: {skuResuelto.stock.stock_consignacion} un</span>
                         </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Lotes disponibles para auto-completar */}
-                  {Array.isArray(skuResuelto.stock?.lotes_quirofano) && skuResuelto.stock.lotes_quirofano.length > 0 && (
-                    <div className="pt-2 border-t border-cyan-200/60 dark:border-cyan-800/40 flex flex-wrap items-center gap-2">
-                      <span className="text-[10px] font-bold text-cyan-800 dark:text-cyan-300">
-                        Lotes físicos disponibles (Clic para cargar):
-                      </span>
-                      {skuResuelto.stock.lotes_quirofano.map((lot: any, lIdx: number) => (
-                        <button
-                          key={lIdx}
-                          type="button"
-                          onClick={() => {
-                            setFormData((prev: any) => ({
-                              ...prev,
-                              lente_lote: lot.lote !== 'S/D' ? lot.lote : prev.lente_lote,
-                              lente_serie: lot.nroSerie || prev.lente_serie,
-                              lente_vencimiento: lot.fechaVto && !lot.fechaVto.startsWith('9999') ? lot.fechaVto.split('T')[0] : prev.lente_vencimiento
-                            }))
-                          }}
-                          className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-cyan-300 dark:border-cyan-700 text-[10px] font-mono font-bold hover:bg-cyan-500 hover:text-black transition"
-                        >
-                          Lote: {lot.lote} (Cant: {lot.cantidad})
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  {/* Lotes disponibles para auto-completar (de todos los depósitos) */}
+                  {(() => {
+                    const todosLotes = [
+                      ...(skuResuelto.stock?.lotes_quirofano || []),
+                      ...(skuResuelto.stock?.lotes_farmacia || []),
+                      ...(skuResuelto.stock?.lotes_consignacion || [])
+                    ]
+                    if (todosLotes.length === 0) return null
+                    return (
+                      <div className="pt-2 border-t border-cyan-200/60 dark:border-cyan-800/40 flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-bold text-cyan-800 dark:text-cyan-300">
+                          Lotes físicos disponibles (Clic para cargar):
+                        </span>
+                        {todosLotes.map((lot: any, lIdx: number) => (
+                          <button
+                            key={lIdx}
+                            type="button"
+                            onClick={() => {
+                              setFormData((prev: any) => ({
+                                ...prev,
+                                lente_lote: lot.lote !== 'S/D' ? lot.lote : prev.lente_lote,
+                                lente_serie: lot.nroSerie || prev.lente_serie,
+                                lente_vencimiento: lot.fechaVto && !lot.fechaVto.startsWith('9999') ? lot.fechaVto.split('T')[0] : prev.lente_vencimiento
+                              }))
+                            }}
+                            className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-cyan-300 dark:border-cyan-700 text-[10px] font-mono font-bold hover:bg-cyan-500 hover:text-black transition cursor-pointer"
+                          >
+                            Lote: {lot.lote} (Cant: {lot.cantidad})
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </div>
               ) : formData.lente_tipo && formData.lente_dioptria ? (
                 <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-[var(--border)] text-[11px] text-[var(--secondary)] flex items-center justify-between">

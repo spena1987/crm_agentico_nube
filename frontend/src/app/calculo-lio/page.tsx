@@ -1270,19 +1270,31 @@ export default function CalculoLioPage() {
                               </div>
 
                               {/* Badges de Stock */}
-                              <div className="flex items-center gap-2 shrink-0 text-xs">
+                              <div className="flex flex-wrap items-center gap-1.5 shrink-0 text-xs">
                                 <span
                                   className={`px-3 py-1.5 rounded-xl font-black text-xs ${
-                                    (skuData.resumen?.stock_quirofano ?? 0) > 0
+                                    (skuData.resumen?.stock_total ?? skuData.resumen?.stock_quirofano ?? 0) > 0
                                       ? 'bg-emerald-600 text-white shadow-xs'
                                       : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold'
                                   }`}
                                 >
-                                  Quirófano: {skuData.resumen?.stock_quirofano ?? 0} un
+                                  Stock Total: {skuData.resumen?.stock_total ?? skuData.resumen?.stock_quirofano ?? 0} un
                                 </span>
 
+                                {(skuData.resumen?.stock_farmacia ?? 0) > 0 && (
+                                  <span className="px-2.5 py-1 rounded-xl font-bold bg-cyan-500/15 text-cyan-800 dark:text-cyan-300 border border-cyan-500/30 text-xs" title="En Farmacia / Depósito Central">
+                                    Farmacia: {skuData.resumen.stock_farmacia} un
+                                  </span>
+                                )}
+
+                                {(skuData.resumen?.stock_quirofano ?? 0) > 0 && (
+                                  <span className="px-2.5 py-1 rounded-xl font-bold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30 text-xs" title="En Quirófano">
+                                    Quirófano: {skuData.resumen.stock_quirofano} un
+                                  </span>
+                                )}
+
                                 {(skuData.resumen?.stock_consignacion ?? 0) > 0 && (
-                                  <span className="px-3 py-1.5 rounded-xl font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 text-xs">
+                                  <span className="px-2.5 py-1 rounded-xl font-bold bg-purple-500/15 text-purple-800 dark:text-purple-300 border border-purple-500/30 text-xs">
                                     Consignación: {skuData.resumen.stock_consignacion} un
                                   </span>
                                 )}

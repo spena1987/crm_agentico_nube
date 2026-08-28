@@ -68,7 +68,11 @@ interface ModeloLioItem {
   torico_valor?: string | null
   stock_quirofano?: number
   stock_consignacion?: number
+  stock_farmacia?: number
+  stock_total?: number
   lotes_quirofano?: any[]
+  lotes_consignacion?: any[]
+  lotes_farmacia?: any[]
   consultando_stock?: boolean
   created_at?: string
   modelos_lio?: {
@@ -473,7 +477,11 @@ export default function LioSettingsCard() {
                   ...it,
                   stock_quirofano: r.stock_quirofano,
                   stock_consignacion: r.stock_consignacion,
+                  stock_farmacia: r.stock_farmacia,
+                  stock_total: r.stock_total,
                   lotes_quirofano: r.lotes_quirofano,
+                  lotes_consignacion: r.lotes_consignacion,
+                  lotes_farmacia: r.lotes_farmacia,
                   consultando_stock: false
                 }
               : it
@@ -1142,7 +1150,7 @@ export default function LioSettingsCard() {
                                   <th className="p-3">Toricidad</th>
                                   <th className="p-3">Código GTIN (Blíster)</th>
                                   <th className="p-3">Nombre en Geclisa</th>
-                                  <th className="p-3">Stock Quirófano</th>
+                                  <th className="p-3">Stock Real (Geclisa)</th>
                                   <th className="p-3 text-right">Acción</th>
                                 </tr>
                               </thead>
@@ -1168,17 +1176,27 @@ export default function LioSettingsCard() {
                                       {it.geclisa_nombre || 'N/A'}
                                     </td>
                                     <td className="p-3">
-                                      {it.stock_quirofano !== undefined ? (
-                                        <div className="flex items-center gap-1.5">
+                                      {it.stock_total !== undefined ? (
+                                        <div className="flex flex-wrap items-center gap-1.5">
                                           <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
-                                            it.stock_quirofano > 0
-                                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                            (it.stock_total ?? 0) > 0
+                                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                                              : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
                                           }`}>
-                                            Q: {it.stock_quirofano} un
+                                            Total: {it.stock_total ?? 0} un
                                           </span>
+                                          {(it.stock_farmacia ?? 0) > 0 && (
+                                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-cyan-500/15 text-cyan-800 dark:text-cyan-300 border border-cyan-500/30" title="En Farmacia / Depósito Central">
+                                              Farmacia: {it.stock_farmacia} un
+                                            </span>
+                                          )}
+                                          {(it.stock_quirofano ?? 0) > 0 && (
+                                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30" title="En Quirófano">
+                                              Quirófano: {it.stock_quirofano} un
+                                            </span>
+                                          )}
                                           {(it.stock_consignacion ?? 0) > 0 && (
-                                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-500/15 text-purple-800 dark:text-purple-300 border border-purple-500/30" title="En Consignación">
                                               Consig: {it.stock_consignacion} un
                                             </span>
                                           )}
@@ -1541,7 +1559,7 @@ export default function LioSettingsCard() {
                       <th className="p-3.5">Dioptría (Poder)</th>
                       <th className="p-3.5">Toricidad</th>
                       <th className="p-3.5">Descripción Oficial en Geclisa</th>
-                      <th className="p-3.5">Stock Quirófano</th>
+                      <th className="p-3.5">Stock Real (Geclisa)</th>
                       <th className="p-3.5 text-right">Acción</th>
                     </tr>
                   </thead>
@@ -1575,17 +1593,27 @@ export default function LioSettingsCard() {
                           {it.geclisa_nombre || 'N/A'}
                         </td>
                         <td className="p-3.5">
-                          {it.stock_quirofano !== undefined ? (
-                            <div className="flex items-center gap-1.5">
+                          {it.stock_total !== undefined ? (
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
-                                it.stock_quirofano > 0
-                                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                  : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                (it.stock_total ?? 0) > 0
+                                  ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
                               }`}>
-                                Q: {it.stock_quirofano} un
+                                Total: {it.stock_total ?? 0} un
                               </span>
+                              {(it.stock_farmacia ?? 0) > 0 && (
+                                <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-cyan-500/15 text-cyan-800 dark:text-cyan-300 border border-cyan-500/30" title="En Farmacia / Depósito Central">
+                                  Farmacia: {it.stock_farmacia} un
+                                </span>
+                              )}
+                              {(it.stock_quirofano ?? 0) > 0 && (
+                                <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border border-emerald-500/30" title="En Quirófano">
+                                  Quirófano: {it.stock_quirofano} un
+                                </span>
+                              )}
                               {(it.stock_consignacion ?? 0) > 0 && (
-                                <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                                <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-purple-500/15 text-purple-800 dark:text-purple-300 border border-purple-500/30" title="En Consignación">
                                   Consig: {it.stock_consignacion} un
                                 </span>
                               )}
