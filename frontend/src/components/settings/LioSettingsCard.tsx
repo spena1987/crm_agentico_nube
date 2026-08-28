@@ -349,10 +349,12 @@ export default function LioSettingsCard() {
       const url = esEdit ? `${BACKEND_URL}/api/modelos-lio/${familiaEnEdicion.id}` : `${BACKEND_URL}/api/modelos-lio`
       const method = esEdit ? 'PUT' : 'POST'
 
+      const { items_count, created_at, ...cleanPayload } = familiaEnEdicion as any
+
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(familiaEnEdicion)
+        body: JSON.stringify(cleanPayload)
       })
       const data = await res.json()
       if (res.ok && data.success) {

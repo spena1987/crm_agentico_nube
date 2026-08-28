@@ -3653,27 +3653,45 @@ def get_modelo_lio_por_id(modelo_id: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error al obtener modelo de LIO {modelo_id}: {e}")
         return None
 
+COLUMNAS_VALIDAS_MODELO_LIO = {
+    "marca", "modelo", "tipo_optica", "descripcion", "constante_a",
+    "acd_estimado", "rango_dioptrias_min", "rango_dioptrias_max",
+    "paso_dioptrias", "admite_toricos", "apto_sulcus", "activo",
+    "deposito_defecto_id"
+}
+
 def crear_modelo_lio(datos: Dict[str, Any]) -> Dict[str, Any]:
     if not supabase:
         return {}
     try:
-        payload = {**datos, "created_at": "now()", "updated_at": "now()"}
+        payload = {k: v for k, v in datos.items() if k in COLUMNAS_VALIDAS_MODELO_LIO}
+        payload["created_at"] = "now()"
+        payload["updated_at"] = "now()"
         resp = supabase.table("modelos_lio").insert(payload).execute()
         return resp.data[0] if resp.data else {}
     except Exception as e:
         logger.error(f"Error al crear modelo de LIO: {e}")
-        return {}
+        raise e
 
 def actualizar_modelo_lio(modelo_id: str, datos: Dict[str, Any]) -> Dict[str, Any]:
     if not supabase or not modelo_id:
         return {}
     try:
-        payload = {**datos, "updated_at": "now()"}
+        payload = {k: v for k, v in datos.items() if k in COLUMNAS_VALIDAS_MODELO_LIO}
+        payload["updated_at"] = "now()"
+        
+        if "constante_a" in payload and payload["constante_a"] is not None:
+            payload["constante_a"] = float(payload["constante_a"])
+        if "acd_estimado" in payload and payload["acd_estimado"] is not None:
+            payload["acd_estimado"] = float(payload["acd_estimado"])
+
         resp = supabase.table("modelos_lio").update(payload).eq("id", modelo_id).execute()
-        return resp.data[0] if resp.data else {}
+        if not resp.data:
+            raise ValueError(f"No se pudo actualizar la familia con ID {modelo_id}")
+        return resp.data[0]
     except Exception as e:
         logger.error(f"Error al actualizar modelo de LIO {modelo_id}: {e}")
-        return {}
+        raise e
 
 def eliminar_modelo_lio(modelo_id: str) -> bool:
     if not supabase or not modelo_id:
