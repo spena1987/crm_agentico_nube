@@ -3864,17 +3864,28 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
         logger.error(f"Error al sincronizar lentes masivos: {e}")
         raise e
 
-def resolver_sku_lio(modelo_lio_id: Optional[str], modelo_nombre: Optional[str], dioptria: float, torico_valor: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def resolver_sku_lio(
+    modelo_lio_id: Optional[str] = None,
+    modelo_nombre: Optional[str] = None,
+    dioptria: float = 0.0,
+    torico_valor: Optional[str] = None,
+    es_torico: bool = False
+) -> Optional[Dict[str, Any]]:
     """
-    Busca el SKU / GTIN de Geclisa exacto para un modelo (por ID o nombre), dioptría y toricidad.
+    Busca el SKU / GTIN de Geclisa exacto para un modelo (por ID o nombre), dioptría y toricidad (T2-T9).
     """
     if not supabase:
         return None
     try:
         m_id = modelo_lio_id
         if not m_id and modelo_nombre:
-            # Buscar ID del modelo por nombre
-            m_res = supabase.table("modelos_lio").select("id, constante_a").ilike("modelo", f"%{modelo_nombre.strip()}%").limit(1).execute()
+            # Limpiar nombre (remover marcas prefijadas y sufijos tipo 'Alcon — ' o '(Trifocal)')
+            clean = re.sub(r'^[^\—\-]+[\—\-]\s*', '', str(modelo_nombre)).strip()
+            clean = re.sub(r'\s*\([^)]*\)', '', clean).strip()
+            if not clean:
+                clean = str(modelo_nombre).strip()
+
+            m_res = supabase.table("modelos_lio").select("id, modelo, marca, constante_a").ilike("modelo", f"%{clean}%").limit(1).execute()
             if m_res.data:
                 m_id = m_res.data[0]["id"]
 
@@ -3883,19 +3894,25 @@ def resolver_sku_lio(modelo_lio_id: Optional[str], modelo_nombre: Optional[str],
 
         # Redondear dioptria a 2 decimales
         diop_val = round(float(dioptria), 2)
-        q = supabase.table("modelos_lio_items").select("*").eq("modelo_lio_id", m_id).eq("dioptria", diop_val)
+        q = supabase.table("modelos_lio_items").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)").eq("modelo_lio_id", m_id).eq("dioptria", diop_val)
         
-        if torico_valor and str(torico_valor).strip() not in ["", "null", "None", "0"]:
-            q = q.eq("torico_valor", str(torico_valor).strip())
+        if es_torico or (torico_valor and str(torico_valor).strip() not in ["", "null", "None", "0"]):
+            # Extraer número de cilindro T2..T9
+            t_match = re.search(r'[Tt]?(\d)', str(torico_valor or ''))
+            t_num = t_match.group(1) if t_match else ''
+            if t_num:
+                q = q.ilike("torico_valor", f"%T{t_num}%")
+            else:
+                q = q.eq("es_torico", True)
         else:
             q = q.or_("torico_valor.is.null,es_torico.eq.false")
 
         resp = q.limit(1).execute()
-        if resp.data:
+        if resp.data and len(resp.data) > 0:
             return resp.data[0]
         return None
     except Exception as e:
-        logger.error(f"Error al resolver SKU LIO ({modelo_lio_id}, {dioptria}, {torico_valor}): {e}")
+        logger.error(f"Error al resolver SKU LIO ({modelo_lio_id}, {modelo_nombre}, {dioptria}, {torico_valor}, {es_torico}): {e}")
         return None
 
 

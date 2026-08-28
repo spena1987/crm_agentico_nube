@@ -4510,6 +4510,7 @@ class ResolverSkuPayload(BaseModel):
     modelo_nombre: Optional[str] = None
     dioptria: float
     torico_valor: Optional[str] = None
+    es_torico: Optional[bool] = False
 
 @app.post("/api/modelos-lio/resolver-sku")
 def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
@@ -4522,7 +4523,8 @@ def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
             modelo_lio_id=payload.modelo_lio_id,
             modelo_nombre=payload.modelo_nombre,
             dioptria=payload.dioptria,
-            torico_valor=payload.torico_valor
+            torico_valor=payload.torico_valor,
+            es_torico=bool(payload.es_torico)
         )
         if not item:
             return {
@@ -4530,7 +4532,8 @@ def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
                 "mapeado": False,
                 "mensaje": "Graduación no mapeada a código GTIN Geclisa.",
                 "item": None,
-                "stock": None
+                "stock": None,
+                "resumen": None
             }
 
         # Consultar stock y lotes en vivo en Geclisa para este eleId
@@ -4541,7 +4544,8 @@ def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
             "success": True,
             "mapeado": True,
             "item": item,
-            "stock": resumen_stock
+            "stock": resumen_stock,
+            "resumen": resumen_stock
         }
     except Exception as e:
         logger.error(f"Error resolviendo SKU LIO: {e}")

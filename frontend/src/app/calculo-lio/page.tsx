@@ -51,6 +51,7 @@ interface OpcionLio {
   tipo_opcion: 'principal' | 'alternativa' | 'torico' | 'sulcus'
   etiqueta: string
   modelo: string
+  modelo_lio_id?: string
   dioptria: string
   es_torico: boolean
   torico_valor: number | null
@@ -197,16 +198,19 @@ export default function CalculoLioPage() {
         modelosLio.length > 0
           ? `${modelosLio[0].modelo} (${modelosLio[0].marca})`
           : p.lente_tipo || 'Clareon CNA0T0 (Alcon)'
+      const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === modeloDefault || m.modelo === modeloDefault)
+
       setOpcionesLio([
         {
           id: `opt-${Date.now()}-1`,
           tipo_opcion: 'principal',
           etiqueta: 'Plan A (Principal)',
           modelo: modeloDefault,
+          modelo_lio_id: modObj?.id,
           dioptria: p.lente_dioptria || '20.00',
           es_torico: Boolean(p.es_torico),
-          torico_valor: p.lente_torico_valor || null,
-          torico_eje: p.lente_torico_eje || null,
+          torico_valor: p.lente_torico_valor || (p.es_torico ? 3 : null),
+          torico_eje: p.lente_torico_eje || (p.es_torico ? 90 : null),
           target_refractivo: '-0.25 D (Miopía Leve)',
           formula: 'Barrett Universal II',
           observaciones: '',
@@ -231,16 +235,28 @@ export default function CalculoLioPage() {
       const timer = setTimeout(async () => {
         try {
           setResolviendoSkus((prev) => ({ ...prev, [op.id]: true }))
-          const cleanModelo = op.modelo.replace(/\s*\([^)]*\)/g, '').trim()
+          
+          // Encontrar modelo_lio_id si no está asignado
+          const modObj = modelosLio.find(
+            (m) =>
+              (op.modelo_lio_id && m.id === op.modelo_lio_id) ||
+              `${m.modelo} (${m.marca})` === op.modelo ||
+              m.modelo === op.modelo ||
+              op.modelo.includes(m.modelo)
+          )
+
+          const payload = {
+            modelo_lio_id: modObj?.id || op.modelo_lio_id || null,
+            modelo_nombre: op.modelo,
+            dioptria: diopNum,
+            torico_valor: op.es_torico && op.torico_valor ? `T${op.torico_valor}` : null,
+            es_torico: Boolean(op.es_torico)
+          }
 
           const res = await fetch(`${BACKEND_URL}/api/modelos-lio/resolver-sku`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              modelo_nombre: cleanModelo,
-              dioptria: diopNum,
-              torico_valor: op.es_torico && op.torico_valor ? `T${op.torico_valor}` : null
-            })
+            body: JSON.stringify(payload)
           })
           const data = await res.json()
           if (res.ok && data.success && data.item) {
@@ -254,11 +270,11 @@ export default function CalculoLioPage() {
         } finally {
           setResolviendoSkus((prev) => ({ ...prev, [op.id]: false }))
         }
-      }, 350)
+      }, 300)
 
       return () => clearTimeout(timer)
     })
-  }, [opcionesLio])
+  }, [opcionesLio, modelosLio])
 
   // Agregar nueva opción de lente con 1 clic
   const agregarOpcionLio = (tipo: 'principal' | 'alternativa' | 'torico' | 'sulcus' = 'alternativa') => {
@@ -268,6 +284,7 @@ export default function CalculoLioPage() {
 
     let etiqueta = `Opción ${num} (Alternativa)`
     let modelo = baseOpt.modelo || (modelosLio.length > 0 ? `${modelosLio[0].modelo} (${modelosLio[0].marca})` : 'Clareon CNA0T0 (Alcon)')
+    let modelo_lio_id = baseOpt.modelo_lio_id
     let dioptria = (diopBase - 0.5).toFixed(2)
     let es_torico = false
     let torico_valor: number | null = null
@@ -280,6 +297,9 @@ export default function CalculoLioPage() {
     } else if (tipo === 'alternativa') {
       etiqueta = `Plan B (Alternativa ${num > 2 ? '+0.50 D' : '-0.50 D'})`
       dioptria = num > 2 ? (diopBase + 0.5).toFixed(2) : (diopBase - 0.5).toFixed(2)
+      es_torico = Boolean(baseOpt.es_torico)
+      torico_valor = baseOpt.torico_valor
+      torico_eje = baseOpt.torico_eje
     } else if (tipo === 'torico') {
       etiqueta = `Opción Tórica (Astigmatismo)`
       es_torico = true
@@ -288,16 +308,15 @@ export default function CalculoLioPage() {
       dioptria = (diopBase || 20.0).toFixed(2)
     } else if (tipo === 'sulcus') {
       etiqueta = `Opción Sulcus / 3 Piezas (Respaldo)`
-      // Buscar modelo de sulcus si existe en catálogo
       const sulcusMod = modelosLio.find((m) => m.apto_sulcus || m.tipo_optica?.toLowerCase().includes('sulcus') || m.modelo?.includes('MA60'))
       if (sulcusMod) {
         modelo = `${sulcusMod.modelo} (${sulcusMod.marca})`
+        modelo_lio_id = sulcusMod.id
         constante_custom = sulcusMod.constante_a || 118.4
       } else {
         modelo = 'AcrySof 3 Piezas MA60AC (Alcon)'
         constante_custom = 118.4
       }
-      // Dioptría sugerida para sulcus: habitualmente -0.50D o -1.00D respecto al plano capsular
       dioptria = (diopBase - 0.5).toFixed(2)
     }
 
@@ -306,6 +325,7 @@ export default function CalculoLioPage() {
       tipo_opcion: tipo,
       etiqueta,
       modelo,
+      modelo_lio_id,
       dioptria,
       es_torico,
       torico_valor,
@@ -335,6 +355,7 @@ export default function CalculoLioPage() {
       opcionesLio.map((o) => {
         if (o.id !== id) return o
         const act = { ...o, [campo]: valor }
+
         if (campo === 'tipo_opcion') {
           if (valor === 'torico') {
             act.es_torico = true
@@ -345,9 +366,21 @@ export default function CalculoLioPage() {
             const sulcusMod = modelosLio.find((m) => m.apto_sulcus || m.modelo?.includes('MA60'))
             if (sulcusMod) {
               act.modelo = `${sulcusMod.modelo} (${sulcusMod.marca})`
+              act.modelo_lio_id = sulcusMod.id
             }
           }
         }
+
+        if (campo === 'es_torico') {
+          if (valor === true) {
+            if (!act.torico_valor) act.torico_valor = 3
+            if (!act.torico_eje) act.torico_eje = 90
+          } else {
+            act.torico_valor = null
+            act.torico_eje = null
+          }
+        }
+
         return act
       })
     )
@@ -683,7 +716,7 @@ export default function CalculoLioPage() {
               </div>
             ) : pacientes.length === 0 ? (
               <div className="p-8 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-3xl space-y-1">
-                <FileText size={24} className="mx-auto text-slate-400 opacity-50" />
+                <FileText size={24} className="mx-auto text-slate-400 opacity-40" />
                 <p className="font-bold text-[var(--foreground)]">No hay cirugías pendientes</p>
                 <p className="text-[11px]">Todos los cálculos de LIO están al día.</p>
               </div>
@@ -870,7 +903,7 @@ export default function CalculoLioPage() {
                         className={`p-4 md:p-5 rounded-3xl border transition space-y-4 ${
                           op.tipo_opcion === 'principal'
                             ? 'border-cyan-500/60 bg-gradient-to-br from-cyan-50/50 via-[var(--card)] to-blue-50/30 dark:from-cyan-950/20 dark:to-blue-950/10'
-                            : op.tipo_opcion === 'torico'
+                            : op.tipo_opcion === 'torico' || op.es_torico
                             ? 'border-indigo-400/60 bg-gradient-to-br from-indigo-50/50 via-[var(--card)] to-purple-50/30 dark:from-indigo-950/20 dark:to-purple-950/10'
                             : op.tipo_opcion === 'sulcus'
                             ? 'border-purple-400/60 bg-gradient-to-br from-purple-50/50 via-[var(--card)] to-pink-50/30 dark:from-purple-950/20 dark:to-pink-950/10'
@@ -884,7 +917,7 @@ export default function CalculoLioPage() {
                               className={`px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider ${
                                 op.tipo_opcion === 'principal'
                                   ? 'bg-cyan-500 text-black shadow-xs'
-                                  : op.tipo_opcion === 'torico'
+                                  : op.tipo_opcion === 'torico' || op.es_torico
                                   ? 'bg-indigo-600 text-white shadow-xs'
                                   : op.tipo_opcion === 'sulcus'
                                   ? 'bg-purple-600 text-white shadow-xs'
@@ -893,6 +926,13 @@ export default function CalculoLioPage() {
                             >
                               {op.etiqueta || `Opción ${idx + 1}`}
                             </span>
+
+                            {op.es_torico && (
+                              <span className="px-2 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-extrabold text-[10px] flex items-center gap-1">
+                                <Compass size={11} />
+                                <span>Tórico (T{op.torico_valor || 3} @ {op.torico_eje || 90}°)</span>
+                              </span>
+                            )}
 
                             {op.es_personalizado && (
                               <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold text-[10px]">
@@ -986,10 +1026,14 @@ export default function CalculoLioPage() {
                                   if (val === '__CUSTOM__') {
                                     actualizarOpcionLio(op.id, 'es_personalizado', true)
                                     actualizarOpcionLio(op.id, 'modelo', '')
+                                    actualizarOpcionLio(op.id, 'modelo_lio_id', undefined)
                                     return
                                   }
                                   const found = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
                                   actualizarOpcionLio(op.id, 'modelo', val)
+                                  if (found?.id) {
+                                    actualizarOpcionLio(op.id, 'modelo_lio_id', found.id)
+                                  }
                                   if (found?.tipo_optica?.toLowerCase().includes('tóric')) {
                                     actualizarOpcionLio(op.id, 'es_torico', true)
                                   }
@@ -1022,7 +1066,7 @@ export default function CalculoLioPage() {
                                     const v = (parseFloat(op.dioptria || '20.00') - 0.5).toFixed(2)
                                     actualizarOpcionLio(op.id, 'dioptria', v)
                                   }}
-                                  className="px-2 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold"
+                                  className="px-2 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold cursor-pointer"
                                 >
                                   -
                                 </button>
@@ -1039,7 +1083,7 @@ export default function CalculoLioPage() {
                                     const v = (parseFloat(op.dioptria || '20.00') + 0.5).toFixed(2)
                                     actualizarOpcionLio(op.id, 'dioptria', v)
                                   }}
-                                  className="px-2 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold"
+                                  className="px-2 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold cursor-pointer"
                                 >
                                   +
                                 </button>
@@ -1070,116 +1114,169 @@ export default function CalculoLioPage() {
                           </div>
                         </div>
 
+                        {/* CHECKBOX EXPLÍCITO: ¿ES LENTE TÓRICO? */}
+                        <div className="p-3 rounded-2xl bg-indigo-50/40 dark:bg-indigo-950/20 border border-indigo-200/80 dark:border-indigo-800/50 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                disabled={deshabilitado}
+                                checked={Boolean(op.es_torico)}
+                                onChange={(e) => actualizarOpcionLio(op.id, 'es_torico', e.target.checked)}
+                                className="w-4 h-4 rounded text-indigo-600 accent-indigo-600 cursor-pointer"
+                              />
+                              <span className="text-xs font-black text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                                <Compass size={14} className="text-indigo-600" />
+                                <span>Lente Tórico (Corrección de Astigmatismo Corneal)</span>
+                              </span>
+                            </label>
+
+                            {op.es_torico && (
+                              <span className="text-[10px] font-mono font-black text-indigo-600 dark:text-indigo-400 bg-indigo-100 dark:bg-indigo-950 px-2 py-0.5 rounded-md">
+                                T{op.torico_valor || 3} • {op.torico_eje || 90}°
+                              </span>
+                            )}
+                          </div>
+
+                          {/* CAMPOS DESPLEGABLES DE TORICIDAD */}
+                          {op.es_torico && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-indigo-200/60 dark:border-indigo-800/40 animate-fade-in">
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-indigo-800 dark:text-indigo-300">
+                                  Valor Tórico (Cilindro IOL) *
+                                </label>
+                                {deshabilitado ? (
+                                  <div className="px-3 py-2 bg-white dark:bg-slate-900 rounded-xl text-xs font-bold text-indigo-900 dark:text-indigo-200 border border-indigo-200">
+                                    T{op.torico_valor} ({TORICOS_OPCIONES.find((t) => t.valor === op.torico_valor)?.label || 'Cilindro'})
+                                  </div>
+                                ) : (
+                                  <select
+                                    value={op.torico_valor || 3}
+                                    onChange={(e) => actualizarOpcionLio(op.id, 'torico_valor', parseInt(e.target.value) || 0)}
+                                    className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border-2 border-indigo-300 dark:border-indigo-700 text-xs font-bold text-indigo-900 dark:text-indigo-200 outline-none cursor-pointer focus:border-indigo-500 shadow-xs"
+                                  >
+                                    {TORICOS_OPCIONES.map((to) => (
+                                      <option key={to.valor} value={to.valor}>
+                                        {to.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                              </div>
+
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-[11px] font-bold text-indigo-800 dark:text-indigo-300">
+                                    Eje de Alineación Quirúrgica (°) *
+                                  </label>
+                                  <span className="text-xs font-black font-mono text-indigo-600 dark:text-indigo-400">
+                                    {op.torico_eje || 90}°
+                                  </span>
+                                </div>
+                                {deshabilitado ? (
+                                  <div className="px-3 py-2 bg-white dark:bg-slate-900 rounded-xl text-xs font-mono font-black text-indigo-600 border border-indigo-200">
+                                    {op.torico_eje || 90}°
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-2">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={180}
+                                      value={op.torico_eje || 90}
+                                      onChange={(e) => actualizarOpcionLio(op.id, 'torico_eje', parseInt(e.target.value) || 0)}
+                                      className="w-24 px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border-2 border-indigo-300 dark:border-indigo-700 text-xs font-mono font-black text-center text-[var(--foreground)] outline-none focus:border-indigo-500 shadow-xs"
+                                    />
+                                    <div className="flex items-center gap-1">
+                                      {[0, 45, 90, 135, 180].map((ang) => (
+                                        <button
+                                          key={ang}
+                                          type="button"
+                                          onClick={() => actualizarOpcionLio(op.id, 'torico_eje', ang)}
+                                          className={`px-2 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
+                                            op.torico_eje === ang
+                                              ? 'bg-indigo-600 text-white shadow-xs'
+                                              : 'bg-white dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100'
+                                          }`}
+                                        >
+                                          {ang}°
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
                         {/* BANNER EN TIEMPO REAL DE RESOLUCIÓN GTIN Y STOCK GECLISA */}
-                        <div className="pt-2">
+                        <div className="pt-1">
                           {resolviendo ? (
-                            <div className="p-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800/60 text-[11px] text-[var(--secondary)] flex items-center gap-2">
-                              <Loader2 size={13} className="animate-spin text-blue-600" />
-                              <span>Resolviendo SKU y consultando stock en vivo en Geclisa...</span>
+                            <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/60 text-[11px] text-[var(--secondary)] flex items-center gap-2">
+                              <Loader2 size={14} className="animate-spin text-blue-600" />
+                              <span>Resolviendo SKU y stock en vivo en Geclisa para esta graduación...</span>
                             </div>
                           ) : skuData && skuData.item ? (
-                            <div className="p-3 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/60 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+                            <div className="p-3.5 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/60 flex flex-wrap items-center justify-between gap-3 animate-fade-in shadow-xs">
                               <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="p-1.5 rounded-lg bg-emerald-500 text-black font-black">
-                                  <Barcode size={16} />
+                                <div className="p-2 rounded-xl bg-emerald-500 text-black font-black shrink-0 shadow-xs">
+                                  <Barcode size={18} />
                                 </div>
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="font-mono font-black text-xs text-emerald-900 dark:text-emerald-200">
+                                    <span className="font-mono font-black text-xs text-emerald-950 dark:text-emerald-200 bg-emerald-200/60 dark:bg-emerald-900/60 px-2 py-0.5 rounded-md">
                                       GTIN: {skuData.item.geclisa_ele_cod}
                                     </span>
-                                    <span className="text-[10px] text-emerald-700 dark:text-emerald-300 truncate">
+                                    <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 truncate">
                                       {skuData.item.geclisa_nombre}
                                     </span>
                                   </div>
+                                  {skuData.item.es_torico && (
+                                    <span className="text-[10px] font-bold text-indigo-700 dark:text-indigo-300 mt-0.5 block">
+                                      ✔ Variante Tórica identificada: {skuData.item.torico_valor}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
                               {/* Badges de Stock */}
                               <div className="flex items-center gap-2 shrink-0 text-xs">
                                 <span
-                                  className={`px-2.5 py-1 rounded-xl font-black text-[11px] ${
+                                  className={`px-3 py-1.5 rounded-xl font-black text-xs ${
                                     (skuData.resumen?.stock_quirofano ?? 0) > 0
                                       ? 'bg-emerald-600 text-white shadow-xs'
-                                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 font-bold'
                                   }`}
                                 >
                                   Quirófano: {skuData.resumen?.stock_quirofano ?? 0} un
                                 </span>
 
                                 {(skuData.resumen?.stock_consignacion ?? 0) > 0 && (
-                                  <span className="px-2.5 py-1 rounded-xl font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 text-[11px]">
+                                  <span className="px-3 py-1.5 rounded-xl font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 text-xs">
                                     Consignación: {skuData.resumen.stock_consignacion} un
                                   </span>
                                 )}
                               </div>
                             </div>
                           ) : (
-                            <div className="p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-900/40 border border-dashed border-[var(--border)] text-[11px] text-[var(--secondary)] flex items-center justify-between gap-2">
-                              <span className="flex items-center gap-1.5">
-                                <Info size={13} className="text-amber-500" />
-                                <span>
+                            <div className="p-3 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-[11px] text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+                              <Info size={16} className="text-amber-600 shrink-0 mt-0.5" />
+                              <div className="space-y-0.5">
+                                <span className="font-bold block">
                                   {op.es_personalizado
-                                    ? 'Modelo personalizado ingresado libremente. Planificación habilitada sin bloqueos.'
-                                    : 'Sin SKU de Geclisa registrado para esta graduación exacta. Se planificará como pedido especial.'}
+                                    ? 'Modelo libre personalizado — Planificación habilitada sin bloqueos.'
+                                    : op.es_torico
+                                    ? `Familia catalogada en Alcon, pero sin unidades físicas cargadas en Geclisa para cilindro T${op.torico_valor || 3} y dioptría +${op.dioptria} D.`
+                                    : `Sin código GTIN registrado en Geclisa para +${op.dioptria} D.`}
                                 </span>
-                              </span>
+                                <p className="text-[10px] text-amber-800/80 dark:text-amber-300/80">
+                                  Puedes continuar y sellar el protocolo quirúrgico; se registrará como orden de pedido especial al proveedor.
+                                </p>
+                              </div>
                             </div>
                           )}
                         </div>
-
-                        {/* Parámetros Tóricos (si aplica) */}
-                        {op.es_torico && (
-                          <div className="mt-2 p-3 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
-                            <div className="space-y-1">
-                              <label className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
-                                Valor Tórico (Cilindro)
-                              </label>
-                              {deshabilitado ? (
-                                <div className="px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg text-xs font-bold text-indigo-900 dark:text-indigo-200">
-                                  T{op.torico_valor}
-                                </div>
-                              ) : (
-                                <select
-                                  value={op.torico_valor || 3}
-                                  onChange={(e) => actualizarOpcionLio(op.id, 'torico_valor', parseInt(e.target.value) || 0)}
-                                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-300 dark:border-indigo-700 text-xs font-bold text-indigo-900 dark:text-indigo-200 outline-none cursor-pointer"
-                                >
-                                  {TORICOS_OPCIONES.map((to) => (
-                                    <option key={to.valor} value={to.valor}>
-                                      {to.label}
-                                    </option>
-                                  ))}
-                                </select>
-                              )}
-                            </div>
-
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between">
-                                <label className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
-                                  Eje de Alineación (°)
-                                </label>
-                                <span className="text-xs font-black font-mono text-indigo-600 dark:text-indigo-400">
-                                  {op.torico_eje || 90}°
-                                </span>
-                              </div>
-                              {deshabilitado ? (
-                                <div className="px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg text-xs font-mono font-bold text-indigo-600">
-                                  {op.torico_eje || 90}°
-                                </div>
-                              ) : (
-                                <input
-                                  type="number"
-                                  min={0}
-                                  max={180}
-                                  value={op.torico_eje || 90}
-                                  onChange={(e) => actualizarOpcionLio(op.id, 'torico_eje', parseInt(e.target.value) || 0)}
-                                  className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-indigo-300 dark:border-indigo-700 text-xs font-mono font-bold text-[var(--foreground)] outline-none"
-                                />
-                              )}
-                            </div>
-                          </div>
-                        )}
 
                         {/* Fórmula y Observaciones */}
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
