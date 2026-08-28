@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   X,
   Sparkles,
+  Zap,
   Layers,
   Info,
   QrCode,
@@ -32,7 +33,8 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronUp,
-  CheckCircle
+  CheckCircle,
+  FileSpreadsheet
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -166,12 +168,19 @@ export default function LioSettingsCard() {
   const [gtinDuplicadoInfo, setGtinDuplicadoInfo] = useState<any | null>(null)
   const [validandoGtin, setValidandoGtin] = useState(false)
 
-  // Parámetros para registrar el GTIN
+  // Parámetros para registrar el GTIN individual
   const [gtinFamiliaId, setGtinFamiliaId] = useState<string>('')
   const [gtinDioptria, setGtinDioptria] = useState<string>('21.50')
   const [gtinEsTorico, setGtinEsTorico] = useState<boolean>(false)
   const [gtinToricoValor, setGtinToricoValor] = useState<string>('T3 (Cil 1.50 D)')
   const [guardandoGtin, setGuardandoGtin] = useState(false)
+
+  // ====================================================================
+  // ESTADOS MODAL SINCRONIZACIÓN MASIVA ALCON
+  // ====================================================================
+  const [mostrandoModalSyncAlcon, setMostrandoModalSyncAlcon] = useState(false)
+  const [sincronizandoAlcon, setSincronizandoAlcon] = useState(false)
+  const [resultadoSyncAlcon, setResultadoSyncAlcon] = useState<any | null>(null)
 
   // ====================================================================
   // CARGA DE DATOS INICIALES
@@ -214,6 +223,35 @@ export default function LioSettingsCard() {
     fetchFamilias()
     fetchItemsGtin()
   }, [])
+
+  // ====================================================================
+  // SINCRONIZACIÓN MASIVA INTELIGENTE ALCON (OPCIÓN 1)
+  // ====================================================================
+  const handleEjecutarSyncAlcon = async () => {
+    try {
+      setSincronizandoAlcon(true)
+      setError(null)
+      setResultadoSyncAlcon(null)
+
+      const res = await fetch(`${BACKEND_URL}/api/modelos-lio/sincronizar-masivo-alcon`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+
+      if (res.ok && data.success) {
+        setResultadoSyncAlcon(data)
+        setMensajeExito(`✔ Sincronización Alcon completada: ${data.resultado?.nuevos_items_creados ?? 0} nuevos lentes vinculados.`)
+        fetchFamilias()
+        fetchItemsGtin()
+      } else {
+        throw new Error(data.detail || 'Error en la sincronización masiva.')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Error al ejecutar sincronización Alcon.')
+    } finally {
+      setSincronizandoAlcon(false)
+    }
+  }
 
   // ====================================================================
   // BÚSQUEDA Y PARSER EN GECLISA (SUBPESTAÑA 2)
@@ -486,49 +524,73 @@ export default function LioSettingsCard() {
 
   return (
     <div className="bg-[var(--card)] p-5 md:p-6 rounded-3xl border border-[var(--border)] space-y-6 shadow-sm animate-fade-in">
-      {/* 1. CABECERA & SELECTOR DE PESTAÑAS (OPCIÓN 1) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+      {/* 1. CABECERA, SINCRONIZACIÓN MASIVA & SELECTOR DE PESTAÑAS */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-gradient-to-br from-cyan-500/20 to-blue-500/20 text-cyan-600 dark:text-cyan-400 rounded-2xl border border-cyan-500/30">
             <Eye size={26} />
           </div>
           <div>
-            <h2 className="text-lg font-extrabold text-[var(--foreground)] tracking-tight">
-              Lentes Intraoculares (LIO) & Trazabilidad GTIN
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-extrabold text-[var(--foreground)] tracking-tight">
+                Lentes Intraoculares (LIO) & Trazabilidad GTIN
+              </h2>
+              <span className="px-2 py-0.5 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-black flex items-center gap-1">
+                <Sparkles size={11} />
+                <span>Catálogo Alcon 3.895 GTINs Activo</span>
+              </span>
+            </div>
             <p className="text-xs text-[var(--secondary)] mt-0.5">
-              Administra familias clínicas, constantes biométricas y vincula códigos GTIN de Geclisa para escáner QR.
+              Administra familias clínicas, constantes biométricas y sincroniza de forma masiva o individual desde Geclisa.
             </p>
           </div>
         </div>
 
-        {/* Botones Switch de Pestañas */}
-        <div className="flex items-center gap-1.5 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-[var(--border)] shrink-0">
+        {/* Botones de Acción Global */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Botón de Sincronización Masiva Inteligente */}
           <button
             type="button"
-            onClick={() => setSubTabActiva('familias')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
-              subTabActiva === 'familias'
-                ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm border border-[var(--border)]'
-                : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-            }`}
+            onClick={() => {
+              setMostrandoModalSyncAlcon(true)
+              if (!resultadoSyncAlcon) {
+                handleEjecutarSyncAlcon()
+              }
+            }}
+            className="px-3.5 py-2 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-600 hover:to-orange-600 text-white rounded-2xl text-xs font-black shadow-md shadow-amber-500/20 flex items-center gap-2 cursor-pointer transition transform hover:scale-[1.02]"
           >
-            <Building2 size={15} />
-            <span>1. Familias Clínicas ({familias.length})</span>
+            <Zap size={15} className="animate-pulse" />
+            <span>⚡ Sincronización Masiva Alcon</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => setSubTabActiva('gtins')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
-              subTabActiva === 'gtins'
-                ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm border border-[var(--border)]'
-                : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            <Barcode size={15} />
-            <span>2. Catálogo de GTINs Geclisa ({itemsGtin.length})</span>
-          </button>
+          {/* Botones Switch de Pestañas */}
+          <div className="flex items-center gap-1.5 p-1.5 bg-slate-100 dark:bg-slate-800/80 rounded-2xl border border-[var(--border)] shrink-0">
+            <button
+              type="button"
+              onClick={() => setSubTabActiva('familias')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
+                subTabActiva === 'familias'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm border border-[var(--border)]'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <Building2 size={15} />
+              <span>1. Familias Clínicas ({familias.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSubTabActiva('gtins')}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all ${
+                subTabActiva === 'gtins'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm border border-[var(--border)]'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <Barcode size={15} />
+              <span>2. Catálogo de GTINs Geclisa ({itemsGtin.length})</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -543,6 +605,163 @@ export default function LioSettingsCard() {
         <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
           <CheckCircle2 size={16} className="shrink-0" />
           <span className="font-bold">{mensajeExito}</span>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL: REPORTE DE SINCRONIZACIÓN MASIVA ALCON                       */}
+      {/* ==================================================================== */}
+      {mostrandoModalSyncAlcon && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl animate-scale-in max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  <Zap size={22} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-[var(--foreground)]">
+                    Sincronización Inteligente Catálogo Alcon
+                  </h3>
+                  <p className="text-xs text-[var(--secondary)]">
+                    Cruce automático de 3.895 GTINs maestros contra elementos registrados en Geclisa.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMostrandoModalSyncAlcon(false)}
+                className="p-2 text-slate-400 hover:text-[var(--foreground)] rounded-xl"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {sincronizandoAlcon ? (
+              <div className="py-16 text-center space-y-4">
+                <Loader2 size={36} className="animate-spin text-amber-500 mx-auto" />
+                <p className="text-sm font-bold text-[var(--foreground)]">
+                  Consultando elementos de Geclisa y decodificando dioptrías...
+                </p>
+                <p className="text-xs text-[var(--secondary)]">
+                  Cruzando los 3.895 códigos GTIN de Alcon para auto-crear familias y graduaciones.
+                </p>
+              </div>
+            ) : resultadoSyncAlcon ? (
+              <div className="space-y-4 flex-1 overflow-y-auto pr-1">
+                {/* Resumen Métricas */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center">
+                    <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 block font-mono">
+                      +{resultadoSyncAlcon.resultado?.nuevos_items_creados ?? 0}
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-900 dark:text-emerald-300 uppercase">
+                      Nuevos GTINs Vinculados
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/30 text-center">
+                    <span className="text-2xl font-black text-blue-600 dark:text-blue-400 block font-mono">
+                      {resultadoSyncAlcon.resultado?.nuevas_familias_creadas ?? 0}
+                    </span>
+                    <span className="text-[10px] font-bold text-blue-900 dark:text-blue-300 uppercase">
+                      Familias Creadas
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-slate-500/10 border border-slate-500/30 text-center">
+                    <span className="text-2xl font-black text-slate-700 dark:text-slate-300 block font-mono">
+                      {resultadoSyncAlcon.resultado?.items_preexistentes ?? 0}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase">
+                      Preexistentes (0 Duplicados)
+                    </span>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-center">
+                    <span className="text-2xl font-black text-amber-600 dark:text-amber-400 block font-mono">
+                      {resultadoSyncAlcon.total_coincidencias_gtin ?? 0}
+                    </span>
+                    <span className="text-[10px] font-bold text-amber-900 dark:text-amber-300 uppercase">
+                      Total Coincidencias Geclisa
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tabla de Resultados Sincronizados */}
+                <div className="border border-[var(--border)] rounded-2xl overflow-hidden">
+                  <div className="max-h-60 overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="bg-slate-100 dark:bg-slate-800/80 text-[var(--secondary)] font-bold text-[10px] uppercase tracking-wider sticky top-0">
+                          <th className="p-2.5">Código GTIN</th>
+                          <th className="p-2.5">Familia Asignada</th>
+                          <th className="p-2.5">Dioptría</th>
+                          <th className="p-2.5">Toricidad</th>
+                          <th className="p-2.5">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[var(--border)]">
+                        {resultadoSyncAlcon.resultado?.items?.map((it: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="p-2.5 font-mono font-bold text-blue-600 dark:text-blue-400 text-[11px]">
+                              {it.geclisa_ele_cod}
+                            </td>
+                            <td className="p-2.5 font-bold text-[var(--foreground)] text-[11px]">
+                              {it.familia_nombre}
+                            </td>
+                            <td className="p-2.5 font-mono font-black text-xs text-[var(--foreground)]">
+                              +{Number(it.dioptria).toFixed(2)} D
+                            </td>
+                            <td className="p-2.5 text-[11px]">
+                              {it.es_torico ? (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[10px]">
+                                  {it.torico_valor}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">Esférico</span>
+                              )}
+                            </td>
+                            <td className="p-2.5">
+                              {it.estado === 'SINCRONIZADO' ? (
+                                <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-black text-[10px]">
+                                  ✔ Sincronizado
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[10px]">
+                                  Preexistente
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between pt-3 border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={handleEjecutarSyncAlcon}
+                disabled={sincronizandoAlcon}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw size={13} className={sincronizandoAlcon ? 'animate-spin' : ''} />
+                <span>Re-ejecutar Cruce</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setMostrandoModalSyncAlcon(false)}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black shadow cursor-pointer"
+              >
+                Cerrar y Ver Catálogo
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -762,14 +981,14 @@ export default function LioSettingsCard() {
                 <button
                   type="button"
                   onClick={() => setMostrandoFormFamilia(false)}
-                  className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-100"
+                  className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-100 cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={guardandoFamilia}
-                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-2"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow flex items-center gap-2 cursor-pointer"
                 >
                   {guardandoFamilia ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   <span>Guardar Familia</span>
@@ -788,7 +1007,7 @@ export default function LioSettingsCard() {
             <div className="p-12 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-3xl space-y-2">
               <Building2 size={28} className="mx-auto text-slate-400 opacity-50" />
               <p className="font-bold text-sm text-[var(--foreground)]">No hay familias configuradas</p>
-              <p className="text-[11px]">Usa el botón superior para dar de alta tu primera familia de LIO.</p>
+              <p className="text-[11px]">Usa el botón superior para sincronizar o dar de alta tu primera familia de LIO.</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -900,7 +1119,7 @@ export default function LioSettingsCard() {
 
                         {itemsDeEstaFam.length === 0 ? (
                           <div className="p-6 text-center border border-dashed border-[var(--border)] rounded-2xl text-xs text-[var(--secondary)]">
-                            No hay graduaciones asociadas a este grupo. Usa el botón <b>"+ Vincular GTINs"</b> para escanear o buscar en Geclisa.
+                            No hay graduaciones asociadas a este grupo. Usa el botón <b>"+ Vincular GTINs"</b> o la <b>"⚡ Sincronización Masiva Alcon"</b>.
                           </div>
                         ) : (
                           <div className="border border-[var(--border)] rounded-2xl overflow-hidden shadow-xs bg-[var(--card)]">
@@ -1023,19 +1242,35 @@ export default function LioSettingsCard() {
               </select>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setMostrandoAltaGtin(true)
-                setScannerInput('')
-                setElementoGeclisaSeleccionado(null)
-                setGtinDuplicadoInfo(null)
-              }}
-              className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <QrCode size={16} />
-              <span>+ Escanear / Agregar GTIN desde Geclisa</span>
-            </button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={() => {
+                  setMostrandoModalSyncAlcon(true)
+                  if (!resultadoSyncAlcon) {
+                    handleEjecutarSyncAlcon()
+                  }
+                }}
+                className="px-3.5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 cursor-pointer"
+              >
+                <Zap size={14} />
+                <span>⚡ Sincronizar Alcon</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMostrandoAltaGtin(true)
+                  setScannerInput('')
+                  setElementoGeclisaSeleccionado(null)
+                  setGtinDuplicadoInfo(null)
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <QrCode size={16} />
+                <span>+ Escanear / Agregar GTIN</span>
+              </button>
+            </div>
           </div>
 
           {/* Panel de Escáner e Importación Directa de GTIN */}
@@ -1157,7 +1392,7 @@ export default function LioSettingsCard() {
                     <button
                       type="button"
                       onClick={() => setElementoGeclisaSeleccionado(null)}
-                      className="text-[11px] font-bold text-slate-500 hover:text-slate-700 underline"
+                      className="text-[11px] font-bold text-slate-500 hover:text-slate-700 underline cursor-pointer"
                     >
                       Cambiar
                     </button>
@@ -1280,7 +1515,7 @@ export default function LioSettingsCard() {
                 {filtroGtinSearch.trim() ? 'No se encontraron GTINs coincidentes con la búsqueda' : 'No hay códigos GTIN registrados'}
               </p>
               <p className="text-[11px]">
-                {filtroGtinSearch.trim() ? 'Prueba borrando el término de búsqueda o seleccionando otra familia.' : 'Usa el botón superior para escanear o buscar artículos en Geclisa.'}
+                {filtroGtinSearch.trim() ? 'Prueba borrando el término de búsqueda o seleccionando otra familia.' : 'Usa el botón "⚡ Sincronizar Alcon" o el buscador superior.'}
               </p>
             </div>
           ) : (

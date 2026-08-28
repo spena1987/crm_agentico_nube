@@ -1,6 +1,7 @@
 import os
 import uuid
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -3764,6 +3765,104 @@ def validar_gtin_unico(gtin: str, exclude_item_id: Optional[str] = None) -> Dict
     except Exception as e:
         logger.error(f"Error al validar unicidad de GTIN {gtin}: {e}")
         return {"existe": False}
+
+def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Sincroniza en bloque un lote de lentes pre-analizados con su familia y graduación en el CRM.
+    Crea las familias que no existan y registra los items por GTIN garantizando no duplicados.
+    """
+    if not supabase or not items_coincidentes:
+        return {
+            "total_analizados": 0,
+            "nuevas_familias_creadas": 0,
+            "nuevos_items_creados": 0,
+            "items_preexistentes": 0,
+            "items": []
+        }
+
+    try:
+        # 1. Obtener todas las familias existentes para no duplicar
+        fam_resp = supabase.table("modelos_lio").select("*").execute()
+        familias_existentes = fam_resp.data or []
+        fam_map = {}
+        for f in familias_existentes:
+            key = f"{f['marca'].strip().upper()}__{f['modelo'].strip().upper()}"
+            fam_map[key] = f["id"]
+
+        # 2. Obtener todos los GTINs existentes para no duplicar
+        gtin_resp = supabase.table("modelos_lio_items").select("geclisa_ele_cod").execute()
+        gtins_existentes = set(str(row["geclisa_ele_cod"]).strip() for row in (gtin_resp.data or []))
+
+        nuevas_familias_count = 0
+        nuevos_items_count = 0
+        preexistentes_count = 0
+        resultado_items = []
+
+        for item in items_coincidentes:
+            marca = str(item.get("marca", "Alcon")).strip()
+            familia_nombre = str(item.get("familia_nombre", "Alcon LIO")).strip()
+            fam_key = f"{marca.upper()}__{familia_nombre.upper()}"
+
+            # Asegurar que la familia exista
+            if fam_key not in fam_map:
+                nueva_fam_payload = {
+                    "marca": marca,
+                    "modelo": familia_nombre,
+                    "tipo_optica": item.get("tipo_optica", "Monofocal Asférico"),
+                    "constante_a": item.get("constante_a", 118.9),
+                    "acd_estimado": item.get("acd_estimado", 5.0),
+                    "admite_toricos": item.get("admite_toricos", False),
+                    "apto_sulcus": item.get("apto_sulcus", False),
+                    "activo": True,
+                    "created_at": "now()",
+                    "updated_at": "now()"
+                }
+                crear_res = supabase.table("modelos_lio").insert(nueva_fam_payload).execute()
+                if crear_res.data:
+                    fam_id = crear_res.data[0]["id"]
+                    fam_map[fam_key] = fam_id
+                    nuevas_familias_count += 1
+                else:
+                    continue
+            else:
+                fam_id = fam_map[fam_key]
+
+            # Verificar si el GTIN ya está registrado
+            gtin_cod = str(item.get("geclisa_ele_cod", "")).strip()
+            if gtin_cod in gtins_existentes:
+                preexistentes_count += 1
+                resultado_items.append({**item, "estado": "PREEXISTENTE", "modelo_lio_id": fam_id})
+                continue
+
+            # Crear el item en modelos_lio_items
+            clean_nombre = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(item.get("geclisa_nombre") or "")).strip()
+            nuevo_item_payload = {
+                "modelo_lio_id": fam_id,
+                "geclisa_ele_id": int(item.get("geclisa_ele_id")),
+                "geclisa_ele_cod": gtin_cod,
+                "geclisa_nombre": clean_nombre,
+                "dioptria": float(item.get("dioptria", 0.0)),
+                "es_torico": bool(item.get("es_torico", False)),
+                "torico_valor": item.get("torico_valor") if item.get("es_torico") else None,
+                "created_at": "now()",
+                "updated_at": "now()"
+            }
+            res_item = supabase.table("modelos_lio_items").insert(nuevo_item_payload).execute()
+            if res_item.data:
+                nuevos_items_count += 1
+                gtins_existentes.add(gtin_cod)
+                resultado_items.append({**item, "estado": "SINCRONIZADO", "modelo_lio_id": fam_id, "id": res_item.data[0]["id"]})
+
+        return {
+            "total_analizados": len(items_coincidentes),
+            "nuevas_familias_creadas": nuevas_familias_count,
+            "nuevos_items_creados": nuevos_items_count,
+            "items_preexistentes": preexistentes_count,
+            "items": resultado_items
+        }
+    except Exception as e:
+        logger.error(f"Error al sincronizar lentes masivos: {e}")
+        raise e
 
 def resolver_sku_lio(modelo_lio_id: Optional[str], modelo_nombre: Optional[str], dioptria: float, torico_valor: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """

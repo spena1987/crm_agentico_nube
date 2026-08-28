@@ -121,6 +121,7 @@ from app.db import (
     get_modelos_lio_items,
     get_all_modelos_lio_items,
     validar_gtin_unico,
+    sincronizar_lentes_masivos,
     crear_modelo_lio_item,
     eliminar_modelo_lio_item,
     resolver_sku_lio,
@@ -147,6 +148,7 @@ from app.services.media_cleaner import purgar_archivos_antiguos, obtener_estadis
 from app.services.tools import crear_borrador_presupuesto
 from app.services.config_service import load_settings, save_settings
 from app.services.agent_orchestrator import orchestrator, AVAILABLE_TOOLS_MAP
+from app.services.alcon_catalog_service import alcon_catalog_service
 from app.services.geclisa_client import GeclisaClient
 from app.services.logger_service import log_event, get_logs, get_logs_stats
 
@@ -4458,6 +4460,49 @@ def validar_gtin_endpoint(gtin: str = Query(...), exclude_id: Optional[str] = Qu
         return {"success": True, **res}
     except Exception as e:
         logger.error(f"Error validando GTIN {gtin}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/modelos-lio/sincronizar-masivo-alcon")
+def sincronizar_masivo_alcon_endpoint():
+    """
+    Escanea los elementos de Geclisa para la marca Alcon, los cruza contra el catálogo maestro
+    de 3.895 GTINs, y crea/actualiza automáticamente las familias y graduaciones en el CRM.
+    """
+    try:
+        # 1. Búsqueda exhaustiva en Geclisa para encontrar todos los elementos Alcon
+        terminos_busqueda = [
+            "CLAREON", "PANOPTIX", "VIVITY", "SN60WF", "ACRYSOF", "AU00T0",
+            "TFNT", "CNA0", "SY60WF", "MA60AC", "MN60", "SND1", "SV25", "DFT",
+            "0038065", "38065", "CNW", "CNA", "ALCON", "ACRY"
+        ]
+        elementos_dict = {}
+        for term in terminos_busqueda:
+            try:
+                res = geclisa_client.buscar_elementos(term, limite=100)
+                for el in res:
+                    if el.get("eleId"):
+                        elementos_dict[el["eleId"]] = el
+            except Exception as ex_t:
+                logger.warning(f"Falla al buscar término '{term}' en Geclisa: {ex_t}")
+
+        elementos_geclisa = list(elementos_dict.values())
+        logger.info(f"[SINCRONIZACION_ALCON] {len(elementos_geclisa)} elementos únicos obtenidos de Geclisa.")
+
+        # 2. Cruzar contra catálogo Alcon GTIN
+        coincidencias = alcon_catalog_service.cruzar_elementos_geclisa(elementos_geclisa)
+        logger.info(f"[SINCRONIZACION_ALCON] {len(coincidencias)} coincidencias exactas con el catálogo de 3.895 GTINs.")
+
+        # 3. Sincronizar en DB
+        resultado = sincronizar_lentes_masivos(coincidencias)
+
+        return {
+            "success": True,
+            "total_geclisa_analizados": len(elementos_geclisa),
+            "total_coincidencias_gtin": len(coincidencias),
+            "resultado": resultado
+        }
+    except Exception as e:
+        logger.error(f"Error en sincronización masiva Alcon: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class ResolverSkuPayload(BaseModel):
