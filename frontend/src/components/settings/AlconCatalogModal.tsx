@@ -500,8 +500,8 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       {/* POPUP DE DETALLE: CÓDIGO QR & EXPORTADOR DE STICKERS PDF A4 (4x4 CM) */}
       {/* ==================================================================== */}
       {itemSeleccionado && (
-        <div className="fixed inset-0 z-60 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl animate-scale-in">
+        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white dark:bg-[#0b1329] border border-slate-200 dark:border-slate-800 rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl relative z-[101] animate-scale-in">
             {/* Cabecera del Popup QR */}
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
               <div className="flex items-center gap-2.5">
