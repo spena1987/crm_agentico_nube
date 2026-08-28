@@ -67,7 +67,7 @@ export default function TabProgramacionLio({
 
   React.useEffect(() => {
     const resolverSku = async () => {
-      const mod = formData.lente_tipo
+      const mod = (formData.lente_tipo || '').replace(/\s*\([^)]*\)/g, '').trim()
       const diop = parseFloat(formData.lente_dioptria)
       if (!mod || isNaN(diop)) {
         setSkuResuelto(null)

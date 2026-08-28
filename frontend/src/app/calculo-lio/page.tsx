@@ -35,7 +35,13 @@ import {
   Lock,
   Unlock,
   Edit3,
-  ShieldCheck
+  ShieldCheck,
+  Zap,
+  Barcode,
+  Boxes,
+  Compass,
+  SlidersHorizontal,
+  Info
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso } from '@/lib/dateUtils'
@@ -53,6 +59,8 @@ interface OpcionLio {
   formula: string
   observaciones: string
   es_implantado?: boolean
+  es_personalizado?: boolean
+  constante_a_custom?: number
 }
 
 const FORMULAS_LIO = [
@@ -104,6 +112,10 @@ export default function CalculoLioPage() {
   const [opcionesLio, setOpcionesLio] = useState<OpcionLio[]>([])
   const [modelosLio, setModelosLio] = useState<any[]>([])
   const [modoEdicion, setModoEdicion] = useState<boolean>(false)
+
+  // Resolución en tiempo real de SKU y Stock de Geclisa (por opción ID)
+  const [skusResueltos, setSkusResueltos] = useState<Record<string, any>>({})
+  const [resolviendoSkus, setResolviendoSkus] = useState<Record<string, boolean>>({})
 
   // Visor de Documentos Geclisa
   const [modalArchivosAbierto, setModalArchivosAbierto] = useState<boolean>(false)
@@ -184,14 +196,14 @@ export default function CalculoLioPage() {
       const modeloDefault =
         modelosLio.length > 0
           ? `${modelosLio[0].modelo} (${modelosLio[0].marca})`
-          : p.lente_tipo || 'AcrySof IQ SN60WF (Alcon)'
+          : p.lente_tipo || 'Clareon CNA0T0 (Alcon)'
       setOpcionesLio([
         {
           id: `opt-${Date.now()}-1`,
           tipo_opcion: 'principal',
           etiqueta: 'Plan A (Principal)',
           modelo: modeloDefault,
-          dioptria: p.lente_dioptria || '+21.50',
+          dioptria: p.lente_dioptria || '20.00',
           es_torico: Boolean(p.es_torico),
           torico_valor: p.lente_torico_valor || null,
           torico_eje: p.lente_torico_eje || null,
@@ -207,33 +219,102 @@ export default function CalculoLioPage() {
     setModoEdicion(!p.lio_calculado)
   }
 
-  // Agregar nueva opción de lente
+  // Hook de resolución en tiempo real de SKU y Stock de Geclisa para cada opción
+  useEffect(() => {
+    opcionesLio.forEach((op) => {
+      const diopNum = parseFloat(op.dioptria)
+      if (!op.modelo || isNaN(diopNum)) {
+        setSkusResueltos((prev) => ({ ...prev, [op.id]: null }))
+        return
+      }
+
+      const timer = setTimeout(async () => {
+        try {
+          setResolviendoSkus((prev) => ({ ...prev, [op.id]: true }))
+          const cleanModelo = op.modelo.replace(/\s*\([^)]*\)/g, '').trim()
+
+          const res = await fetch(`${BACKEND_URL}/api/modelos-lio/resolver-sku`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              modelo_nombre: cleanModelo,
+              dioptria: diopNum,
+              torico_valor: op.es_torico && op.torico_valor ? `T${op.torico_valor}` : null
+            })
+          })
+          const data = await res.json()
+          if (res.ok && data.success && data.item) {
+            setSkusResueltos((prev) => ({ ...prev, [op.id]: data }))
+          } else {
+            setSkusResueltos((prev) => ({ ...prev, [op.id]: null }))
+          }
+        } catch (e) {
+          console.error('Error resolviendo SKU para opción:', op.id, e)
+          setSkusResueltos((prev) => ({ ...prev, [op.id]: null }))
+        } finally {
+          setResolviendoSkus((prev) => ({ ...prev, [op.id]: false }))
+        }
+      }, 350)
+
+      return () => clearTimeout(timer)
+    })
+  }, [opcionesLio])
+
+  // Agregar nueva opción de lente con 1 clic
   const agregarOpcionLio = (tipo: 'principal' | 'alternativa' | 'torico' | 'sulcus' = 'alternativa') => {
     const num = opcionesLio.length + 1
-    const etiqueta =
-      tipo === 'principal'
-        ? `Plan A (Principal)`
-        : tipo === 'torico'
-        ? `Opción Tórica (Astigmatismo)`
-        : tipo === 'sulcus'
-        ? `Opción Sulcus / 3 Piezas (MA60AC)`
-        : `Opción ${num} (Alternativa ${num > 2 ? '+0.50D' : '-0.50D'})`
+    const baseOpt = opcionesLio[0] || {}
+    const diopBase = parseFloat(baseOpt.dioptria || '20.00')
 
-    const modeloBase = opcionesLio[0]?.modelo || (modelosLio.length > 0 ? `${modelosLio[0].modelo} (${modelosLio[0].marca})` : 'AcrySof IQ SN60WF (Alcon)')
+    let etiqueta = `Opción ${num} (Alternativa)`
+    let modelo = baseOpt.modelo || (modelosLio.length > 0 ? `${modelosLio[0].modelo} (${modelosLio[0].marca})` : 'Clareon CNA0T0 (Alcon)')
+    let dioptria = (diopBase - 0.5).toFixed(2)
+    let es_torico = false
+    let torico_valor: number | null = null
+    let torico_eje: number | null = null
+    let constante_custom: number | undefined = undefined
+
+    if (tipo === 'principal') {
+      etiqueta = `Plan A (Principal)`
+      dioptria = (diopBase || 20.0).toFixed(2)
+    } else if (tipo === 'alternativa') {
+      etiqueta = `Plan B (Alternativa ${num > 2 ? '+0.50 D' : '-0.50 D'})`
+      dioptria = num > 2 ? (diopBase + 0.5).toFixed(2) : (diopBase - 0.5).toFixed(2)
+    } else if (tipo === 'torico') {
+      etiqueta = `Opción Tórica (Astigmatismo)`
+      es_torico = true
+      torico_valor = 3
+      torico_eje = 85
+      dioptria = (diopBase || 20.0).toFixed(2)
+    } else if (tipo === 'sulcus') {
+      etiqueta = `Opción Sulcus / 3 Piezas (Respaldo)`
+      // Buscar modelo de sulcus si existe en catálogo
+      const sulcusMod = modelosLio.find((m) => m.apto_sulcus || m.tipo_optica?.toLowerCase().includes('sulcus') || m.modelo?.includes('MA60'))
+      if (sulcusMod) {
+        modelo = `${sulcusMod.modelo} (${sulcusMod.marca})`
+        constante_custom = sulcusMod.constante_a || 118.4
+      } else {
+        modelo = 'AcrySof 3 Piezas MA60AC (Alcon)'
+        constante_custom = 118.4
+      }
+      // Dioptría sugerida para sulcus: habitualmente -0.50D o -1.00D respecto al plano capsular
+      dioptria = (diopBase - 0.5).toFixed(2)
+    }
 
     const nueva: OpcionLio = {
       id: `opt-${Date.now()}-${num}`,
       tipo_opcion: tipo,
       etiqueta,
-      modelo: tipo === 'sulcus' ? 'AcrySof MA60AC (Alcon)' : modeloBase,
-      dioptria: opcionesLio[0]?.dioptria || '+21.50',
-      es_torico: tipo === 'torico',
-      torico_valor: tipo === 'torico' ? 3 : null,
-      torico_eje: tipo === 'torico' ? 85 : null,
-      target_refractivo: opcionesLio[0]?.target_refractivo || '-0.25 D (Miopía Leve)',
-      formula: opcionesLio[0]?.formula || 'Barrett Universal II',
-      observaciones: '',
-      es_implantado: false
+      modelo,
+      dioptria,
+      es_torico,
+      torico_valor,
+      torico_eje,
+      target_refractivo: baseOpt.target_refractivo || '-0.25 D (Miopía Leve)',
+      formula: baseOpt.formula || 'Barrett Universal II',
+      observaciones: tipo === 'sulcus' ? 'Ajuste de poder por implante en surco ciliar (Constante A 118.4)' : '',
+      es_implantado: false,
+      constante_a_custom: constante_custom
     }
 
     setOpcionesLio([...opcionesLio, nueva])
@@ -259,8 +340,12 @@ export default function CalculoLioPage() {
             act.es_torico = true
             if (!act.torico_valor) act.torico_valor = 3
             if (!act.torico_eje) act.torico_eje = 90
-          } else {
+          } else if (valor === 'sulcus') {
             act.es_torico = false
+            const sulcusMod = modelosLio.find((m) => m.apto_sulcus || m.modelo?.includes('MA60'))
+            if (sulcusMod) {
+              act.modelo = `${sulcusMod.modelo} (${sulcusMod.marca})`
+            }
           }
         }
         return act
@@ -451,149 +536,134 @@ export default function CalculoLioPage() {
     const pendientes = pacientes.filter((p) => !p.lio_calculado).length
     const calculados = pacientes.filter((p) => p.lio_calculado).length
     const stockPendiente = pacientes.filter((p) => p.lio_calculado && !p.lio_stock_reservado).length
+
     return { total, pendientes, calculados, stockPendiente }
   }, [pacientes])
 
   return (
-    <div className="space-y-6 animate-fade-in p-4 md:p-8 max-w-[1700px] mx-auto min-w-0">
-      {/* 1. CABECERA PRINCIPAL & METRICAS */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm">
-        <div>
-          <h1 className="text-2xl font-extrabold text-[var(--foreground)] tracking-tight flex items-center gap-2.5">
-            <Eye className="text-cyan-500" size={28} />
-            <span>Cálculo de Lentes Intraoculares (LIO)</span>
-          </h1>
-          <p className="text-xs md:text-sm text-[var(--secondary)] mt-1">
+    <div className="p-4 md:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
+      {/* 1. CABECERA PRINCIPAL */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2.5 bg-gradient-to-br from-cyan-500/20 to-blue-500/20 text-cyan-600 dark:text-cyan-400 rounded-2xl border border-cyan-500/30 shadow-xs">
+              <Eye size={24} />
+            </div>
+            <h1 className="text-xl md:text-2xl font-black text-[var(--foreground)] tracking-tight">
+              Cálculo de Lentes Intraoculares (LIO)
+            </h1>
+          </div>
+          <p className="text-xs text-[var(--secondary)]">
             Definición biométrica multilente (Plan A, B, Tórico y Sulcus), consulta de estudios Geclisa y reserva de stock para quirófano.
           </p>
         </div>
 
-        {/* Filtro por Cirujano / Prestador */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1.5 rounded-xl border border-[var(--border)]">
-            <User size={15} className="text-slate-400 ml-1.5" />
-            <span className="text-xs font-bold text-[var(--secondary)]">Cirujano:</span>
+        <div className="flex items-center gap-3">
+          {/* Filtro por Cirujano */}
+          <div className="flex items-center gap-2 bg-[var(--card)] px-3 py-1.5 rounded-2xl border border-[var(--border)] shadow-xs">
+            <User size={14} className="text-[var(--secondary)]" />
             <select
               value={cirujanoSeleccionado}
               onChange={(e) => setCirujanoSeleccionado(e.target.value)}
-              className="bg-transparent text-xs font-extrabold text-[var(--foreground)] outline-none pr-2 cursor-pointer"
+              className="bg-transparent text-xs font-bold text-[var(--foreground)] outline-none cursor-pointer"
             >
               <option value="todos">Todos los Cirujanos</option>
-              {cirujanos.map((cir) => (
-                <option key={cir} value={cir}>
-                  {cir}
+              {cirujanos.map((c) => (
+                <option key={c} value={c}>
+                  {c}
                 </option>
               ))}
             </select>
           </div>
 
           <button
+            type="button"
             onClick={fetchPacientes}
-            disabled={cargando}
-            className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl border border-[var(--border)] transition"
+            className="p-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] text-slate-500 hover:text-[var(--foreground)] transition shadow-xs cursor-pointer"
             title="Refrescar listado"
           >
-            <RefreshCw size={15} className={cargando ? 'animate-spin text-blue-600' : ''} />
+            <RefreshCw size={16} className={cargando ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
-      {/* 2. KPIS Y FILTROS RÁPIDOS */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {/* KPI 1: Todos */}
+      {/* 2. TARJETAS DE MÉTRICAS */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <button
           type="button"
           onClick={() => setEstadoFiltro('todos')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
+          className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'todos'
-              ? 'bg-slate-200/80 dark:bg-slate-700/80 border-slate-400 ring-2 ring-slate-400/30 shadow-md'
-              : 'bg-slate-100/40 dark:bg-slate-800/20 border-[var(--border)] hover:border-slate-400 opacity-80 hover:opacity-100'
+              ? 'bg-blue-600/10 border-blue-500 text-blue-700 dark:text-blue-300'
+              : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Total Asignados
-            </p>
-            <p className="text-2xl font-extrabold text-[var(--foreground)] font-mono mt-0.5">{metricas.total}</p>
+          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[var(--secondary)]">
+            <span>Total Asignados</span>
+            <Layers size={14} />
           </div>
-          <Layers size={22} className="text-slate-400" />
+          <span className="text-2xl font-black font-mono mt-1 block">{metricas.total}</span>
         </button>
 
-        {/* KPI 2: Pendientes de Cálculo */}
         <button
           type="button"
           onClick={() => setEstadoFiltro('pendientes')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
+          className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'pendientes'
-              ? 'bg-amber-500/20 border-amber-500 ring-2 ring-amber-500/30 shadow-md'
-              : 'bg-amber-500/5 border-amber-500/20 hover:border-amber-400 opacity-85 hover:opacity-100'
+              ? 'bg-amber-600/10 border-amber-500 text-amber-700 dark:text-amber-300'
+              : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-amber-600 dark:text-amber-400">
-                Pendientes LIO
-              </p>
-            </div>
-            <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 font-mono mt-0.5">
-              {metricas.pendientes}
-            </p>
+          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+            <span>Pendientes LIO</span>
+            <AlertCircle size={14} />
           </div>
-          <AlertCircle size={22} className="text-amber-500" />
+          <span className="text-2xl font-black font-mono mt-1 block text-amber-600 dark:text-amber-400">
+            {metricas.pendientes}
+          </span>
         </button>
 
-        {/* KPI 3: LIO Calculados / Confirmados */}
         <button
           type="button"
           onClick={() => setEstadoFiltro('calculados')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
+          className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'calculados'
-              ? 'bg-cyan-500/20 border-cyan-500 ring-2 ring-cyan-500/30 shadow-md'
-              : 'bg-cyan-500/5 border-cyan-500/20 hover:border-cyan-400 opacity-85 hover:opacity-100'
+              ? 'bg-emerald-600/10 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+              : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-cyan-500" />
-              <p className="text-[10px] font-extrabold uppercase tracking-wide text-cyan-600 dark:text-cyan-400">
-                LIO Confirmados
-              </p>
-            </div>
-            <p className="text-2xl font-extrabold text-cyan-600 dark:text-cyan-400 font-mono mt-0.5">
-              {metricas.calculados}
-            </p>
+          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+            <span>LIO Confirmados</span>
+            <CheckCircle2 size={14} />
           </div>
-          <CheckCircle2 size={22} className="text-cyan-500" />
+          <span className="text-2xl font-black font-mono mt-1 block text-emerald-600 dark:text-emerald-400">
+            {metricas.calculados}
+          </span>
         </button>
 
-        {/* KPI 4: Stock Pendiente de Reserva */}
         <button
           type="button"
           onClick={() => setEstadoFiltro('stock_pendiente')}
-          className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex items-center justify-between cursor-pointer ${
+          className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'stock_pendiente'
-              ? 'bg-purple-500/20 border-purple-500 ring-2 ring-purple-500/30 shadow-md'
-              : 'bg-purple-500/5 border-purple-500/20 hover:border-purple-400 opacity-85 hover:opacity-100'
+              ? 'bg-purple-600/10 border-purple-500 text-purple-700 dark:text-purple-300'
+              : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
-          <div>
-            <p className="text-[10px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
-              Stock Pendiente
-            </p>
-            <p className="text-2xl font-extrabold text-purple-600 dark:text-purple-400 font-mono mt-0.5">
-              {metricas.stockPendiente}
-            </p>
+          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400">
+            <span>Stock Pendiente</span>
+            <Package size={14} />
           </div>
-          <Package size={22} className="text-purple-500" />
+          <span className="text-2xl font-black font-mono mt-1 block text-purple-600 dark:text-purple-400">
+            {metricas.stockPendiente}
+          </span>
         </button>
       </div>
 
-      {/* 3. DISPOSICIÓN PRINCIPAL (MASTER-DETAIL) */}
+      {/* 3. LAYOUT MAESTRO-DETALLE (COLA QUIRÚRGICA & MESA DE TRABAJO BIOMÉTRICA) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLUMNA IZQUIERDA: LISTADO DE PACIENTES ASIGNADOS */}
+        {/* COLUMNA IZQUIERDA: LISTA DE PACIENTES / COLA */}
         <div className="lg:col-span-4 space-y-3">
-          {/* Barra de Búsqueda */}
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -601,291 +671,249 @@ export default function CalculoLioPage() {
               placeholder="Buscar por paciente, DNI, práctica..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && fetchPacientes()}
-              className="w-full pl-8 pr-7 py-2 bg-[var(--card)] rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] placeholder:text-slate-400 outline-none focus:border-cyan-500"
+              className="w-full pl-8 pr-3 py-2.5 text-xs rounded-2xl bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] outline-none focus:border-cyan-500 shadow-xs"
             />
-            {busqueda && (
-              <button
-                type="button"
-                onClick={() => {
-                  setBusqueda('')
-                  fetchPacientes()
-                }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[var(--foreground)]"
-              >
-                <X size={14} />
-              </button>
-            )}
           </div>
 
-          {/* Listado de Tarjetas de Pacientes */}
-          <div className="space-y-2.5 max-h-[calc(100vh-280px)] overflow-y-auto pr-1">
+          <div className="space-y-2.5 max-h-[750px] overflow-y-auto pr-1">
             {cargando ? (
-              <div className="p-8 text-center text-xs text-[var(--secondary)] flex flex-col items-center gap-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl">
-                <Loader2 size={20} className="animate-spin text-cyan-500" />
-                <span>Cargando pacientes asignados...</span>
+              <div className="p-8 text-center text-xs text-[var(--secondary)] space-y-2">
+                <Loader2 size={20} className="animate-spin text-cyan-600 mx-auto" />
+                <span>Cargando pacientes quirúrgicos...</span>
               </div>
             ) : pacientes.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[var(--secondary)] bg-[var(--card)] border border-dashed rounded-2xl">
-                No se encontraron pacientes para los filtros seleccionados.
+              <div className="p-8 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-3xl space-y-1">
+                <FileText size={24} className="mx-auto text-slate-400 opacity-50" />
+                <p className="font-bold text-[var(--foreground)]">No hay cirugías pendientes</p>
+                <p className="text-[11px]">Todos los cálculos de LIO están al día.</p>
               </div>
             ) : (
               pacientes.map((p) => {
-                const esSeleccionado =
+                const esActivo =
                   pacienteActivo &&
                   ((p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
                     (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id))
 
-                const tieneBorrador = !p.lio_calculado && p.lio_calculo_opciones && p.lio_calculo_opciones.length > 0
-
                 return (
-                  <div
+                  <button
                     key={p.turno_id || p.asesoria_id}
+                    type="button"
                     onClick={() => seleccionarPaciente(p)}
-                    className={`p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer text-left relative ${
-                      esSeleccionado
-                        ? 'bg-cyan-500/10 border-cyan-500 ring-2 ring-cyan-500/30 shadow-md'
-                        : 'bg-[var(--card)] border-[var(--border)] hover:border-cyan-400/60'
+                    className={`w-full p-4 rounded-3xl border text-left transition shadow-xs flex flex-col justify-between gap-2.5 cursor-pointer ${
+                      esActivo
+                        ? 'border-cyan-500 bg-gradient-to-r from-cyan-500/10 via-blue-500/5 to-transparent'
+                        : 'border-[var(--border)] bg-[var(--card)] hover:border-slate-300'
                     }`}
                   >
-                    {/* Fila 1: Ojo + Fecha / Asesoramiento + Badge de Cálculo */}
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="px-2 py-0.5 rounded-md bg-blue-600 text-white text-[10px] font-black">
-                          {p.ojo || 'OD'}
-                        </span>
-                        <span className="text-[11px] font-bold text-[var(--secondary)]">
-                          {p.fecha_cirugia ? `${p.fecha_cirugia} (${String(p.hora_inicio).slice(0, 5)}hs)` : 'En Asesoramiento'}
-                        </span>
-                      </div>
-
-                      {p.lio_calculado ? (
-                        <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 text-[10px] font-extrabold flex items-center gap-1">
-                          <CheckCircle2 size={11} />
-                          <span>Confirmado ({p.lio_calculo_opciones?.length || 1})</span>
-                        </span>
-                      ) : tieneBorrador ? (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-[10px] font-extrabold flex items-center gap-1">
-                          <Clock size={11} />
-                          <span>Borrador ({p.lio_calculo_opciones.length})</span>
-                        </span>
-                      ) : (
-                        <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-[10px] font-extrabold flex items-center gap-1">
-                          <AlertCircle size={11} />
-                          <span>Sin Iniciar</span>
-                        </span>
-                      )}
+                      <span className="px-2 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 text-[10px] font-black">
+                        {p.ojo || 'OD'}
+                      </span>
+                      <span className="text-[11px] font-bold text-[var(--secondary)]">
+                        {p.fecha_cx} {p.hora_cx ? `(${p.hora_cx}hs)` : ''}
+                      </span>
+                      <span
+                        className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                          p.lio_calculado
+                            ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                            : 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+                        }`}
+                      >
+                        {p.lio_calculado ? 'Confirmado' : `Borrador (${p.lio_calculo_opciones?.length || 1})`}
+                      </span>
                     </div>
 
-                    {/* Fila 2: Nombre del Paciente */}
-                    <h3 className="text-sm font-extrabold text-[var(--foreground)] mt-2 tracking-tight truncate">
-                      {p.paciente_nombre}
-                    </h3>
-                    <p className="text-xs text-[var(--secondary)] font-mono">DNI: {p.paciente_dni} • {p.paciente_obra_social}</p>
-                    <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-1 truncate">
-                      {p.practica_nombre}
-                    </p>
+                    <div>
+                      <h4 className="text-xs font-black text-[var(--foreground)] uppercase tracking-tight">
+                        {p.paciente_nombre}
+                      </h4>
+                      <p className="text-[10px] text-[var(--secondary)]">
+                        DNI: {p.paciente_dni || 'N/A'} • {p.obra_social || 'Particular'}
+                      </p>
+                      <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 truncate mt-0.5">
+                        {p.practica_nombre || 'Cirugía de Catarata'}
+                      </p>
+                    </div>
 
-                    {/* Fila 3: Cirujano & Stock */}
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--secondary)] mt-2 pt-2 border-t border-[var(--border)]">
-                      <span className="truncate">👨‍⚕️ {p.cirujano_nombre}</span>
-                      {p.lio_stock_reservado ? (
+                    <div className="flex items-center justify-between pt-1 border-t border-[var(--border)]/60 text-[10px] text-[var(--secondary)]">
+                      <span className="font-bold flex items-center gap-1">
+                        <User size={11} />
+                        <span>{p.cirujano_nombre || 'Cirujano'}</span>
+                      </span>
+                      {p.lio_stock_reservado && (
                         <span className="text-purple-600 dark:text-purple-400 font-extrabold flex items-center gap-1">
-                          <PackageCheck size={12} /> Stock OK
+                          <PackageCheck size={12} />
+                          <span>Stock Reservado</span>
                         </span>
-                      ) : (
-                        p.lio_calculado && <span className="text-slate-400">Stock s/reserva</span>
                       )}
                     </div>
-                  </div>
+                  </button>
                 )
               })
             )}
           </div>
         </div>
 
-        {/* COLUMNA DERECHA: MESA DE TRABAJO DE CÁLCULO DE LIO */}
-        <div className="lg:col-span-8">
+        {/* COLUMNA DERECHA: MESA DE TRABAJO BIOMÉTRICA */}
+        <div className="lg:col-span-8 space-y-5">
           {!pacienteActivo ? (
-            <div className="p-16 text-center bg-[var(--card)] border border-dashed rounded-3xl space-y-3">
-              <Eye size={40} className="text-slate-400 mx-auto opacity-50" />
-              <h3 className="text-base font-bold text-[var(--foreground)]">Selecciona un paciente para calcular LIO</h3>
-              <p className="text-xs text-[var(--secondary)] max-w-md mx-auto">
-                Elige un paciente de la lista izquierda para cargar las opciones biométricas de lentes intraoculares, consultar estudios y guardar o confirmar el cálculo.
+            <div className="p-16 text-center border border-dashed border-[var(--border)] rounded-3xl bg-[var(--card)] space-y-2">
+              <Eye size={36} className="mx-auto text-cyan-600 opacity-60" />
+              <h3 className="text-sm font-bold text-[var(--foreground)]">Selecciona una cirugía de la cola</h3>
+              <p className="text-xs text-[var(--secondary)]">
+                Podrás cargar los cálculos multilente, verificar stock físico en quirófano y sellar el protocolo.
               </p>
             </div>
           ) : (
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-5 md:p-6 shadow-sm space-y-5">
-              {/* ENCABEZADO DEL PACIENTE SELECCIONADO */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+            <div className="p-5 md:p-6 rounded-3xl border border-[var(--border)] bg-[var(--card)] space-y-6 shadow-sm">
+              {/* CABECERA DEL PACIENTE ACTIVO */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="px-2.5 py-0.5 rounded-lg bg-blue-600 text-white text-xs font-black">
-                      {pacienteActivo.ojo === 'OD' ? 'OJO DERECHO (OD)' : pacienteActivo.ojo === 'OI' ? 'OJO IZQUIERDO (OI)' : 'AMBOS OJOS (AO)'}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-0.5 rounded-lg bg-blue-600 text-white font-black text-xs shadow-xs">
+                      {pacienteActivo.ojo === 'OI' ? 'OJO IZQUIERDO (OI)' : 'OJO DERECHO (OD)'}
                     </span>
-                    <span className="text-xs font-bold text-[var(--secondary)]">
-                      {pacienteActivo.fecha_cirugia ? `Fecha Qx: ${pacienteActivo.fecha_cirugia}` : 'Caso en Asesoramiento'}
+                    <span className="text-xs text-[var(--secondary)] font-bold">
+                      Fecha Qx: {pacienteActivo.fecha_cx}
                     </span>
-                    {pacienteActivo.lio_calculado ? (
-                      <span className="px-2.5 py-0.5 rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/30 text-xs font-extrabold flex items-center gap-1">
-                        <CheckCircle2 size={13} />
-                        <span>Confirmado</span>
-                      </span>
-                    ) : (
-                      <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-xs font-extrabold flex items-center gap-1">
-                        <Clock size={13} />
-                        <span>Pendiente LIO</span>
-                      </span>
-                    )}
+                    <span
+                      className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
+                        pacienteActivo.lio_calculado
+                          ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                          : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30'
+                      }`}
+                    >
+                      {pacienteActivo.lio_calculado ? '✔ LIO Confirmado & Sellado' : '⏳ Pendiente LIO'}
+                    </span>
                   </div>
-                  <h2 className="text-xl font-extrabold text-[var(--foreground)] mt-1.5 tracking-tight">
+
+                  <h2 className="text-lg md:text-xl font-black text-[var(--foreground)] mt-1 tracking-tight">
                     {pacienteActivo.paciente_nombre}
                   </h2>
-                  <p className="text-xs text-[var(--secondary)] font-mono">
-                    DNI: {pacienteActivo.paciente_dni} • {pacienteActivo.paciente_obra_social} • Cirujano:{' '}
-                    <b>{pacienteActivo.cirujano_nombre}</b>
+                  <p className="text-xs text-[var(--secondary)]">
+                    DNI: <b className="font-mono text-[var(--foreground)]">{pacienteActivo.paciente_dni || 'N/A'}</b> • {pacienteActivo.obra_social || 'Particular'} • Cirujano: <b className="text-[var(--foreground)]">{pacienteActivo.cirujano_nombre || 'Asignado'}</b>
                   </p>
                 </div>
 
-                {/* Botón Acceso Rápido a Biometrías / PDFs Geclisa */}
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleAbrirEstudiosGeclisa}
-                    className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-2xl text-xs font-extrabold flex items-center gap-2 shadow-md shadow-blue-500/20 transition"
-                  >
-                    <FileText size={15} />
-                    <span>📁 Ver Biometría & PDFs Geclisa</span>
-                  </button>
-                </div>
+                {/* Botón Ver Biometría & Estudios Geclisa */}
+                <button
+                  type="button"
+                  onClick={handleAbrirEstudiosGeclisa}
+                  className="px-4 py-2.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-2xl text-xs font-black flex items-center gap-2 shadow-xs cursor-pointer transition"
+                >
+                  <FileText size={15} />
+                  <span>Ver Biometría & PDFs Geclisa</span>
+                </button>
               </div>
 
-              {/* BANNER DE ESTADO CONFIRMADO Y MODO PROTEGIDO */}
-              {pacienteActivo.lio_calculado && !modoEdicion && (
-                <div className="p-4 rounded-2xl bg-gradient-to-r from-cyan-950/40 to-blue-950/40 border border-cyan-500/40 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
-                      <Lock size={18} />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-extrabold text-white flex items-center gap-1.5">
-                        <span>Cálculo de LIO Confirmado y Sellado</span>
-                        <ShieldCheck size={14} className="text-cyan-400" />
-                      </h4>
-                      <p className="text-[11px] text-cyan-200/80 mt-0.5">
-                        Definido por <b>{pacienteActivo.lio_calculado_por || pacienteActivo.cirujano_nombre}</b>
-                        {pacienteActivo.lio_calculado_at && ` • ${formatearHoraDesdeIso(pacienteActivo.lio_calculado_at)}`}
-                        {' ' }— Los campos están protegidos para el acto quirúrgico.
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={reabriendo}
-                    onClick={handleReabrirCalculo}
-                    className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 hover:text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 border border-cyan-500/40 transition shadow-sm"
-                  >
-                    {reabriendo ? <Loader2 size={13} className="animate-spin" /> : <Edit3 size={13} />}
-                    <span>✏ Modificar / Reabrir Cálculo</span>
-                  </button>
-                </div>
-              )}
-
-              {/* GESTOR DINÁMICO DE OPCIONES MULTILENTE */}
+              {/* OPCIONES DE LIO (PLAN A, PLAN B, TÓRICO, SULCUS) */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <h3 className="text-sm font-extrabold text-[var(--foreground)] flex items-center gap-1.5">
-                      <Sparkles size={16} className="text-cyan-500" />
+                    <h3 className="text-xs font-black text-[var(--foreground)] uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-cyan-500" />
                       <span>Opciones de Lente Intraocular ({opcionesLio.length})</span>
                     </h3>
                     <p className="text-[11px] text-[var(--secondary)]">
-                      {pacienteActivo.lio_calculado && !modoEdicion
-                        ? 'Opciones definitivas selladas por el cirujano para la intervención.'
-                        : 'Carga el Plan Principal y las opciones alternativas (dioptría limítrofe, lente tórico con eje o sulcus).'}
+                      Carga el Plan Principal y las opciones alternativas con stock y GTIN en tiempo real.
                     </p>
                   </div>
 
-                  {(modoEdicion || !pacienteActivo.lio_calculado) && (
-                    <div className="flex items-center gap-2">
+                  {/* Botones de Acción Rápida "1-Clic" */}
+                  {modoEdicion && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <button
                         type="button"
                         onClick={() => agregarOpcionLio('alternativa')}
-                        className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)] rounded-xl text-xs font-bold flex items-center gap-1.5 border border-[var(--border)] transition"
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
+                        title="Duplica el Plan Principal con dioptría contigua"
                       >
                         <Plus size={13} />
                         <span>+ Opción Alternativa</span>
                       </button>
+
                       <button
                         type="button"
                         onClick={() => agregarOpcionLio('torico')}
-                        className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border border-indigo-200 dark:border-indigo-800 transition"
+                        className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
+                        title="Agrega opción tórica con selector de cilindro y eje"
                       >
-                        <Plus size={13} />
+                        <Compass size={13} />
                         <span>+ Opción Tórica</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => agregarOpcionLio('sulcus')}
+                        className="px-3 py-1.5 rounded-xl bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 text-[11px] font-black flex items-center gap-1 transition cursor-pointer"
+                        title="Agrega lente 3 piezas para implante en sulcus"
+                      >
+                        <Boxes size={13} />
+                        <span>+ Opción Sulcus</span>
                       </button>
                     </div>
                   )}
                 </div>
 
-                {/* Listado de Tarjetas de Opciones */}
-                <div className="space-y-3.5">
-                  {opcionesLio.map((op, index) => {
-                    const esPpal = op.tipo_opcion === 'principal' || index === 0
-                    const deshabilitado = pacienteActivo.lio_calculado && !modoEdicion
+                {/* Grid / Lista de Opciones */}
+                <div className="space-y-4">
+                  {opcionesLio.map((op, idx) => {
+                    const deshabilitado = !modoEdicion
+                    const skuData = skusResueltos[op.id]
+                    const resolviendo = resolviendoSkus[op.id]
+                    const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === op.modelo || m.modelo === op.modelo)
+                    const constanteCalculada = op.es_personalizado ? (op.constante_a_custom || 118.9) : (modObj?.constante_a || 118.9)
 
                     return (
                       <div
                         key={op.id}
-                        className={`p-4 rounded-2xl border transition-all ${
-                          esPpal
-                            ? 'bg-cyan-50/20 dark:bg-cyan-950/10 border-cyan-300 dark:border-cyan-800 ring-1 ring-cyan-500/20'
-                            : 'bg-slate-50/50 dark:bg-slate-900/40 border-[var(--border)]'
+                        className={`p-4 md:p-5 rounded-3xl border transition space-y-4 ${
+                          op.tipo_opcion === 'principal'
+                            ? 'border-cyan-500/60 bg-gradient-to-br from-cyan-50/50 via-[var(--card)] to-blue-50/30 dark:from-cyan-950/20 dark:to-blue-950/10'
+                            : op.tipo_opcion === 'torico'
+                            ? 'border-indigo-400/60 bg-gradient-to-br from-indigo-50/50 via-[var(--card)] to-purple-50/30 dark:from-indigo-950/20 dark:to-purple-950/10'
+                            : op.tipo_opcion === 'sulcus'
+                            ? 'border-purple-400/60 bg-gradient-to-br from-purple-50/50 via-[var(--card)] to-pink-50/30 dark:from-purple-950/20 dark:to-pink-950/10'
+                            : 'border-[var(--border)] bg-slate-50/40 dark:bg-slate-900/30'
                         }`}
                       >
-                        {/* Header de la Opción */}
-                        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[var(--border)]">
-                          <div className="flex items-center gap-2 flex-1">
+                        {/* Encabezado de la Opción */}
+                        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)]/60 pb-3">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span
-                              className={`px-2.5 py-0.5 rounded-lg text-xs font-black ${
-                                esPpal
-                                  ? 'bg-cyan-500 text-black'
+                              className={`px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider ${
+                                op.tipo_opcion === 'principal'
+                                  ? 'bg-cyan-500 text-black shadow-xs'
                                   : op.tipo_opcion === 'torico'
-                                  ? 'bg-indigo-600 text-white'
+                                  ? 'bg-indigo-600 text-white shadow-xs'
                                   : op.tipo_opcion === 'sulcus'
-                                  ? 'bg-purple-600 text-white'
+                                  ? 'bg-purple-600 text-white shadow-xs'
                                   : 'bg-slate-200 dark:bg-slate-800 text-[var(--foreground)]'
                               }`}
                             >
-                              {esPpal ? 'Plan A (Principal)' : `Opción ${index + 1}`}
+                              {op.etiqueta || `Opción ${idx + 1}`}
                             </span>
 
-                            {deshabilitado ? (
-                              <span className="font-extrabold text-xs text-[var(--foreground)] px-1">{op.etiqueta}</span>
-                            ) : (
-                              <input
-                                type="text"
-                                value={op.etiqueta}
-                                onChange={(e) => actualizarOpcionLio(op.id, 'etiqueta', e.target.value)}
-                                className="font-extrabold text-xs text-[var(--foreground)] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-cyan-500 outline-none px-1"
-                              />
+                            {op.es_personalizado && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-bold text-[10px]">
+                                ✏️ Modelo Libre
+                              </span>
                             )}
                           </div>
 
                           <div className="flex items-center gap-2">
                             {deshabilitado ? (
-                              <span className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-[11px] font-bold uppercase text-[var(--foreground)]">
-                                {op.tipo_opcion}
+                              <span className="text-[11px] font-bold text-[var(--secondary)]">
+                                {op.tipo_opcion === 'principal' ? 'Principal' : 'Alternativa'}
                               </span>
                             ) : (
                               <select
                                 value={op.tipo_opcion}
                                 onChange={(e) => actualizarOpcionLio(op.id, 'tipo_opcion', e.target.value)}
-                                className="px-2 py-1 bg-white dark:bg-slate-800 rounded-lg border border-[var(--border)] text-[11px] font-bold text-[var(--foreground)] outline-none cursor-pointer"
+                                className="px-2.5 py-1 bg-white dark:bg-slate-800 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none cursor-pointer"
                               >
                                 <option value="principal">Principal</option>
-                                <option value="alternativa">Alternativa (+/-0.50D)</option>
+                                <option value="alternativa">Alternativa (+/-0.50 D)</option>
                                 <option value="torico">Tórica (Astigmatismo)</option>
                                 <option value="sulcus">Sulcus (3 Piezas)</option>
                               </select>
@@ -895,75 +923,127 @@ export default function CalculoLioPage() {
                               <button
                                 type="button"
                                 onClick={() => eliminarOpcionLio(op.id)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg transition"
+                                className="p-1.5 text-slate-400 hover:text-rose-600 rounded-xl transition cursor-pointer"
                                 title="Eliminar esta opción"
                               >
-                                <Trash2 size={14} />
+                                <Trash2 size={15} />
                               </button>
                             )}
                           </div>
                         </div>
 
-                        {/* Campos de la Opción */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-3">
-                          {/* Modelo de LIO */}
+                        {/* Campos Principales de la Opción */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+                          {/* Modelo de LIO (Selector Híbrido: Catálogo vs Libre) */}
                           <div className="sm:col-span-2 space-y-1">
-                            <label className="text-[11px] font-bold text-[var(--secondary)] flex items-center justify-between">
-                              <span>Modelo / Tipo de LIO</span>
-                              {(() => {
-                                const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === op.modelo || m.modelo === op.modelo)
-                                return modObj?.constante_a ? (
-                                  <span className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400 font-extrabold">
-                                    Constante A: {modObj.constante_a}
-                                  </span>
-                                ) : null
-                              })()}
-                            </label>
+                            <div className="flex items-center justify-between text-[11px] font-bold text-[var(--secondary)]">
+                              <span>Modelo de Lente Intraocular *</span>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-extrabold text-cyan-600 dark:text-cyan-400 text-[10px]">
+                                  Constante A: {constanteCalculada}
+                                </span>
+                                {!deshabilitado && (
+                                  <button
+                                    type="button"
+                                    onClick={() => actualizarOpcionLio(op.id, 'es_personalizado', !op.es_personalizado)}
+                                    className="text-[10px] text-blue-600 font-extrabold hover:underline"
+                                  >
+                                    {op.es_personalizado ? 'Usar Catálogo' : 'Ingreso Libre'}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
                             {deshabilitado ? (
                               <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-extrabold text-[var(--foreground)]">
                                 {op.modelo || 'Sin especificar'}
+                              </div>
+                            ) : op.es_personalizado ? (
+                              <div className="space-y-2">
+                                <input
+                                  type="text"
+                                  value={op.modelo}
+                                  onChange={(e) => actualizarOpcionLio(op.id, 'modelo', e.target.value)}
+                                  placeholder="Escribe el modelo libre (ej: Rayner EMV 600U, Zeiss AT LISA, PMMA)..."
+                                  className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-amber-300 dark:border-amber-700 text-xs font-bold text-[var(--foreground)] outline-none focus:ring-2 focus:ring-amber-500"
+                                />
+                                <div className="flex items-center gap-2">
+                                  <label className="text-[10px] text-[var(--secondary)] font-bold">Constante A manual:</label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={op.constante_a_custom || 118.9}
+                                    onChange={(e) => actualizarOpcionLio(op.id, 'constante_a_custom', parseFloat(e.target.value) || 118.9)}
+                                    className="w-20 px-2 py-1 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs font-mono font-bold text-center"
+                                  />
+                                </div>
                               </div>
                             ) : (
                               <select
                                 value={op.modelo}
                                 onChange={(e) => {
                                   const val = e.target.value
-                                  const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
+                                  if (val === '__CUSTOM__') {
+                                    actualizarOpcionLio(op.id, 'es_personalizado', true)
+                                    actualizarOpcionLio(op.id, 'modelo', '')
+                                    return
+                                  }
+                                  const found = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
                                   actualizarOpcionLio(op.id, 'modelo', val)
-                                  if (modObj && modObj.tipo_optica && modObj.tipo_optica.toLowerCase().includes('tóric')) {
+                                  if (found?.tipo_optica?.toLowerCase().includes('tóric')) {
                                     actualizarOpcionLio(op.id, 'es_torico', true)
                                   }
                                 }}
-                                className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-sm"
+                                className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-xs"
                               >
-                                <option value="">-- Seleccionar LIO del Catálogo ({modelosLio.length} disponibles) --</option>
+                                <option value="">-- Seleccionar LIO de Ajustes ({modelosLio.length} disponibles) --</option>
                                 {modelosLio.map((m) => (
                                   <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
                                     {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
                                   </option>
                                 ))}
-                                {op.modelo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === op.modelo) && (
-                                  <option value={op.modelo}>{op.modelo}</option>
-                                )}
+                                <option value="__CUSTOM__">✏️ + Ingreso Libre / Modelo Personalizado...</option>
                               </select>
                             )}
                           </div>
 
                           {/* Dioptría (Poder) */}
                           <div className="space-y-1">
-                            <label className="text-[11px] font-bold text-[var(--secondary)]">Dioptría (Poder)</label>
+                            <label className="text-[11px] font-bold text-[var(--secondary)]">Dioptría Esférica *</label>
                             {deshabilitado ? (
                               <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-black text-blue-600 dark:text-blue-400 font-mono">
                                 {op.dioptria} D
                               </div>
                             ) : (
-                              <input
-                                type="text"
-                                value={op.dioptria}
-                                onChange={(e) => actualizarOpcionLio(op.id, 'dioptria', e.target.value)}
-                                placeholder="+21.50"
-                                className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-extrabold text-blue-600 dark:text-blue-400 outline-none focus:border-cyan-500 font-mono"
-                              />
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const v = (parseFloat(op.dioptria || '20.00') - 0.5).toFixed(2)
+                                    actualizarOpcionLio(op.id, 'dioptria', v)
+                                  }}
+                                  className="px-2 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="text"
+                                  value={op.dioptria}
+                                  onChange={(e) => actualizarOpcionLio(op.id, 'dioptria', e.target.value)}
+                                  placeholder="20.00"
+                                  className="w-full text-center px-2 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-black text-blue-600 dark:text-blue-400 outline-none focus:border-cyan-500 font-mono"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const v = (parseFloat(op.dioptria || '20.00') + 0.5).toFixed(2)
+                                    actualizarOpcionLio(op.id, 'dioptria', v)
+                                  }}
+                                  className="px-2 py-2 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold"
+                                >
+                                  +
+                                </button>
+                              </div>
                             )}
                           </div>
 
@@ -990,9 +1070,67 @@ export default function CalculoLioPage() {
                           </div>
                         </div>
 
+                        {/* BANNER EN TIEMPO REAL DE RESOLUCIÓN GTIN Y STOCK GECLISA */}
+                        <div className="pt-2">
+                          {resolviendo ? (
+                            <div className="p-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800/60 text-[11px] text-[var(--secondary)] flex items-center gap-2">
+                              <Loader2 size={13} className="animate-spin text-blue-600" />
+                              <span>Resolviendo SKU y consultando stock en vivo en Geclisa...</span>
+                            </div>
+                          ) : skuData && skuData.item ? (
+                            <div className="p-3 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-800/60 flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="p-1.5 rounded-lg bg-emerald-500 text-black font-black">
+                                  <Barcode size={16} />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono font-black text-xs text-emerald-900 dark:text-emerald-200">
+                                      GTIN: {skuData.item.geclisa_ele_cod}
+                                    </span>
+                                    <span className="text-[10px] text-emerald-700 dark:text-emerald-300 truncate">
+                                      {skuData.item.geclisa_nombre}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Badges de Stock */}
+                              <div className="flex items-center gap-2 shrink-0 text-xs">
+                                <span
+                                  className={`px-2.5 py-1 rounded-xl font-black text-[11px] ${
+                                    (skuData.resumen?.stock_quirofano ?? 0) > 0
+                                      ? 'bg-emerald-600 text-white shadow-xs'
+                                      : 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30'
+                                  }`}
+                                >
+                                  Quirófano: {skuData.resumen?.stock_quirofano ?? 0} un
+                                </span>
+
+                                {(skuData.resumen?.stock_consignacion ?? 0) > 0 && (
+                                  <span className="px-2.5 py-1 rounded-xl font-bold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30 text-[11px]">
+                                    Consignación: {skuData.resumen.stock_consignacion} un
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-2.5 rounded-2xl bg-slate-50 dark:bg-slate-900/40 border border-dashed border-[var(--border)] text-[11px] text-[var(--secondary)] flex items-center justify-between gap-2">
+                              <span className="flex items-center gap-1.5">
+                                <Info size={13} className="text-amber-500" />
+                                <span>
+                                  {op.es_personalizado
+                                    ? 'Modelo personalizado ingresado libremente. Planificación habilitada sin bloqueos.'
+                                    : 'Sin SKU de Geclisa registrado para esta graduación exacta. Se planificará como pedido especial.'}
+                                </span>
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
                         {/* Parámetros Tóricos (si aplica) */}
                         {op.es_torico && (
-                          <div className="mt-3 p-3 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
+                          <div className="mt-2 p-3 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 grid grid-cols-1 sm:grid-cols-2 gap-3 animate-fade-in">
                             <div className="space-y-1">
                               <label className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
                                 Valor Tórico (Cilindro)
@@ -1019,7 +1157,7 @@ export default function CalculoLioPage() {
                             <div className="space-y-1">
                               <div className="flex items-center justify-between">
                                 <label className="text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
-                                  Eje / Ángulo de Alineación (°)
+                                  Eje de Alineación (°)
                                 </label>
                                 <span className="text-xs font-black font-mono text-indigo-600 dark:text-indigo-400">
                                   {op.torico_eje || 90}°
@@ -1044,9 +1182,9 @@ export default function CalculoLioPage() {
                         )}
 
                         {/* Fórmula y Observaciones */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                           <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-[var(--secondary)]">Fórmula Utilizada</label>
+                            <label className="text-[10px] font-bold text-[var(--secondary)]">Fórmula Biometría</label>
                             {deshabilitado ? (
                               <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs text-[var(--foreground)]">
                                 {op.formula}
@@ -1067,7 +1205,7 @@ export default function CalculoLioPage() {
                           </div>
 
                           <div className="sm:col-span-2 space-y-1">
-                            <label className="text-[10px] font-bold text-[var(--secondary)]">Notas para Quirófano</label>
+                            <label className="text-[10px] font-bold text-[var(--secondary)]">Notas Quirúrgicas</label>
                             {deshabilitado ? (
                               <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs text-[var(--foreground)]">
                                 {op.observaciones || 'Sin notas especiales'}
@@ -1077,7 +1215,7 @@ export default function CalculoLioPage() {
                                 type="text"
                                 value={op.observaciones}
                                 onChange={(e) => actualizarOpcionLio(op.id, 'observaciones', e.target.value)}
-                                placeholder="Ej: Si ACD < 3.0mm o en caso de desgarro capsular..."
+                                placeholder="Ej: En caso de desgarro capsular implantar en sulcus..."
                                 className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500"
                               />
                             )}
@@ -1089,7 +1227,7 @@ export default function CalculoLioPage() {
                 </div>
               </div>
 
-              {/* BARRA INFERIOR DE ACCIONES (BOTONERA DUAL & STOCK) */}
+              {/* BARRA INFERIOR DE ACCIONES */}
               <div className="pt-4 border-t border-[var(--border)] flex flex-col lg:flex-row items-center justify-between gap-4">
                 {/* Gestión de Reserva de Stock (Quirófano) */}
                 <div className="flex items-center gap-2 w-full lg:w-auto">
@@ -1099,67 +1237,55 @@ export default function CalculoLioPage() {
                     onClick={handleToggleReservaStock}
                     className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition ${
                       pacienteActivo.lio_stock_reservado
-                        ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
-                        : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)] border-[var(--border)]'
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-[var(--border)] hover:bg-slate-200'
                     }`}
-                    title="Control de Quirófano: confirmar que las lentes ya están físicamente separadas en quirófano o en consignación"
                   >
                     {reservandoStock ? (
                       <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <PackageCheck size={15} />
+                      <PackageCheck size={14} />
                     )}
                     <span>
-                      {pacienteActivo.lio_stock_reservado ? '✔ Stock Físico Reservado' : '📦 Marcar Stock Reservado'}
+                      {pacienteActivo.lio_stock_reservado ? 'Stock Reservado en Depósito' : 'Marcar Stock Reservado'}
                     </span>
                   </button>
-                  {pacienteActivo.lio_stock_reservado_at && (
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      ({formatearHoraDesdeIso(pacienteActivo.lio_stock_reservado_at)})
-                    </span>
-                  )}
                 </div>
 
-                {/* BOTONERA DUAL: GUARDAR BORRADOR & CONFIRMAR */}
-                <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto justify-end">
-                  {(!pacienteActivo.lio_calculado || modoEdicion) && (
-                    <>
-                      {/* Botón 1: Guardar Borrador (no confirma, permanece en Pendientes LIO) */}
-                      <button
-                        type="button"
-                        disabled={guardandoBorrador || confirmandoCalculo}
-                        onClick={handleGuardarBorrador}
-                        className="px-4 py-2.5 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-[var(--foreground)] rounded-2xl text-xs font-extrabold flex items-center gap-2 border border-[var(--border)] transition disabled:opacity-50"
-                        title="Guarda las opciones cargadas sin sellar. El paciente permanece en Pendientes LIO."
-                      >
-                        {guardandoBorrador ? <Loader2 size={15} className="animate-spin text-blue-500" /> : <Save size={15} />}
-                        <span>💾 Guardar Borrador</span>
-                      </button>
-
-                      {/* Botón 2: Confirmar y Sellar (cierra la selección y pasa a LIO Confirmado) */}
-                      <button
-                        type="button"
-                        disabled={guardandoBorrador || confirmandoCalculo}
-                        onClick={handleConfirmarCalculo}
-                        className="px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white rounded-2xl text-xs font-black flex items-center gap-2 shadow-lg shadow-cyan-500/25 transition disabled:opacity-50"
-                        title="Confirma y sella la selección de lentes, bloqueando la edición y pasando el caso a LIO Confirmado."
-                      >
-                        {confirmandoCalculo ? <Loader2 size={15} className="animate-spin" /> : <Lock size={15} />}
-                        <span>🔒 Confirmar y Sellar LIO</span>
-                      </button>
-                    </>
-                  )}
-
-                  {pacienteActivo.lio_calculado && !modoEdicion && (
+                {/* Botonera de Guardar / Sellar */}
+                <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
+                  {!modoEdicion ? (
                     <button
                       type="button"
                       disabled={reabriendo}
                       onClick={handleReabrirCalculo}
-                      className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-2xl text-xs font-extrabold flex items-center gap-2 border border-cyan-500/40 transition"
+                      className="px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30 rounded-2xl text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
                     >
-                      {reabriendo ? <Loader2 size={15} className="animate-spin" /> : <Edit3 size={15} />}
-                      <span>✏ Reabrir para Modificar</span>
+                      {reabriendo ? <Loader2 size={14} className="animate-spin" /> : <Unlock size={14} />}
+                      <span>Reabrir / Modificar Cálculo</span>
                     </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={guardandoBorrador}
+                        onClick={handleGuardarBorrador}
+                        className="px-4 py-2.5 rounded-2xl border border-[var(--border)] bg-slate-100 dark:bg-slate-800 text-[var(--foreground)] hover:bg-slate-200 text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
+                      >
+                        {guardandoBorrador ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        <span>Guardar Borrador</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={confirmandoCalculo}
+                        onClick={handleConfirmarCalculo}
+                        className="px-5 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-600 hover:to-blue-700 text-white rounded-2xl text-xs font-black shadow-md flex items-center gap-2 transition cursor-pointer"
+                      >
+                        {confirmandoCalculo ? <Loader2 size={14} className="animate-spin" /> : <Lock size={14} />}
+                        <span>Confirmar y Sellar LIO</span>
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1170,143 +1296,111 @@ export default function CalculoLioPage() {
 
       {/* 4. MODAL VISOR DE ESTUDIOS & BIOMETRÍAS DE GECLISA */}
       {modalArchivosAbierto && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-fade-in">
-          <div className="bg-[var(--card)] border border-[var(--border)] w-full max-w-4xl max-h-[85vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
-            {/* Header Modal */}
-            <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileText size={18} className="text-blue-500" />
-                <h3 className="text-sm font-extrabold text-[var(--foreground)]">
-                  Estudios & Biometrías de Geclisa — {pacienteActivo?.paciente_nombre}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setModalArchivosAbierto(false)
-                  setArchivoVisor(null)
-                }}
-                className="p-1.5 text-slate-400 hover:text-[var(--foreground)] rounded-lg"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Contenido Modal */}
-            <div className="p-4 flex-1 overflow-y-auto space-y-3">
-              {cargandoArchivos ? (
-                <div className="p-12 text-center text-xs text-[var(--secondary)] flex flex-col items-center gap-2">
-                  <Loader2 size={24} className="animate-spin text-blue-500" />
-                  <span>Consultando historia clínica y biometrías en Geclisa...</span>
-                </div>
-              ) : archivosGeclisa.length === 0 ? (
-                <div className="p-8 text-center text-xs text-[var(--secondary)] bg-slate-50 dark:bg-slate-900 rounded-2xl border border-dashed">
-                  No se encontraron archivos o biometrías adjuntas en Geclisa para este paciente.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {archivosGeclisa.map((arc) => (
-                    <div
-                      key={arc.as_id}
-                      className="p-3.5 rounded-2xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/50 hover:border-blue-400 transition flex flex-col justify-between gap-3"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                            {arc.clase || 'ESTUDIO'}
-                          </span>
-                          <span className="text-[10px] font-mono text-slate-400">#{arc.as_id}</span>
-                        </div>
-                        <h4 className="text-xs font-bold text-[var(--foreground)] mt-1.5 leading-snug line-clamp-2">
-                          {arc.titulo}
-                        </h4>
-                        <p className="text-[10px] text-[var(--secondary)] mt-1">
-                          📅 {arc.fecha} {arc.hora} {arc.prestador && `• ${arc.prestador}`}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2 pt-2 border-t border-[var(--border)]">
-                        <button
-                          type="button"
-                          onClick={() => setArchivoVisor(arc)}
-                          className="flex-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-sm transition"
-                        >
-                          <Eye size={12} />
-                          <span>Ver Estudio</span>
-                        </button>
-                        <a
-                          href={`${BACKEND_URL}/api/geclisa/archivos/${arc.as_id}/descargar`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-1.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 rounded-xl transition"
-                          title="Descargar archivo original"
-                        >
-                          <Download size={13} />
-                        </a>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 5. VISOR IN-APP DE PANTALLA COMPLETA PARA PDF / ESTUDIO */}
-      {archivoVisor && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-4 animate-fade-in">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div
-            className={`bg-[var(--card)] border border-[var(--border)] rounded-3xl shadow-2xl flex flex-col overflow-hidden transition-all duration-300 ${
-              visorPantallaCompleta ? 'w-full h-full rounded-none' : 'w-full max-w-5xl h-[88vh]'
+            className={`bg-[var(--card)] border border-[var(--border)] rounded-3xl w-full p-6 space-y-4 shadow-2xl flex flex-col transition-all ${
+              visorPantallaCompleta ? 'h-full max-w-none' : 'max-w-4xl max-h-[90vh]'
             }`}
           >
-            {/* Header Visor */}
-            <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-slate-900 text-white">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <FileText size={18} className="text-cyan-400 shrink-0" />
-                <div className="truncate">
-                  <h3 className="text-xs sm:text-sm font-extrabold truncate">{archivoVisor.titulo}</h3>
-                  <p className="text-[10px] text-slate-400 font-mono">Geclisa Doc #{archivoVisor.as_id}</p>
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <div className="flex items-center gap-2.5">
+                <FileText size={20} className="text-cyan-600" />
+                <div>
+                  <h3 className="text-sm font-black text-[var(--foreground)]">
+                    Estudios & Biometría Geclisa — {pacienteActivo?.paciente_nombre}
+                  </h3>
+                  <p className="text-[11px] text-[var(--secondary)]">
+                    Archivos adjuntos, biometrías IOLMaster / Pentacam y reportes clínicos.
+                  </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setVisorPantallaCompleta(!visorPantallaCompleta)}
-                  className="p-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800"
-                  title={visorPantallaCompleta ? 'Restaurar tamaño' : 'Pantalla completa'}
+                  className="p-1.5 text-slate-400 hover:text-[var(--foreground)] rounded-lg"
                 >
                   {visorPantallaCompleta ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
                 </button>
-                <a
-                  href={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800"
-                  title="Abrir en pestaña nueva"
-                >
-                  <ExternalLink size={16} />
-                </a>
                 <button
                   type="button"
-                  onClick={() => setArchivoVisor(null)}
-                  className="p-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800"
+                  onClick={() => {
+                    setModalArchivosAbierto(false)
+                    setArchivoVisor(null)
+                  }}
+                  className="p-1.5 text-slate-400 hover:text-[var(--foreground)] rounded-lg"
                 >
-                  <X size={18} />
+                  <X size={16} />
                 </button>
               </div>
             </div>
 
-            {/* iFrame Embebido */}
-            <div className="flex-1 bg-slate-950">
-              <iframe
-                src={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
-                className="w-full h-full border-0"
-                title="Visor de Estudio"
-              />
-            </div>
+            {cargandoArchivos ? (
+              <div className="py-16 text-center text-xs text-[var(--secondary)] space-y-2">
+                <Loader2 size={24} className="animate-spin text-cyan-600 mx-auto" />
+                <span>Consultando archivos en el servidor de Geclisa...</span>
+              </div>
+            ) : archivosGeclisa.length === 0 ? (
+              <div className="py-16 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-2xl space-y-1">
+                <FileText size={28} className="mx-auto text-slate-400 opacity-40" />
+                <p className="font-bold text-[var(--foreground)]">No hay archivos en Geclisa para este paciente</p>
+                <p className="text-[11px]">Verifica si la ficha o DNI coinciden en el sistema central.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-4 flex-1 overflow-hidden">
+                {/* Lista de Archivos */}
+                <div className="md:col-span-4 space-y-2 overflow-y-auto max-h-[500px] pr-1">
+                  {archivosGeclisa.map((arch) => (
+                    <button
+                      key={arch.arcId || arch.nombre}
+                      type="button"
+                      onClick={() => setArchivoVisor(arch)}
+                      className={`w-full p-3 rounded-2xl border text-left text-xs transition cursor-pointer flex items-center justify-between ${
+                        archivoVisor?.arcId === arch.arcId
+                          ? 'border-cyan-500 bg-cyan-50/50 dark:bg-cyan-950/30'
+                          : 'border-[var(--border)] hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <div className="truncate">
+                        <span className="font-bold text-[var(--foreground)] block truncate">
+                          {arch.arcNombre || arch.nombre || 'Documento'}
+                        </span>
+                        <span className="text-[10px] text-[var(--secondary)]">
+                          {arch.arcFecha || 'Fecha N/A'}
+                        </span>
+                      </div>
+                      <ChevronRight size={14} className="text-slate-400 shrink-0" />
+                    </button>
+                  ))}
+                </div>
+
+                {/* Previsualizador */}
+                <div className="md:col-span-8 border border-[var(--border)] rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900/60 flex items-center justify-center min-h-[350px]">
+                  {archivoVisor ? (
+                    archivoVisor.arcUrl || archivoVisor.url ? (
+                      <iframe
+                        src={archivoVisor.arcUrl || archivoVisor.url}
+                        className="w-full h-full min-h-[450px]"
+                        title="Visor de Documento"
+                      />
+                    ) : (
+                      <div className="text-center p-8 space-y-2">
+                        <FileText size={32} className="mx-auto text-cyan-600" />
+                        <p className="font-bold text-xs text-[var(--foreground)]">
+                          {archivoVisor.arcNombre || archivoVisor.nombre}
+                        </p>
+                        <p className="text-[11px] text-[var(--secondary)]">
+                          Este archivo se encuentra almacenado en el repositorio de Geclisa.
+                        </p>
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-xs text-[var(--secondary)]">Selecciona un archivo para visualizarlo</p>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
