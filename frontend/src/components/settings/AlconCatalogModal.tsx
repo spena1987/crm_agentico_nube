@@ -65,7 +65,7 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
   const [copiado, setCopiado] = useState<boolean>(false)
 
   // Configuración de Impresión de Stickers
-  const [cantidadStickers, setCantidadStickers] = useState<number>(24) // 24 = 1 hoja A4 llena (4x6)
+  const [cantidadStickers, setCantidadStickers] = useState<number>(35) // 35 = 1 hoja A4 llena (5x7 con margen de 0.5 cm)
   const [incluirGuiasCorte, setIncluirGuiasCorte] = useState<boolean>(true)
   const [generandoPdf, setGenerandoPdf] = useState<boolean>(false)
 
@@ -189,14 +189,14 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
         format: 'a4'
       })
 
-      const stickerSize = 40 // 40 mm x 40 mm (4 cm x 4 cm)
-      const cols = 4 // 4 columnas = 160 mm de ancho
-      const rows = 6 // 6 filas = 240 mm de alto
-      const stickersPorPagina = cols * rows // 24 stickers por página A4
+      const stickerSize = 40 // 40 mm x 40 mm (4.0 cm x 4.0 cm)
+      const cols = 5 // 5 columnas = 200 mm de ancho
+      const rows = 7 // 7 filas = 280 mm de alto
+      const stickersPorPagina = cols * rows // 35 stickers por página A4 (5x7)
 
-      // Márgenes para centrar la cuadrícula en la hoja A4 (210 x 297 mm)
-      const marginLeft = (210 - cols * stickerSize) / 2 // 25 mm
-      const marginTop = (297 - rows * stickerSize) / 2 // 28.5 mm
+      // Margen de 0.5 cm (5 mm) exactos para aprovechar al máximo la hoja A4 (210 x 297 mm)
+      const marginLeft = 5 // 5 mm = 0.5 cm (210 mm - 5*40 mm = 10 mm / 2 = 5 mm por lado)
+      const marginTop = 5 // 5 mm = 0.5 cm (inicia a 0.5 cm desde el borde superior)
 
       const totalStickers = cantidadStickers || 1
       let stickersColocados = 0
@@ -593,7 +593,7 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
                   <span>Cantidad de Stickers a Imprimir (Hoja A4)</span>
                 </label>
                 <div className="flex items-center gap-1.5">
-                  {[1, 6, 12, 24, 48].map((cant) => (
+                  {[1, 5, 15, 35, 70].map((cant) => (
                     <button
                       key={cant}
                       type="button"
@@ -604,7 +604,7 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
                           : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200'
                       }`}
                     >
-                      {cant === 24 ? '24 (1 Hoja)' : cant}
+                      {cant === 35 ? '35 (1 Hoja)' : cant === 70 ? '70 (2 Hojas)' : cant}
                     </button>
                   ))}
                 </div>
@@ -619,11 +619,11 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
                     className="w-4 h-4 rounded text-amber-500 accent-amber-500 cursor-pointer"
                   />
                   <span className="text-[11px] text-[var(--secondary)] font-bold">
-                    Incluir líneas punteadas para guillotina / tijera
+                    Incluir líneas punteadas para guillotina / tijera (Margen 0.5 cm)
                   </span>
                 </label>
                 <span className="text-[10px] text-slate-400">
-                  {Math.ceil(cantidadStickers / 24)} {Math.ceil(cantidadStickers / 24) === 1 ? 'página A4' : 'páginas A4'}
+                  {Math.ceil(cantidadStickers / 35)} {Math.ceil(cantidadStickers / 35) === 1 ? 'página A4 (5x7)' : 'páginas A4 (5x7)'}
                 </span>
               </div>
             </div>
