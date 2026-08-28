@@ -4411,3 +4411,128 @@ def get_active_jid_for_paciente_o_conversacion(
         logger.warning(f"Error resolviendo active_jid para paciente/conversacion: {e}")
     return None
 
+# ====================================================================
+# CATÁLOGO MAESTRO UNIFICADO DE GTINs, LENTES E INSUMOS
+# ====================================================================
+
+def get_catalogo_maestro(
+    busqueda: Optional[str] = None,
+    marca: Optional[str] = None,
+    categoria: Optional[str] = None,
+    solo_activos: bool = True,
+    limit: int = 50,
+    offset: int = 0
+) -> Dict[str, Any]:
+    """
+    Lista ítems del catálogo maestro unificado con filtros multivariable y conteo total.
+    """
+    if not supabase:
+        return {"items": [], "total": 0}
+    try:
+        q = supabase.table("catalogo_maestro_gtin").select("*, modelos_lio(id, modelo, marca, tipo_optica, constante_a)", count="exact")
+
+        if solo_activos:
+            q = q.eq("activo", True)
+
+        if marca and marca.upper() != "ALL":
+            q = q.ilike("marca", f"%{marca}%")
+
+        if categoria and categoria.upper() != "ALL":
+            q = q.eq("categoria", categoria)
+
+        if busqueda and busqueda.strip():
+            b = busqueda.strip()
+            # Búsqueda por GTIN, internacional o nombre_producto
+            q = q.or_(f"gtin_14.ilike.%{b}%,internacional.ilike.%{b}%,nombre_producto.ilike.%{b}%,familia_nombre.ilike.%{b}%")
+
+        q = q.order("marca").order("nombre_producto").range(offset, offset + limit - 1)
+        res = q.execute()
+
+        return {
+            "items": res.data or [],
+            "total": res.count or len(res.data or [])
+        }
+    except Exception as e:
+        logger.error(f"Error consultando catalogo maestro: {e}")
+        return {"items": [], "total": 0}
+
+def crear_item_catalogo_maestro(datos: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Crea un nuevo SKU / Insumo en el catálogo maestro.
+    """
+    if not supabase:
+        return {}
+    try:
+        gtin_14 = str(datos.get("gtin_14", "")).strip().zfill(14)
+        if not gtin_14 or len(gtin_14) != 14:
+            raise ValueError("El código GTIN debe contener exactamente 14 dígitos numéricos.")
+
+        payload = {
+            "gtin_14": gtin_14,
+            "gtin_12": str(datos.get("gtin_12", "")).strip() or gtin_14.lstrip("0"),
+            "marca": datos.get("marca") or "Alcon",
+            "nombre_producto": str(datos.get("nombre_producto", "")).strip(),
+            "internacional": str(datos.get("internacional", "")).strip() or None,
+            "categoria": datos.get("categoria") or "LIO",
+            "familia_nombre": datos.get("familia_nombre") or None,
+            "modelo_lio_id": datos.get("modelo_lio_id") or None,
+            "tipo_optica": datos.get("tipo_optica") or "Monofocal Asférico",
+            "dioptria": float(datos.get("dioptria")) if datos.get("dioptria") is not None and str(datos.get("dioptria")).strip() != "" else None,
+            "es_torico": bool(datos.get("es_torico", False)),
+            "torico_valor": datos.get("torico_valor") if datos.get("es_torico") else None,
+            "constante_a": float(datos.get("constante_a", 118.9)) if datos.get("constante_a") is not None else 118.9,
+            "acd_estimado": float(datos.get("acd_estimado", 5.0)) if datos.get("acd_estimado") is not None else 5.0,
+            "geclisa_ele_id": int(datos.get("geclisa_ele_id")) if datos.get("geclisa_ele_id") else None,
+            "geclisa_ele_cod": str(datos.get("geclisa_ele_cod", "")).strip() or None,
+            "activo": bool(datos.get("activo", True)),
+            "origen": datos.get("origen") or "MANUAL",
+            "observaciones": datos.get("observaciones") or None,
+            "created_at": "now()",
+            "updated_at": "now()"
+        }
+
+        res = supabase.table("catalogo_maestro_gtin").upsert(payload, on_conflict="gtin_14").execute()
+        return res.data[0] if res.data else {}
+    except Exception as e:
+        logger.error(f"Error al crear item en catalogo maestro: {e}")
+        raise e
+
+def actualizar_item_catalogo_maestro(item_id: str, datos: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualiza los datos de un ítem en el catálogo maestro.
+    """
+    if not supabase or not item_id:
+        return {}
+    try:
+        payload = {**datos, "updated_at": "now()"}
+        # Eliminar id si viene en datos para evitar conflictos
+        payload.pop("id", None)
+        payload.pop("created_at", None)
+
+        if "dioptria" in payload and payload["dioptria"] is not None and str(payload["dioptria"]).strip() != "":
+            payload["dioptria"] = float(payload["dioptria"])
+        if "constante_a" in payload and payload["constante_a"] is not None:
+            payload["constante_a"] = float(payload["constante_a"])
+
+        res = supabase.table("catalogo_maestro_gtin").update(payload).eq("id", item_id).execute()
+        return res.data[0] if res.data else {}
+    except Exception as e:
+        logger.error(f"Error al actualizar item #{item_id} en catalogo maestro: {e}")
+        raise e
+
+def eliminar_item_catalogo_maestro(item_id: str, fisico: bool = False) -> bool:
+    """
+    Elimina físicamente o desactiva (baja lógica) un ítem del catálogo maestro.
+    """
+    if not supabase or not item_id:
+        return False
+    try:
+        if fisico:
+            supabase.table("catalogo_maestro_gtin").delete().eq("id", item_id).execute()
+        else:
+            supabase.table("catalogo_maestro_gtin").update({"activo": False, "updated_at": "now()"}).eq("id", item_id).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar item #{item_id} de catalogo maestro: {e}")
+        return False
+

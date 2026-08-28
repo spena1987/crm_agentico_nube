@@ -545,10 +545,10 @@ export default function LioSettingsCard() {
                 type="button"
                 onClick={() => setMostrandoModalCatalogoAlcon(true)}
                 className="px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 text-amber-600 dark:text-amber-400 border border-amber-500/40 text-[10px] font-black flex items-center gap-1.5 shadow-xs transition cursor-pointer group"
-                title="Abrir explorador del Catálogo Alcon Completo (3.895 GTINs), ver QR y exportar stickers PDF"
+                title="Abrir Catálogo Maestro de LIOs e Insumos Quirúrgicos (ABM, QR, Stickers PDF y Geclisa)"
               >
                 <Sparkles size={11} className="text-amber-500 animate-pulse group-hover:rotate-12 transition-transform" />
-                <span>Catálogo Alcon 3.895 GTINs Activo</span>
+                <span>Catálogo Maestro de LIOs & Insumos (3.894+ SKUs)</span>
                 <ExternalLink size={10} className="opacity-70 group-hover:translate-x-0.5 transition-transform" />
               </button>
             </div>

@@ -125,6 +125,10 @@ from app.db import (
     crear_modelo_lio_item,
     eliminar_modelo_lio_item,
     resolver_sku_lio,
+    get_catalogo_maestro,
+    crear_item_catalogo_maestro,
+    actualizar_item_catalogo_maestro,
+    eliminar_item_catalogo_maestro,
     get_turnos_dia_ejecucion,
     cambiar_estado_turno_quirofano,
     subir_consentimiento_turno_a_geclisa,
@@ -4519,6 +4523,162 @@ def obtener_catalogo_alcon_completo():
         }
     except Exception as e:
         logger.error(f"Error al obtener catálogo Alcon: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: CATÁLOGO MAESTRO UNIFICADO DE GTINs, LENTES E INSUMOS (ABM)
+# ====================================================================
+
+class ItemCatalogoMaestroPayload(BaseModel):
+    gtin_14: str
+    gtin_12: Optional[str] = None
+    marca: str = "Alcon"
+    nombre_producto: str
+    internacional: Optional[str] = None
+    categoria: str = "LIO"
+    familia_nombre: Optional[str] = None
+    modelo_lio_id: Optional[str] = None
+    tipo_optica: Optional[str] = "Monofocal Asférico"
+    dioptria: Optional[float] = None
+    es_torico: bool = False
+    torico_valor: Optional[str] = None
+    constante_a: Optional[float] = 118.9
+    acd_estimado: Optional[float] = 5.0
+    geclisa_ele_id: Optional[int] = None
+    geclisa_ele_cod: Optional[str] = None
+    activo: bool = True
+    origen: str = "MANUAL"
+    observaciones: Optional[str] = None
+
+class ActualizarItemCatalogoMaestroPayload(BaseModel):
+    gtin_14: Optional[str] = None
+    gtin_12: Optional[str] = None
+    marca: Optional[str] = None
+    nombre_producto: Optional[str] = None
+    internacional: Optional[str] = None
+    categoria: Optional[str] = None
+    familia_nombre: Optional[str] = None
+    modelo_lio_id: Optional[str] = None
+    tipo_optica: Optional[str] = None
+    dioptria: Optional[float] = None
+    es_torico: Optional[bool] = None
+    torico_valor: Optional[str] = None
+    constante_a: Optional[float] = None
+    acd_estimado: Optional[float] = None
+    geclisa_ele_id: Optional[int] = None
+    geclisa_ele_cod: Optional[str] = None
+    activo: Optional[bool] = None
+    observaciones: Optional[str] = None
+
+@app.get("/api/catalogo-maestro")
+def listar_catalogo_maestro_endpoint(
+    busqueda: Optional[str] = None,
+    marca: Optional[str] = "ALL",
+    categoria: Optional[str] = "ALL",
+    solo_activos: bool = True,
+    limit: int = 50,
+    offset: int = 0
+):
+    try:
+        data = get_catalogo_maestro(
+            busqueda=busqueda,
+            marca=marca,
+            categoria=categoria,
+            solo_activos=solo_activos,
+            limit=limit,
+            offset=offset
+        )
+        return {"success": True, "total": data["total"], "items": data["items"]}
+    except Exception as e:
+        logger.error(f"Error al listar catalogo maestro: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/catalogo-maestro")
+def crear_item_catalogo_maestro_endpoint(payload: ItemCatalogoMaestroPayload):
+    try:
+        nuevo = crear_item_catalogo_maestro(payload.dict())
+        return {"success": True, "item": nuevo}
+    except Exception as e:
+        logger.error(f"Error al crear item en catalogo maestro: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/catalogo-maestro/{item_id}")
+def actualizar_item_catalogo_maestro_endpoint(item_id: str, payload: ActualizarItemCatalogoMaestroPayload):
+    try:
+        datos = {k: v for k, v in payload.dict().items() if v is not None}
+        act = actualizar_item_catalogo_maestro(item_id, datos)
+        return {"success": True, "item": act}
+    except Exception as e:
+        logger.error(f"Error al actualizar item #{item_id} en catalogo maestro: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/catalogo-maestro/{item_id}")
+def eliminar_item_catalogo_maestro_endpoint(item_id: str, fisico: bool = False):
+    try:
+        ok = eliminar_item_catalogo_maestro(item_id, fisico=fisico)
+        return {"success": ok}
+    except Exception as e:
+        logger.error(f"Error al eliminar item #{item_id} de catalogo maestro: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/catalogo-maestro/sincronizar-geclisa")
+def sincronizar_catalogo_maestro_con_geclisa_endpoint():
+    """
+    Cruza los registros del catálogo maestro contra Geclisa por GTIN o código comercial y asocia los eleId.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        elementos_geclisa = geclisa_client.buscar_elementos("")
+        if not elementos_geclisa:
+            return {"success": True, "total_sincronizados": 0, "mensaje": "No se encontraron elementos en Geclisa."}
+
+        ele_map_gtin = {}
+        for el in elementos_geclisa:
+            g = str(el.get("eleCod") or "").strip()
+            if g:
+                ele_map_gtin[g.zfill(14)] = el
+                ele_map_gtin[g.lstrip("0")] = el
+
+        cat_res = supabase.table("catalogo_maestro_gtin").select("id, gtin_14, gtin_12, modelo_lio_id, dioptria, es_torico, torico_valor").execute()
+        items_cat = cat_res.data or []
+        sincronizados = 0
+
+        for it in items_cat:
+            g14 = it.get("gtin_14")
+            match = ele_map_gtin.get(g14) or (ele_map_gtin.get(it.get("gtin_12")) if it.get("gtin_12") else None)
+            if match:
+                ele_id = match.get("eleId")
+                ele_cod = match.get("eleCod")
+                ele_nom = match.get("eleNombre")
+                supabase.table("catalogo_maestro_gtin").update({
+                    "geclisa_ele_id": ele_id,
+                    "geclisa_ele_cod": ele_cod,
+                    "updated_at": "now()"
+                }).eq("id", it["id"]).execute()
+
+                if it.get("modelo_lio_id") and it.get("dioptria") is not None:
+                    try:
+                        crear_modelo_lio_item({
+                            "modelo_lio_id": it["modelo_lio_id"],
+                            "geclisa_ele_id": ele_id,
+                            "geclisa_ele_cod": ele_cod,
+                            "geclisa_nombre": ele_nom,
+                            "dioptria": it["dioptria"],
+                            "es_torico": it.get("es_torico", False),
+                            "torico_valor": it.get("torico_valor")
+                        })
+                    except Exception:
+                        pass
+                sincronizados += 1
+
+        return {
+            "success": True,
+            "total_geclisa": len(elementos_geclisa),
+            "total_catalogo": len(items_cat),
+            "total_sincronizados": sincronizados
+        }
+    except Exception as e:
+        logger.error(f"Error en sincronizacion maestro Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class ResolverSkuPayload(BaseModel):
