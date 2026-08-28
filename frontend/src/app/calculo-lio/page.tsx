@@ -908,7 +908,17 @@ export default function CalculoLioPage() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-3">
                           {/* Modelo de LIO */}
                           <div className="sm:col-span-2 space-y-1">
-                            <label className="text-[11px] font-bold text-[var(--secondary)]">Modelo / Tipo de LIO</label>
+                            <label className="text-[11px] font-bold text-[var(--secondary)] flex items-center justify-between">
+                              <span>Modelo / Tipo de LIO</span>
+                              {(() => {
+                                const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === op.modelo || m.modelo === op.modelo)
+                                return modObj?.constante_a ? (
+                                  <span className="text-[10px] font-mono text-cyan-600 dark:text-cyan-400 font-extrabold">
+                                    Constante A: {modObj.constante_a}
+                                  </span>
+                                ) : null
+                              })()}
+                            </label>
                             {deshabilitado ? (
                               <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-extrabold text-[var(--foreground)]">
                                 {op.modelo || 'Sin especificar'}

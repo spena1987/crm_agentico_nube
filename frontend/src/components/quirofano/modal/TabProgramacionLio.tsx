@@ -61,6 +61,48 @@ export default function TabProgramacionLio({
   const [reservandoStock, setReservandoStock] = useState<boolean>(false)
   const [stockLocal, setStockLocal] = useState<boolean>(stockReservado)
 
+  // Resolución de SKU Geclisa y Stock en Vivo
+  const [skuResuelto, setSkuResuelto] = useState<any | null>(null)
+  const [resolviendoSku, setResolviendoSku] = useState<boolean>(false)
+
+  React.useEffect(() => {
+    const resolverSku = async () => {
+      const mod = formData.lente_tipo
+      const diop = parseFloat(formData.lente_dioptria)
+      if (!mod || isNaN(diop)) {
+        setSkuResuelto(null)
+        return
+      }
+
+      try {
+        setResolviendoSku(true)
+        const res = await fetch(`${BACKEND_URL}/api/modelos-lio/resolver-sku`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            modelo_nombre: mod,
+            dioptria: diop,
+            torico_valor: formData.es_torico ? formData.lente_torico_valor : null
+          })
+        })
+        const data = await res.json()
+        if (res.ok && data.success) {
+          setSkuResuelto(data)
+        } else {
+          setSkuResuelto(null)
+        }
+      } catch (e) {
+        console.error('Error resolviendo SKU:', e)
+        setSkuResuelto(null)
+      } finally {
+        setResolviendoSku(false)
+      }
+    }
+
+    const timer = setTimeout(resolverSku, 300)
+    return () => clearTimeout(timer)
+  }, [formData.lente_tipo, formData.lente_dioptria, formData.es_torico, formData.lente_torico_valor])
+
   // Función rápida para reservar stock desde el mismo modal de quirófano
   const handleToggleStock = async () => {
     if (!turno.id) return
@@ -520,6 +562,87 @@ export default function TabProgramacionLio({
                   </div>
                 </div>
               )}
+
+              {/* Banner de Sincronización con Geclisa (GTIN & Stock en Vivo) */}
+              {resolviendoSku ? (
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] flex items-center gap-2 text-xs text-blue-600">
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>Verificando SKU y Stock en Geclisa...</span>
+                </div>
+              ) : skuResuelto?.mapeado ? (
+                <div className="p-3.5 rounded-2xl bg-cyan-50/50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800/60 space-y-2.5 animate-fade-in">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 rounded-lg bg-cyan-500 text-black">
+                        <Check size={14} />
+                      </span>
+                      <div>
+                        <span className="text-xs font-black text-cyan-950 dark:text-cyan-100 flex items-center gap-1.5">
+                          <span>Geclisa: #{skuResuelto.item.geclisa_ele_id}</span>
+                          <span className="font-mono text-[10px] bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-200 px-1.5 py-0.5 rounded">
+                            GTIN: {skuResuelto.item.geclisa_ele_cod}
+                          </span>
+                        </span>
+                        <p className="text-[10px] text-[var(--secondary)] truncate max-w-md">
+                          {skuResuelto.item.geclisa_nombre}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Stock Quirófano & Consignación */}
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1 ${
+                        (skuResuelto.stock?.stock_quirofano ?? 0) > 0
+                          ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400'
+                      }`}>
+                        <Package size={13} />
+                        <span>Stock Quirófano: {skuResuelto.stock?.stock_quirofano ?? 0} un</span>
+                      </span>
+
+                      {(skuResuelto.stock?.stock_consignacion ?? 0) > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-blue-500/10 border border-blue-500/30 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                          <span>Consignación: {skuResuelto.stock.stock_consignacion} un</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Lotes disponibles para auto-completar */}
+                  {Array.isArray(skuResuelto.stock?.lotes_quirofano) && skuResuelto.stock.lotes_quirofano.length > 0 && (
+                    <div className="pt-2 border-t border-cyan-200/60 dark:border-cyan-800/40 flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-bold text-cyan-800 dark:text-cyan-300">
+                        Lotes físicos disponibles (Clic para cargar):
+                      </span>
+                      {skuResuelto.stock.lotes_quirofano.map((lot: any, lIdx: number) => (
+                        <button
+                          key={lIdx}
+                          type="button"
+                          onClick={() => {
+                            setFormData((prev: any) => ({
+                              ...prev,
+                              lente_lote: lot.lote !== 'S/D' ? lot.lote : prev.lente_lote,
+                              lente_serie: lot.nroSerie || prev.lente_serie,
+                              lente_vencimiento: lot.fechaVto && !lot.fechaVto.startsWith('9999') ? lot.fechaVto.split('T')[0] : prev.lente_vencimiento
+                            }))
+                          }}
+                          className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-cyan-300 dark:border-cyan-700 text-[10px] font-mono font-bold hover:bg-cyan-500 hover:text-black transition"
+                        >
+                          Lote: {lot.lote} (Cant: {lot.cantidad})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : formData.lente_tipo && formData.lente_dioptria ? (
+                <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-[var(--border)] text-[11px] text-[var(--secondary)] flex items-center justify-between">
+                  <span>ℹ Graduación ({formData.lente_tipo} {formData.lente_dioptria}D) sin GTIN Geclisa mapeado.</span>
+                  <Link href="/ajustes?tab=lios" target="_blank" className="text-blue-600 font-bold hover:underline flex items-center gap-1">
+                    <span>Mapear en Ajustes</span>
+                    <ExternalLink size={11} />
+                  </Link>
+                </div>
+              ) : null}
 
               {/* Lote, Serie y Vencimiento del Blíster */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

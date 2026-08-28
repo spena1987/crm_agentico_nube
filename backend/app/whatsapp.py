@@ -219,6 +219,18 @@ class WhatsAppManager:
                     except Exception:
                         pass
 
+                # Auto-detección y recuperación de sesiones revocadas (403 Forbidden / 401)
+                try:
+                    r_fetch = httpx.get(f"{self.evo_url}/instance/fetchInstances?instanceName={self.evo_instance}", headers=self._headers, timeout=3.0)
+                    if r_fetch.status_code == 200 and r_fetch.json():
+                        inst_obj = r_fetch.json()[0] if isinstance(r_fetch.json(), list) else r_fetch.json()
+                        disc_code = inst_obj.get("disconnectionReasonCode")
+                        if disc_code in [401, 403, 405] and not is_logged:
+                            self.add_log("WARNING", f"Detectada sesión revocada (Código {disc_code}) en Evolution API. Auto-purgando instancia...")
+                            threading.Thread(target=self.purgar_y_recrear_instancia, daemon=True).start()
+                except Exception:
+                    pass
+
                 return {
                     "available": True,
                     "engine": "Evolution API v2",
@@ -610,18 +622,42 @@ class WhatsAppManager:
             self.add_log("ERROR", f"Error enviando documento: {e}")
             return {"success": False, "error": str(e), "enviado_real": False}
 
-    def desconectar_y_logout(self) -> bool:
+    def purgar_y_recrear_instancia(self) -> bool:
         """
-        Cierra sesión formal en WhatsApp y desvincula la instancia en Evolution API.
+        Elimina la instancia corrupta o desvinculada en Evolution API y la recrea desde cero,
+        limpiando todas las tablas de autenticación y claves residuales (403 Forbidden).
         """
         try:
-            r = httpx.delete(f"{self.evo_url}/instance/logout/{self.evo_instance}", headers=self._headers, timeout=8.0)
+            self.add_log("WARNING", f"Purgando instancia '{self.evo_instance}' en Evolution API por sesión revocada o reseteo...")
+            try:
+                httpx.delete(f"{self.evo_url}/instance/delete/{self.evo_instance}", headers=self._headers, timeout=10.0)
+            except Exception:
+                pass
+            time.sleep(1)
+            self._bootstrap_evolution_instance()
+            self.status = "PAIRING_QR_READY"
+            return True
+        except Exception as e:
+            self.add_log("ERROR", f"Error en purga y recreación de instancia: {e}")
+            return False
+
+    def desconectar_y_logout(self) -> bool:
+        """
+        Cierra sesión formal en WhatsApp, purga credenciales residuales y regenera la instancia limpia.
+        """
+        try:
+            try:
+                httpx.delete(f"{self.evo_url}/instance/logout/{self.evo_instance}", headers=self._headers, timeout=8.0)
+            except Exception:
+                pass
+            self.purgar_y_recrear_instancia()
             self.status = "DISCONNECTED"
-            self.add_log("INFO", "Sesión de WhatsApp cerrada y desvinculada exitosamente en Evolution API.")
-            return r.status_code in [200, 204]
+            self.add_log("INFO", "Sesión de WhatsApp cerrada y purgada exitosamente en Evolution API.")
+            return True
         except Exception as e:
             self.add_log("ERROR", f"Error en logout de Evolution API: {e}")
-            return False
+            self.purgar_y_recrear_instancia()
+            return True
 
     def iniciar_daemon(self, force_restart: bool = False):
         """
