@@ -30,6 +30,8 @@ import {
   ArrowRight,
   ExternalLink,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   CheckCircle
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
@@ -136,6 +138,9 @@ export default function LioSettingsCard() {
   const [cargandoItems, setCargandoItems] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
+
+  // Acordeón de Familias expandidas
+  const [familiasExpandidas, setFamiliasExpandidas] = useState<Record<string, boolean>>({})
 
   // ====================================================================
   // ESTADOS SUBPESTAÑA 1: GESTOR DE FAMILIAS
@@ -307,6 +312,7 @@ export default function LioSettingsCard() {
         setMostrandoFormFamilia(false)
         setFamiliaEnEdicion(null)
         fetchFamilias()
+        fetchItemsGtin()
         setTimeout(() => setMensajeExito(null), 3500)
       } else {
         throw new Error(data.detail || 'Error al guardar la familia.')
@@ -326,6 +332,7 @@ export default function LioSettingsCard() {
       const res = await fetch(`${BACKEND_URL}/api/modelos-lio/${id}`, { method: 'DELETE' })
       if (res.ok) {
         setFamilias((prev) => prev.filter((f) => f.id !== id))
+        fetchItemsGtin()
         setMensajeExito('✔ Familia eliminada.')
         setTimeout(() => setMensajeExito(null), 3000)
       }
@@ -436,27 +443,42 @@ export default function LioSettingsCard() {
     }
   }
 
+  // Toggle acordeón de familia en Subpestaña 1
+  const handleToggleFamiliaExpandida = (famId: string) => {
+    setFamiliasExpandidas((prev) => ({
+      ...prev,
+      [famId]: !prev[famId]
+    }))
+  }
+
   // Filtrado de Familias
   const familiasFiltradas = useMemo(() => {
+    const cleanSearch = filtroFamiliaSearch.trim().toLowerCase()
     return familias.filter((f) => {
       const matchSearch =
-        !filtroFamiliaSearch.trim() ||
-        f.marca.toLowerCase().includes(filtroFamiliaSearch.toLowerCase()) ||
-        f.modelo.toLowerCase().includes(filtroFamiliaSearch.toLowerCase()) ||
-        (f.descripcion && f.descripcion.toLowerCase().includes(filtroFamiliaSearch.toLowerCase()))
+        !cleanSearch ||
+        (f.marca || '').toLowerCase().includes(cleanSearch) ||
+        (f.modelo || '').toLowerCase().includes(cleanSearch) ||
+        (f.descripcion || '').toLowerCase().includes(cleanSearch)
       const matchOptica = filtroFamiliaOptica === 'ALL' || f.tipo_optica === filtroFamiliaOptica
       return matchSearch && matchOptica
     })
   }, [familias, filtroFamiliaSearch, filtroFamiliaOptica])
 
-  // Filtrado de GTINs
+  // Filtrado de GTINs (Blindado y saneado)
   const itemsGtinFiltrados = useMemo(() => {
+    const cleanSearch = filtroGtinSearch.trim().toLowerCase()
     return itemsGtin.filter((it) => {
+      const cod = (it.geclisa_ele_cod || '').toLowerCase()
+      const nom = (it.geclisa_nombre || '').toLowerCase()
+      const mod = (it.modelos_lio?.modelo || '').toLowerCase()
+      const marca = (it.modelos_lio?.marca || '').toLowerCase()
       const matchSearch =
-        !filtroGtinSearch.trim() ||
-        it.geclisa_ele_cod.toLowerCase().includes(filtroGtinSearch.toLowerCase()) ||
-        (it.geclisa_nombre && it.geclisa_nombre.toLowerCase().includes(filtroGtinSearch.toLowerCase())) ||
-        (it.modelos_lio && it.modelos_lio.modelo.toLowerCase().includes(filtroGtinSearch.toLowerCase()))
+        !cleanSearch ||
+        cod.includes(cleanSearch) ||
+        nom.includes(cleanSearch) ||
+        mod.includes(cleanSearch) ||
+        marca.includes(cleanSearch)
       const matchFam = filtroGtinFamilia === 'ALL' || it.modelo_lio_id === filtroGtinFamilia
       return matchSearch && matchFam
     })
@@ -756,7 +778,7 @@ export default function LioSettingsCard() {
             </form>
           )}
 
-          {/* Grilla de Familias */}
+          {/* Grilla de Familias con Acordeón de Graduaciones */}
           {cargando ? (
             <div className="p-12 text-center text-xs text-[var(--secondary)] flex items-center justify-center gap-2">
               <Loader2 size={20} className="animate-spin text-blue-600" />
@@ -769,91 +791,200 @@ export default function LioSettingsCard() {
               <p className="text-[11px]">Usa el botón superior para dar de alta tu primera familia de LIO.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {familiasFiltradas.map((f) => (
-                <div
-                  key={f.id}
-                  className="p-5 rounded-3xl border border-[var(--border)] bg-slate-50/40 dark:bg-slate-800/30 flex flex-col justify-between gap-4 hover:border-blue-400/60 transition shadow-xs"
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                        {f.marca}
-                      </span>
-                      <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded-md bg-cyan-50 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800">
-                        Constante A: {f.constante_a || 118.9}
-                      </span>
+            <div className="space-y-4">
+              {familiasFiltradas.map((f) => {
+                const itemsDeEstaFam = itemsGtin.filter((it) => it.modelo_lio_id === f.id)
+                const expandido = Boolean(familiasExpandidas[f.id!])
+
+                return (
+                  <div
+                    key={f.id}
+                    className="rounded-3xl border border-[var(--border)] bg-slate-50/40 dark:bg-slate-800/30 overflow-hidden shadow-xs hover:border-blue-400/50 transition"
+                  >
+                    {/* Cabecera de la Familia */}
+                    <div className="p-4 md:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-[var(--card)]">
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleFamiliaExpandida(f.id!)}
+                          className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-cyan-500 hover:text-black transition shrink-0 mt-0.5 cursor-pointer"
+                          title={expandido ? 'Ocultar graduaciones' : 'Ver graduaciones'}
+                        >
+                          {expandido ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                        </button>
+
+                        <div className="space-y-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                              {f.marca}
+                            </span>
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                              {f.tipo_optica}
+                            </span>
+                            <span className="text-[10px] font-mono font-black px-2 py-0.5 rounded-md bg-cyan-50 dark:bg-cyan-950/60 text-cyan-600 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800">
+                              Constante A: {f.constante_a || 118.9}
+                            </span>
+                          </div>
+
+                          <h3 className="text-base font-black text-[var(--foreground)] tracking-tight">
+                            {f.modelo}
+                          </h3>
+
+                          {f.descripcion && (
+                            <p className="text-[11px] text-[var(--secondary)] truncate">{f.descripcion}</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Acciones de la Familia */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleFamiliaExpandida(f.id!)}
+                          className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <span>{itemsDeEstaFam.length} GTINs</span>
+                          {expandido ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGtinFamiliaId(f.id!)
+                            setSubTabActiva('gtins')
+                            setMostrandoAltaGtin(true)
+                            setScannerInput(f.modelo.split(' ')[0] || '')
+                            setElementoGeclisaSeleccionado(null)
+                          }}
+                          className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        >
+                          <Barcode size={13} />
+                          <span>+ Vincular GTINs</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFamiliaEnEdicion({ ...f })
+                            setMostrandoFormFamilia(true)
+                          }}
+                          className="p-2 text-slate-400 hover:text-blue-600 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                          title="Editar familia"
+                        >
+                          <Edit2 size={15} />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleEliminarFamilia(f.id)}
+                          className="p-2 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                          title="Eliminar familia"
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </div>
 
-                    <h3 className="text-base font-black text-[var(--foreground)] tracking-tight">
-                      {f.modelo}
-                    </h3>
+                    {/* Acordeón: Tabla de Graduaciones de esta Familia */}
+                    {expandido && (
+                      <div className="p-4 md:p-5 border-t border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/40 space-y-3 animate-fade-in">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-[var(--foreground)] flex items-center gap-1.5">
+                            <Boxes size={14} className="text-cyan-500" />
+                            <span>Graduaciones & Códigos GTIN vinculados a {f.modelo} ({itemsDeEstaFam.length})</span>
+                          </span>
+                          <span className="text-[10px] text-[var(--secondary)]">
+                            Resuelve automáticamente el stock en Quirófano cuando el cirujano elige esta dioptría
+                          </span>
+                        </div>
 
-                    <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                      {f.tipo_optica}
-                    </p>
-
-                    {f.descripcion && (
-                      <p className="text-[11px] text-[var(--secondary)] line-clamp-2">{f.descripcion}</p>
+                        {itemsDeEstaFam.length === 0 ? (
+                          <div className="p-6 text-center border border-dashed border-[var(--border)] rounded-2xl text-xs text-[var(--secondary)]">
+                            No hay graduaciones asociadas a este grupo. Usa el botón <b>"+ Vincular GTINs"</b> para escanear o buscar en Geclisa.
+                          </div>
+                        ) : (
+                          <div className="border border-[var(--border)] rounded-2xl overflow-hidden shadow-xs bg-[var(--card)]">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-100 dark:bg-slate-800/80 text-[var(--secondary)] font-bold text-[10px] uppercase tracking-wider border-b border-[var(--border)]">
+                                  <th className="p-3">Dioptría (Poder)</th>
+                                  <th className="p-3">Toricidad</th>
+                                  <th className="p-3">Código GTIN (Blíster)</th>
+                                  <th className="p-3">Nombre en Geclisa</th>
+                                  <th className="p-3">Stock Quirófano</th>
+                                  <th className="p-3 text-right">Acción</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-[var(--border)]">
+                                {itemsDeEstaFam.map((it) => (
+                                  <tr key={it.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                                    <td className="p-3 font-mono font-black text-blue-600 dark:text-blue-400 text-sm">
+                                      +{Number(it.dioptria).toFixed(2)} D
+                                    </td>
+                                    <td className="p-3">
+                                      {it.es_torico ? (
+                                        <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-extrabold text-[10px]">
+                                          {it.torico_valor || 'Tórico'}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[11px] text-slate-400">Esférico</span>
+                                      )}
+                                    </td>
+                                    <td className="p-3 font-mono font-black text-[var(--foreground)]">
+                                      {it.geclisa_ele_cod}
+                                    </td>
+                                    <td className="p-3 text-[11px] text-[var(--secondary)] truncate max-w-xs" title={it.geclisa_nombre}>
+                                      {it.geclisa_nombre || 'N/A'}
+                                    </td>
+                                    <td className="p-3">
+                                      {it.stock_quirofano !== undefined ? (
+                                        <div className="flex items-center gap-1.5">
+                                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
+                                            it.stock_quirofano > 0
+                                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400'
+                                          }`}>
+                                            Q: {it.stock_quirofano} un
+                                          </span>
+                                          {(it.stock_consignacion ?? 0) > 0 && (
+                                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                                              Consig: {it.stock_consignacion} un
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          disabled={it.consultando_stock}
+                                          onClick={() => handleConsultarStockGtin(it)}
+                                          className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                                        >
+                                          {it.consultando_stock ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                                          <span>Ver Stock</span>
+                                        </button>
+                                      )}
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleEliminarGtin(it.id)}
+                                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition cursor-pointer"
+                                        title="Eliminar graduación"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
                     )}
-
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[var(--border)] text-[10px]">
-                      <span className="font-bold text-slate-700 dark:text-slate-300">
-                        📦 {f.items_count ?? 0} GTINs cargados
-                      </span>
-                      {f.admite_toricos && (
-                        <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold">
-                          Tóricos OK
-                        </span>
-                      )}
-                      {f.apto_sulcus && (
-                        <span className="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-bold">
-                          Sulcus
-                        </span>
-                      )}
-                    </div>
                   </div>
-
-                  <div className="flex items-center justify-between pt-3 border-t border-[var(--border)] gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGtinFamiliaId(f.id!)
-                        setSubTabActiva('gtins')
-                        setMostrandoAltaGtin(true)
-                        setScannerInput('')
-                        setElementoGeclisaSeleccionado(null)
-                      }}
-                      className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 hover:bg-blue-100 rounded-xl text-[11px] font-black flex items-center gap-1.5 transition"
-                    >
-                      <Barcode size={13} />
-                      <span>+ Vincular GTINs</span>
-                    </button>
-
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFamiliaEnEdicion({ ...f })
-                          setMostrandoFormFamilia(true)
-                        }}
-                        className="p-1.5 text-slate-400 hover:text-blue-600 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                        title="Editar familia"
-                      >
-                        <Edit2 size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleEliminarFamilia(f.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
-                        title="Eliminar familia"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -941,7 +1072,7 @@ export default function LioSettingsCard() {
                   autoFocus
                   value={scannerInput}
                   onChange={(e) => setScannerInput(e.target.value)}
-                  placeholder="Pistolea el QR de la caja o escribe (ej: GALAXY, 07612797..., PANOPTIX, VIVITY)..."
+                  placeholder="Pistolea el QR de la caja o escribe (ej: GALAXY, 0038065..., PANOPTIX, VIVITY)..."
                   className="w-full pl-12 pr-10 py-3.5 rounded-2xl bg-[var(--card)] border-2 border-blue-300 dark:border-blue-700 text-xs md:text-sm font-mono font-bold text-[var(--foreground)] outline-none focus:ring-4 focus:ring-blue-500/20 shadow-sm"
                 />
                 {buscandoGeclisa && (
@@ -1061,7 +1192,7 @@ export default function LioSettingsCard() {
                         <button
                           type="button"
                           onClick={() => setGtinDioptria((prev) => (parseFloat(prev || '20') - 0.5).toFixed(2))}
-                          className="px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold hover:bg-slate-200"
+                          className="px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold hover:bg-slate-200 cursor-pointer"
                         >
                           -0.5
                         </button>
@@ -1076,7 +1207,7 @@ export default function LioSettingsCard() {
                         <button
                           type="button"
                           onClick={() => setGtinDioptria((prev) => (parseFloat(prev || '20') + 0.5).toFixed(2))}
-                          className="px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold hover:bg-slate-200"
+                          className="px-2.5 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold hover:bg-slate-200 cursor-pointer"
                         >
                           +0.5
                         </button>
@@ -1118,7 +1249,7 @@ export default function LioSettingsCard() {
                     <button
                       type="button"
                       onClick={() => setElementoGeclisaSeleccionado(null)}
-                      className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-100"
+                      className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-100 cursor-pointer"
                     >
                       Cancelar
                     </button>
@@ -1145,8 +1276,12 @@ export default function LioSettingsCard() {
           ) : itemsGtinFiltrados.length === 0 ? (
             <div className="p-12 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-3xl space-y-2">
               <Barcode size={28} className="mx-auto text-slate-400 opacity-50" />
-              <p className="font-bold text-sm text-[var(--foreground)]">No hay códigos GTIN registrados</p>
-              <p className="text-[11px]">Usa el botón superior para escanear o buscar artículos en Geclisa.</p>
+              <p className="font-bold text-sm text-[var(--foreground)]">
+                {filtroGtinSearch.trim() ? 'No se encontraron GTINs coincidentes con la búsqueda' : 'No hay códigos GTIN registrados'}
+              </p>
+              <p className="text-[11px]">
+                {filtroGtinSearch.trim() ? 'Prueba borrando el término de búsqueda o seleccionando otra familia.' : 'Usa el botón superior para escanear o buscar artículos en Geclisa.'}
+              </p>
             </div>
           ) : (
             <div className="border border-[var(--border)] rounded-3xl overflow-hidden shadow-xs bg-[var(--card)]">

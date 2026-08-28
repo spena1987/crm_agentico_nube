@@ -3704,7 +3704,7 @@ def crear_modelo_lio_item(datos: Dict[str, Any]) -> Dict[str, Any]:
             "modelo_lio_id": datos.get("modelo_lio_id"),
             "geclisa_ele_id": int(datos.get("geclisa_ele_id")),
             "geclisa_ele_cod": str(datos.get("geclisa_ele_cod", "")).strip(),
-            "geclisa_nombre": datos.get("geclisa_nombre"),
+            "geclisa_nombre": re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(datos.get("geclisa_nombre") or "")).strip(),
             "dioptria": float(datos.get("dioptria")),
             "es_torico": bool(datos.get("es_torico", False)),
             "torico_valor": datos.get("torico_valor") if datos.get("es_torico") else None,
