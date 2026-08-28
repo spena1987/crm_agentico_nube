@@ -4899,15 +4899,7 @@ def listar_pacientes_calculo_lio(
             }
             items.append(item)
 
-        # 3. Filtrado por estado de cálculo
-        if estado_calculo == "pendientes":
-            items = [it for it in items if not it["lio_calculado"]]
-        elif estado_calculo == "calculados":
-            items = [it for it in items if it["lio_calculado"]]
-        elif estado_calculo == "stock_pendiente":
-            items = [it for it in items if it["lio_calculado"] and not it["lio_stock_reservado"]]
-
-        # 4. Filtro de búsqueda por texto
+        # Filtro de búsqueda por texto inicial
         if busqueda and busqueda.strip():
             b = busqueda.lower().strip()
             items = [
@@ -4924,14 +4916,35 @@ def listar_pacientes_calculo_lio(
             if it["cirujano_nombre"] and it["cirujano_nombre"] != "Sin Asignar":
                 cirujanos_set.add(it["cirujano_nombre"])
 
+        # Métricas Globales (Calculadas sobre el conjunto completo de este cirujano/búsqueda)
+        total_global = len(items)
+        pendientes_global = len([it for it in items if not it["lio_calculado"]])
+        calculados_global = len([it for it in items if it["lio_calculado"]])
+        stock_pendiente_global = len([it for it in items if it["lio_calculado"] and not it["lio_stock_reservado"]])
+
+        # Filtrado opcional por estado de cálculo
+        items_filtrados = items
+        if estado_calculo == "pendientes":
+            items_filtrados = [it for it in items if not it["lio_calculado"]]
+        elif estado_calculo == "calculados":
+            items_filtrados = [it for it in items if it["lio_calculado"]]
+        elif estado_calculo == "stock_pendiente":
+            items_filtrados = [it for it in items if it["lio_calculado"] and not it["lio_stock_reservado"]]
+
         return {
             "success": True,
-            "total": len(items),
-            "pendientes_count": len([it for it in items if not it["lio_calculado"]]),
-            "calculados_count": len([it for it in items if it["lio_calculado"]]),
-            "stock_pendiente_count": len([it for it in items if it["lio_calculado"] and not it["lio_stock_reservado"]]),
+            "total": total_global,
+            "pendientes_count": pendientes_global,
+            "calculados_count": calculados_global,
+            "stock_pendiente_count": stock_pendiente_global,
+            "metricas": {
+                "total": total_global,
+                "pendientes": pendientes_global,
+                "calculados": calculados_global,
+                "stock_pendiente": stock_pendiente_global
+            },
             "cirujanos": sorted(list(cirujanos_set)),
-            "pacientes": items
+            "pacientes": items_filtrados
         }
     except Exception as e:
         logger.error(f"Error al listar pacientes para cálculo de LIO: {e}")

@@ -98,7 +98,7 @@ const TORICOS_OPCIONES = [
 ]
 
 export default function CalculoLioPage() {
-  const [pacientes, setPacientes] = useState<any[]>([])
+  const [todosPacientes, setTodosPacientes] = useState<any[]>([])
   const [cirujanos, setCirujanos] = useState<string[]>([])
   const [cirujanoSeleccionado, setCirujanoSeleccionado] = useState<string>('todos')
   const [estadoFiltro, setEstadoFiltro] = useState<string>('todos') // 'todos' | 'pendientes' | 'calculados' | 'stock_pendiente'
@@ -141,11 +141,11 @@ export default function CalculoLioPage() {
     fetchModelos()
   }, [])
 
-  // Cargar pacientes para cálculo de LIO
+  // Cargar pacientes para cálculo de LIO (siempre carga universo completo para calcular métricas consistentes)
   const fetchPacientes = async () => {
     try {
       setCargando(true)
-      let url = `${BACKEND_URL}/api/calculo-lio/pacientes?estado_calculo=${estadoFiltro}`
+      let url = `${BACKEND_URL}/api/calculo-lio/pacientes?estado_calculo=todos`
       if (cirujanoSeleccionado !== 'todos') {
         url += `&cirujano_nombre=${encodeURIComponent(cirujanoSeleccionado)}`
       }
@@ -156,12 +156,13 @@ export default function CalculoLioPage() {
       const res = await fetch(url)
       const data = await res.json()
       if (res.ok && data.success) {
-        setPacientes(data.pacientes || [])
+        const listado = data.pacientes || []
+        setTodosPacientes(listado)
         setCirujanos(data.cirujanos || [])
         
         // Si hay un paciente activo, refrescar sus datos
         if (pacienteActivo) {
-          const act = (data.pacientes || []).find(
+          const act = listado.find(
             (p: any) =>
               (p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
               (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id)
@@ -169,11 +170,11 @@ export default function CalculoLioPage() {
           if (act) {
             setPacienteActivo(act)
           }
-        } else if ((data.pacientes || []).length > 0 && !pacienteActivo) {
-          seleccionarPaciente(data.pacientes[0])
+        } else if (listado.length > 0 && !pacienteActivo) {
+          seleccionarPaciente(listado[0])
         }
       } else {
-        setPacientes([])
+        setTodosPacientes([])
       }
     } catch (e) {
       console.error('Error cargando pacientes para cálculo de LIO:', e)
@@ -184,7 +185,35 @@ export default function CalculoLioPage() {
 
   useEffect(() => {
     fetchPacientes()
-  }, [cirujanoSeleccionado, estadoFiltro])
+  }, [cirujanoSeleccionado, busqueda])
+
+  // Filtrado reactivo en memoria para el listado lateral según tarjeta seleccionada
+  const pacientesFiltrados = useMemo(() => {
+    if (estadoFiltro === 'pendientes') {
+      return todosPacientes.filter((p) => !p.lio_calculado)
+    }
+    if (estadoFiltro === 'calculados') {
+      return todosPacientes.filter((p) => p.lio_calculado)
+    }
+    if (estadoFiltro === 'stock_pendiente') {
+      return todosPacientes.filter((p) => p.lio_calculado && !p.lio_stock_reservado)
+    }
+    return todosPacientes
+  }, [todosPacientes, estadoFiltro])
+
+  // Auto-seleccionar primer paciente del filtro si el activo quedó fuera
+  useEffect(() => {
+    if (pacientesFiltrados.length > 0) {
+      const estaEnFiltro = pacienteActivo && pacientesFiltrados.some(
+        (p) =>
+          (p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
+          (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id)
+      )
+      if (!estaEnFiltro) {
+        seleccionarPaciente(pacientesFiltrados[0])
+      }
+    }
+  }, [pacientesFiltrados])
 
   // Seleccionar paciente para la mesa de trabajo
   const seleccionarPaciente = (p: any) => {
@@ -529,7 +558,7 @@ export default function CalculoLioPage() {
       const data = await res.json()
       if (res.ok && data.success) {
         setPacienteActivo({ ...pacienteActivo, lio_stock_reservado: nuevoEstado })
-        setPacientes((prev) =>
+        setTodosPacientes((prev) =>
           prev.map((p) => (p.turno_id === pacienteActivo.turno_id ? { ...p, lio_stock_reservado: nuevoEstado } : p))
         )
       } else {
@@ -563,15 +592,15 @@ export default function CalculoLioPage() {
     }
   }
 
-  // Métricas de resumen
+  // Métricas de resumen globales (Calculadas sobre todos los pacientes asignados sin mutar con el filtro)
   const metricas = useMemo(() => {
-    const total = pacientes.length
-    const pendientes = pacientes.filter((p) => !p.lio_calculado).length
-    const calculados = pacientes.filter((p) => p.lio_calculado).length
-    const stockPendiente = pacientes.filter((p) => p.lio_calculado && !p.lio_stock_reservado).length
+    const total = todosPacientes.length
+    const pendientes = todosPacientes.filter((p) => !p.lio_calculado).length
+    const calculados = todosPacientes.filter((p) => p.lio_calculado).length
+    const stockPendiente = todosPacientes.filter((p) => p.lio_calculado && !p.lio_stock_reservado).length
 
     return { total, pendientes, calculados, stockPendiente }
-  }, [pacientes])
+  }, [todosPacientes])
 
   return (
     <div className="p-4 md:p-6 lg:p-8 space-y-6 max-w-7xl mx-auto">
@@ -620,14 +649,14 @@ export default function CalculoLioPage() {
         </div>
       </div>
 
-      {/* 2. TARJETAS DE MÉTRICAS */}
+      {/* 2. TARJETAS DE MÉTRICAS GLOBALES (CON NÚMEROS FIJOS Y FILTRADO INSTANTÁNEO) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <button
           type="button"
           onClick={() => setEstadoFiltro('todos')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'todos'
-              ? 'bg-blue-600/10 border-blue-500 text-blue-700 dark:text-blue-300'
+              ? 'bg-blue-600/10 border-blue-500 text-blue-700 dark:text-blue-300 ring-2 ring-blue-500/20'
               : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
@@ -643,7 +672,7 @@ export default function CalculoLioPage() {
           onClick={() => setEstadoFiltro('pendientes')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'pendientes'
-              ? 'bg-amber-600/10 border-amber-500 text-amber-700 dark:text-amber-300'
+              ? 'bg-amber-600/10 border-amber-500 text-amber-700 dark:text-amber-300 ring-2 ring-amber-500/20'
               : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
@@ -661,7 +690,7 @@ export default function CalculoLioPage() {
           onClick={() => setEstadoFiltro('calculados')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'calculados'
-              ? 'bg-emerald-600/10 border-emerald-500 text-emerald-700 dark:text-emerald-300'
+              ? 'bg-emerald-600/10 border-emerald-500 text-emerald-700 dark:text-emerald-300 ring-2 ring-emerald-500/20'
               : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
@@ -679,7 +708,7 @@ export default function CalculoLioPage() {
           onClick={() => setEstadoFiltro('stock_pendiente')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'stock_pendiente'
-              ? 'bg-purple-600/10 border-purple-500 text-purple-700 dark:text-purple-300'
+              ? 'bg-purple-600/10 border-purple-500 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/20'
               : 'bg-[var(--card)] border-[var(--border)] hover:border-slate-400'
           }`}
         >
@@ -695,7 +724,7 @@ export default function CalculoLioPage() {
 
       {/* 3. LAYOUT MAESTRO-DETALLE (COLA QUIRÚRGICA & MESA DE TRABAJO BIOMÉTRICA) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* COLUMNA IZQUIERDA: LISTA DE PACIENTES / COLA */}
+        {/* COLUMNA IZQUIERDA: LISTA DE PACIENTES / COLA FILTRADA */}
         <div className="lg:col-span-4 space-y-3">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -714,14 +743,14 @@ export default function CalculoLioPage() {
                 <Loader2 size={20} className="animate-spin text-cyan-600 mx-auto" />
                 <span>Cargando pacientes quirúrgicos...</span>
               </div>
-            ) : pacientes.length === 0 ? (
+            ) : pacientesFiltrados.length === 0 ? (
               <div className="p-8 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-3xl space-y-1">
                 <FileText size={24} className="mx-auto text-slate-400 opacity-40" />
-                <p className="font-bold text-[var(--foreground)]">No hay cirugías pendientes</p>
-                <p className="text-[11px]">Todos los cálculos de LIO están al día.</p>
+                <p className="font-bold text-[var(--foreground)]">No hay cirugías en este filtro</p>
+                <p className="text-[11px]">Prueba seleccionando otra tarjeta de estado superior.</p>
               </div>
             ) : (
-              pacientes.map((p) => {
+              pacientesFiltrados.map((p) => {
                 const esActivo =
                   pacienteActivo &&
                   ((p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
