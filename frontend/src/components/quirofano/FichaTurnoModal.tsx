@@ -36,6 +36,8 @@ import {
   UploadCloud
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import { Printer } from 'lucide-react'
 
 interface FichaTurnoModalProps {
   turno?: any
@@ -76,6 +78,7 @@ export default function FichaTurnoModal({
   const [modelosLio, setModelosLio] = useState<any[]>([])
   // Modal flotante para Administrar Modelos de LIO sin salir de la ficha
   const [mostrarModalConfigLio, setMostrarModalConfigLio] = useState(false)
+  const [mostrarModalPulsera, setMostrarModalPulsera] = useState(false)
   const [nuevoModeloLio, setNuevoModeloLio] = useState({
     marca: '',
     modelo: '',
@@ -1535,6 +1538,14 @@ export default function FichaTurnoModal({
             </button>
           </div>
         </div>
+                {/* MODAL IMPRIMIR PULSERA TÉRMICA TSC */}
+        {mostrarModalPulsera && turno?.id && (
+          <ModalImprimirPulsera
+            isOpen={mostrarModalPulsera}
+            onClose={() => setMostrarModalPulsera(false)}
+            turnoId={turno.id}
+          />
+        )}
         {/* MODAL RÁPIDO PARA REGISTRAR / ADMINISTRAR MODELOS DE LIO */}
         {mostrarModalConfigLio && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">

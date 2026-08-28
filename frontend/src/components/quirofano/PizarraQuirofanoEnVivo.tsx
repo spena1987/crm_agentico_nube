@@ -41,6 +41,11 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
+import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
+import { useQRScannerListener } from '@/hooks/useQRScannerListener'
+import { Printer, QrCode, Camera } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
@@ -63,6 +68,20 @@ const NOMBRES_ESTADOS: Record<string, string> = {
 export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofanoEnVivoProps) {
   const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10))
   const [quirofanoFiltro, setQuirofanoFiltro] = useState<string>('todos')
+
+  // Estados de Pulsera Térmica y Escáner QR
+  const [pulseraTurnoId, setPulseraTurnoId] = useState<string | null>(null)
+  const [scanVerifTurnoId, setScanVerifTurnoId] = useState<string | null>(null)
+  const [scanVerifRawQR, setScanVerifRawQR] = useState<string>('')
+  const [mostrarModalCamara, setMostrarModalCamara] = useState<boolean>(false)
+
+  // Listener global de escáner QR en Pizarra de Quirófano
+  useQRScannerListener({
+    onScan: (raw, tId) => {
+      setScanVerifRawQR(raw)
+      setScanVerifTurnoId(tId)
+    }
+  })
   const [quirofanos, setQuirofanos] = useState<any[]>([])
   const [turnos, setTurnos] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
@@ -566,6 +585,16 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               </option>
             ))}
           </select>
+
+          <button
+            type="button"
+            onClick={() => setMostrarModalCamara(true)}
+            className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            title="Escanear pulsera QR con cámara o lector"
+          >
+            <Camera size={15} />
+            <span className="hidden sm:inline">Escanear QR</span>
+          </button>
 
           <button
             onClick={fetchTurnosDia}
@@ -1253,6 +1282,40 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             await handleCambiarEstado(tId, 'en_operacion')
           }}
           procesando={procesandoId === turnoParaPausaOms.id}
+        />
+      )}
+      {/* Modales de Pulsera Térmica y Escáner QR */}
+      {pulseraTurnoId && (
+        <ModalImprimirPulsera
+          isOpen={!!pulseraTurnoId}
+          onClose={() => setPulseraTurnoId(null)}
+          turnoId={pulseraTurnoId}
+          onPulseraImpresa={() => fetchTurnosDia()}
+        />
+      )}
+
+      {scanVerifTurnoId && (
+        <ModalVerificacionQR
+          isOpen={!!scanVerifTurnoId}
+          onClose={() => {
+            setScanVerifTurnoId(null)
+            setScanVerifRawQR('')
+          }}
+          rawQR={scanVerifRawQR}
+          turnoId={scanVerifTurnoId}
+          estacion="Pizarra de Quirófano en Vivo"
+          onEstadoActualizado={() => fetchTurnosDia()}
+        />
+      )}
+
+      {mostrarModalCamara && (
+        <ModalEscanearCamara
+          isOpen={mostrarModalCamara}
+          onClose={() => setMostrarModalCamara(false)}
+          onScanExitoso={(raw, tId) => {
+            setScanVerifRawQR(raw)
+            setScanVerifTurnoId(tId)
+          }}
         />
       )}
     </div>

@@ -28,6 +28,11 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
+import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
+import { useQRScannerListener } from '@/hooks/useQRScannerListener'
+import { Printer, QrCode, Camera } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 
 interface TurnoRecepcion {
@@ -90,6 +95,20 @@ export default function RecepcionPacientesDia() {
   const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['todos'])
   const [ultimoEstadoClickeado, setUltimoEstadoClickeado] = useState<string>('todos')
   const [busqueda, setBusqueda] = useState<string>('')
+
+  // Estados de Pulsera Térmica y Escáner QR
+  const [pulseraTurnoId, setPulseraTurnoId] = useState<string | null>(null)
+  const [scanVerifTurnoId, setScanVerifTurnoId] = useState<string | null>(null)
+  const [scanVerifRawQR, setScanVerifRawQR] = useState<string>('')
+  const [mostrarModalCamara, setMostrarModalCamara] = useState<boolean>(false)
+
+  // Listener global de escáner QR (Pistolas USB / Bluetooth)
+  useQRScannerListener({
+    onScan: (raw, tId) => {
+      setScanVerifRawQR(raw)
+      setScanVerifTurnoId(tId)
+    }
+  })
 
   // Restaurar estado de filtros desde URL o localStorage al cargar
   useEffect(() => {
@@ -445,6 +464,16 @@ export default function RecepcionPacientesDia() {
 
           <button
             type="button"
+            onClick={() => setMostrarModalCamara(true)}
+            className="px-3 py-1.5 bg-neutral-950 hover:bg-neutral-800 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm shrink-0"
+            title="Escanear pulsera QR con cámara o pistola"
+          >
+            <Camera size={14} />
+            <span className="hidden sm:inline">Escanear QR</span>
+          </button>
+
+          <button
+            type="button"
             onClick={fetchTurnosHoy}
             className="p-2 bg-neutral-950 hover:bg-neutral-800 border border-[var(--border)] rounded-xl text-gray-300 hover:text-white transition shadow-sm shrink-0"
             title="Refrescar listado"
@@ -770,6 +799,16 @@ export default function RecepcionPacientesDia() {
                             <Send size={11} />
                             <span>Reenviar WhatsApp</span>
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPulseraTurnoId(t.id)}
+                            className="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
+                            title="Imprimir pulsera identificatoria en TSC TDP-225"
+                          >
+                            <Printer size={12} />
+                            <span>Pulsera QR</span>
+                          </button>
                         </div>
                       </div>
                     ) : (
@@ -834,6 +873,40 @@ export default function RecepcionPacientesDia() {
         </div>
       )}
 
+      {/* Modales de Pulsera Térmica y Escáner QR */}
+      {pulseraTurnoId && (
+        <ModalImprimirPulsera
+          isOpen={!!pulseraTurnoId}
+          onClose={() => setPulseraTurnoId(null)}
+          turnoId={pulseraTurnoId}
+          onPulseraImpresa={() => fetchTurnosHoy()}
+        />
+      )}
+
+      {scanVerifTurnoId && (
+        <ModalVerificacionQR
+          isOpen={!!scanVerifTurnoId}
+          onClose={() => {
+            setScanVerifTurnoId(null)
+            setScanVerifRawQR('')
+          }}
+          rawQR={scanVerifRawQR}
+          turnoId={scanVerifTurnoId}
+          estacion="Recepción de Pacientes"
+          onEstadoActualizado={() => fetchTurnosHoy()}
+        />
+      )}
+
+      {mostrarModalCamara && (
+        <ModalEscanearCamara
+          isOpen={mostrarModalCamara}
+          onClose={() => setMostrarModalCamara(false)}
+          onScanExitoso={(raw, tId) => {
+            setScanVerifRawQR(raw)
+            setScanVerifTurnoId(tId)
+          }}
+        />
+      )}
     </div>
   )
 }

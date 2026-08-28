@@ -129,11 +129,13 @@ from app.db import (
     crear_item_catalogo_maestro,
     actualizar_item_catalogo_maestro,
     eliminar_item_catalogo_maestro,
-    get_turnos_dia_ejecucion,
     cambiar_estado_turno_quirofano,
     subir_consentimiento_turno_a_geclisa,
     subir_parte_quirurgico_turno_a_geclisa,
-    desvincular_documento_geclisa_turno
+    desvincular_documento_geclisa_turno,
+    obtener_datos_pulsera_turno,
+    marcar_pulsera_impresa,
+    procesar_escaneo_qr_turno
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (
@@ -3749,6 +3751,54 @@ def eliminar_turno(turno_id: str):
     except Exception as e:
         logger.error(f"Error al eliminar turno {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# TRAZABILIDAD QUIRÚRGICA POR CÓDIGO QR & PULSERAS TÉRMICAS
+# ====================================================================
+
+class EscanearQRRequest(BaseModel):
+    codigo_qr: str
+    estacion: Optional[str] = "General"
+    usuario_crm: Optional[str] = None
+    accion_deseada: Optional[str] = None
+
+@app.post("/api/turnos-quirofano/escanear-qr")
+def escanear_qr_turno_api(payload: EscanearQRRequest):
+    """
+    Procesa la lectura de un código QR de pulsera médica para identificación
+    inequívoca del paciente y transición en tiempo real de estadios quirúrgicos.
+    """
+    res = procesar_escaneo_qr_turno(
+        codigo_qr=payload.codigo_qr,
+        estacion=payload.estacion,
+        usuario_crm=payload.usuario_crm,
+        accion_deseada=payload.accion_deseada
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Error al procesar el código QR.")
+    return res
+
+@app.get("/api/turnos-quirofano/{turno_id}/datos-pulsera")
+def obtener_datos_pulsera_api(turno_id: str):
+    """
+    Retorna los datos clínicos consolidados para la impresión térmica de la pulsera
+    identificatoria en la impresora TSC TDP-225.
+    """
+    res = obtener_datos_pulsera_turno(turno_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=404, detail=res.get("error") or "Turno no encontrado.")
+    return res
+
+@app.post("/api/turnos-quirofano/{turno_id}/marcar-pulsera-impresa")
+def marcar_pulsera_impresa_api(turno_id: str, payload: Optional[Dict[str, Any]] = None):
+    """
+    Marca que la pulsera identificatoria ha sido impresa y colocada al paciente.
+    """
+    user = (payload or {}).get("usuario_crm") if isinstance(payload, dict) else None
+    res = marcar_pulsera_impresa(turno_id, usuario_crm=user)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Error al registrar impresión de pulsera.")
+    return res
 
 # Disparo de Consentimiento por WhatsApp
 @app.post("/api/turnos-quirofano/{turno_id}/enviar-consentimiento-wa")

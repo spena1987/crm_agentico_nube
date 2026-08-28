@@ -4554,3 +4554,269 @@ def eliminar_item_catalogo_maestro(item_id: str, fisico: bool = False) -> bool:
         logger.error(f"Error al eliminar item #{item_id} de catalogo maestro: {e}")
         return False
 
+# ====================================================================
+# TRAZABILIDAD QUIRÚRGICA INEQUÍVOCA Y PULSERAS TÉRMICAS QR
+# ====================================================================
+
+def extraer_turno_id_de_qr(codigo_qr: str) -> Optional[str]:
+    """
+    Decodifica de forma flexible el ID de turno desde múltiples formatos de QR:
+    - 'MEDCRM:QX:<uuid>'
+    - 'QX-<uuid>'
+    - 'https://...?t=<uuid>'
+    - '<uuid>'
+    """
+    if not codigo_qr:
+        return None
+    raw = codigo_qr.strip()
+    
+    # 1. Prefijo institucional MEDCRM:QX:
+    if raw.upper().startswith("MEDCRM:QX:"):
+        partes = raw.split(":")
+        if len(partes) >= 3:
+            return partes[2].strip()
+            
+    # 2. Formato simple QX-
+    if raw.upper().startswith("QX-"):
+        return raw[3:].strip()
+        
+    # 3. URL con query param ?t= o ?turno_id=
+    if "http" in raw and ("?t=" in raw or "?turno_id=" in raw):
+        import urllib.parse
+        parsed = urllib.parse.urlparse(raw)
+        qs = urllib.parse.parse_qs(parsed.query)
+        if "t" in qs and qs["t"]:
+            return qs["t"][0].strip()
+        if "turno_id" in qs and qs["turno_id"]:
+            return qs["turno_id"][0].strip()
+            
+    # 4. Asumir UUID directo si coincide con longitud de UUID (36 chars)
+    if len(raw) == 36 and raw.count("-") == 4:
+        return raw
+        
+    return raw
+
+def obtener_datos_pulsera_turno(turno_id: str) -> Dict[str, Any]:
+    """
+    Recupera y formatea los datos clínicos normalizados para la impresión térmica
+    de la pulsera identificatoria en la impresora TSC TDP-225.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Sin conexión o ID de turno inválido."}
+    try:
+        resp = supabase.table("turnos_quirofano").select(
+            "*, pacientes(*), quirofanos(nombre, codigo), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo)"
+        ).eq("id", turno_id).limit(1).execute()
+        
+        if not resp.data or len(resp.data) == 0:
+            return {"success": False, "error": f"Turno {turno_id} no encontrado."}
+            
+        turno = resp.data[0]
+        pac = turno.get("pacientes") or {}
+        asesoria = turno.get("asesorias_quirurgicas") or {}
+        
+        # Calcular edad si tiene fecha de nacimiento
+        edad_str = ""
+        fn = pac.get("fecha_nacimiento")
+        if fn:
+            try:
+                from datetime import date
+                fn_date = date.fromisoformat(str(fn)[:10])
+                today = date.today()
+                edad = today.year - fn_date.year - ((today.month, today.day) < (fn_date.month, fn_date.day))
+                edad_str = f"{edad} años"
+            except Exception:
+                pass
+                
+        ojo = turno.get("ojo") or "OD"
+        ojo_texto = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+        
+        practica_nombre = turno.get("practica_nombre") or asesoria.get("practica_nombre") or "Cirugía Oftalmológica"
+        practica_codigo = turno.get("practica_codigo") or asesoria.get("practica_codigo") or ""
+        
+        qr_payload = f"MEDCRM:QX:{turno['id']}"
+        
+        return {
+            "success": True,
+            "turno_id": turno["id"],
+            "qr_payload": qr_payload,
+            "paciente": {
+                "id": pac.get("id"),
+                "nombre": pac.get("nombre") or turno.get("paciente_nombre") or "PACIENTE SIN NOMBRE",
+                "dni": pac.get("dni") or turno.get("paciente_dni") or "S/D",
+                "edad": edad_str,
+                "fecha_nacimiento": pac.get("fecha_nacimiento"),
+                "obra_social": pac.get("obra_social") or turno.get("obra_social") or "Particular",
+                "nro_afiliado": pac.get("nro_afiliado") or "",
+                "telefono": pac.get("telefono") or turno.get("paciente_telefono") or "S/D",
+                "alergias": pac.get("alergias") or "Sin alergias declaradas"
+            },
+            "cirugia": {
+                "fecha": turno.get("fecha_cirugia"),
+                "hora": str(turno.get("hora_inicio") or "")[:5],
+                "ojo": ojo,
+                "ojo_texto": ojo_texto,
+                "practica_codigo": practica_codigo,
+                "practica_nombre": practica_nombre,
+                "cirujano_nombre": turno.get("cirujano_nombre") or "No asignado",
+                "quirofano_nombre": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano",
+                "tipo_anestesia": turno.get("tipo_anestesia") or "Tópica + Sedación",
+                "lleva_lente": turno.get("lleva_lente", False),
+                "lente_tipo": turno.get("lente_tipo"),
+                "lente_dioptria": turno.get("lente_dioptria"),
+                "es_torico": turno.get("es_torico", False),
+                "lente_torico_valor": turno.get("lente_torico_valor"),
+                "lente_torico_eje": turno.get("lente_torico_eje"),
+                "lente_lote": turno.get("lente_lote")
+            },
+            "estado": turno.get("estado"),
+            "pulsera_impresa": bool(turno.get("pulsera_impresa")),
+            "pulsera_impresa_at": turno.get("pulsera_impresa_at")
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo datos de pulsera para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+def marcar_pulsera_impresa(turno_id: str, usuario_crm: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Registra que la pulsera térmica ha sido impresa exitosamente.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "Parámetros inválidos."}
+    try:
+        now_iso = datetime.now().isoformat()
+        upd = {
+            "pulsera_impresa": True,
+            "pulsera_impresa_at": now_iso,
+            "updated_at": "now()"
+        }
+        supabase.table("turnos_quirofano").update(upd).eq("id", turno_id).execute()
+        
+        # Registrar log
+        try:
+            supabase.table("system_logs").insert({
+                "action": "IMPRESION_PULSERA_QR",
+                "description": f"Pulsera térmica QR impresa para turno {turno_id} por {usuario_crm or 'Operador'}",
+                "level": "INFO",
+                "created_at": "now()"
+            }).execute()
+        except Exception:
+            pass
+            
+        return {"success": True, "turno_id": turno_id, "pulsera_impresa_at": now_iso}
+    except Exception as e:
+        logger.error(f"Error marcando pulsera impresa para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+def procesar_escaneo_qr_turno(
+    codigo_qr: str,
+    estacion: Optional[str] = None,
+    usuario_crm: Optional[str] = None,
+    accion_deseada: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Procesa un escaneo de pulsera QR para la identificación inequívoca y
+    el avance automático de estadios quirúrgicos en tiempo real.
+    """
+    if not supabase or not codigo_qr:
+        return {"success": False, "error": "Código QR no proporcionado o base de datos no disponible."}
+        
+    turno_id = extraer_turno_id_de_qr(codigo_qr)
+    if not turno_id:
+        return {"success": False, "error": "No se pudo extraer el ID del turno desde el código QR."}
+        
+    try:
+        resp = supabase.table("turnos_quirofano").select(
+            "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo)"
+        ).eq("id", turno_id).limit(1).execute()
+        
+        if not resp.data or len(resp.data) == 0:
+            return {"success": False, "error": f"No se encontró ningún turno quirúrgico con el ID {turno_id}."}
+            
+        turno = resp.data[0]
+        estado_anterior = turno.get("estado") or "programado"
+        pac = turno.get("pacientes") or {}
+        
+        # Determinar nuevo estado
+        nuevo_estado = estado_anterior
+        if accion_deseada and accion_deseada in ["programado", "en_espera", "en_operacion", "operado", "cancelado"]:
+            nuevo_estado = accion_deseada
+        else:
+            # Avance automático en cascada según etapa actual
+            if estado_anterior == "programado":
+                nuevo_estado = "en_espera"
+            elif estado_anterior == "en_espera":
+                nuevo_estado = "en_operacion"
+            elif estado_anterior == "en_operacion":
+                nuevo_estado = "operado"
+            elif estado_anterior == "operado":
+                # Ya operado: se mantiene en operado y se informa
+                nuevo_estado = "operado"
+                
+        # Actualizar en Supabase
+        now_iso = datetime.now().isoformat()
+        update_payload: Dict[str, Any] = {
+            "estado": nuevo_estado,
+            "updated_at": "now()"
+        }
+        
+        # Registrar timestamps de auditoría de trazabilidad
+        if nuevo_estado == "en_espera" and estado_anterior != "en_espera":
+            update_payload["llegada_at"] = now_iso
+        elif nuevo_estado == "en_operacion" and estado_anterior != "en_operacion":
+            update_payload["inicio_quirofano_at"] = now_iso
+        elif nuevo_estado == "operado" and estado_anterior != "operado":
+            update_payload["fin_quirofano_at"] = now_iso
+            
+        res_upd = supabase.table("turnos_quirofano").update(update_payload).eq("id", turno_id).execute()
+        turno_actualizado = res_upd.data[0] if res_upd.data else {**turno, **update_payload}
+        
+        # Si tiene asesoría vinculada, reflejar estado
+        if turno.get("asesoria_id"):
+            try:
+                as_estado = "en_espera" if nuevo_estado == "en_espera" else "en_cirugia" if nuevo_estado == "en_operacion" else "operado" if nuevo_estado == "operado" else None
+                if as_estado:
+                    supabase.table("asesorias_quirurgicas").update({"estado": as_estado, "updated_at": "now()"}).eq("id", turno["asesoria_id"]).execute()
+            except Exception as e_as:
+                logger.warning(f"Aviso actualizando asesoria {turno.get('asesoria_id')} desde escaneo QR: {e_as}")
+                
+        # Registrar log del evento
+        try:
+            desc = f"Escaneo QR Pulsera: Paciente {pac.get('nombre')} ({turno.get('ojo')}) avanzado de '{estado_anterior}' a '{nuevo_estado}' en estación '{estacion or 'General'}' por {usuario_crm or 'Operador'}."
+            supabase.table("system_logs").insert({
+                "action": "ESCANEO_QR_QUIROFANO",
+                "description": desc,
+                "level": "INFO",
+                "created_at": "now()"
+            }).execute()
+        except Exception:
+            pass
+            
+        ojo = turno.get("ojo") or "OD"
+        ojo_texto = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+        
+        return {
+            "success": True,
+            "mensaje": f"Paciente {pac.get('nombre')} verificado. Estado actualizado a '{nuevo_estado}'.",
+            "turno": turno_actualizado,
+            "estado_anterior": estado_anterior,
+            "nuevo_estado": nuevo_estado,
+            "estacion": estacion or "General",
+            "seguridad": {
+                "paciente_nombre": pac.get("nombre") or turno.get("paciente_nombre"),
+                "paciente_dni": pac.get("dni") or turno.get("paciente_dni"),
+                "ojo": ojo,
+                "ojo_texto": ojo_texto,
+                "practica_nombre": turno.get("practica_nombre"),
+                "cirujano_nombre": turno.get("cirujano_nombre"),
+                "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano",
+                "lleva_lente": turno.get("lleva_lente", False),
+                "lente_info": f"{turno.get('lente_tipo') or ''} ({turno.get('lente_dioptria') or ''} D) Lote: {turno.get('lente_lote') or 'S/D'}" if turno.get("lleva_lente") else "No requiere LIO",
+                "alergias": pac.get("alergias") or "Sin alergias declaradas"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error procesando escaneo QR para turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+
