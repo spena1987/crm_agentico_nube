@@ -1555,20 +1555,24 @@ class GeclisaClient:
 
     def obtener_resumen_stock_lotes(self, ele_id: int) -> Dict[str, Any]:
         """
-        Retorna un resumen consolidado de stock en Quirófano (dep 1) y Consignación (dep 3) con sus lotes activos.
+        Retorna un resumen consolidado de stock en Quirófano (dep 1), Consignación (dep 3) y Farmacia/Almacén (dep 4) con sus lotes activos.
         """
         stock_quirofano = self.obtener_stock_elemento(ele_id, dep_id=1)
         stock_consignacion = self.obtener_stock_elemento(ele_id, dep_id=3)
+        stock_farmacia = self.obtener_stock_elemento(ele_id, dep_id=4)
         lotes_quirofano = self.obtener_lotes_elemento(ele_id, dep_id=1)
         lotes_consignacion = self.obtener_lotes_elemento(ele_id, dep_id=3)
+        lotes_farmacia = self.obtener_lotes_elemento(ele_id, dep_id=4)
 
         return {
             "ele_id": ele_id,
             "stock_quirofano": stock_quirofano,
             "stock_consignacion": stock_consignacion,
-            "stock_total": stock_quirofano + stock_consignacion,
+            "stock_farmacia": stock_farmacia,
+            "stock_total": stock_quirofano + stock_consignacion + stock_farmacia,
             "lotes_quirofano": lotes_quirofano,
-            "lotes_consignacion": lotes_consignacion
+            "lotes_consignacion": lotes_consignacion,
+            "lotes_farmacia": lotes_farmacia
         }
 
     # ====================================================================

@@ -4624,14 +4624,34 @@ def eliminar_item_catalogo_maestro_endpoint(item_id: str, fisico: bool = False):
 @app.post("/api/catalogo-maestro/sincronizar-geclisa")
 def sincronizar_catalogo_maestro_con_geclisa_endpoint():
     """
-    Cruza los registros del catálogo maestro contra Geclisa por GTIN o código comercial y asocia los eleId.
+    Cruza los registros del catálogo maestro contra Geclisa por GTIN o código comercial y asocia los eleId (Modo Estricto B).
     """
     try:
         from app.services.geclisa_client import geclisa_client
-        elementos_geclisa = geclisa_client.buscar_elementos("")
+        
+        # 1. Barrido exhaustivo multi-prefijo en Geclisa
+        terminos_busqueda = [
+            "0038065", "38065", "CLAREON", "PANOPTIX", "VIVITY", "SN60WF", "ACRYSOF", "AU00T0",
+            "TFNT", "CNA0", "SY60WF", "MA60AC", "MN60", "SND1", "SV25", "DFT", "PXY", "CNW", "CNA",
+            "ALCON", "TECNIS", "ICB", "ZCB", "DCB", "ZEISS", "LISA", "RAYNER", "EMV", "600U",
+            "HOYA", "BAUSCH", "ANILLO", "VISCO", "PROVISC", "DUOVISC", "HEALON", "DISCOVISC", "GAS"
+        ]
+
+        elementos_dict = {}
+        for term in terminos_busqueda:
+            try:
+                res = geclisa_client.buscar_elementos(term, limite=200)
+                for el in res:
+                    if el.get("eleId"):
+                        elementos_dict[el["eleId"]] = el
+            except Exception as e_t:
+                logger.warning(f"Error buscando término '{term}' en Geclisa: {e_t}")
+
+        elementos_geclisa = list(elementos_dict.values())
         if not elementos_geclisa:
             return {"success": True, "total_sincronizados": 0, "mensaje": "No se encontraron elementos en Geclisa."}
 
+        # 2. Indexar elementos de Geclisa por GTIN a 14 y 12 dígitos
         ele_map_gtin = {}
         for el in elementos_geclisa:
             g = str(el.get("eleCod") or "").strip()
@@ -4639,27 +4659,54 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
                 ele_map_gtin[g.zfill(14)] = el
                 ele_map_gtin[g.lstrip("0")] = el
 
-        cat_res = supabase.table("catalogo_maestro_gtin").select("id, gtin_14, gtin_12, modelo_lio_id, dioptria, es_torico, torico_valor").execute()
-        items_cat = cat_res.data or []
+        # 3. Traer todos los ítems de catalogo_maestro_gtin (con paginación interna)
+        todos_items = []
+        offset = 0
+        while True:
+            cat_res = supabase.table("catalogo_maestro_gtin").select("id, gtin_14, gtin_12, modelo_lio_id, familia_nombre, dioptria, es_torico, torico_valor, nombre_producto").range(offset, offset + 999).execute()
+            rows = cat_res.data or []
+            todos_items.extend(rows)
+            if len(rows) < 1000:
+                break
+            offset += 1000
+
         sincronizados = 0
 
-        for it in items_cat:
-            g14 = it.get("gtin_14")
-            match = ele_map_gtin.get(g14) or (ele_map_gtin.get(it.get("gtin_12")) if it.get("gtin_12") else None)
+        # Traer familias de modelos_lio para asignación automática si no está vinculado
+        fam_res = supabase.table("modelos_lio").select("id, modelo, marca").execute()
+        familias_crm = fam_res.data or []
+
+        for it in todos_items:
+            g14 = str(it.get("gtin_14") or "").strip()
+            g12 = str(it.get("gtin_12") or "").strip()
+            match = ele_map_gtin.get(g14) or (ele_map_gtin.get(g12) if g12 else None)
+
             if match:
                 ele_id = match.get("eleId")
                 ele_cod = match.get("eleCod")
                 ele_nom = match.get("eleNombre")
+
+                # Actualizar registro en catalogo_maestro_gtin
                 supabase.table("catalogo_maestro_gtin").update({
                     "geclisa_ele_id": ele_id,
                     "geclisa_ele_cod": ele_cod,
                     "updated_at": "now()"
                 }).eq("id", it["id"]).execute()
 
-                if it.get("modelo_lio_id") and it.get("dioptria") is not None:
+                # Vincular en modelos_lio_items si corresponde
+                mod_id = it.get("modelo_lio_id")
+                if not mod_id and it.get("familia_nombre"):
+                    # Intentar buscar familia por nombre aproximado
+                    fn = str(it["familia_nombre"]).lower()
+                    for f in familias_crm:
+                        if f["modelo"].lower() in fn or fn in f["modelo"].lower() or ("vivity" in fn and "vivity" in f["modelo"].lower()) or ("panoptix" in fn and "panoptix" in f["modelo"].lower()):
+                            mod_id = f["id"]
+                            break
+
+                if mod_id and it.get("dioptria") is not None:
                     try:
                         crear_modelo_lio_item({
-                            "modelo_lio_id": it["modelo_lio_id"],
+                            "modelo_lio_id": mod_id,
                             "geclisa_ele_id": ele_id,
                             "geclisa_ele_cod": ele_cod,
                             "geclisa_nombre": ele_nom,
@@ -4669,15 +4716,18 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
                         })
                     except Exception:
                         pass
+
                 sincronizados += 1
 
         return {
             "success": True,
             "total_geclisa": len(elementos_geclisa),
-            "total_catalogo": len(items_cat),
+            "total_catalogo": len(todos_items),
             "total_sincronizados": sincronizados
         }
     except Exception as e:
+        logger.error(f"Error en sincronizacion maestro Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
         logger.error(f"Error en sincronizacion maestro Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
