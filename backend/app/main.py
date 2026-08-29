@@ -136,7 +136,8 @@ from app.db import (
     desvincular_documento_geclisa_turno,
     obtener_datos_pulsera_turno,
     marcar_pulsera_impresa,
-    procesar_escaneo_qr_turno
+    procesar_escaneo_qr_turno,
+    get_turnos_dia_ejecucion
 )
 from app.agent import procesar_mensaje_agente, transcribir_audio_con_gemini
 from app.services.copilot_service import (

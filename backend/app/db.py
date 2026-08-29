@@ -3061,6 +3061,7 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
                     
             c["dias_sin_contacto"] = max(0, dias_sin_contacto)
             c["es_critico"] = dias_sin_contacto >= sla_critico
+            c["es_alerta"] = dias_sin_contacto >= sla_alerta and not c["es_critico"]
             # Código Institucional de Caso
             chk_pipe = c.get("checklist_prequirurgico") or {}
             c["codigo_caso"] = chk_pipe.get("_codigo_caso") or c.get("codigo_caso") or "QX-26-0001"

@@ -619,7 +619,7 @@ export default function PipelineQuirurgicoPage() {
               Monto en Cotización (ARS)
             </span>
             <p className="text-lg font-black text-white font-mono">
-              $ {metricas.total_monto_ars.toLocaleString('es-AR')}
+              $ {(metricas?.total_monto_ars || 0).toLocaleString('es-AR')}
             </p>
             <span className="text-[10px] text-gray-500 block">
               En casos activos de asesoramiento
@@ -633,7 +633,7 @@ export default function PipelineQuirurgicoPage() {
               Monto en Cotización (USD)
             </span>
             <p className="text-lg font-black text-blue-300 font-mono">
-              USD {metricas.total_monto_usd.toLocaleString('es-AR')}
+              USD {(metricas?.total_monto_usd || 0).toLocaleString('es-AR')}
             </p>
             <span className="text-[10px] text-gray-500 block">
               En moneda extranjera
