@@ -475,6 +475,11 @@ function ProgramacionQuirurgicaContent() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-500/40">
+                              {c.codigo_turno || (c.codigo_caso ? (c.sub_ojo ? `${c.codigo_caso}-${c.sub_ojo}` : `${c.codigo_caso}-${c.ojo || 'OD'}`) : 'QX-26-0012')}
+                            </span>
+                          </div>
                           <p className="text-xs font-bold text-[var(--foreground)]">{pac.nombre || 'Paciente'}</p>
                           <p className="text-[11px] text-[var(--secondary)] font-mono">DNI: {pac.dni || 'S/D'}</p>
                         </div>

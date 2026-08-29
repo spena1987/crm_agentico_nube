@@ -61,22 +61,21 @@ export default function CasoAcordeonHeader({
           : 'bg-neutral-900/50 hover:bg-neutral-900/80'
       }`}
     >
-      {/* Lado Izquierdo: Número de caso, Título de Práctica y Especialista */}
+      {/* Lado Izquierdo: Número Institucional QX, Lateralidad, Título de Práctica y Especialista */}
       <div className="flex items-start md:items-center gap-3 min-w-0">
-        <div
-          className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 shadow-sm border ${
-            esCasoCerrado
-              ? caso.estado === 'operado'
-                ? 'bg-teal-950 text-teal-300 border-teal-800'
-                : 'bg-red-950 text-red-300 border-red-800'
-              : 'bg-blue-600/15 text-blue-400 border-blue-500/30'
-          }`}
-        >
-          {esCasoCerrado ? (
-            <Lock size={13} />
-          ) : (
-            `#${index + 1}`
-          )}
+        <div className="shrink-0 flex items-center gap-1">
+          <div
+            className={`px-2.5 py-1 rounded-xl flex items-center gap-1.5 font-bold font-mono text-xs shadow-sm border ${
+              esCasoCerrado
+                ? caso.estado === 'operado'
+                  ? 'bg-teal-950 text-teal-300 border-teal-800'
+                  : 'bg-red-950 text-red-300 border-red-800'
+                : 'bg-blue-950/90 text-blue-300 border-blue-500/50'
+            }`}
+          >
+            {esCasoCerrado ? <Lock size={12} className="text-teal-400" /> : <Tag size={12} className="text-blue-400" />}
+            <span className="tracking-wide">{caso.codigo_caso || (caso.checklist_prequirurgico as any)?._codigo_caso || `QX-26-${String(index + 1).padStart(4, '0')}`}</span>
+          </div>
         </div>
 
         <div className="min-w-0">
@@ -87,6 +86,18 @@ export default function CasoAcordeonHeader({
             {caso.practica_codigo && (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-gray-400 border border-[var(--border)]">
                 {caso.practica_codigo}
+              </span>
+            )}
+            {/* Badge de Ojo */}
+            {caso.ojo && (
+              <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border font-mono ${
+                caso.ojo === 'OD'
+                  ? 'bg-blue-950/80 text-blue-300 border-blue-500/40'
+                  : caso.ojo === 'OI'
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40'
+                  : 'bg-purple-950/80 text-purple-300 border-purple-500/40'
+              }`}>
+                {caso.ojo === 'OD' ? '👁️ OD' : caso.ojo === 'OI' ? '👁️ OI' : '👁️👁️ AO'}
               </span>
             )}
             {esCasoCerrado && (

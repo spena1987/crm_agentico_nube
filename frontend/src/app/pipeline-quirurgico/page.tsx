@@ -51,6 +51,8 @@ interface PacienteData {
 
 interface AsesoriaCasoPipeline {
   id: string
+  codigo_caso?: string
+  ojo?: string
   paciente_id: string
   pacientes?: PacienteData | null
   practica_codigo?: string | null
@@ -378,9 +380,11 @@ export default function PipelineQuirurgicoPage() {
     const cirujano = (caso.medico_cirujano_nombre || '').toLowerCase()
     const motivo = (caso.motivo_cancelacion || '').toLowerCase()
     const os = (caso.cobertura_obra_social || caso.pacientes?.obra_social || '').toLowerCase()
+    const codigo = (caso.codigo_caso || '').toLowerCase()
 
     const matchTexto =
       !q ||
+      codigo.includes(q) ||
       pacNombre.includes(q) ||
       pacDni.includes(q) ||
       cirugia.includes(q) ||
@@ -1041,6 +1045,17 @@ export default function PipelineQuirurgicoPage() {
                           }`}
                         >
                           {/* Cabecera de la Tarjeta */}
+                          <div className="flex items-center justify-between gap-1 mb-1">
+                            <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-950/90 text-blue-300 border border-blue-500/40">
+                              {caso.codigo_caso || 'QX-26-0001'}
+                            </span>
+                            {caso.ojo && (
+                              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 border border-[var(--border)]">
+                                {caso.ojo === 'AO' ? 'AO' : caso.ojo}
+                              </span>
+                            )}
+                          </div>
+
                           <div className="flex items-center justify-between gap-1.5">
                             <Link
                               href={`/pacientes?id=${caso.paciente_id}`}
@@ -1271,13 +1286,18 @@ export default function PipelineQuirurgicoPage() {
                   >
                     {/* Header Tarjeta Cerrada */}
                     <div className="flex items-center justify-between gap-2">
-                      <Link
-                        href={`/pacientes?id=${caso.paciente_id}`}
-                        className="text-sm font-bold text-white hover:text-blue-400 transition-colors flex items-center gap-1.5 truncate"
-                      >
-                        <span className="truncate">{pac?.nombre || 'Paciente'}</span>
-                        <ExternalLink size={12} className="text-blue-400 shrink-0" />
-                      </Link>
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 border border-[var(--border)] shrink-0">
+                          {caso.codigo_caso || 'QX-26-0001'}
+                        </span>
+                        <Link
+                          href={`/pacientes?id=${caso.paciente_id}`}
+                          className="text-sm font-bold text-white hover:text-blue-400 transition-colors flex items-center gap-1.5 truncate"
+                        >
+                          <span className="truncate">{pac?.nombre || 'Paciente'}</span>
+                          <ExternalLink size={12} className="text-blue-400 shrink-0" />
+                        </Link>
+                      </div>
 
                       <span
                         className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 shrink-0 ${

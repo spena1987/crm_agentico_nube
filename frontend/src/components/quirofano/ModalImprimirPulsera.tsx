@@ -201,6 +201,7 @@ export default function ModalImprimirPulsera({
                         <div className="flex items-start justify-between gap-1 border-b border-black/20 pb-1">
                           <div className="min-w-0">
                             <h4 className="text-xs font-black uppercase text-black truncate tracking-tight">
+                              <span className="font-mono bg-black text-white px-1 py-0.5 rounded text-[10px] mr-1.5">{cir.codigo_turno || cir.codigo_caso || 'QX-26-0012-OD'}</span>
                               {pac.nombre}
                             </h4>
                             <p className="text-[9px] font-bold text-gray-800 font-mono">
@@ -301,7 +302,7 @@ export default function ModalImprimirPulsera({
                 {/* Nombre y Ojo */}
                 <div className="wristband-row-header">
                   <div className="wristband-paciente-title">
-                    {pac.nombre}
+                    [{cir.codigo_turno || cir.codigo_caso || 'QX-26-0012-OD'}] {pac.nombre}
                   </div>
                   <div className="wristband-ojo-badge">
                     {cir.ojo_texto}

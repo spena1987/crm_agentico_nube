@@ -2096,9 +2096,43 @@ def bulk_import_practicas_aranceles(
 # MÓDULO DE ASESORÍAS QUIRÚRGICAS (PIPELINE DE CIRUGÍAS)
 # ====================================================================
 
+def generar_siguiente_codigo_caso(year: int = 26) -> str:
+    """
+    Genera el siguiente número correlativo institucional para un caso quirúrgico.
+    Formato: QX-YY-XXXX (ej: QX-26-0013)
+    """
+    if not supabase:
+        return f"QX-{year}-0001"
+    try:
+        resp = supabase.table("asesorias_quirurgicas").select("id, created_at, checklist_prequirurgico").execute()
+        casos = resp.data or []
+        
+        max_num = 0
+        prefix = f"QX-{year}-"
+        for c in casos:
+            chk = c.get("checklist_prequirurgico") or {}
+            code = chk.get("_codigo_caso") or c.get("codigo_caso") or ""
+            if code.startswith(prefix):
+                try:
+                    num_part = int(code.replace(prefix, "").split("-")[0])
+                    if num_part > max_num:
+                        max_num = num_part
+                except Exception:
+                    pass
+                    
+        if max_num == 0 and len(casos) > 0:
+            max_num = len(casos)
+            
+        nuevo_num = max_num + 1
+        return f"QX-{year}-{nuevo_num:04d}"
+    except Exception as e:
+        logger.warning(f"Error generando código de caso secuencial: {e}")
+        return f"QX-{year}-0001"
+
 def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
     """
-    Retorna el historial de asesorías quirúrgicas de un paciente ordenadas por fecha reciente.
+    Retorna el historial de asesorías quirúrgicas de un paciente ordenadas por fecha reciente
+    con su número de caso institucional QX-YY-XXXX.
     """
     if not supabase or not paciente_id:
         return []
@@ -2108,18 +2142,29 @@ def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
             .eq("paciente_id", paciente_id) \
             .order("created_at", desc=True) \
             .execute()
-        return resp.data or []
+        casos = resp.data or []
+        for c in casos:
+            chk = c.get("checklist_prequirurgico") or {}
+            c["codigo_caso"] = chk.get("_codigo_caso") or c.get("codigo_caso") or f"QX-26-{(len(casos)):04d}"
+        return casos
     except Exception as e:
         logger.error(f"Error al obtener asesorías quirúrgicas del paciente {paciente_id}: {e}")
         return []
 
 def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
     """
-    Crea un nuevo caso de asesoramiento quirúrgico para un paciente.
+    Crea un nuevo caso de asesoramiento quirúrgico para un paciente con su código institucional.
     """
     if not supabase:
         raise RuntimeError("Supabase no está conectado.")
     try:
+        nuevo_codigo = generar_siguiente_codigo_caso()
+        chk = payload.get("checklist_prequirurgico") or {}
+        if isinstance(chk, dict):
+            chk["_codigo_caso"] = nuevo_codigo
+        else:
+            chk = {"_codigo_caso": nuevo_codigo}
+
         datos = {
             "paciente_id": payload["paciente_id"],
             "medico_derivador_id": int(payload["medico_derivador_id"]) if payload.get("medico_derivador_id") else None,
@@ -2151,13 +2196,19 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             "estado": payload.get("estado", "en_asesoramiento"),
             "situacion_paciente": payload.get("situacion_paciente") or "",
             "motivo_cancelacion": payload.get("motivo_cancelacion") or None,
-            "ojo": payload.get("ojo", "OD")
+            "ojo": payload.get("ojo", "OD"),
+            "checklist_prequirurgico": chk
         }
         
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
         if not resp.data:
             raise Exception("No se pudo registrar la asesoría quirúrgica.")
-        return resp.data[0]
+        creado = resp.data[0]
+        creado["codigo_caso"] = nuevo_codigo
+        return creado
+    except Exception as e:
+        logger.error(f"Error al crear asesoría quirúrgica: {e}")
+        raise
     except Exception as e:
         logger.error(f"Error al crear asesoría quirúrgica: {e}")
         raise
@@ -3010,7 +3061,9 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
                     
             c["dias_sin_contacto"] = max(0, dias_sin_contacto)
             c["es_critico"] = dias_sin_contacto >= sla_critico
-            c["es_alerta"] = dias_sin_contacto >= sla_alerta and not c["es_critico"]
+            # Código Institucional de Caso
+            chk_pipe = c.get("checklist_prequirurgico") or {}
+            c["codigo_caso"] = chk_pipe.get("_codigo_caso") or c.get("codigo_caso") or "QX-26-0001"
             
             # Acumuladores de métricas y mapeo de etapas activas al Kanban
             monto = float(c.get("monto_extra") or 0.0)

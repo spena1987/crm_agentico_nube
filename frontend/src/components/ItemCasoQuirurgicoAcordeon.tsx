@@ -36,6 +36,7 @@ export interface PresupuestoPaciente {
 
 export interface AsesoriaQuirurgica {
   id: string
+  codigo_caso?: string | null
   paciente_id: string
   medico_derivador_id?: number | null
   medico_derivador_nombre?: string | null

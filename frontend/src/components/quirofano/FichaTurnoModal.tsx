@@ -694,9 +694,10 @@ export default function FichaTurnoModal({
                         const pac = c.pacientes || {}
                         const subOjoTxt = c.sub_ojo_etiqueta ? ` [${c.sub_ojo_etiqueta}]` : (c.ojo ? ` [Ojo: ${c.ojo}]` : '')
                         const optKey = c.id_compuesto || (c.sub_ojo ? `${c.id}_${c.sub_ojo}` : `${c.id}_${idx}`)
+                        const codigoTxt = c.codigo_turno || (c.codigo_caso ? (c.sub_ojo ? `${c.codigo_caso}-${c.sub_ojo}` : `${c.codigo_caso}-${c.ojo || 'OD'}`) : 'QX-26-0012')
                         return (
                           <option key={optKey} value={optKey}>
-                            {pac.nombre || 'Paciente'} (DNI: {pac.dni || 'S/D'}) — {c.practica_nombre}{subOjoTxt} — Cirujano: {c.medico_cirujano_nombre || 'Sin cirujano'}
+                            [{codigoTxt}] {pac.nombre || 'Paciente'} (DNI: {pac.dni || 'S/D'}) — {c.practica_nombre}{subOjoTxt} — Cirujano: {c.medico_cirujano_nombre || 'Sin cirujano'}
                           </option>
                         )
                       })}
@@ -710,6 +711,11 @@ export default function FichaTurnoModal({
                           <UserCheck size={20} />
                         </div>
                         <div>
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className="px-1.5 py-0.5 rounded bg-white/20 text-white font-mono font-bold text-[10px]">
+                              {casoSeleccionadoActual.codigo_turno || (casoSeleccionadoActual.codigo_caso ? (casoSeleccionadoActual.sub_ojo ? `${casoSeleccionadoActual.codigo_caso}-${casoSeleccionadoActual.sub_ojo}` : `${casoSeleccionadoActual.codigo_caso}-${casoSeleccionadoActual.ojo || 'OD'}`) : 'QX-26-0012')}
+                            </span>
+                          </div>
                           <p className="font-bold text-xs">
                             {casoSeleccionadoActual.pacientes?.nombre || 'Paciente'}
                           </p>

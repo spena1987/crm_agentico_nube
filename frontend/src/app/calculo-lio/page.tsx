@@ -773,9 +773,14 @@ export default function CalculoLioPage() {
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="px-2 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 text-[10px] font-black">
-                        {p.ojo || 'OD'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-lg bg-blue-950 text-blue-300 text-[10px] font-black font-mono border border-blue-500/40">
+                          {p.codigo_turno || (p.codigo_caso ? `${p.codigo_caso}-${p.ojo || 'OD'}` : `QX-26-0012-${p.ojo || 'OD'}`)}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-200 text-[10px] font-black">
+                          {p.ojo || 'OD'}
+                        </span>
+                      </div>
                       <span className="text-[11px] font-bold text-[var(--secondary)]">
                         {p.fecha_cx} {p.hora_cx ? `(${p.hora_cx}hs)` : ''}
                       </span>
@@ -837,6 +842,9 @@ export default function CalculoLioPage() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2.5 py-1 rounded-xl bg-blue-950 text-blue-300 border border-blue-500/50 font-black font-mono text-xs shadow-xs">
+                      {pacienteActivo.codigo_turno || (pacienteActivo.codigo_caso ? `${pacienteActivo.codigo_caso}-${pacienteActivo.ojo || 'OD'}` : `QX-26-0012-${pacienteActivo.ojo || 'OD'}`)}
+                    </span>
                     <span className="px-2.5 py-0.5 rounded-lg bg-blue-600 text-white font-black text-xs shadow-xs">
                       {pacienteActivo.ojo === 'OI' ? 'OJO IZQUIERDO (OI)' : 'OJO DERECHO (OD)'}
                     </span>

@@ -1199,10 +1199,11 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
     story = []
 
     # 1. Cabecera Institucional
+    codigo_ref = turno.get("codigo_turno") or turno.get("codigo_caso") or f"QX-26-{str(turno_id)[:4].upper()}-{turno.get('ojo', 'OD')}"
     header_data = [
         [
             Paragraph(f"<b><font size=12 color='{color_primario_hex}'>{nombre_inst.upper()}</font></b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal),
-            Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=8 color='#64748B'>Doc Ref: PQ-{str(turno_id)[:8].upper()}</font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {parsear_fecha_hora_argentina()}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
+            Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=9 color='{color_acento_hex}'><b>N° Registro: {codigo_ref}</b></font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {parsear_fecha_hora_argentina()}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
         ]
     ]
     t_head = Table(header_data, colWidths=[270, 270])
