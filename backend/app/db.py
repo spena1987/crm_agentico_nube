@@ -4953,11 +4953,12 @@ def procesar_escaneo_qr_turno(
     codigo_qr: str,
     estacion: Optional[str] = None,
     usuario_crm: Optional[str] = None,
-    accion_deseada: Optional[str] = None
+    accion_deseada: Optional[str] = None,
+    solo_verificar: Optional[bool] = False
 ) -> Dict[str, Any]:
     """
     Procesa un escaneo de pulsera QR para la identificación inequívoca y
-    el avance automático de estadios quirúrgicos en tiempo real.
+    el avance automático seguro de estadios quirúrgicos según la estación física.
     """
     if not supabase or not codigo_qr:
         return {"success": False, "error": "Código QR no proporcionado o base de datos no disponible."}
@@ -4978,12 +4979,30 @@ def procesar_escaneo_qr_turno(
         estado_anterior = turno.get("estado") or "programado"
         pac = turno.get("pacientes") or {}
         
-        # Determinar nuevo estado
+        est_norm = (estacion or "general").lower()
+
+        # Determinar nuevo estado según la estación y modo
         nuevo_estado = estado_anterior
-        if accion_deseada and accion_deseada in ["programado", "en_espera", "pre_quirofano", "en_operacion", "operado", "cancelado"]:
+        if solo_verificar:
+            # Modo consulta: no altera el estado del turno
+            nuevo_estado = estado_anterior
+        elif accion_deseada and accion_deseada in ["programado", "en_espera", "pre_quirofano", "en_operacion", "operado", "cancelado"]:
             nuevo_estado = accion_deseada
-        else:
-            # Avance automático en cascada según etapa actual
+        elif "recep" in est_norm:
+            # Estación Recepción: Solo avanza de programado -> en_espera. Si ya llegó o está en quirófano, no lo avanza más
+            if estado_anterior == "programado":
+                nuevo_estado = "en_espera"
+            else:
+                nuevo_estado = estado_anterior
+        elif "pre" in est_norm or "dilata" in est_norm:
+            # Estación Pre-Quirófano / Dilatación: Solo avanza de en_espera/programado -> pre_quirofano.
+            # Si ya está en pre_quirofano, se mantiene para chequeo seguro de lateralidad y gotas
+            if estado_anterior in ["programado", "en_espera"]:
+                nuevo_estado = "pre_quirofano"
+            else:
+                nuevo_estado = estado_anterior
+        elif "quirofano" in est_norm or "pizarra" in est_norm or "sala" in est_norm:
+            # Estación Quirófano / Pizarra en Vivo
             if estado_anterior == "programado":
                 nuevo_estado = "en_espera"
             elif estado_anterior == "en_espera":
@@ -4993,10 +5012,21 @@ def procesar_escaneo_qr_turno(
             elif estado_anterior == "en_operacion":
                 nuevo_estado = "operado"
             elif estado_anterior == "operado":
-                # Ya operado: se mantiene en operado y se informa
+                nuevo_estado = "operado"
+        else:
+            # Cascada general por defecto
+            if estado_anterior == "programado":
+                nuevo_estado = "en_espera"
+            elif estado_anterior == "en_espera":
+                nuevo_estado = "pre_quirofano"
+            elif estado_anterior == "pre_quirofano":
+                nuevo_estado = "en_operacion"
+            elif estado_anterior == "en_operacion":
+                nuevo_estado = "operado"
+            elif estado_anterior == "operado":
                 nuevo_estado = "operado"
                 
-        # Actualizar en Supabase
+        # Actualizar en Supabase si hubo cambio de estado o registrar timestamp
         from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
         update_payload: Dict[str, Any] = {

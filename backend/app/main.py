@@ -3763,6 +3763,7 @@ class EscanearQRRequest(BaseModel):
     estacion: Optional[str] = "General"
     usuario_crm: Optional[str] = None
     accion_deseada: Optional[str] = None
+    solo_verificar: Optional[bool] = False
 
 @app.post("/api/turnos-quirofano/escanear-qr")
 def escanear_qr_turno_api(payload: EscanearQRRequest):
@@ -3774,7 +3775,8 @@ def escanear_qr_turno_api(payload: EscanearQRRequest):
         codigo_qr=payload.codigo_qr,
         estacion=payload.estacion,
         usuario_crm=payload.usuario_crm,
-        accion_deseada=payload.accion_deseada
+        accion_deseada=payload.accion_deseada,
+        solo_verificar=payload.solo_verificar
     )
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error") or "Error al procesar el código QR.")

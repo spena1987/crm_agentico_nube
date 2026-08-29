@@ -13,7 +13,11 @@ import {
   ArrowRight,
   Clock,
   Sparkles,
-  Volume2
+  Volume2,
+  Printer,
+  PackageCheck,
+  Check,
+  ExternalLink
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -24,6 +28,7 @@ interface ModalVerificacionQRProps {
   turnoId: string
   estacion?: string
   onEstadoActualizado?: (turnoActualizado: any) => void
+  onAbrirImprimirPulsera?: (turnoId: string) => void
 }
 
 // Reproductor de sonido de verificación médica exitosa (Web Audio API)
@@ -60,13 +65,14 @@ export default function ModalVerificacionQR({
   rawQR,
   turnoId,
   estacion = 'Pizarra Quirúrgica',
-  onEstadoActualizado
+  onEstadoActualizado,
+  onAbrirImprimirPulsera
 }: ModalVerificacionQRProps) {
   const [procesando, setProcesando] = useState<boolean>(true)
   const [ejecutandoAccion, setEjecutandoAccion] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [resultado, setResultado] = useState<any>(null)
-  const [contadorAutoCierre, setContadorAutoCierre] = useState<number | null>(null)
+  const [pausarAutoCierre, setPausarAutoCierre] = useState<boolean>(true) // Por defecto pausado para que el médico coteje
 
   // Procesar escaneo al abrir
   useEffect(() => {
@@ -76,7 +82,6 @@ export default function ModalVerificacionQR({
       try {
         setProcesando(true)
         setError(null)
-        setContadorAutoCierre(null)
 
         const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
           method: 'POST',
@@ -99,9 +104,6 @@ export default function ModalVerificacionQR({
         if (onEstadoActualizado && data.turno) {
           onEstadoActualizado(data.turno)
         }
-
-        // Auto-cierre tras 4 segundos de confirmación
-        setContadorAutoCierre(4)
       } catch (err: any) {
         console.error('Error procesando escaneo QR:', err)
         setError(err.message || 'No se pudo verificar el turno quirúrgico.')
@@ -113,26 +115,10 @@ export default function ModalVerificacionQR({
     procesarEscaneo()
   }, [isOpen, turnoId, rawQR, estacion])
 
-  // Manejador del contador de auto-cierre
-  useEffect(() => {
-    if (contadorAutoCierre === null || contadorAutoCierre <= 0) return
-
-    const timer = setTimeout(() => {
-      if (contadorAutoCierre === 1) {
-        onClose()
-      } else {
-        setContadorAutoCierre(contadorAutoCierre - 1)
-      }
-    }, 1000)
-
-    return () => clearTimeout(timer)
-  }, [contadorAutoCierre, onClose])
-
   // Forzar cambio a un estado específico
   const handleForzarEstado = async (nuevoEstado: string) => {
     try {
       setEjecutandoAccion(true)
-      setContadorAutoCierre(null) // Cancelar auto-cierre si el usuario interactúa
       const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -166,6 +152,7 @@ export default function ModalVerificacionQR({
   const esOI = seg.ojo === 'OI'
   const nuevoEst = resultado?.nuevo_estado || 'en_espera'
   const anteriorEst = resultado?.estado_anterior || 'programado'
+  const fueCambioEstado = nuevoEst !== anteriorEst
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-150">
@@ -207,7 +194,7 @@ export default function ModalVerificacionQR({
           {procesando ? (
             <div className="p-12 text-center text-xs text-gray-400 flex flex-col items-center justify-center gap-2">
               <Loader2 size={32} className="animate-spin text-emerald-400" />
-              <span>Validando código QR y actualizando Pizarra en Vivo...</span>
+              <span>Validando código QR y verificando protocolo OMS...</span>
             </div>
           ) : error ? (
             <div className="p-4 rounded-2xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-3">
@@ -219,7 +206,7 @@ export default function ModalVerificacionQR({
             </div>
           ) : (
             <>
-              {/* Tarjeta Gigante de Verificación Inequívoca */}
+              {/* Tarjeta de Verificación Inequívoca */}
               <div className="p-4 rounded-2xl bg-neutral-950 border border-gray-800 space-y-4 shadow-inner">
                 
                 {/* Paciente y DNI */}
@@ -234,16 +221,16 @@ export default function ModalVerificacionQR({
                     </span>
                   </div>
 
-                  {/* LATERALIDAD DE OJO (GIGANTE) */}
+                  {/* LATERALIDAD DE OJO (GIGANTE CON CÓDIGO DE COLOR) */}
                   <div className={`p-3 rounded-2xl border-2 flex flex-col items-center justify-center text-center shadow-lg ${
                     esOD
-                      ? 'bg-blue-950/60 border-blue-500 text-blue-300 ring-2 ring-blue-500/30'
+                      ? 'bg-blue-950/80 border-blue-500 text-blue-300 ring-2 ring-blue-500/30'
                       : esOI
-                      ? 'bg-emerald-950/60 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/30'
-                      : 'bg-purple-950/60 border-purple-500 text-purple-300'
+                      ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300 ring-2 ring-emerald-500/30'
+                      : 'bg-purple-950/80 border-purple-500 text-purple-300'
                   }`}>
-                    <Eye size={20} className="mb-0.5" />
-                    <span className="text-[11px] font-black uppercase tracking-wider">
+                    <Eye size={22} className="mb-0.5" />
+                    <span className="text-xs font-black uppercase tracking-wider">
                       {seg.ojo_texto}
                     </span>
                   </div>
@@ -276,39 +263,50 @@ export default function ModalVerificacionQR({
 
               </div>
 
-              {/* BANNER DE TRANSICIÓN DE ESTADO */}
+              {/* BANNER DE TRANSICIÓN O VERIFICACIÓN */}
               <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-neutral-950 to-neutral-950 border border-emerald-500/40 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
                   <CheckCircle2 size={20} className="text-emerald-400 shrink-0" />
                   <div className="text-xs">
-                    <p className="font-black text-white">Estado Quirúrgico Actualizado:</p>
+                    <p className="font-black text-white">
+                      {fueCambioEstado ? 'Estado Quirúrgico Actualizado:' : 'Identificación Inequívoca Validada:'}
+                    </p>
                     <div className="flex items-center gap-1.5 text-gray-300 font-mono text-[11px] mt-0.5">
-                      <span className="opacity-60">{anteriorEst}</span>
-                      <ArrowRight size={12} className="text-emerald-400" />
-                      <span className="font-bold text-emerald-400 uppercase">{nuevoEst}</span>
+                      {fueCambioEstado ? (
+                        <>
+                          <span className="opacity-60">{anteriorEst}</span>
+                          <ArrowRight size={12} className="text-emerald-400" />
+                          <span className="font-bold text-emerald-400 uppercase">{nuevoEst}</span>
+                        </>
+                      ) : (
+                        <span className="font-bold text-emerald-400 uppercase">
+                          PACIENTE EN {nuevoEst.replace('_', ' ').toUpperCase()}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
-                {contadorAutoCierre !== null && (
-                  <div className="text-right shrink-0">
-                    <span className="text-[10px] text-gray-400 block">Cerrando en:</span>
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 font-mono font-bold text-xs">
-                      {contadorAutoCierre}s
-                    </span>
-                  </div>
-                )}
+                <div className="text-right shrink-0">
+                  <span className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase">
+                    OMS OK
+                  </span>
+                </div>
               </div>
 
               {/* ACCIONES RÁPIDAS MANUALES ALTERNATIVAS */}
               <div className="space-y-1.5">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Cambiar manualmente a otra etapa:</span>
+                <span className="text-[10px] font-bold text-gray-400 uppercase">Ajuste manual de etapa (si corresponde):</span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <button
                     type="button"
                     disabled={ejecutandoAccion || nuevoEst === 'en_espera'}
                     onClick={() => handleForzarEstado('en_espera')}
-                    className="p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
+                    className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                      nuevoEst === 'en_espera'
+                        ? 'bg-amber-500 text-black font-black'
+                        : 'bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 disabled:opacity-40'
+                    }`}
                   >
                     <span>🟡 En Espera</span>
                   </button>
@@ -317,7 +315,11 @@ export default function ModalVerificacionQR({
                     type="button"
                     disabled={ejecutandoAccion || nuevoEst === 'pre_quirofano'}
                     onClick={() => handleForzarEstado('pre_quirofano')}
-                    className="p-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
+                    className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                      nuevoEst === 'pre_quirofano'
+                        ? 'bg-cyan-500 text-black font-black'
+                        : 'bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 disabled:opacity-40'
+                    }`}
                   >
                     <span>🩵 Pre-Qx</span>
                   </button>
@@ -326,7 +328,11 @@ export default function ModalVerificacionQR({
                     type="button"
                     disabled={ejecutandoAccion || nuevoEst === 'en_operacion'}
                     onClick={() => handleForzarEstado('en_operacion')}
-                    className="p-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
+                    className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                      nuevoEst === 'en_operacion'
+                        ? 'bg-purple-500 text-white font-black shadow-lg shadow-purple-500/30'
+                        : 'bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 disabled:opacity-40'
+                    }`}
                   >
                     <span>🟣 Quirófano</span>
                   </button>
@@ -335,7 +341,11 @@ export default function ModalVerificacionQR({
                     type="button"
                     disabled={ejecutandoAccion || nuevoEst === 'operado'}
                     onClick={() => handleForzarEstado('operado')}
-                    className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
+                    className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                      nuevoEst === 'operado'
+                        ? 'bg-emerald-500 text-black font-black'
+                        : 'bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 disabled:opacity-40'
+                    }`}
                   >
                     <span>🟢 Operado</span>
                   </button>
@@ -346,13 +356,30 @@ export default function ModalVerificacionQR({
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-gray-800 flex items-center justify-end bg-neutral-950">
+        <div className="p-4 border-t border-gray-800 flex items-center justify-between bg-neutral-950">
+          <div>
+            {onAbrirImprimirPulsera && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose()
+                  onAbrirImprimirPulsera(turnoId)
+                }}
+                className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-gray-700"
+              >
+                <Printer size={14} />
+                <span>Reimprimir Pulsera</span>
+              </button>
+            )}
+          </div>
+
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl text-xs font-bold transition"
+            className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black shadow-lg shadow-emerald-500/20 transition flex items-center gap-1.5"
           >
-            Listo / Cerrar
+            <Check size={16} />
+            <span>✓ Time-Out OMS Verificado / Listo</span>
           </button>
         </div>
 
