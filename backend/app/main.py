@@ -5038,13 +5038,12 @@ def listar_pacientes_calculo_lio(
 ):
     """
     Lista todos los pacientes asignados a un cirujano (turnos agendados y asesorías activas que requieren LIO)
-    con desdoblamiento automático de casos bilaterales en OD y OI y códigos institucionales QX.
+    con desdoblamiento automático de casos bilaterales en OD y OI y soporte de turnos individuales por ojo.
     """
     try:
         from datetime import datetime, timezone
         items = []
-        turnos_vistos = set()
-        asesorias_vistas = set()
+        turnos_ojos_vistos = set() # Set of (asesoria_id, ojo)
 
         # 1. Consultar turnos de quirófano programados / activos
         q_turnos = supabase.table("turnos_quirofano").select(
@@ -5058,9 +5057,9 @@ def listar_pacientes_calculo_lio(
             pac = t.get("pacientes") or {}
             as_id = t.get("asesoria_id")
             as_rel = t.get("asesorias_quirurgicas") or {}
+            ojo_turno = t.get("ojo") or "OD"
             if as_id:
-                asesorias_vistas.add(as_id)
-            turnos_vistos.add(t["id"])
+                turnos_ojos_vistos.add((as_id, ojo_turno))
 
             practica_nombre = t.get("practica_nombre") or as_rel.get("practica_nombre") or "Cirugía Oftalmológica"
             lleva_lente = bool(t.get("lleva_lente")) or requiere_calculo_lio(practica_nombre)
@@ -5096,7 +5095,6 @@ def listar_pacientes_calculo_lio(
             # Extraer códigos institucionales
             chk_as = as_rel.get("checklist_prequirurgico") or {}
             codigo_caso = (chk_as if isinstance(chk_as, dict) else {}).get("_codigo_caso") or as_rel.get("codigo_caso") or f"QX-26-{str(t.get('id', ''))[:4].upper()}"
-            ojo_turno = t.get("ojo") or "OD"
             codigo_turno = t.get("codigo_turno") or f"{codigo_caso}-{ojo_turno}"
 
             item = {
@@ -5138,16 +5136,14 @@ def listar_pacientes_calculo_lio(
             }
             items.append(item)
 
-        # 2. Consultar asesorías confirmadas o en proceso que aún no tengan turno agendado
+        # 2. Consultar asesorías confirmadas, programadas o en proceso que aún no tengan turno agendado para cada ojo
         q_asesorias = supabase.table("asesorias_quirurgicas").select(
             "*, pacientes(*)"
-        ).in_("estado", ["confirmado", "en_asesoramiento", "presupuesto_enviado", "en_analisis"]).order("created_at", desc=True)
+        ).in_("estado", ["confirmado", "programado", "en_asesoramiento", "presupuesto_enviado", "en_analisis"]).order("created_at", desc=True)
 
         res_as = q_asesorias.execute()
         for a in (res_as.data or []):
-            if a["id"] in asesorias_vistas:
-                continue
-
+            as_id = a["id"]
             practica_nombre = a.get("practica_nombre") or "Cirugía de Catarata"
             if not requiere_calculo_lio(practica_nombre):
                 continue
@@ -5180,127 +5176,133 @@ def listar_pacientes_calculo_lio(
                 ojo_1 = "OD" if orden == "OD_primero" else "OI"
                 ojo_2 = "OI" if orden == "OD_primero" else "OD"
 
+                tiene_t1 = (as_id, ojo_1) in turnos_ojos_vistos
+                tiene_t2 = (as_id, ojo_2) in turnos_ojos_vistos
+
                 lio_OD = chk.get("_lio_calculo_OD") if isinstance(chk, dict) else None
                 lio_OI = chk.get("_lio_calculo_OI") if isinstance(chk, dict) else None
 
-                # Candidato 1er Ojo
-                lio_1 = lio_OD if ojo_1 == "OD" else lio_OI
-                es_calc_1 = bool(lio_1.get("lio_calculado")) if isinstance(lio_1, dict) else bool(a.get("lio_calculado"))
-                opciones_1 = (lio_1.get("opciones") if isinstance(lio_1, dict) else None) or a.get("lio_calculo_opciones") or []
+                # Candidato 1er Ojo (si aún no tiene turno agendado)
+                if not tiene_t1:
+                    lio_1 = lio_OD if ojo_1 == "OD" else lio_OI
+                    es_calc_1 = bool(lio_1.get("lio_calculado")) if isinstance(lio_1, dict) else bool(a.get("lio_calculado"))
+                    opciones_1 = (lio_1.get("opciones") if isinstance(lio_1, dict) else None) or a.get("lio_calculo_opciones") or []
 
-                item_1 = {
-                    "tipo_registro": "asesoria",
-                    "id_compuesto": f"{a['id']}_{ojo_1}",
-                    "turno_id": None,
-                    "asesoria_id": a["id"],
-                    "codigo_caso": codigo_base,
-                    "codigo_turno": f"{codigo_base}-{ojo_1}",
-                    "sub_ojo": ojo_1,
-                    "sub_ojo_etiqueta": f"1er Ojo ({ojo_1})",
-                    "ojo": ojo_1,
-                    "paciente_id": a.get("paciente_id"),
-                    "paciente": pac,
-                    "paciente_nombre": pac.get("nombre") or "Paciente",
-                    "paciente_dni": pac.get("dni") or "S/D",
-                    "paciente_telefono": pac.get("telefono") or "S/D",
-                    "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
-                    "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
-                    "fecha_cirugia": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia"),
-                    "fecha_cx": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia") or "A programar",
-                    "hora_inicio": None,
-                    "hora_cx": None,
-                    "practica_nombre": practica_nombre,
-                    "cirujano_nombre": cirujano,
-                    "quirofano_nombre": "Pendiente de Quirófano",
-                    "estado_turno": a.get("estado"),
-                    "lio_calculado": es_calc_1,
-                    "lio_calculado_at": (lio_1.get("lio_calculado_at") if isinstance(lio_1, dict) else a.get("lio_calculado_at")),
-                    "lio_calculado_por": (lio_1.get("lio_calculado_por") if isinstance(lio_1, dict) else (cirujano if es_calc_1 else None)),
-                    "lio_calculo_opciones": opciones_1,
-                    "lio_stock_reservado": False,
-                    "lio_stock_reservado_at": None,
-                    "lio_stock_observaciones": ""
-                }
-                items.append(item_1)
+                    item_1 = {
+                        "tipo_registro": "asesoria",
+                        "id_compuesto": f"{a['id']}_{ojo_1}",
+                        "turno_id": None,
+                        "asesoria_id": a["id"],
+                        "codigo_caso": codigo_base,
+                        "codigo_turno": f"{codigo_base}-{ojo_1}",
+                        "sub_ojo": ojo_1,
+                        "sub_ojo_etiqueta": f"1er Ojo ({ojo_1})",
+                        "ojo": ojo_1,
+                        "paciente_id": a.get("paciente_id"),
+                        "paciente": pac,
+                        "paciente_nombre": pac.get("nombre") or "Paciente",
+                        "paciente_dni": pac.get("dni") or "S/D",
+                        "paciente_telefono": pac.get("telefono") or "S/D",
+                        "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
+                        "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
+                        "fecha_cirugia": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia"),
+                        "fecha_cx": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia") or "A programar",
+                        "hora_inicio": None,
+                        "hora_cx": None,
+                        "practica_nombre": practica_nombre,
+                        "cirujano_nombre": cirujano,
+                        "quirofano_nombre": "Pendiente de Quirófano",
+                        "estado_turno": a.get("estado"),
+                        "lio_calculado": es_calc_1,
+                        "lio_calculado_at": (lio_1.get("lio_calculado_at") if isinstance(lio_1, dict) else a.get("lio_calculado_at")),
+                        "lio_calculado_por": (lio_1.get("lio_calculado_por") if isinstance(lio_1, dict) else (cirujano if es_calc_1 else None)),
+                        "lio_calculo_opciones": opciones_1,
+                        "lio_stock_reservado": False,
+                        "lio_stock_reservado_at": None,
+                        "lio_stock_observaciones": ""
+                    }
+                    items.append(item_1)
 
-                # Candidato 2do Ojo
-                lio_2 = lio_OI if ojo_2 == "OI" else lio_OD
-                es_calc_2 = bool(lio_2.get("lio_calculado")) if isinstance(lio_2, dict) else False
-                opciones_2 = (lio_2.get("opciones") if isinstance(lio_2, dict) else None) or []
-                f_2do = meta_bilateral.get("fecha_probable_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo") or a.get("fecha_probable_2do_ojo")
+                # Candidato 2do Ojo (si aún no tiene turno agendado)
+                if not tiene_t2:
+                    lio_2 = lio_OI if ojo_2 == "OI" else lio_OD
+                    es_calc_2 = bool(lio_2.get("lio_calculado")) if isinstance(lio_2, dict) else False
+                    opciones_2 = (lio_2.get("opciones") if isinstance(lio_2, dict) else None) or []
+                    f_2do = meta_bilateral.get("fecha_probable_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo") or a.get("fecha_probable_2do_ojo")
 
-                item_2 = {
-                    "tipo_registro": "asesoria",
-                    "id_compuesto": f"{a['id']}_{ojo_2}",
-                    "turno_id": None,
-                    "asesoria_id": a["id"],
-                    "codigo_caso": codigo_base,
-                    "codigo_turno": f"{codigo_base}-{ojo_2}",
-                    "sub_ojo": ojo_2,
-                    "sub_ojo_etiqueta": f"2do Ojo ({ojo_2})",
-                    "ojo": ojo_2,
-                    "paciente_id": a.get("paciente_id"),
-                    "paciente": pac,
-                    "paciente_nombre": pac.get("nombre") or "Paciente",
-                    "paciente_dni": pac.get("dni") or "S/D",
-                    "paciente_telefono": pac.get("telefono") or "S/D",
-                    "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
-                    "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
-                    "fecha_cirugia": f_2do,
-                    "fecha_cx": f_2do or "A programar",
-                    "hora_inicio": None,
-                    "hora_cx": None,
-                    "practica_nombre": practica_nombre,
-                    "cirujano_nombre": cirujano,
-                    "quirofano_nombre": "Pendiente de Quirófano",
-                    "estado_turno": a.get("estado"),
-                    "lio_calculado": es_calc_2,
-                    "lio_calculado_at": (lio_2.get("lio_calculado_at") if isinstance(lio_2, dict) else None),
-                    "lio_calculado_por": (lio_2.get("lio_calculado_por") if isinstance(lio_2, dict) else (cirujano if es_calc_2 else None)),
-                    "lio_calculo_opciones": opciones_2,
-                    "lio_stock_reservado": False,
-                    "lio_stock_reservado_at": None,
-                    "lio_stock_observaciones": ""
-                }
-                items.append(item_2)
+                    item_2 = {
+                        "tipo_registro": "asesoria",
+                        "id_compuesto": f"{a['id']}_{ojo_2}",
+                        "turno_id": None,
+                        "asesoria_id": a["id"],
+                        "codigo_caso": codigo_base,
+                        "codigo_turno": f"{codigo_base}-{ojo_2}",
+                        "sub_ojo": ojo_2,
+                        "sub_ojo_etiqueta": f"2do Ojo ({ojo_2})",
+                        "ojo": ojo_2,
+                        "paciente_id": a.get("paciente_id"),
+                        "paciente": pac,
+                        "paciente_nombre": pac.get("nombre") or "Paciente",
+                        "paciente_dni": pac.get("dni") or "S/D",
+                        "paciente_telefono": pac.get("telefono") or "S/D",
+                        "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
+                        "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
+                        "fecha_cirugia": f_2do,
+                        "fecha_cx": f_2do or "A programar",
+                        "hora_inicio": None,
+                        "hora_cx": None,
+                        "practica_nombre": practica_nombre,
+                        "cirujano_nombre": cirujano,
+                        "quirofano_nombre": "Pendiente de Quirófano",
+                        "estado_turno": a.get("estado"),
+                        "lio_calculado": es_calc_2,
+                        "lio_calculado_at": (lio_2.get("lio_calculado_at") if isinstance(lio_2, dict) else None),
+                        "lio_calculado_por": (lio_2.get("lio_calculado_por") if isinstance(lio_2, dict) else (cirujano if es_calc_2 else None)),
+                        "lio_calculo_opciones": opciones_2,
+                        "lio_stock_reservado": False,
+                        "lio_stock_reservado_at": None,
+                        "lio_stock_observaciones": ""
+                    }
+                    items.append(item_2)
             else:
                 # Caso Unilateral
-                es_calculado = bool(a.get("lio_calculado"))
-                opciones = a.get("lio_calculo_opciones") or []
+                if (as_id, ojo_caso) not in turnos_ojos_vistos:
+                    es_calculado = bool(a.get("lio_calculado"))
+                    opciones = a.get("lio_calculo_opciones") or []
 
-                item = {
-                    "tipo_registro": "asesoria",
-                    "id_compuesto": a["id"],
-                    "turno_id": None,
-                    "asesoria_id": a["id"],
-                    "codigo_caso": codigo_base,
-                    "codigo_turno": f"{codigo_base}-{ojo_caso}",
-                    "sub_ojo_etiqueta": f"Ojo ({ojo_caso})",
-                    "paciente_id": a.get("paciente_id"),
-                    "paciente": pac,
-                    "paciente_nombre": pac.get("nombre") or "Paciente",
-                    "paciente_dni": pac.get("dni") or "S/D",
-                    "paciente_telefono": pac.get("telefono") or "S/D",
-                    "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
-                    "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
-                    "fecha_cirugia": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia"),
-                    "fecha_cx": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia") or "A programar",
-                    "hora_inicio": None,
-                    "hora_cx": None,
-                    "ojo": ojo_caso,
-                    "practica_nombre": practica_nombre,
-                    "cirujano_nombre": cirujano,
-                    "quirofano_nombre": "Pendiente de Quirófano",
-                    "estado_turno": a.get("estado"),
-                    "lio_calculado": es_calculado,
-                    "lio_calculado_at": a.get("lio_calculado_at"),
-                    "lio_calculado_por": a.get("lio_calculado_por") or (cirujano if es_calculado else None),
-                    "lio_calculo_opciones": opciones,
-                    "lio_stock_reservado": False,
-                    "lio_stock_reservado_at": None,
-                    "lio_stock_observaciones": ""
-                }
-                items.append(item)
+                    item = {
+                        "tipo_registro": "asesoria",
+                        "id_compuesto": a["id"],
+                        "turno_id": None,
+                        "asesoria_id": a["id"],
+                        "codigo_caso": codigo_base,
+                        "codigo_turno": f"{codigo_base}-{ojo_caso}",
+                        "sub_ojo_etiqueta": f"Ojo ({ojo_caso})",
+                        "paciente_id": a.get("paciente_id"),
+                        "paciente": pac,
+                        "paciente_nombre": pac.get("nombre") or "Paciente",
+                        "paciente_dni": pac.get("dni") or "S/D",
+                        "paciente_telefono": pac.get("telefono") or "S/D",
+                        "paciente_obra_social": a.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
+                        "geclisa_ficha_id": pac.get("geclisa_ficha_id"),
+                        "fecha_cirugia": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia"),
+                        "fecha_cx": a.get("fecha_probable_cirugia") or a.get("fecha_definitiva_cirugia") or "A programar",
+                        "hora_inicio": None,
+                        "hora_cx": None,
+                        "ojo": ojo_caso,
+                        "practica_nombre": practica_nombre,
+                        "cirujano_nombre": cirujano,
+                        "quirofano_nombre": "Pendiente de Quirófano",
+                        "estado_turno": a.get("estado"),
+                        "lio_calculado": es_calculado,
+                        "lio_calculado_at": a.get("lio_calculado_at"),
+                        "lio_calculado_por": a.get("lio_calculado_por") or (cirujano if es_calculado else None),
+                        "lio_calculo_opciones": opciones,
+                        "lio_stock_reservado": False,
+                        "lio_stock_reservado_at": None,
+                        "lio_stock_observaciones": ""
+                    }
+                    items.append(item)
 
         # Filtro de búsqueda por texto inicial
         if busqueda and busqueda.strip():
@@ -5474,11 +5476,12 @@ class ReabrirCalculoPayload(BaseModel):
     turno_id: Optional[str] = None
     asesoria_id: Optional[str] = None
     usuario: Optional[str] = None
+    ojo: Optional[str] = None
 
 @app.post("/api/calculo-lio/reabrir")
 def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload):
     """
-    Reabre un cálculo de LIO confirmado para permitir su rectificación o ajuste médico.
+    Reabre un cálculo de LIO confirmado para permitir su rectificación o ajuste médico por ojo.
     """
     try:
         from datetime import datetime, timezone
@@ -5492,14 +5495,33 @@ def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload):
         if payload.turno_id:
             supabase.table("turnos_quirofano").update(upd).eq("id", payload.turno_id).execute()
         if payload.asesoria_id:
-            supabase.table("asesorias_quirurgicas").update(upd).eq("id", payload.asesoria_id).execute()
+            as_resp = supabase.table("asesorias_quirurgicas").select("*").eq("id", payload.asesoria_id).execute()
+            as_existente = (as_resp.data or [{}])[0]
+            ojo_actual_caso = as_existente.get("ojo") or "OD"
+            chk_existente = as_existente.get("checklist_prequirurgico") or {}
+            if not isinstance(chk_existente, dict):
+                chk_existente = {}
+
+            if ojo_actual_caso == "AO":
+                ojo_reabrir = payload.ojo or "OD"
+                if f"_lio_calculo_{ojo_reabrir}" in chk_existente and isinstance(chk_existente[f"_lio_calculo_{ojo_reabrir}"], dict):
+                    chk_existente[f"_lio_calculo_{ojo_reabrir}"]["lio_calculado"] = False
+                    chk_existente[f"_lio_calculo_{ojo_reabrir}"]["lio_calculado_at"] = None
+
+                as_upd = {
+                    "checklist_prequirurgico": chk_existente,
+                    "updated_at": ahora_iso
+                }
+                supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
+            else:
+                supabase.table("asesorias_quirurgicas").update(upd).eq("id", payload.asesoria_id).execute()
             
         log_event(
             nivel="INFO",
             modulo="QUIROFANO",
             accion="CALCULO_LIO_REABIERTO",
-            mensaje=f"Cálculo de LIO reabierto para edición por {payload.usuario or 'Cirujano'}",
-            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id}
+            mensaje=f"Cálculo de LIO reabierto para edición ({payload.ojo or 'OD'}) por {payload.usuario or 'Cirujano'}",
+            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id, "ojo": payload.ojo}
         )
         return {"success": True, "mensaje": "Cálculo reabierto para edición.", "lio_calculado": False}
     except Exception as e:

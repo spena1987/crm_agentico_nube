@@ -529,12 +529,16 @@ export default function CalculoLioPage() {
         body: JSON.stringify({
           turno_id: pacienteActivo.turno_id,
           asesoria_id: pacienteActivo.asesoria_id,
-          usuario: pacienteActivo.cirujano_nombre || 'Cirujano'
+          usuario: pacienteActivo.cirujano_nombre || 'Cirujano',
+          ojo: pacienteActivo.ojo
         })
       })
       const data = await res.json()
       if (res.ok && data.success) {
         setModoEdicion(true)
+        if (estadoFiltro === 'calculados') {
+          setEstadoFiltro('todos')
+        }
         setPacienteActivo({ ...pacienteActivo, lio_calculado: false })
         fetchPacientes()
       } else {
