@@ -27,7 +27,8 @@ import {
   Sparkles,
   RefreshCw,
   Search,
-  Tag
+  Tag,
+  Eye
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -155,12 +156,28 @@ export default function CasoFormularioActivo({
   const [medioPago, setMedioPago] = useState<string | null>(caso.medio_pago || null)
   const [presupuestoId, setPresupuestoId] = useState<string | null>(caso.presupuesto_id || null)
 
+  // Lateralidad y Modalidad Bilateral
+  const metaBilateralInicial = ((caso.checklist_prequirurgico as any)?._meta_bilateral) || {}
+  const [ojo, setOjo] = useState<'OD' | 'OI' | 'AO'>((caso.ojo as any) || 'OD')
+  const [modalidadBilateral, setModalidadBilateral] = useState<'escalonada' | 'simultanea'>(
+    metaBilateralInicial.modalidad || (caso.ojo === 'AO' ? 'escalonada' : 'escalonada')
+  )
+  const [ordenOjos, setOrdenOjos] = useState<'OD_primero' | 'OI_primero'>(
+    metaBilateralInicial.orden || 'OD_primero'
+  )
+  const [fechaProbable2doOjo, setFechaProbable2doOjo] = useState<string>(
+    metaBilateralInicial.fecha_probable_2do_ojo || (caso as any).fecha_probable_2do_ojo || ''
+  )
+  const [fechaDefinitiva2doOjo, setFechaDefinitiva2doOjo] = useState<string>(
+    metaBilateralInicial.fecha_definitiva_2do_ojo || (caso as any).fecha_definitiva_2do_ojo || ''
+  )
+
   // Fechas
   const [fechaProbable, setFechaProbable] = useState(caso.fecha_probable_cirugia || '')
   const [fechaDefinitiva, setFechaDefinitiva] = useState(caso.fecha_definitiva_cirugia || '')
 
   // Checklist y Notas
-  const [checklist, setChecklist] = useState<Record<string, boolean>>(caso.checklist_prequirurgico || {})
+  const [checklist, setChecklist] = useState<Record<string, any>>(caso.checklist_prequirurgico || {})
   const [proximaAccionFecha, setProximaAccionFecha] = useState(caso.proxima_accion_fecha || '')
   const [proximaAccionTexto, setProximaAccionTexto] = useState(caso.proxima_accion_texto || '')
   const [situacionPaciente, setSituacionPaciente] = useState(caso.situacion_paciente || '')
@@ -385,7 +402,16 @@ export default function CasoFormularioActivo({
       presupuesto_id: presupuestoId || null,
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
-      checklist_prequirurgico: checklist,
+      ojo: ojo,
+      checklist_prequirurgico: {
+        ...checklist,
+        _meta_bilateral: {
+          modalidad: ojo === 'AO' ? modalidadBilateral : null,
+          orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
+          fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
+          fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
+        }
+      },
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
       situacion_paciente: situacionPaciente || ''
@@ -430,7 +456,16 @@ export default function CasoFormularioActivo({
       presupuesto_id: presupuestoId || null,
       fecha_probable_cirugia: fechaProbable || null,
       fecha_definitiva_cirugia: fechaDefinitiva || null,
-      checklist_prequirurgico: checklist,
+      ojo: ojo,
+      checklist_prequirurgico: {
+        ...checklist,
+        _meta_bilateral: {
+          modalidad: ojo === 'AO' ? modalidadBilateral : null,
+          orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
+          fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
+          fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
+        }
+      },
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
       situacion_paciente: situacionPaciente || ''
@@ -580,6 +615,117 @@ export default function CasoFormularioActivo({
                         ) : null}
                       </button>
                     ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Selector Ergonómico de Lateralidad / Ojo Quirúrgico */}
+            <div className="p-3 bg-neutral-950/70 border border-blue-500/20 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                  <Eye size={14} className="text-blue-400" />
+                  Lateralidad / Ojo a Operar
+                </label>
+                {ojo === 'AO' && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    {modalidadBilateral === 'escalonada' ? 'Bilateral Escalonada (2 Días)' : 'Bilateral Simultánea (Mismo Día)'}
+                  </span>
+                )}
+              </div>
+
+              {/* 3 Botones Principales de Selección Directa */}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOjo('OD')}
+                  className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                    ojo === 'OD'
+                      ? 'bg-blue-600/30 border-blue-500 text-blue-300 shadow-md shadow-blue-500/10'
+                      : 'bg-neutral-900 hover:bg-neutral-800 border-[var(--border)] text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span>👁️ Ojo Derecho (OD)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOjo('OI')}
+                  className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                    ojo === 'OI'
+                      ? 'bg-emerald-600/30 border-emerald-500 text-emerald-300 shadow-md shadow-emerald-500/10'
+                      : 'bg-neutral-900 hover:bg-neutral-800 border-[var(--border)] text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span>👁️ Ojo Izquierdo (OI)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOjo('AO')}
+                  className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
+                    ojo === 'AO'
+                      ? 'bg-purple-600/30 border-purple-500 text-purple-300 shadow-md shadow-purple-500/10'
+                      : 'bg-neutral-900 hover:bg-neutral-800 border-[var(--border)] text-gray-400 hover:text-white'
+                  }`}
+                >
+                  <span>👁️👁️ Ambos Ojos (AO)</span>
+                </button>
+              </div>
+
+              {/* Opciones Avanzadas si es Ambos Ojos (AO) */}
+              {ojo === 'AO' && (
+                <div className="pt-2 border-t border-gray-800 space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-gray-400 font-medium">Modalidad:</span>
+                    <button
+                      type="button"
+                      onClick={() => setModalidadBilateral('escalonada')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                        modalidadBilateral === 'escalonada'
+                          ? 'bg-purple-600 text-white border-purple-500'
+                          : 'bg-neutral-900 text-gray-400 border-[var(--border)] hover:text-white'
+                      }`}
+                    >
+                      2 Días Separados (Escalonada)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModalidadBilateral('simultanea')}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                        modalidadBilateral === 'simultanea'
+                          ? 'bg-purple-600 text-white border-purple-500'
+                          : 'bg-neutral-900 text-gray-400 border-[var(--border)] hover:text-white'
+                      }`}
+                    >
+                      Mismo Acto (Simultánea)
+                    </button>
+                  </div>
+
+                  {modalidadBilateral === 'escalonada' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 block mb-1">Orden de Intervención:</label>
+                        <select
+                          value={ordenOjos}
+                          onChange={(e) => setOrdenOjos(e.target.value as any)}
+                          className="w-full p-1.5 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-purple-500"
+                        >
+                          <option value="OD_primero">1° Ojo Derecho (OD) ➔ 2° Ojo Izquierdo (OI)</option>
+                          <option value="OI_primero">1° Ojo Izquierdo (OI) ➔ 2° Ojo Derecho (OD)</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-bold text-gray-400 block mb-1">Fecha Estimada 2do Ojo:</label>
+                        <input
+                          type="date"
+                          value={fechaProbable2doOjo}
+                          onChange={(e) => setFechaProbable2doOjo(e.target.value)}
+                          className="w-full p-1.5 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-purple-500"
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

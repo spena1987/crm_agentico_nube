@@ -1607,12 +1607,26 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
             nom_any = supabase.table("nomencladores").select("id").limit(1).execute()
             nomenclador_id = nom_any.data[0]["id"] if nom_any.data else None
             
+        modalidad_lat = payload.get("modalidad_lateralidad_defecto") or "unilateral"
+        ojo_def = payload.get("ojo_defecto") or ("AO" if "bilateral" in modalidad_lat else "OD")
+        duracion_est = int(payload.get("duracion_estimada_minutos") or 20)
+        
+        # Limpiar tags previos en descripcion si existen
+        clean_desc = descripcion or ""
+        import re
+        clean_desc = re.sub(r'\[ORIGEN:.*?\]', '', clean_desc)
+        clean_desc = re.sub(r'\[MODALIDAD:.*?\]', '', clean_desc)
+        clean_desc = re.sub(r'\[OJO_DEFECTO:.*?\]', '', clean_desc)
+        clean_desc = re.sub(r'\[DURACION:.*?\]', '', clean_desc)
+        
+        full_desc = f"[ORIGEN:{origen}][MODALIDAD:{modalidad_lat}][OJO_DEFECTO:{ojo_def}][DURACION:{duracion_est}] {clean_desc.strip()}".strip()
+        
         p_data = {
             "nomenclador_id": nomenclador_id,
             "codigo": codigo,
             "nombre": nombre,
             "categoria": categoria,
-            "descripcion": f"[ORIGEN:{origen}] {descripcion}".strip(),
+            "descripcion": full_desc,
             "habilitar_arancel": habilitar_arancel,
             "habilitar_preparacion": habilitar_preparacion,
             "preparacion_plantilla_id": preparacion_plantilla_id,
@@ -1802,16 +1816,48 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
                 texto_consentimiento = practica.get("consentimiento_custom_texto")
                 titulo_consentimiento = f"Consentimiento - {practica.get('nombre', 'Cirugía')}"
             elif practica.get("plantillas_consentimientos"):
-                pl = practica["plantillas_consentimientos"]
-                texto_consentimiento = pl.get("cuerpo_legal")
-                titulo_consentimiento = pl.get("titulo", "Consentimiento Informado")
-                version_consentimiento = pl.get("version", "1.0")
+        # Resolver modalidad de lateralidad y agendamiento por defecto
+        desc = practica.get("descripcion") or ""
+        modalidad_def = "unilateral"
+        ojo_def = "OD"
+        duracion_def = 20
+        
+        if "[MODALIDAD:" in desc:
+            try:
+                modalidad_def = desc.split("[MODALIDAD:")[1].split("]")[0].strip()
+            except Exception:
+                pass
+        else:
+            # Preconfiguración médica inteligente
+            nom_low = (practica.get("nombre") or "").lower()
+            if "catarata" in nom_low or "faco" in nom_low or "lio" in nom_low or "vitrec" in nom_low or "glaucoma" in nom_low or "trabecu" in nom_low:
+                modalidad_def = "bilateral_escalonada"
+                ojo_def = "AO"
+            elif "lasik" in nom_low or "refractiva" in nom_low or "prk" in nom_low or "inyeccion" in nom_low or "inyecci" in nom_low or "blefaro" in nom_low or "parpado" in nom_low:
+                modalidad_def = "bilateral_simultanea"
+                ojo_def = "AO"
                 
+        if "[OJO_DEFECTO:" in desc:
+            try:
+                ojo_def = desc.split("[OJO_DEFECTO:")[1].split("]")[0].strip()
+            except Exception:
+                pass
+                
+        if "[DURACION:" in desc:
+            try:
+                duracion_def = int(desc.split("[DURACION:")[1].split("]")[0].strip())
+            except Exception:
+                pass
+
         return {
             "id": practica["id"],
             "codigo": practica["codigo"],
             "nombre": practica["nombre"],
             "categoria": practica.get("categoria"),
+            "descripcion": practica.get("descripcion"),
+            "modalidad_lateralidad_defecto": modalidad_def,
+            "ojo_defecto": ojo_def,
+            "duracion_estimada_minutos": duracion_def,
             "habilitar_arancel": practica.get("habilitar_arancel", True),
             "precio": float(ar_vigente.get("precio", 0.0)) if ar_vigente else 0.0,
             "moneda": ar_vigente.get("moneda", "ARS") if ar_vigente else "ARS",
@@ -2099,7 +2145,8 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             
             "estado": payload.get("estado", "en_asesoramiento"),
             "situacion_paciente": payload.get("situacion_paciente") or "",
-            "motivo_cancelacion": payload.get("motivo_cancelacion") or None
+            "motivo_cancelacion": payload.get("motivo_cancelacion") or None,
+            "ojo": payload.get("ojo", "OD")
         }
         
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
@@ -2126,7 +2173,8 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             "fecha_probable_cirugia", "fecha_definitiva_cirugia", 
             "control_postop_24h", "control_postop_7d", "alta_medica_definitiva",
             "estado", "situacion_paciente", "motivo_cancelacion",
-            "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at"
+            "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at",
+            "ojo"
         ]
         
         for k in campos_permitidos:
@@ -3274,12 +3322,68 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
     """
     Retorna los casos de cirugías confirmadas desde asesoramiento quirúrgico con sus pacientes
     que aún no han sido programadas en quirófano (estado = 'confirmado').
+    Desdobla automáticamente los casos bilaterales escalonados en 1er Ojo y 2do Ojo
+    para permitir agendarlos en fechas quirúrgicas independientes.
     """
     if not supabase:
         return []
     try:
         resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("estado", "confirmado").order("created_at", desc=True).execute()
-        return resp.data or []
+        casos = resp.data or []
+        
+        resultado = []
+        for caso in casos:
+            asesoria_id = caso["id"]
+            # Buscar turnos ya existentes para esta asesoría en quirófano
+            t_resp = supabase.table("turnos_quirofano").select("id, ojo, fecha_cirugia, hora_inicio, estado").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+            turnos_existentes = t_resp.data or []
+            
+            ojo_caso = caso.get("ojo") or "OD"
+            
+            # Extraer metadata bilateral
+            chk = caso.get("checklist_prequirurgico") or {}
+            meta_bilateral = chk.get("_meta_bilateral") if isinstance(chk, dict) else {}
+            modalidad = (meta_bilateral or {}).get("modalidad") or caso.get("modalidad_bilateral")
+            
+            # Si no está explícito pero es catarata/faco/vitrec y ojo == AO, asumir escalonada
+            nom = (caso.get("practica_nombre") or "").lower()
+            if ojo_caso == "AO" and not modalidad:
+                if "catarata" in nom or "faco" in nom or "lio" in nom or "vitrec" in nom or "glaucoma" in nom or "trabecu" in nom:
+                    modalidad = "escalonada"
+                else:
+                    modalidad = "simultanea"
+                    
+            if ojo_caso == "AO" and modalidad == "escalonada":
+                orden = (meta_bilateral or {}).get("orden") or caso.get("orden_ojos_escalonada") or "OD_primero"
+                ojo_1 = "OD" if orden == "OD_primero" else "OI"
+                ojo_2 = "OI" if orden == "OD_primero" else "OD"
+                
+                tiene_t1 = any(t.get("ojo") == ojo_1 for t in turnos_existentes)
+                tiene_t2 = any(t.get("ojo") == ojo_2 for t in turnos_existentes)
+                
+                f_2do = (meta_bilateral or {}).get("fecha_probable_2do_ojo") or (meta_bilateral or {}).get("fecha_definitiva_2do_ojo") or caso.get("fecha_probable_2do_ojo")
+                
+                if not tiene_t1:
+                    c1 = dict(caso)
+                    c1["sub_ojo"] = ojo_1
+                    c1["es_sub_turno"] = True
+                    c1["sub_ojo_etiqueta"] = f"1er Ojo ({ojo_1})"
+                    c1["fecha_sugerida"] = caso.get("fecha_probable_cirugia") or caso.get("fecha_definitiva_cirugia")
+                    resultado.append(c1)
+                    
+                if not tiene_t2:
+                    c2 = dict(caso)
+                    c2["sub_ojo"] = ojo_2
+                    c2["es_sub_turno"] = True
+                    c2["sub_ojo_etiqueta"] = f"2do Ojo ({ojo_2})"
+                    c2["fecha_sugerida"] = f_2do
+                    resultado.append(c2)
+            else:
+                # Caso Unilateral (OD u OI) o AO Simultáneo
+                if len(turnos_existentes) == 0:
+                    resultado.append(caso)
+                    
+        return resultado
     except Exception as e:
         logger.error(f"Error al listar asesorías confirmadas para quirófano: {e}")
         return []

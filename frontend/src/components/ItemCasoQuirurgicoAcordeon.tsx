@@ -57,10 +57,15 @@ export interface AsesoriaQuirurgica {
   control_postop_24h?: boolean
   control_postop_7d?: boolean
   alta_medica_definitiva?: boolean
+  ojo?: 'OD' | 'OI' | 'AO'
+  modalidad_bilateral?: 'escalonada' | 'simultanea' | null
+  orden_ojos_escalonada?: 'OD_primero' | 'OI_primero' | null
+  fecha_probable_2do_ojo?: string | null
+  fecha_definitiva_2do_ojo?: string | null
   estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'presupuesto_enviado' | 'confirmado' | 'operado' | 'cancelado'
   situacion_paciente?: string | null
   motivo_cancelacion?: string | null
-  checklist_prequirurgico?: Record<string, boolean> | null
+  checklist_prequirurgico?: Record<string, any> | null
   proxima_accion_fecha?: string | null
   proxima_accion_texto?: string | null
   ultimo_contacto_at?: string | null

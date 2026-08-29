@@ -196,28 +196,34 @@ export default function FichaTurnoModal({
     const nomPractica = (caso.practica_nombre || '').toLowerCase()
     const requiereLio = nomPractica.includes('catarata') || nomPractica.includes('faco') || nomPractica.includes('lio')
 
-    setFormData((prev) => ({
-      ...prev,
-      asesoria_id: caso.id,
-      paciente_id: caso.paciente_id || pac.id || '',
-      paciente_nombre: pac.nombre || '',
-      paciente_dni: pac.dni || '',
-      paciente_telefono: pac.telefono || '',
-      practica_nombre: caso.practica_nombre || prev.practica_nombre,
-      practica_codigo: caso.practica_codigo || prev.practica_codigo,
-      cirujano_nombre: caso.medico_cirujano_nombre || prev.cirujano_nombre,
-      cirujano_id: caso.medico_cirujano_id || prev.cirujano_id,
-      medico_derivador_nombre: caso.medico_derivador_nombre || prev.medico_derivador_nombre || '',
-      obra_social: caso.cobertura_obra_social || pac.obra_social || '',
-      plan_obra_social: pac.plan_obra_social || '',
-      ojo: caso.ojo || prev.ojo || 'OD',
-      duracion_minutos: duracionSugerida,
-      lleva_lente: requiereLio,
-      fecha_cirugia: caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || prev.fecha_cirugia
-    }))
+    setFormData((prev) => {
+      const ojoSugerido = caso.sub_ojo || caso.ojo || prev.ojo || 'OD'
+      const fechaSugerida = caso.fecha_sugerida || caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || prev.fecha_cirugia
 
-    setCasoSeleccionadoId(caso.id)
-    setMensajeExito(`✓ Datos heredados de la asesoría de ${pac.nombre || 'Paciente'}`)
+      return {
+        ...prev,
+        asesoria_id: caso.id,
+        paciente_id: caso.paciente_id || pac.id || '',
+        paciente_nombre: pac.nombre || '',
+        paciente_dni: pac.dni || '',
+        paciente_telefono: pac.telefono || '',
+        practica_nombre: caso.practica_nombre || prev.practica_nombre,
+        practica_codigo: caso.practica_codigo || prev.practica_codigo,
+        cirujano_nombre: caso.medico_cirujano_nombre || prev.cirujano_nombre,
+        cirujano_id: caso.medico_cirujano_id || prev.cirujano_id,
+        medico_derivador_nombre: caso.medico_derivador_nombre || prev.medico_derivador_nombre || '',
+        obra_social: caso.cobertura_obra_social || pac.obra_social || '',
+        plan_obra_social: pac.plan_obra_social || '',
+        ojo: ojoSugerido,
+        duracion_minutos: duracionSugerida,
+        lleva_lente: requiereLio,
+        fecha_cirugia: fechaSugerida
+      }
+    })
+
+    const optId = caso.sub_ojo ? `${caso.id}_${caso.sub_ojo}` : caso.id
+    setCasoSeleccionadoId(optId)
+    setMensajeExito(`✓ Datos heredados de la asesoría de ${pac.nombre || 'Paciente'}${caso.sub_ojo_etiqueta ? ' (' + caso.sub_ojo_etiqueta + ')' : ''}`)
     setTimeout(() => setMensajeExito(null), 3000)
   }
 
@@ -671,19 +677,24 @@ export default function FichaTurnoModal({
                     <select
                       value={casoSeleccionadoId}
                       onChange={(e) => {
-                        const cid = e.target.value
-                        setCasoSeleccionadoId(cid)
-                        const match = casosConfirmados.find((c) => c.id === cid)
+                        const optVal = e.target.value
+                        setCasoSeleccionadoId(optVal)
+                        const match = casosConfirmados.find((c) => {
+                          const optKey = c.sub_ojo ? `${c.id}_${c.sub_ojo}` : c.id
+                          return optKey === optVal || c.id === optVal
+                        })
                         if (match) aplicarCasoConfirmado(match)
                       }}
                       className="w-full p-2.5 rounded-xl bg-[var(--card)] border-2 border-blue-500/50 text-xs font-bold text-blue-600 dark:text-blue-400 outline-none focus:border-blue-600 shadow-sm"
                     >
                       <option value="">-- Seleccionar de la lista ({casosConfirmados.length} cirugías confirmadas) --</option>
-                      {casosConfirmados.map((c) => {
+                      {casosConfirmados.map((c, idx) => {
                         const pac = c.pacientes || {}
+                        const subOjoTxt = c.sub_ojo_etiqueta ? ` [${c.sub_ojo_etiqueta}]` : (c.ojo ? ` [Ojo: ${c.ojo}]` : '')
+                        const optKey = c.sub_ojo ? `${c.id}_${c.sub_ojo}` : c.id
                         return (
-                          <option key={c.id} value={c.id}>
-                            {pac.nombre || 'Paciente'} (DNI: {pac.dni || 'S/D'}) — {c.practica_nombre} — Cirujano: {c.medico_cirujano_nombre || 'Sin cirujano'}
+                          <option key={`${c.id}_${idx}`} value={optKey}>
+                            {pac.nombre || 'Paciente'} (DNI: {pac.dni || 'S/D'}) — {c.practica_nombre}{subOjoTxt} — Cirujano: {c.medico_cirujano_nombre || 'Sin cirujano'}
                           </option>
                         )
                       })}

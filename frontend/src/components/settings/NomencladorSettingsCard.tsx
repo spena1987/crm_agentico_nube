@@ -152,7 +152,10 @@ export default function NomencladorSettingsCard() {
     habilitar_consentimiento: false,
     modo_consentimiento: 'plantilla' as 'plantilla' | 'custom',
     consentimiento_plantilla_id: '',
-    consentimiento_custom_texto: ''
+    consentimiento_custom_texto: '',
+    modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
+    ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
+    duracion_estimada_minutos: 20
   })
 
   const [isPrepModalOpen, setIsPrepModalOpen] = useState(false)
@@ -307,7 +310,10 @@ export default function NomencladorSettingsCard() {
       habilitar_consentimiento: false,
       modo_consentimiento: 'plantilla',
       consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
-      consentimiento_custom_texto: ''
+      consentimiento_custom_texto: '',
+    modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
+    ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
+    duracion_estimada_minutos: 20
     })
     if (item.crm_practica_id) {
       loadHistorialAranceles(item.crm_practica_id)
@@ -343,7 +349,10 @@ export default function NomencladorSettingsCard() {
       habilitar_consentimiento: false,
       modo_consentimiento: 'plantilla',
       consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
-      consentimiento_custom_texto: ''
+      consentimiento_custom_texto: '',
+    modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
+    ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
+    duracion_estimada_minutos: 20
     })
     setHistorialAranceles([])
     setIsModalOpen(true)
@@ -359,6 +368,9 @@ export default function NomencladorSettingsCard() {
       nombre: item.nombre,
       categoria: item.categoria || 'General',
       descripcion: item.descripcion || '',
+      modalidad_lateralidad_defecto: (item.descripcion?.includes('[MODALIDAD:bilateral_escalonada]') ? 'bilateral_escalonada' : item.descripcion?.includes('[MODALIDAD:bilateral_simultanea]') ? 'bilateral_simultanea' : item.descripcion?.includes('[MODALIDAD:unilateral]') ? 'unilateral' : ((item.nombre || '').toLowerCase().includes('catarata') || (item.nombre || '').toLowerCase().includes('faco')) ? 'bilateral_escalonada' : 'unilateral') as any,
+      ojo_defecto: (item.descripcion?.includes('[OJO_DEFECTO:AO]') ? 'AO' : item.descripcion?.includes('[OJO_DEFECTO:OI]') ? 'OI' : 'OD') as any,
+      duracion_estimada_minutos: item.descripcion?.includes('[DURACION:') ? parseInt(item.descripcion.split('[DURACION:')[1].split(']')[0], 10) || 20 : 20,
       origen: item.origen,
       nom_id: null,
       habilitar_arancel: item.habilitar_arancel !== undefined ? item.habilitar_arancel : true,
@@ -1344,6 +1356,71 @@ export default function NomencladorSettingsCard() {
                       placeholder="Observaciones de la prestación..."
                       className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] outline-none focus:ring-2 focus:ring-blue-500"
                     />
+                  </div>
+
+                  {/* Configuración de Modalidad de Lateralidad y Quirófano */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 border border-blue-500/20 rounded-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="font-bold text-xs text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                        <SlidersHorizontal size={14} className="text-blue-500" />
+                        Modalidad Quirúrgica & Lateralidad por Defecto
+                      </label>
+                      <span className="text-[10px] text-slate-400">Determina el agendamiento al confirmar</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, modalidad_lateralidad_defecto: 'unilateral', ojo_defecto: 'OD' })}
+                        className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between gap-1.5 ${
+                          formData.modalidad_lateralidad_defecto === 'unilateral'
+                            ? 'bg-blue-50/80 border-blue-500 text-blue-900 dark:bg-blue-950/50 dark:text-blue-300 shadow-sm'
+                            : 'bg-white dark:bg-slate-900 border-[var(--border)] text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className="font-bold text-xs">👁️ Unilateral</span>
+                        <span className="text-[10px] opacity-75">1 solo ojo (OD/OI). Genera 1 turno.</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, modalidad_lateralidad_defecto: 'bilateral_escalonada', ojo_defecto: 'AO' })}
+                        className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between gap-1.5 ${
+                          formData.modalidad_lateralidad_defecto === 'bilateral_escalonada'
+                            ? 'bg-purple-50/80 border-purple-500 text-purple-900 dark:bg-purple-950/50 dark:text-purple-300 shadow-sm'
+                            : 'bg-white dark:bg-slate-900 border-[var(--border)] text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className="font-bold text-xs">👁️👁️ Bilateral Escalonada</span>
+                        <span className="text-[10px] opacity-75">2 días separados (Catarata). Genera 2 turnos.</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, modalidad_lateralidad_defecto: 'bilateral_simultanea', ojo_defecto: 'AO' })}
+                        className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between gap-1.5 ${
+                          formData.modalidad_lateralidad_defecto === 'bilateral_simultanea'
+                            ? 'bg-emerald-50/80 border-emerald-500 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300 shadow-sm'
+                            : 'bg-white dark:bg-slate-900 border-[var(--border)] text-slate-600 dark:text-slate-400 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className="font-bold text-xs">👁️👁️ Bilateral Simultánea</span>
+                        <span className="text-[10px] opacity-75">Mismo día (LASIK). Genera 1 turno.</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 text-xs">
+                      <span className="text-[11px] text-slate-500 font-bold">Duración estimada por acto:</span>
+                      <input
+                        type="number"
+                        min={5}
+                        max={180}
+                        value={formData.duracion_estimada_minutos}
+                        onChange={(e) => setFormData({ ...formData, duracion_estimada_minutos: parseInt(e.target.value, 10) || 20 })}
+                        className="w-20 px-2 py-1 bg-white dark:bg-slate-900 border border-[var(--border)] rounded-lg text-xs font-bold text-center outline-none focus:border-blue-500"
+                      />
+                      <span className="text-[11px] text-slate-400">minutos</span>
+                    </div>
                   </div>
 
                   {/* Resumen de Módulos Activos */}
