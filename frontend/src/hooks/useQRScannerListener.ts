@@ -80,6 +80,15 @@ export function useQRScannerListener({ onScan, enabled = true, prefix = 'MEDCRM'
             if (isInput) {
               // Prevenir que el Enter envíe formularios por accidente
               e.preventDefault()
+              e.stopPropagation()
+
+              if (target && 'value' in target) {
+                const inputElem = target as HTMLInputElement
+                if (inputElem.value && (inputElem.value.includes(buffer) || inputElem.value.toUpperCase().includes('MEDCRM:QX:') || inputElem.value.toUpperCase().startsWith('QX-'))) {
+                  inputElem.value = inputElem.value.replace(buffer, '').replace(/MEDCRM:QX:[^\s]+/gi, '').replace(/QX-[^\s]+/gi, '').trim()
+                  inputElem.dispatchEvent(new Event('input', { bubbles: true }))
+                }
+              }
             }
             onScan(buffer, turnoId)
           }

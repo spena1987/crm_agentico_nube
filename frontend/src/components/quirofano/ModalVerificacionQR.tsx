@@ -303,14 +303,23 @@ export default function ModalVerificacionQR({
               {/* ACCIONES RÁPIDAS MANUALES ALTERNATIVAS */}
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold text-gray-400 uppercase">Cambiar manualmente a otra etapa:</span>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <button
                     type="button"
                     disabled={ejecutandoAccion || nuevoEst === 'en_espera'}
                     onClick={() => handleForzarEstado('en_espera')}
                     className="p-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
                   >
-                    <span>🟡 Sala de Espera</span>
+                    <span>🟡 En Espera</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={ejecutandoAccion || nuevoEst === 'pre_quirofano'}
+                    onClick={() => handleForzarEstado('pre_quirofano')}
+                    className="p-2 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
+                  >
+                    <span>🩵 Pre-Qx</span>
                   </button>
 
                   <button
@@ -319,7 +328,7 @@ export default function ModalVerificacionQR({
                     onClick={() => handleForzarEstado('en_operacion')}
                     className="p-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 text-xs font-bold transition flex items-center justify-center gap-1 disabled:opacity-40"
                   >
-                    <span>🟣 En Quirófano</span>
+                    <span>🟣 Quirófano</span>
                   </button>
 
                   <button

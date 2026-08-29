@@ -4739,13 +4739,15 @@ def procesar_escaneo_qr_turno(
         
         # Determinar nuevo estado
         nuevo_estado = estado_anterior
-        if accion_deseada and accion_deseada in ["programado", "en_espera", "en_operacion", "operado", "cancelado"]:
+        if accion_deseada and accion_deseada in ["programado", "en_espera", "pre_quirofano", "en_operacion", "operado", "cancelado"]:
             nuevo_estado = accion_deseada
         else:
             # Avance automático en cascada según etapa actual
             if estado_anterior == "programado":
                 nuevo_estado = "en_espera"
             elif estado_anterior == "en_espera":
+                nuevo_estado = "pre_quirofano"
+            elif estado_anterior == "pre_quirofano":
                 nuevo_estado = "en_operacion"
             elif estado_anterior == "en_operacion":
                 nuevo_estado = "operado"
@@ -4754,19 +4756,54 @@ def procesar_escaneo_qr_turno(
                 nuevo_estado = "operado"
                 
         # Actualizar en Supabase
-        now_iso = datetime.now().isoformat()
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
         update_payload: Dict[str, Any] = {
             "estado": nuevo_estado,
             "updated_at": "now()"
         }
         
         # Registrar timestamps de auditoría de trazabilidad
-        if nuevo_estado == "en_espera" and estado_anterior != "en_espera":
-            update_payload["llegada_at"] = now_iso
-        elif nuevo_estado == "en_operacion" and estado_anterior != "en_operacion":
-            update_payload["inicio_quirofano_at"] = now_iso
-        elif nuevo_estado == "operado" and estado_anterior != "operado":
-            update_payload["fin_quirofano_at"] = now_iso
+        if nuevo_estado == "en_espera":
+            if not turno.get("llegada_at"):
+                update_payload["llegada_at"] = now_iso
+        elif nuevo_estado == "pre_quirofano":
+            if not turno.get("llegada_at"):
+                update_payload["llegada_at"] = now_iso
+            if not turno.get("ingreso_pre_quirofano_at"):
+                update_payload["ingreso_pre_quirofano_at"] = now_iso
+        elif nuevo_estado == "en_operacion":
+            if not turno.get("llegada_at"):
+                update_payload["llegada_at"] = now_iso
+            if not turno.get("ingreso_pre_quirofano_at"):
+                update_payload["ingreso_pre_quirofano_at"] = now_iso
+            if not turno.get("inicio_cirugia_at"):
+                update_payload["inicio_cirugia_at"] = now_iso
+                update_payload["inicio_quirofano_at"] = now_iso
+        elif nuevo_estado == "operado":
+            if not turno.get("llegada_at"):
+                update_payload["llegada_at"] = now_iso
+            if not turno.get("ingreso_pre_quirofano_at"):
+                update_payload["ingreso_pre_quirofano_at"] = now_iso
+            if not turno.get("inicio_cirugia_at"):
+                update_payload["inicio_cirugia_at"] = now_iso
+                update_payload["inicio_quirofano_at"] = now_iso
+            if not turno.get("fin_cirugia_at"):
+                update_payload["fin_cirugia_at"] = now_iso
+                update_payload["fin_quirofano_at"] = now_iso
+
+            # Generar automáticamente el Protocolo / Parte Quirúrgico Oficial en PDF
+            try:
+                from app.services.pdf_service import generar_pdf_parte_quirurgico
+                t_full = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
+                if t_full.data:
+                    t_item = t_full.data[0]
+                    paciente_data = t_item.get("pacientes") or {}
+                    pdf_filename = generar_pdf_parte_quirurgico(t_item, paciente_data)
+                    pdf_rel_url = f"/static/{pdf_filename}"
+                    update_payload["parte_quirurgico_pdf_url"] = pdf_rel_url
+            except Exception as e_pdf:
+                logger.warning(f"Aviso generando PDF de parte quirúrgico en escaneo QR: {e_pdf}")
             
         res_upd = supabase.table("turnos_quirofano").update(update_payload).eq("id", turno_id).execute()
         turno_actualizado = res_upd.data[0] if res_upd.data else {**turno, **update_payload}
@@ -4774,7 +4811,7 @@ def procesar_escaneo_qr_turno(
         # Si tiene asesoría vinculada, reflejar estado
         if turno.get("asesoria_id"):
             try:
-                as_estado = "en_espera" if nuevo_estado == "en_espera" else "en_cirugia" if nuevo_estado == "en_operacion" else "operado" if nuevo_estado == "operado" else None
+                as_estado = "en_espera" if nuevo_estado in ["en_espera", "pre_quirofano"] else "en_cirugia" if nuevo_estado == "en_operacion" else "operado" if nuevo_estado == "operado" else None
                 if as_estado:
                     supabase.table("asesorias_quirurgicas").update({"estado": as_estado, "updated_at": "now()"}).eq("id", turno["asesoria_id"]).execute()
             except Exception as e_as:

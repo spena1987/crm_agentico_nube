@@ -75,13 +75,6 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [scanVerifRawQR, setScanVerifRawQR] = useState<string>('')
   const [mostrarModalCamara, setMostrarModalCamara] = useState<boolean>(false)
 
-  // Listener global de escáner QR en Pizarra de Quirófano
-  useQRScannerListener({
-    onScan: (raw, tId) => {
-      setScanVerifRawQR(raw)
-      setScanVerifTurnoId(tId)
-    }
-  })
   const [quirofanos, setQuirofanos] = useState<any[]>([])
   const [turnos, setTurnos] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
@@ -92,6 +85,46 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [subiendoGeclisaId, setSubiendoGeclisaId] = useState<string | null>(null)
   const [desvinculandoGeclisaId, setDesvinculandoGeclisaId] = useState<string | null>(null)
   const [subiendoConsentimientoId, setSubiendoConsentimientoId] = useState<string | null>(null)
+
+  // Procesador inteligente de escaneos en Pizarra de Quirófano (Garantiza Time-Out OMS)
+  const procesarEscaneoPizarra = async (raw: string, tId: string) => {
+    let turnoTarget = turnos.find((t) => t.id === tId)
+    
+    if (!turnoTarget) {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${tId}/datos-pulsera`)
+        const data = await res.json()
+        if (res.ok && data.success) {
+          turnoTarget = {
+            id: tId,
+            estado: data.estado,
+            pacientes: data.paciente,
+            ...data.cirugia,
+            lleva_lente: data.cirugia?.lleva_lente
+          }
+        }
+      } catch (e) {
+        console.warn('Aviso buscando turno para escaneo en pizarra:', e)
+      }
+    }
+
+    // Si el paciente está en Pre-Quirófano o Espera, abrir mandatoriamente el checklist de Time-Out OMS
+    if (turnoTarget && (turnoTarget.estado === 'pre_quirofano' || turnoTarget.estado === 'en_espera')) {
+      setTurnoParaPausaOms(turnoTarget)
+      return
+    }
+
+    // Para el resto de etapas (ej. cerrar a 'operado'), procesar verificación estándar
+    setScanVerifRawQR(raw)
+    setScanVerifTurnoId(tId)
+  }
+
+  // Listener global de escáner QR en Pizarra de Quirófano
+  useQRScannerListener({
+    onScan: (raw, tId) => {
+      procesarEscaneoPizarra(raw, tId)
+    }
+  })
 
   // Filtros operativos múltiples y búsqueda en tiempo real
   const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['programado'])
@@ -1313,8 +1346,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           isOpen={mostrarModalCamara}
           onClose={() => setMostrarModalCamara(false)}
           onScanExitoso={(raw, tId) => {
-            setScanVerifRawQR(raw)
-            setScanVerifTurnoId(tId)
+            setMostrarModalCamara(false)
+            procesarEscaneoPizarra(raw, tId)
           }}
         />
       )}
