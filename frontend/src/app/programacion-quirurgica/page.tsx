@@ -456,21 +456,46 @@ function ProgramacionQuirurgicaContent() {
                   No hay cirugías confirmadas pendientes por el momento.
                 </p>
               ) : (
-                casosConfirmados.map((c) => {
+                casosConfirmados.map((c, idx) => {
                   const pac = c.pacientes || {}
+                  const cardKey = c.id_compuesto || (c.sub_ojo ? `${c.id}_${c.sub_ojo}` : `${c.id}_${idx}`)
+                  const esSubTurno = Boolean(c.sub_ojo)
+                  const fechaPactada = c.fecha_sugerida || c.fecha_probable_cirugia || c.fecha_definitiva_cirugia
+
                   return (
                     <div
-                      key={c.id}
-                      className="p-3.5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/40 space-y-2 hover:border-blue-500/50 transition-all shadow-sm"
+                      key={cardKey}
+                      className={`p-3.5 rounded-xl border space-y-2.5 transition-all shadow-sm ${
+                        c.sub_ojo === 'OD'
+                          ? 'border-blue-500/40 bg-blue-50/20 dark:bg-blue-950/20 hover:border-blue-500'
+                          : c.sub_ojo === 'OI'
+                          ? 'border-emerald-500/40 bg-emerald-50/20 dark:bg-emerald-950/20 hover:border-emerald-500'
+                          : 'border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/40 hover:border-blue-500/50'
+                      }`}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <p className="text-xs font-bold text-[var(--foreground)]">{pac.nombre || 'Paciente'}</p>
                           <p className="text-[11px] text-[var(--secondary)] font-mono">DNI: {pac.dni || 'S/D'}</p>
                         </div>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold uppercase">
-                          Confirmado
-                        </span>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-bold uppercase">
+                            Confirmado
+                          </span>
+                          {esSubTurno ? (
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-black border font-mono ${
+                              c.sub_ojo === 'OD'
+                                ? 'bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-900/60 dark:text-blue-200'
+                                : 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200'
+                            }`}>
+                              👁️ {c.sub_ojo_etiqueta || c.sub_ojo}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-900/60 dark:text-purple-200 font-bold font-mono">
+                              {c.ojo === 'AO' ? '👁️👁️ AO Simultáneo' : `👁️ ${c.ojo || 'OD'}`}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="text-[11px] space-y-0.5 text-[var(--secondary)]">
@@ -479,18 +504,24 @@ function ProgramacionQuirurgicaContent() {
                         {c.cobertura_obra_social && (
                           <p>🛡 Obra Social: {c.cobertura_obra_social}</p>
                         )}
-                        {c.fecha_probable_cirugia && (
-                          <p className="font-mono text-blue-600">🗓 Fecha pactada: {c.fecha_probable_cirugia}</p>
+                        {fechaPactada && (
+                          <p className="font-mono text-blue-600 font-bold">🗓 Fecha pactada: {fechaPactada}</p>
                         )}
                       </div>
 
                       <button
                         type="button"
                         onClick={() => handleAgendarCasoConfirmado(c)}
-                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all"
+                        className={`w-full py-2 text-white rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 shadow transition-all ${
+                          c.sub_ojo === 'OD'
+                            ? 'bg-blue-600 hover:bg-blue-700'
+                            : c.sub_ojo === 'OI'
+                            ? 'bg-emerald-600 hover:bg-emerald-700'
+                            : 'bg-blue-600 hover:bg-blue-700'
+                        }`}
                       >
                         <Plus size={14} />
-                        <span>Agendar en Quirófano</span>
+                        <span>{esSubTurno ? `Agendar ${c.sub_ojo_etiqueta || c.sub_ojo}` : 'Agendar en Quirófano'}</span>
                       </button>
                     </div>
                   )

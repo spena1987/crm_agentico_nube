@@ -3325,15 +3325,15 @@ def verificar_solapamiento_turno_quirofano(quirofano_id: str, fecha_cirugia: str
 
 def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
     """
-    Retorna los casos de cirugías confirmadas desde asesoramiento quirúrgico con sus pacientes
-    que aún no han sido programadas en quirófano (estado = 'confirmado').
+    Retorna los casos de cirugías confirmadas o en proceso desde asesoramiento quirúrgico con sus pacientes
+    que tienen turnos pendientes de agendamiento en quirófano.
     Desdobla automáticamente los casos bilaterales escalonados en 1er Ojo y 2do Ojo
     para permitir agendarlos en fechas quirúrgicas independientes.
     """
     if not supabase:
         return []
     try:
-        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("estado", "confirmado").order("created_at", desc=True).execute()
+        resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").in_("estado", ["confirmado", "programado"]).order("created_at", desc=True).execute()
         casos = resp.data or []
         
         resultado = []
@@ -3373,6 +3373,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c1["sub_ojo"] = ojo_1
                     c1["es_sub_turno"] = True
                     c1["sub_ojo_etiqueta"] = f"1er Ojo ({ojo_1})"
+                    c1["id_compuesto"] = f"{caso['id']}_{ojo_1}"
                     c1["fecha_sugerida"] = caso.get("fecha_probable_cirugia") or caso.get("fecha_definitiva_cirugia")
                     resultado.append(c1)
                     
@@ -3381,12 +3382,15 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c2["sub_ojo"] = ojo_2
                     c2["es_sub_turno"] = True
                     c2["sub_ojo_etiqueta"] = f"2do Ojo ({ojo_2})"
+                    c2["id_compuesto"] = f"{caso['id']}_{ojo_2}"
                     c2["fecha_sugerida"] = f_2do
                     resultado.append(c2)
             else:
-                # Caso Unilateral (OD u OI) o AO Simultáneo
-                if len(turnos_existentes) == 0:
-                    resultado.append(caso)
+                # Caso Unilateral (OD u OI) o AO Simultáneo: solo si no tiene turno y está confirmado
+                if len(turnos_existentes) == 0 and caso.get("estado") == "confirmado":
+                    c_uni = dict(caso)
+                    c_uni["id_compuesto"] = caso["id"]
+                    resultado.append(c_uni)
                     
         return resultado
     except Exception as e:

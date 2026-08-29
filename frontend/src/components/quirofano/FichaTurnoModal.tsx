@@ -580,7 +580,9 @@ export default function FichaTurnoModal({
     }
   }
 
-    const casoSeleccionadoActual = casosConfirmados.find((c) => c.id === casoSeleccionadoId)
+  const casoSeleccionadoActual = casosConfirmados.find(
+    (c) => (c.id_compuesto || (c.sub_ojo ? `${c.id}_${c.sub_ojo}` : c.id)) === casoSeleccionadoId || c.id === casoSeleccionadoId
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fade-in">
@@ -680,7 +682,7 @@ export default function FichaTurnoModal({
                         const optVal = e.target.value
                         setCasoSeleccionadoId(optVal)
                         const match = casosConfirmados.find((c) => {
-                          const optKey = c.sub_ojo ? `${c.id}_${c.sub_ojo}` : c.id
+                          const optKey = c.id_compuesto || (c.sub_ojo ? `${c.id}_${c.sub_ojo}` : c.id)
                           return optKey === optVal || c.id === optVal
                         })
                         if (match) aplicarCasoConfirmado(match)
@@ -691,9 +693,9 @@ export default function FichaTurnoModal({
                       {casosConfirmados.map((c, idx) => {
                         const pac = c.pacientes || {}
                         const subOjoTxt = c.sub_ojo_etiqueta ? ` [${c.sub_ojo_etiqueta}]` : (c.ojo ? ` [Ojo: ${c.ojo}]` : '')
-                        const optKey = c.sub_ojo ? `${c.id}_${c.sub_ojo}` : c.id
+                        const optKey = c.id_compuesto || (c.sub_ojo ? `${c.id}_${c.sub_ojo}` : `${c.id}_${idx}`)
                         return (
-                          <option key={`${c.id}_${idx}`} value={optKey}>
+                          <option key={optKey} value={optKey}>
                             {pac.nombre || 'Paciente'} (DNI: {pac.dni || 'S/D'}) — {c.practica_nombre}{subOjoTxt} — Cirujano: {c.medico_cirujano_nombre || 'Sin cirujano'}
                           </option>
                         )
@@ -718,7 +720,16 @@ export default function FichaTurnoModal({
                       </div>
                       <div className="text-right text-[11px] text-white/90">
                         <p className="font-semibold">{casoSeleccionadoActual.practica_nombre}</p>
-                        <p className="text-white/80">Derivador: {casoSeleccionadoActual.medico_derivador_nombre || 'S/D'}</p>
+                        {casoSeleccionadoActual.sub_ojo_etiqueta ? (
+                          <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-white text-blue-900 font-bold text-[10px] uppercase font-mono shadow-sm">
+                            👁️ {casoSeleccionadoActual.sub_ojo_etiqueta}
+                          </span>
+                        ) : (
+                          <span className="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-white/20 text-white font-bold text-[10px] uppercase font-mono">
+                            {casoSeleccionadoActual.ojo === 'AO' ? '👁️👁️ AO Simultáneo' : `👁️ ${casoSeleccionadoActual.ojo || 'OD'}`}
+                          </span>
+                        )}
+                        <p className="text-white/80 mt-0.5">Derivador: {casoSeleccionadoActual.medico_derivador_nombre || 'S/D'}</p>
                       </div>
                     </div>
                   )}
@@ -1252,7 +1263,14 @@ export default function FichaTurnoModal({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1">
               <div>
-                <label className="text-[11px] font-semibold text-[var(--secondary)]">Ojo a Intervenir *</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-semibold text-[var(--secondary)]">Ojo a Intervenir *</label>
+                  {casoSeleccionadoActual?.sub_ojo_etiqueta && (
+                    <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 font-mono">
+                      (Asignando {casoSeleccionadoActual.sub_ojo_etiqueta})
+                    </span>
+                  )}
+                </div>
                 <div className="grid grid-cols-3 gap-2 mt-1">
                   {[
                     { id: 'OD', label: 'Ojo Derecho' },
