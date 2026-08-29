@@ -70,6 +70,11 @@ export interface AsesoriaQuirurgica {
   proxima_accion_fecha?: string | null
   proxima_accion_texto?: string | null
   ultimo_contacto_at?: string | null
+  turnos_activos?: any[]
+  turnos_quirofano?: any[]
+  lio_calculado?: boolean
+  lente_tipo?: string | null
+  lente_dioptria?: string | null
   created_at: string
   updated_at: string
 }

@@ -74,7 +74,7 @@ export default function CasoAcordeonHeader({
             }`}
           >
             {esCasoCerrado ? <Lock size={12} className="text-teal-400" /> : <Tag size={12} className="text-blue-400" />}
-            <span className="tracking-wide">{caso.codigo_caso || (caso.checklist_prequirurgico as any)?._codigo_caso || `QX-26-${String(index + 1).padStart(4, '0')}`}</span>
+            <span className="tracking-wide">{caso.codigo_caso || (caso.checklist_prequirurgico as any)?._codigo_caso || (caso.id ? `QX-26-${caso.id.slice(0, 4).toUpperCase()}` : `QX-26-${String(index + 1).padStart(4, '0')}`)}</span>
           </div>
         </div>
 
@@ -98,6 +98,12 @@ export default function CasoAcordeonHeader({
                   : 'bg-purple-950/80 text-purple-300 border-purple-500/40'
               }`}>
                 {caso.ojo === 'OD' ? '👁️ OD' : caso.ojo === 'OI' ? '👁️ OI' : '👁️👁️ AO'}
+              </span>
+            )}
+            {/* Badge de Quirófano Agendado */}
+            {(caso.turnos_activos?.length || (caso as any).turnos_quirofano?.filter((t: any) => t.estado !== 'cancelado')?.length) > 0 && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 flex items-center gap-1">
+                🏥 Quirófano Agendado
               </span>
             )}
             {esCasoCerrado && (

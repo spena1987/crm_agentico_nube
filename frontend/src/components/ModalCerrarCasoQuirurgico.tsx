@@ -241,6 +241,12 @@ export default function ModalCerrarCasoQuirurgico({
                 </div>
               </button>
             </div>
+            {tipoCierre === 'cancelado' && (
+              <div className="p-2.5 rounded-xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-2 animate-in fade-in">
+                <AlertCircle size={14} className="text-red-400 shrink-0" />
+                <span>Esta acción cancelará automáticamente cualquier turno de quirófano que estuviera agendado para esta cirugía, liberando la sala.</span>
+              </div>
+            )}
           </div>
 
           {/* 2. Motivo Principal Categorizado */}

@@ -2132,20 +2132,22 @@ def generar_siguiente_codigo_caso(year: int = 26) -> str:
 def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
     """
     Retorna el historial de asesorías quirúrgicas de un paciente ordenadas por fecha reciente
-    con su número de caso institucional QX-YY-XXXX.
+    con su número de caso institucional QX-YY-XXXX y sus turnos de quirófano vinculados.
     """
     if not supabase or not paciente_id:
         return []
     try:
         resp = supabase.table("asesorias_quirurgicas") \
-            .select("*") \
+            .select("*, turnos_quirofano(*, quirofanos(nombre, codigo, color))") \
             .eq("paciente_id", paciente_id) \
             .order("created_at", desc=True) \
             .execute()
         casos = resp.data or []
         for c in casos:
             chk = c.get("checklist_prequirurgico") or {}
-            c["codigo_caso"] = chk.get("_codigo_caso") or c.get("codigo_caso") or f"QX-26-{(len(casos)):04d}"
+            c["codigo_caso"] = chk.get("_codigo_caso") or c.get("codigo_caso") or f"QX-26-{str(c.get('id', ''))[:4].upper()}"
+            t_list = c.get("turnos_quirofano") or []
+            c["turnos_activos"] = [t for t in t_list if t.get("estado") != "cancelado"]
         return casos
     except Exception as e:
         logger.error(f"Error al obtener asesorías quirúrgicas del paciente {paciente_id}: {e}")
@@ -2158,57 +2160,47 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
     if not supabase:
         raise RuntimeError("Supabase no está conectado.")
     try:
+        paciente_id = payload.get("paciente_id")
         nuevo_codigo = generar_siguiente_codigo_caso()
-        chk = payload.get("checklist_prequirurgico") or {}
-        if isinstance(chk, dict):
-            chk["_codigo_caso"] = nuevo_codigo
-        else:
-            chk = {"_codigo_caso": nuevo_codigo}
-
+        
+        chk_init = payload.get("checklist_prequirurgico") or {}
+        if not isinstance(chk_init, dict):
+            chk_init = {}
+        chk_init["_codigo_caso"] = nuevo_codigo
+        
         datos = {
-            "paciente_id": payload["paciente_id"],
-            "medico_derivador_id": int(payload["medico_derivador_id"]) if payload.get("medico_derivador_id") else None,
-            "medico_derivador_nombre": payload.get("medico_derivador_nombre") or None,
-            "medico_derivador_matricula": str(payload["medico_derivador_matricula"]) if payload.get("medico_derivador_matricula") else None,
-            
-            "medico_cirujano_id": int(payload["medico_cirujano_id"]) if payload.get("medico_cirujano_id") else None,
-            "medico_cirujano_nombre": payload.get("medico_cirujano_nombre") or None,
-            "medico_cirujano_matricula": str(payload["medico_cirujano_matricula"]) if payload.get("medico_cirujano_matricula") else None,
-            
+            "paciente_id": paciente_id,
+            "codigo_caso": nuevo_codigo,
             "practica_codigo": payload.get("practica_codigo") or None,
-            "practica_nombre": payload.get("practica_nombre") or "Práctica Quirúrgica a Determinar",
-            
+            "practica_nombre": payload.get("practica_nombre") or "Nueva Cirugía / Procedimiento",
+            "medico_derivador_id": int(payload.get("medico_derivador_id")) if payload.get("medico_derivador_id") else None,
+            "medico_derivador_nombre": payload.get("medico_derivador_nombre") or None,
+            "medico_derivador_matricula": payload.get("medico_derivador_matricula") or None,
+            "medico_cirujano_id": int(payload.get("medico_cirujano_id")) if payload.get("medico_cirujano_id") else None,
+            "medico_cirujano_nombre": payload.get("medico_cirujano_nombre") or None,
+            "medico_cirujano_matricula": payload.get("medico_cirujano_matricula") or None,
             "cobertura_obra_social": payload.get("cobertura_obra_social") or None,
-            "monto_extra": float(payload.get("monto_extra", 0.0)) if payload.get("monto_extra") is not None else 0.0,
-            "moneda_extra": payload.get("moneda_extra", "ARS").upper(),
-            
-            "monto_sena": float(payload.get("monto_sena", 0.0)) if payload.get("monto_sena") is not None else 0.0,
-            "estado_pago": payload.get("estado_pago", "pendiente"),
+            "monto_extra": float(payload.get("monto_extra") or 0),
+            "moneda_extra": (payload.get("moneda_extra") or "ARS").upper(),
+            "monto_sena": float(payload.get("monto_sena") or 0),
+            "estado_pago": payload.get("estado_pago") or "pendiente",
             "medio_pago": payload.get("medio_pago") or None,
-            
+            "presupuesto_id": payload.get("presupuesto_id") or None,
             "fecha_probable_cirugia": payload.get("fecha_probable_cirugia") or None,
             "fecha_definitiva_cirugia": payload.get("fecha_definitiva_cirugia") or None,
-            
-            "control_postop_24h": bool(payload.get("control_postop_24h", False)),
-            "control_postop_7d": bool(payload.get("control_postop_7d", False)),
-            "alta_medica_definitiva": bool(payload.get("alta_medica_definitiva", False)),
-            
-            "estado": payload.get("estado", "en_asesoramiento"),
+            "estado": payload.get("estado") or "en_asesoramiento",
+            "ojo": payload.get("ojo") or "OD",
             "situacion_paciente": payload.get("situacion_paciente") or "",
-            "motivo_cancelacion": payload.get("motivo_cancelacion") or None,
-            "ojo": payload.get("ojo", "OD"),
-            "checklist_prequirurgico": chk
+            "checklist_prequirurgico": chk_init,
+            "proxima_accion_fecha": payload.get("proxima_accion_fecha") or None,
+            "proxima_accion_texto": payload.get("proxima_accion_texto") or None,
+            "ultimo_contacto_at": payload.get("ultimo_contacto_at") or "now()"
         }
         
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
         if not resp.data:
-            raise Exception("No se pudo registrar la asesoría quirúrgica.")
-        creado = resp.data[0]
-        creado["codigo_caso"] = nuevo_codigo
-        return creado
-    except Exception as e:
-        logger.error(f"Error al crear asesoría quirúrgica: {e}")
-        raise
+            raise Exception("No se pudo crear la asesoría quirúrgica en Supabase.")
+        return resp.data[0]
     except Exception as e:
         logger.error(f"Error al crear asesoría quirúrgica: {e}")
         raise
@@ -2252,8 +2244,19 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
         if not resp.data:
             raise Exception(f"No se encontró la asesoría {asesoria_id} para actualizar.")
         
-        # Sincronizar hacia turnos de quirófano vinculados a esta asesoría
-        if "practica_nombre" in datos or "practica_codigo" in datos or "medico_cirujano_nombre" in datos or "medico_cirujano_id" in datos:
+        # 1. Cancelación en cascada hacia turnos_quirofano si el caso se cancela / desiste
+        if datos.get("estado") == "cancelado":
+            try:
+                supabase.table("turnos_quirofano").update({
+                    "estado": "cancelado",
+                    "updated_at": "now()"
+                }).eq("asesoria_id", asesoria_id).execute()
+                logger.info(f"Turnos de quirófano cancelados automáticamente para asesoría cancelada {asesoria_id}")
+            except Exception as e_c:
+                logger.warning(f"Aviso al cancelar turnos de quirófano en cascada: {e_c}")
+
+        # 2. Sincronizar hacia turnos de quirófano vinculados a esta asesoría
+        if "practica_nombre" in datos or "practica_codigo" in datos or "medico_cirujano_nombre" in datos or "medico_cirujano_id" in datos or "ojo" in datos:
             upd_turno = {}
             if "practica_nombre" in datos and datos["practica_nombre"] and datos["practica_nombre"] != "Nueva Cirugía / Procedimiento":
                 upd_turno["practica_nombre"] = datos["practica_nombre"]
@@ -2263,10 +2266,12 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 upd_turno["cirujano_nombre"] = datos["medico_cirujano_nombre"]
             if "medico_cirujano_id" in datos and datos["medico_cirujano_id"]:
                 upd_turno["cirujano_id"] = datos["medico_cirujano_id"]
+            if "ojo" in datos and datos["ojo"] and datos["ojo"] != "AO":
+                upd_turno["ojo"] = datos["ojo"]
                 
             if upd_turno:
                 try:
-                    supabase.table("turnos_quirofano").update(upd_turno).eq("asesoria_id", asesoria_id).execute()
+                    supabase.table("turnos_quirofano").update(upd_turno).eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
                 except Exception as e_t:
                     logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
 
@@ -2277,11 +2282,16 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
 
 def eliminar_asesoria_quirurgica(asesoria_id: str) -> bool:
     """
-    Elimina un caso de asesoría quirúrgica.
+    Elimina un caso de asesoría quirúrgica y limpia sus turnos asociados.
     """
     if not supabase:
         return False
     try:
+        try:
+            supabase.table("turnos_quirofano").delete().eq("asesoria_id", asesoria_id).execute()
+        except Exception as e_td:
+            logger.warning(f"Aviso al limpiar turnos vinculados al eliminar asesoría {asesoria_id}: {e_td}")
+
         supabase.table("asesorias_quirurgicas").delete().eq("id", asesoria_id).execute()
         return True
     except Exception as e:

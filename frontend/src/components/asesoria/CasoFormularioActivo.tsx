@@ -181,6 +181,50 @@ export default function CasoFormularioActivo({
   const [proximaAccionFecha, setProximaAccionFecha] = useState(caso.proxima_accion_fecha || '')
   const [proximaAccionTexto, setProximaAccionTexto] = useState(caso.proxima_accion_texto || '')
   const [situacionPaciente, setSituacionPaciente] = useState(caso.situacion_paciente || '')
+  const [avisoValidacion, setAvisoValidacion] = useState<string | null>(null)
+
+  // Turnos activos en Quirófano
+  const turnosActivos = useMemo(() => {
+    const list = caso.turnos_activos || (caso as any).turnos_quirofano || []
+    return Array.isArray(list) ? list.filter((t: any) => t.estado !== 'cancelado') : []
+  }, [caso.turnos_activos, (caso as any).turnos_quirofano])
+
+  // Datos biométricos de LIO calculados
+  const chkData = checklist || {}
+  const lioOD = chkData._lio_calculo_OD
+  const lioOI = chkData._lio_calculo_OI
+  const esCalcOD = Boolean(lioOD?.lio_calculado)
+  const esCalcOI = Boolean(lioOI?.lio_calculado)
+  const tieneLioCalculado = Boolean(caso.lio_calculado || esCalcOD || esCalcOI || chkData._lio_calculado)
+
+  // Validación asistida al hacer clic en las etapas del stepper
+  const handleCambiarEstadoStepper = (nuevoEstado: AsesoriaQuirurgica['estado']) => {
+    setAvisoValidacion(null)
+    const cleanPractica = (practicaNombre || busquedaPractica || '').trim()
+    const cirujNombre = (medicoCirujano.nombre || busquedaCirujano || '').trim()
+
+    // Validar requisitos para etapas avanzadas
+    if (['confirmado', 'programado', 'operado'].includes(nuevoEstado)) {
+      const faltantes: string[] = []
+      if (!cleanPractica || cleanPractica === 'Nueva Cirugía / Procedimiento' || cleanPractica === 'Práctica Quirúrgica a Determinar') {
+        faltantes.push('Práctica Quirúrgica (Nomenclador)')
+      }
+      if (!ojo) {
+        faltantes.push('Lateralidad / Ojo')
+      }
+      if (!cirujNombre) {
+        faltantes.push('Médico Cirujano')
+      }
+
+      if (faltantes.length > 0) {
+        setAvisoValidacion(`⚠️ Para avanzar a [${nuevoEstado.toUpperCase()}], configure los siguientes datos obligatorios: ${faltantes.join(', ')}.`)
+        setTimeout(() => setAvisoValidacion(null), 6000)
+        return
+      }
+    }
+
+    setEstado(nuevoEstado)
+  }
 
   // --------------------------------------------------------------------------
   // DETECCIÓN DE CAMBIOS SIN GUARDAR (DIRTY STATE)
@@ -513,7 +557,7 @@ export default function CasoFormularioActivo({
                 <button
                   key={e.id}
                   type="button"
-                  onClick={() => setEstado(e.id)}
+                  onClick={() => handleCambiarEstadoStepper(e.id)}
                   disabled={guardando}
                   className={`p-2 rounded-xl text-left transition-all border flex flex-col justify-between ${
                     isSelected
@@ -533,6 +577,45 @@ export default function CasoFormularioActivo({
             })}
         </div>
       </div>
+
+      {/* Alerta de Validación Asistida */}
+      {avisoValidacion && (
+        <div className="p-3 rounded-xl bg-amber-950/90 border border-amber-500/50 text-amber-200 text-xs font-bold flex items-center gap-2 shadow-lg animate-in fade-in">
+          <AlertCircle size={16} className="text-amber-400 shrink-0" />
+          <span>{avisoValidacion}</span>
+        </div>
+      )}
+
+      {/* Banner de Turnos Activos en Quirófano */}
+      {turnosActivos.length > 0 && (
+        <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-950/80 to-indigo-950/80 border border-blue-500/40 text-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md animate-in fade-in">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-500/20 text-blue-300 rounded-xl border border-blue-500/30">
+              <Calendar size={18} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white">
+                  {turnosActivos.length === 1 ? 'Turno Programado en Quirófano' : `${turnosActivos.length} Turnos Programados en Quirófano`}
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                  Activo en Sala
+                </span>
+              </div>
+              <p className="text-[11px] text-gray-300 mt-0.5">
+                {turnosActivos.map((t: any) => `${t.quirofanos?.nombre || 'Quirófano'} • Fecha: ${t.fecha_cirugia || 'Sin fecha'} (${(t.hora_inicio || '08:30').slice(0, 5)} hs) • Ojo: ${t.ojo || 'OD'}`).join(' | ')}
+              </p>
+            </div>
+          </div>
+          <a
+            href="/programacion-quirurgica"
+            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition shrink-0 shadow"
+          >
+            <span>Ver en Quirófano</span>
+            <ExternalLink size={13} />
+          </a>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* 2. DISTRIBUCIÓN ERGONÓMICA EN 2 COLUMNAS EQUILIBRADAS */}
@@ -729,6 +812,69 @@ export default function CasoFormularioActivo({
                   )}
                 </div>
               )}
+
+              {/* Tarjeta de Cálculo Biométrico de LIO & Acceso Directo */}
+              <div className={`p-3 rounded-xl border space-y-2 transition-all ${
+                tieneLioCalculado
+                  ? 'bg-emerald-950/40 border-emerald-500/40'
+                  : 'bg-neutral-950/60 border-[var(--border)]'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold">
+                    <Sparkles size={14} className={tieneLioCalculado ? 'text-emerald-400' : 'text-blue-400'} />
+                    <span className={tieneLioCalculado ? 'text-emerald-300' : 'text-gray-300'}>
+                      {tieneLioCalculado ? 'Cálculo Biométrico de LIO Sellado' : 'Mesa Biométrica & Cálculo de LIO'}
+                    </span>
+                  </div>
+                  <a
+                    href="/calculo-lio"
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shadow-sm ${
+                      tieneLioCalculado
+                        ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                        : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40'
+                    }`}
+                  >
+                    <span>{tieneLioCalculado ? 'Ver Mesa Biométrica' : 'Abrir Cálculo LIO ➔'}</span>
+                    <ExternalLink size={11} />
+                  </a>
+                </div>
+
+                {tieneLioCalculado ? (
+                  <div className="space-y-1 text-xs text-gray-300 font-mono">
+                    {lioOD && (
+                      <div className="flex items-center gap-2">
+                        <span className="px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold">OD</span>
+                        <span className="text-white font-bold">{lioOD.opciones?.[0]?.modelo || 'Lente OD'}</span>
+                        <span className="text-cyan-400 font-extrabold">+{lioOD.opciones?.[0]?.dioptria || '20.00'} D</span>
+                        {lioOD.opciones?.[0]?.es_torico && (
+                          <span className="text-[10px] text-purple-300">T{lioOD.opciones?.[0]?.torico_valor} @ {lioOD.opciones?.[0]?.torico_eje}°</span>
+                        )}
+                      </div>
+                    )}
+                    {lioOI && (
+                      <div className="flex items-center gap-2">
+                        <span className="px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 text-[10px] font-bold">OI</span>
+                        <span className="text-white font-bold">{lioOI.opciones?.[0]?.modelo || 'Lente OI'}</span>
+                        <span className="text-cyan-400 font-extrabold">+{lioOI.opciones?.[0]?.dioptria || '20.00'} D</span>
+                        {lioOI.opciones?.[0]?.es_torico && (
+                          <span className="text-[10px] text-purple-300">T{lioOI.opciones?.[0]?.torico_valor} @ {lioOI.opciones?.[0]?.torico_eje}°</span>
+                        )}
+                      </div>
+                    )}
+                    {(!lioOD && !lioOI && caso.lente_tipo) && (
+                      <div className="text-white font-bold">
+                        {caso.lente_tipo} (+{caso.lente_dioptria || '21.50'} D)
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-gray-400">
+                    Define la biometría y selección de lente intraocular para esta práctica en la mesa de cálculo.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-2 pt-1">
