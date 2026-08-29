@@ -164,8 +164,9 @@ export default function CalculoLioPage() {
         if (pacienteActivo) {
           const act = listado.find(
             (p: any) =>
+              (p.id_compuesto && p.id_compuesto === pacienteActivo.id_compuesto) ||
               (p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
-              (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id)
+              (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id && p.ojo === pacienteActivo.ojo)
           )
           if (act) {
             setPacienteActivo(act)
@@ -206,8 +207,9 @@ export default function CalculoLioPage() {
     if (pacientesFiltrados.length > 0) {
       const estaEnFiltro = pacienteActivo && pacientesFiltrados.some(
         (p) =>
+          (p.id_compuesto && p.id_compuesto === pacienteActivo.id_compuesto) ||
           (p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
-          (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id)
+          (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id && p.ojo === pacienteActivo.ojo)
       )
       if (!estaEnFiltro) {
         seleccionarPaciente(pacientesFiltrados[0])
@@ -755,30 +757,36 @@ export default function CalculoLioPage() {
                 <p className="text-[11px]">Prueba seleccionando otra tarjeta de estado superior.</p>
               </div>
             ) : (
-              pacientesFiltrados.map((p) => {
+              pacientesFiltrados.map((p, idx) => {
+                const cardKey = p.id_compuesto || p.turno_id || (p.asesoria_id ? `${p.asesoria_id}_${p.ojo}` : `pac_${p.paciente_id}_${p.ojo}_${idx}`)
                 const esActivo =
                   pacienteActivo &&
-                  ((p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
-                    (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id))
+                  ((p.id_compuesto && p.id_compuesto === pacienteActivo.id_compuesto) ||
+                    (p.turno_id && p.turno_id === pacienteActivo.turno_id) ||
+                    (p.asesoria_id && p.asesoria_id === pacienteActivo.asesoria_id && p.ojo === pacienteActivo.ojo))
 
                 return (
                   <button
-                    key={p.turno_id || p.asesoria_id}
+                    key={cardKey}
                     type="button"
                     onClick={() => seleccionarPaciente(p)}
                     className={`w-full p-4 rounded-3xl border text-left transition shadow-xs flex flex-col justify-between gap-2.5 cursor-pointer ${
                       esActivo
-                        ? 'border-cyan-500 bg-gradient-to-r from-cyan-500/10 via-blue-500/5 to-transparent'
+                        ? 'border-cyan-500 bg-gradient-to-r from-cyan-500/10 via-blue-500/5 to-transparent ring-1 ring-cyan-500/30'
                         : 'border-[var(--border)] bg-[var(--card)] hover:border-slate-300'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="px-2 py-0.5 rounded-lg bg-blue-950 text-blue-300 text-[10px] font-black font-mono border border-blue-500/40">
-                          {p.codigo_turno || (p.codigo_caso ? `${p.codigo_caso}-${p.ojo || 'OD'}` : `QX-26-0012-${p.ojo || 'OD'}`)}
+                          {p.codigo_turno || (p.codigo_caso ? `${p.codigo_caso}-${p.ojo || 'OD'}` : 'QX-26-0012')}
                         </span>
-                        <span className="px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-200 text-[10px] font-black">
-                          {p.ojo || 'OD'}
+                        <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black font-mono ${
+                          p.ojo === 'OD'
+                            ? 'bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-200'
+                            : 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-200'
+                        }`}>
+                          👁️ {p.sub_ojo_etiqueta || p.ojo || 'OD'}
                         </span>
                       </div>
                       <span className="text-[11px] font-bold text-[var(--secondary)]">
@@ -843,10 +851,12 @@ export default function CalculoLioPage() {
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2.5 py-1 rounded-xl bg-blue-950 text-blue-300 border border-blue-500/50 font-black font-mono text-xs shadow-xs">
-                      {pacienteActivo.codigo_turno || (pacienteActivo.codigo_caso ? `${pacienteActivo.codigo_caso}-${pacienteActivo.ojo || 'OD'}` : `QX-26-0012-${pacienteActivo.ojo || 'OD'}`)}
+                      {pacienteActivo.codigo_turno || (pacienteActivo.codigo_caso ? `${pacienteActivo.codigo_caso}-${pacienteActivo.ojo || 'OD'}` : 'QX-26-0012')}
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-lg bg-blue-600 text-white font-black text-xs shadow-xs">
-                      {pacienteActivo.ojo === 'OI' ? 'OJO IZQUIERDO (OI)' : 'OJO DERECHO (OD)'}
+                    <span className={`px-2.5 py-0.5 rounded-lg text-white font-black text-xs shadow-xs ${
+                      pacienteActivo.ojo === 'OI' ? 'bg-emerald-600' : 'bg-blue-600'
+                    }`}>
+                      {pacienteActivo.sub_ojo_etiqueta ? `👁️ ${pacienteActivo.sub_ojo_etiqueta.toUpperCase()}` : (pacienteActivo.ojo === 'OI' ? '👁️ OJO IZQUIERDO (OI)' : '👁️ OJO DERECHO (OD)')}
                     </span>
                     <span className="text-xs text-[var(--secondary)] font-bold">
                       Fecha Qx: {pacienteActivo.fecha_cx}
