@@ -52,6 +52,7 @@ from app.db import (
     bulk_import_practicas_aranceles,
     guardar_transcripcion_mensaje,
     get_asesorias_by_paciente,
+    get_asesorias_confirmadas_pendientes,
     crear_asesoria_quirurgica,
     actualizar_asesoria_quirurgica,
     eliminar_asesoria_quirurgica,
