@@ -108,13 +108,13 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       }
     }
 
-    // Si el paciente está en Pre-Quirófano o Espera, abrir mandatoriamente el checklist de Time-Out OMS
-    if (turnoTarget && (turnoTarget.estado === 'pre_quirofano' || turnoTarget.estado === 'en_espera')) {
+    // 1. Si el paciente está en Pre-Quirófano: Abrir checklist de Pausa Quirúrgica OMS previo a incisión (pasa a en_operacion)
+    if (turnoTarget && turnoTarget.estado === 'pre_quirofano') {
       setTurnoParaPausaOms(turnoTarget)
       return
     }
 
-    // Para el resto de etapas (ej. cerrar a 'operado'), procesar verificación estándar
+    // 2. Para el resto de etapas (programado -> en_espera, en_espera -> pre_quirofano, en_operacion -> operado, operado -> verificación):
     setScanVerifRawQR(raw)
     setScanVerifTurnoId(tId)
   }

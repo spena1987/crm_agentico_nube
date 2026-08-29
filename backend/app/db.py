@@ -5050,7 +5050,6 @@ def procesar_escaneo_qr_turno(
                 update_payload["ingreso_pre_quirofano_at"] = now_iso
             if not turno.get("inicio_cirugia_at"):
                 update_payload["inicio_cirugia_at"] = now_iso
-                update_payload["inicio_quirofano_at"] = now_iso
         elif nuevo_estado == "operado":
             if not turno.get("llegada_at"):
                 update_payload["llegada_at"] = now_iso
@@ -5058,10 +5057,8 @@ def procesar_escaneo_qr_turno(
                 update_payload["ingreso_pre_quirofano_at"] = now_iso
             if not turno.get("inicio_cirugia_at"):
                 update_payload["inicio_cirugia_at"] = now_iso
-                update_payload["inicio_quirofano_at"] = now_iso
             if not turno.get("fin_cirugia_at"):
                 update_payload["fin_cirugia_at"] = now_iso
-                update_payload["fin_quirofano_at"] = now_iso
 
             # Generar automáticamente el Protocolo / Parte Quirúrgico Oficial en PDF
             try:
@@ -5082,7 +5079,7 @@ def procesar_escaneo_qr_turno(
         # Si tiene asesoría vinculada, reflejar estado
         if turno.get("asesoria_id"):
             try:
-                as_estado = "en_espera" if nuevo_estado in ["en_espera", "pre_quirofano"] else "en_cirugia" if nuevo_estado == "en_operacion" else "operado" if nuevo_estado == "operado" else None
+                as_estado = "en_espera" if nuevo_estado in ["en_espera", "pre_quirofano"] else "en_operacion" if nuevo_estado == "en_operacion" else "operado" if nuevo_estado == "operado" else "programado" if nuevo_estado == "programado" else None
                 if as_estado:
                     supabase.table("asesorias_quirurgicas").update({"estado": as_estado, "updated_at": "now()"}).eq("id", turno["asesoria_id"]).execute()
             except Exception as e_as:
