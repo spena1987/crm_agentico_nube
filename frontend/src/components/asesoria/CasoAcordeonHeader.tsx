@@ -74,7 +74,7 @@ export default function CasoAcordeonHeader({
             }`}
           >
             {esCasoCerrado ? <Lock size={12} className="text-teal-400" /> : <Tag size={12} className="text-blue-400" />}
-            <span className="tracking-wide">{caso.codigo_caso || (caso.checklist_prequirurgico as any)?._codigo_caso || (caso.id ? `QX-26-${caso.id.slice(0, 4).toUpperCase()}` : `QX-26-${String(index + 1).padStart(4, '0')}`)}</span>
+            <span className="tracking-wide">{caso.codigo_caso || (caso.checklist_prequirurgico as any)?._codigo_caso || `QX-26-${String(index + 1).padStart(4, '0')}`}</span>
           </div>
         </div>
 

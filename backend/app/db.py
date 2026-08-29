@@ -2104,14 +2104,14 @@ def generar_siguiente_codigo_caso(year: int = 26) -> str:
     if not supabase:
         return f"QX-{year}-0001"
     try:
-        resp = supabase.table("asesorias_quirurgicas").select("id, created_at, checklist_prequirurgico").execute()
+        resp = supabase.table("asesorias_quirurgicas").select("id, codigo_caso, checklist_prequirurgico").execute()
         casos = resp.data or []
         
         max_num = 0
         prefix = f"QX-{year}-"
         for c in casos:
             chk = c.get("checklist_prequirurgico") or {}
-            code = chk.get("_codigo_caso") or c.get("codigo_caso") or ""
+            code = c.get("codigo_caso") or chk.get("_codigo_caso") or ""
             if code.startswith(prefix):
                 try:
                     num_part = int(code.replace(prefix, "").split("-")[0])
@@ -2120,14 +2120,40 @@ def generar_siguiente_codigo_caso(year: int = 26) -> str:
                 except Exception:
                     pass
                     
-        if max_num == 0 and len(casos) > 0:
-            max_num = len(casos)
-            
         nuevo_num = max_num + 1
         return f"QX-{year}-{nuevo_num:04d}"
     except Exception as e:
         logger.warning(f"Error generando código de caso secuencial: {e}")
         return f"QX-{year}-0001"
+
+def asegurar_codigo_caso(c: dict) -> str:
+    """
+    Garantiza que una asesoría quirúrgica tenga un código de caso único y persistido en la base de datos.
+    """
+    chk = c.get("checklist_prequirurgico") or {}
+    if not isinstance(chk, dict):
+        chk = {}
+    code = c.get("codigo_caso") or chk.get("_codigo_caso")
+    if code and str(code).startswith("QX-"):
+        c["codigo_caso"] = str(code)
+        return str(code)
+    
+    nuevo_code = generar_siguiente_codigo_caso()
+    c["codigo_caso"] = nuevo_code
+    chk["_codigo_caso"] = nuevo_code
+    c["checklist_prequirurgico"] = chk
+    
+    asesoria_id = c.get("id")
+    if asesoria_id and supabase:
+        try:
+            supabase.table("asesorias_quirurgicas").update({
+                "codigo_caso": nuevo_code,
+                "checklist_prequirurgico": chk
+            }).eq("id", asesoria_id).execute()
+        except Exception as e_p:
+            logger.warning(f"Aviso al persistir codigo_caso generado en asesoría {asesoria_id}: {e_p}")
+            
+    return nuevo_code
 
 def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
     """
@@ -2144,8 +2170,7 @@ def get_asesorias_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
             .execute()
         casos = resp.data or []
         for c in casos:
-            chk = c.get("checklist_prequirurgico") or {}
-            c["codigo_caso"] = chk.get("_codigo_caso") or c.get("codigo_caso") or f"QX-26-{str(c.get('id', ''))[:4].upper()}"
+            c["codigo_caso"] = asegurar_codigo_caso(c)
             t_list = c.get("turnos_quirofano") or []
             c["turnos_activos"] = [t for t in t_list if t.get("estado") != "cancelado"]
         return casos
@@ -3073,8 +3098,7 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
             c["es_critico"] = dias_sin_contacto >= sla_critico
             c["es_alerta"] = dias_sin_contacto >= sla_alerta and not c["es_critico"]
             # Código Institucional de Caso
-            chk_pipe = c.get("checklist_prequirurgico") or {}
-            c["codigo_caso"] = chk_pipe.get("_codigo_caso") or c.get("codigo_caso") or "QX-26-0001"
+            c["codigo_caso"] = asegurar_codigo_caso(c)
             
             # Acumuladores de métricas y mapeo de etapas activas al Kanban
             monto = float(c.get("monto_extra") or 0.0)
@@ -3432,7 +3456,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                 
                 f_2do = (meta_bilateral or {}).get("fecha_probable_2do_ojo") or (meta_bilateral or {}).get("fecha_definitiva_2do_ojo") or caso.get("fecha_probable_2do_ojo")
                 
-                codigo_base = (chk if isinstance(chk, dict) else {}).get("_codigo_caso") or caso.get("codigo_caso") or "QX-26-0001"
+                codigo_base = asegurar_codigo_caso(caso)
 
                 if not tiene_t1:
                     c1 = dict(caso)
@@ -3502,7 +3526,7 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
             else:
                 # Caso Unilateral (OD u OI) o AO Simultáneo: solo si no tiene turno y está confirmado
                 if len(turnos_existentes) == 0 and caso.get("estado") == "confirmado":
-                    codigo_base = (chk if isinstance(chk, dict) else {}).get("_codigo_caso") or caso.get("codigo_caso") or "QX-26-0001"
+                    codigo_base = asegurar_codigo_caso(caso)
                     c_uni = dict(caso)
                     c_uni["id_compuesto"] = caso["id"]
                     c_uni["codigo_caso"] = codigo_base

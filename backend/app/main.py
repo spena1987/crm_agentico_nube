@@ -56,6 +56,7 @@ from app.db import (
     crear_asesoria_quirurgica,
     actualizar_asesoria_quirurgica,
     eliminar_asesoria_quirurgica,
+    asegurar_codigo_caso,
     get_presupuestos_by_paciente,
     cambiar_estado_presupuesto,
     vincular_presupuesto_a_asesoria,
@@ -5095,8 +5096,7 @@ def listar_pacientes_calculo_lio(
                 }]
 
             # Extraer códigos institucionales
-            chk_as = as_rel.get("checklist_prequirurgico") or {}
-            codigo_caso = (chk_as if isinstance(chk_as, dict) else {}).get("_codigo_caso") or as_rel.get("codigo_caso") or f"QX-26-{str(t.get('id', ''))[:4].upper()}"
+            codigo_caso = as_rel.get("codigo_caso") or (as_rel.get("checklist_prequirurgico") or {}).get("_codigo_caso") or asegurar_codigo_caso(as_rel)
             codigo_turno = t.get("codigo_turno") or f"{codigo_caso}-{ojo_turno}"
 
             item = {
@@ -5157,10 +5157,7 @@ def listar_pacientes_calculo_lio(
                 if cirujano_nombre.lower() not in cirujano.lower():
                     continue
 
-            chk = a.get("checklist_prequirurgico") or {}
-            if not isinstance(chk, dict):
-                chk = {}
-            codigo_base = chk.get("_codigo_caso") or a.get("codigo_caso") or "QX-26-0001"
+            codigo_base = a.get("codigo_caso") or (a.get("checklist_prequirurgico") or {}).get("_codigo_caso") or asegurar_codigo_caso(a)
             ojo_caso = a.get("ojo") or "OD"
 
             meta_bilateral = chk.get("_meta_bilateral") or {}
