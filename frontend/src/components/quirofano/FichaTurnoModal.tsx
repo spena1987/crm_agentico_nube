@@ -70,7 +70,9 @@ export default function FichaTurnoModal({
   const [casosConfirmados, setCasosConfirmados] = useState<any[]>([])
   const [cargandoCasos, setCargandoCasos] = useState(false)
   const [casoSeleccionadoId, setCasoSeleccionadoId] = useState<string>(
-    turno?.asesoria_id || asesoriaIdInicial || ''
+    casoConfirmadoInicial
+      ? (casoConfirmadoInicial.id_compuesto || (casoConfirmadoInicial.sub_ojo ? `${casoConfirmadoInicial.id}_${casoConfirmadoInicial.sub_ojo}` : casoConfirmadoInicial.id))
+      : (turno?.asesoria_id || asesoriaIdInicial || '')
   )
   const [modoCarga, setModoCarga] = useState<'asesoria' | 'manual'>('asesoria')
 
@@ -131,39 +133,42 @@ export default function FichaTurnoModal({
     { id: 'lasik', nombre: 'Cirugía Refractiva LASIK / PRK', minutos: 15 }
   ])
 
-  // Formulario de Turno Quirúrgico
+  // Formulario de Turno Quirúrgico inicializado directamente si viene un caso confirmado
+  const pacInit = casoConfirmadoInicial?.pacientes || {}
   const [formData, setFormData] = useState({
-    asesoria_id: turno?.asesoria_id || asesoriaIdInicial || '',
-    paciente_id: turno?.paciente_id || pacienteIdInicial || '',
-    paciente_nombre: turno?.pacientes?.nombre || '',
-    paciente_dni: turno?.pacientes?.dni || '',
-    paciente_telefono: turno?.pacientes?.telefono || '',
+    asesoria_id: turno?.asesoria_id || casoConfirmadoInicial?.id || asesoriaIdInicial || '',
+    paciente_id: turno?.paciente_id || casoConfirmadoInicial?.paciente_id || pacInit.id || pacienteIdInicial || '',
+    paciente_nombre: turno?.pacientes?.nombre || pacInit.nombre || '',
+    paciente_dni: turno?.pacientes?.dni || pacInit.dni || '',
+    paciente_telefono: turno?.pacientes?.telefono || pacInit.telefono || '',
     quirofano_id: turno?.quirofano_id || quirofanoDefectoId || quirofanos[0]?.id || '',
-    fecha_cirugia: turno?.fecha_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
+    fecha_cirugia: turno?.fecha_cirugia || casoConfirmadoInicial?.fecha_sugerida || casoConfirmadoInicial?.fecha_definitiva_cirugia || casoConfirmadoInicial?.fecha_probable_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
     hora_inicio: (turno?.hora_inicio || horaDefecto || '08:30').slice(0, 5),
     duracion_minutos: turno?.duracion_minutos || 20,
-    ojo: turno?.ojo || 'OD',
+    ojo: turno?.ojo || casoConfirmadoInicial?.sub_ojo || casoConfirmadoInicial?.ojo || 'OD',
     es_bilateral_escalonada: turno?.es_bilateral_escalonada || false,
-    cirujano_id: turno?.cirujano_id || 1067,
-    cirujano_nombre: turno?.cirujano_nombre || 'ABRAHAM, IRINA',
-    medico_derivador_nombre: turno?.medico_derivador_nombre || turno?.asesorias_quirurgicas?.medico_derivador_nombre || '',
+    cirujano_id: turno?.cirujano_id || casoConfirmadoInicial?.medico_cirujano_id || casoConfirmadoInicial?.cirujano_id || 1067,
+    cirujano_nombre: turno?.cirujano_nombre || casoConfirmadoInicial?.medico_cirujano_nombre || casoConfirmadoInicial?.cirujano_nombre || 'ABRAHAM, IRINA',
+    medico_derivador_nombre: turno?.medico_derivador_nombre || turno?.asesorias_quirurgicas?.medico_derivador_nombre || casoConfirmadoInicial?.medico_derivador_nombre || '',
     instrumentador_nombre: turno?.instrumentador_nombre || '',
     anestesiologo_nombre: turno?.anestesiologo_nombre || '',
-    practica_codigo: turno?.practica_codigo || '',
-    practica_nombre: turno?.practica_nombre || turno?.asesorias_quirurgicas?.practica_nombre || '',
-    obra_social: turno?.obra_social || '',
-    plan_obra_social: turno?.plan_obra_social || '',
+    practica_codigo: turno?.practica_codigo || casoConfirmadoInicial?.practica_codigo || '',
+    practica_nombre: turno?.practica_nombre || turno?.asesorias_quirurgicas?.practica_nombre || casoConfirmadoInicial?.practica_nombre || '',
+    obra_social: turno?.obra_social || casoConfirmadoInicial?.cobertura_obra_social || pacInit.obra_social || '',
+    plan_obra_social: turno?.plan_obra_social || pacInit.plan_obra_social || '',
     lleva_lente: turno?.lleva_lente ?? (
-      (turno?.practica_nombre || '').toLowerCase().includes('catarata') ||
-      (turno?.practica_nombre || '').toLowerCase().includes('faco') ||
-      (turno?.practica_nombre || '').toLowerCase().includes('lio') ||
-      false
+      casoConfirmadoInicial?.lleva_lente ?? (
+        (turno?.practica_nombre || casoConfirmadoInicial?.practica_nombre || '').toLowerCase().includes('catarata') ||
+        (turno?.practica_nombre || casoConfirmadoInicial?.practica_nombre || '').toLowerCase().includes('faco') ||
+        (turno?.practica_nombre || casoConfirmadoInicial?.practica_nombre || '').toLowerCase().includes('lio') ||
+        false
+      )
     ),
-    lente_tipo: turno?.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
-    lente_dioptria: turno?.lente_dioptria !== undefined && turno?.lente_dioptria !== null ? turno.lente_dioptria : '+21.50',
-    es_torico: turno?.es_torico ?? false,
-    lente_torico_valor: turno?.lente_torico_valor !== undefined && turno?.lente_torico_valor !== null ? turno.lente_torico_valor : 0,
-    lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : 90,
+    lente_tipo: turno?.lente_tipo || casoConfirmadoInicial?.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
+    lente_dioptria: turno?.lente_dioptria !== undefined && turno?.lente_dioptria !== null ? turno.lente_dioptria : (casoConfirmadoInicial?.lente_dioptria !== undefined ? String(casoConfirmadoInicial.lente_dioptria) : '+21.50'),
+    es_torico: turno?.es_torico ?? (casoConfirmadoInicial?.es_torico ?? false),
+    lente_torico_valor: turno?.lente_torico_valor !== undefined && turno?.lente_torico_valor !== null ? turno.lente_torico_valor : (casoConfirmadoInicial?.lente_torico_valor ?? 0),
+    lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : (casoConfirmadoInicial?.lente_torico_eje ?? 90),
     lente_lote: turno?.lente_lote || '',
     lente_serie: turno?.lente_serie || '',
     lente_vencimiento: turno?.lente_vencimiento || '',
@@ -171,11 +176,11 @@ export default function FichaTurnoModal({
     observaciones: turno?.observaciones || '',
     observaciones_intraoperatorias: turno?.observaciones_intraoperatorias || '',
     estado: turno?.estado || 'programado',
-    lio_calculado: turno?.lio_calculado ?? false,
-    lio_calculado_por: turno?.lio_calculado_por || '',
-    lio_calculo_opciones: turno?.lio_calculo_opciones || [],
-    lio_formula: turno?.lio_formula || '',
-    lio_target_refractivo: turno?.lio_target_refractivo || ''
+    lio_calculado: turno?.lio_calculado ?? (casoConfirmadoInicial?.lio_calculado ?? false),
+    lio_calculado_por: turno?.lio_calculado_por || casoConfirmadoInicial?.lio_calculado_por || '',
+    lio_calculo_opciones: turno?.lio_calculo_opciones || casoConfirmadoInicial?.lio_calculo_opciones || [],
+    lio_formula: turno?.lio_formula || casoConfirmadoInicial?.lio_formula || '',
+    lio_target_refractivo: turno?.lio_target_refractivo || casoConfirmadoInicial?.lio_target_refractivo || ''
   })
 
   const [guardando, setGuardando] = useState(false)
