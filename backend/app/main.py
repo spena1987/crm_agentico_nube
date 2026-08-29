@@ -5096,7 +5096,7 @@ def listar_pacientes_calculo_lio(
                 }]
 
             # Extraer códigos institucionales
-            codigo_caso = as_rel.get("codigo_caso") or (as_rel.get("checklist_prequirurgico") or {}).get("_codigo_caso") or asegurar_codigo_caso(as_rel)
+            codigo_caso = as_rel.get("codigo_caso") or (as_rel.get("checklist_prequirurgico") or {}).get("_codigo_caso") or (asegurar_codigo_caso(as_rel) if as_rel.get("id") else f"QX-26-{str(t.get('id', ''))[:4].upper()}")
             codigo_turno = t.get("codigo_turno") or f"{codigo_caso}-{ojo_turno}"
 
             item = {
@@ -5157,7 +5157,11 @@ def listar_pacientes_calculo_lio(
                 if cirujano_nombre.lower() not in cirujano.lower():
                     continue
 
-            codigo_base = a.get("codigo_caso") or (a.get("checklist_prequirurgico") or {}).get("_codigo_caso") or asegurar_codigo_caso(a)
+            chk = a.get("checklist_prequirurgico") or {}
+            if not isinstance(chk, dict):
+                chk = {}
+
+            codigo_base = a.get("codigo_caso") or chk.get("_codigo_caso") or asegurar_codigo_caso(a)
             ojo_caso = a.get("ojo") or "OD"
 
             meta_bilateral = chk.get("_meta_bilateral") or {}
@@ -5353,7 +5357,8 @@ def listar_pacientes_calculo_lio(
             "pacientes": items_filtrados
         }
     except Exception as e:
-        logger.error(f"Error al listar pacientes para cálculo de LIO: {e}")
+        logger.error(f"Error al listar pacientes para cálculo de LIO: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al listar pacientes para cálculo de LIO: {str(e)}")
 class GuardarCalculoLioPayload(BaseModel):
     turno_id: Optional[str] = None
     asesoria_id: Optional[str] = None
