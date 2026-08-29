@@ -1816,6 +1816,11 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
                 texto_consentimiento = practica.get("consentimiento_custom_texto")
                 titulo_consentimiento = f"Consentimiento - {practica.get('nombre', 'Cirugía')}"
             elif practica.get("plantillas_consentimientos"):
+                pl = practica["plantillas_consentimientos"]
+                texto_consentimiento = pl.get("cuerpo_legal")
+                titulo_consentimiento = pl.get("titulo", "Consentimiento Informado")
+                version_consentimiento = pl.get("version", "1.0")
+                
         # Resolver modalidad de lateralidad y agendamiento por defecto
         desc = practica.get("descripcion") or ""
         modalidad_def = "unilateral"
