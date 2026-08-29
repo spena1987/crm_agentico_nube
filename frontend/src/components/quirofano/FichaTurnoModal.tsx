@@ -170,7 +170,12 @@ export default function FichaTurnoModal({
     tipo_anestesia: turno?.tipo_anestesia || 'Tópica + Sedación',
     observaciones: turno?.observaciones || '',
     observaciones_intraoperatorias: turno?.observaciones_intraoperatorias || '',
-    estado: turno?.estado || 'programado'
+    estado: turno?.estado || 'programado',
+    lio_calculado: turno?.lio_calculado ?? false,
+    lio_calculado_por: turno?.lio_calculado_por || '',
+    lio_calculo_opciones: turno?.lio_calculo_opciones || [],
+    lio_formula: turno?.lio_formula || '',
+    lio_target_refractivo: turno?.lio_target_refractivo || ''
   })
 
   const [guardando, setGuardando] = useState(false)
@@ -195,6 +200,7 @@ export default function FichaTurnoModal({
 
     const nomPractica = (caso.practica_nombre || '').toLowerCase()
     const requiereLio = nomPractica.includes('catarata') || nomPractica.includes('faco') || nomPractica.includes('lio')
+    const llevaLio = caso.lleva_lente !== undefined ? Boolean(caso.lleva_lente) : (requiereLio || Boolean(caso.lente_tipo))
 
     setFormData((prev) => {
       const ojoSugerido = caso.sub_ojo || caso.ojo || prev.ojo || 'OD'
@@ -209,15 +215,25 @@ export default function FichaTurnoModal({
         paciente_telefono: pac.telefono || '',
         practica_nombre: caso.practica_nombre || prev.practica_nombre,
         practica_codigo: caso.practica_codigo || prev.practica_codigo,
-        cirujano_nombre: caso.medico_cirujano_nombre || prev.cirujano_nombre,
-        cirujano_id: caso.medico_cirujano_id || prev.cirujano_id,
+        cirujano_nombre: caso.medico_cirujano_nombre || caso.cirujano_nombre || prev.cirujano_nombre,
+        cirujano_id: caso.medico_cirujano_id || caso.cirujano_id || prev.cirujano_id,
         medico_derivador_nombre: caso.medico_derivador_nombre || prev.medico_derivador_nombre || '',
         obra_social: caso.cobertura_obra_social || pac.obra_social || '',
         plan_obra_social: pac.plan_obra_social || '',
         ojo: ojoSugerido,
         duracion_minutos: duracionSugerida,
-        lleva_lente: requiereLio,
-        fecha_cirugia: fechaSugerida
+        lleva_lente: llevaLio,
+        fecha_cirugia: fechaSugerida,
+        lente_tipo: caso.lente_tipo || prev.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
+        lente_dioptria: caso.lente_dioptria !== undefined && caso.lente_dioptria !== null ? String(caso.lente_dioptria) : prev.lente_dioptria,
+        es_torico: caso.es_torico !== undefined ? Boolean(caso.es_torico) : prev.es_torico,
+        lente_torico_valor: caso.lente_torico_valor !== undefined && caso.lente_torico_valor !== null ? caso.lente_torico_valor : prev.lente_torico_valor,
+        lente_torico_eje: caso.lente_torico_eje !== undefined && caso.lente_torico_eje !== null ? caso.lente_torico_eje : prev.lente_torico_eje,
+        lio_calculado: Boolean(caso.lio_calculado),
+        lio_calculado_por: caso.lio_calculado_por || '',
+        lio_calculo_opciones: caso.lio_calculo_opciones || [],
+        lio_formula: caso.lio_formula || '',
+        lio_target_refractivo: caso.lio_target_refractivo || ''
       }
     })
 
@@ -1355,9 +1371,59 @@ export default function FichaTurnoModal({
               </div>
 
               {formData.lleva_lente ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5 pt-2 border-t border-[var(--border)] animate-fade-in">
-                  {/* 1. Modelo de LIO */}
-                  <div className="md:col-span-2">
+                <div className="space-y-3.5 pt-2 border-t border-[var(--border)] animate-fade-in">
+                  {/* BANNER DE CERTIFICACIÓN DE BIOMETRÍA & LIO SELLADO */}
+                  {formData.lio_calculado && (
+                    <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-blue-500/10 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white font-black text-[10px] uppercase flex items-center gap-1 shadow-xs">
+                            <CheckCircle2 size={12} />
+                            <span>LIO Calculado & Sellado</span>
+                          </span>
+                          {formData.lio_calculado_por && (
+                            <span className="font-extrabold text-emerald-600 dark:text-emerald-400 text-xs">
+                              por {formData.lio_calculado_por}
+                            </span>
+                          )}
+                          {formData.lio_formula && (
+                            <span className="px-2 py-0.5 rounded-md bg-slate-900/80 text-cyan-300 text-[10px] font-mono border border-cyan-500/40">
+                              Fórmula: {formData.lio_formula}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-[var(--foreground)] font-medium">
+                          <strong className="text-[var(--foreground)]">Plan Principal Recomendado:</strong>{' '}
+                          <span className="font-bold text-blue-600 dark:text-blue-400">{formData.lente_tipo}</span>{' '}
+                          <span className="font-mono font-black text-cyan-600 dark:text-cyan-400">+{formData.lente_dioptria} D</span>{' '}
+                          {formData.es_torico && (
+                            <span className="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 font-extrabold text-[10px] font-mono border border-purple-500/30">
+                              Tórico T{formData.lente_torico_valor} @ {formData.lente_torico_eje}°
+                            </span>
+                          )}
+                          {formData.lio_target_refractivo && (
+                            <span className="text-[var(--secondary)] text-[11px] ml-1">
+                              • Target: {formData.lio_target_refractivo}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <a
+                        href="/calculo-lio"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-xl bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-700 dark:text-cyan-300 border border-cyan-500/40 text-[11px] font-bold flex items-center gap-1.5 shrink-0 transition"
+                      >
+                        <Eye size={13} />
+                        <span>Ver Mesa Biométrica</span>
+                      </a>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+                    {/* 1. Modelo de LIO */}
+                    <div className="md:col-span-2">
                     <label className="text-[11px] font-semibold text-[var(--secondary)]">Modelo de Lente Intraocular *</label>
                     <select
                       value={formData.lente_tipo}
@@ -1477,6 +1543,7 @@ export default function FichaTurnoModal({
                         className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono outline-none focus:border-blue-500"
                       />
                     </div>
+                  </div>
                   </div>
                 </div>
               ) : (

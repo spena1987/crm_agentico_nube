@@ -3433,6 +3433,28 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c1["codigo_caso"] = codigo_base
                     c1["codigo_turno"] = f"{codigo_base}-{ojo_1}"
                     c1["fecha_sugerida"] = caso.get("fecha_probable_cirugia") or caso.get("fecha_definitiva_cirugia")
+
+                    # Extraer datos de cálculo de LIO para Ojo 1
+                    lio_1 = (chk.get(f"_lio_calculo_{ojo_1}") if isinstance(chk, dict) else None)
+                    opciones_1 = (lio_1.get("opciones") if isinstance(lio_1, dict) else None) or caso.get("lio_calculo_opciones") or []
+                    es_calc_1 = bool(lio_1.get("lio_calculado")) if isinstance(lio_1, dict) else bool(caso.get("lio_calculado"))
+                    por_1 = (lio_1.get("lio_calculado_por") if isinstance(lio_1, dict) else None) or caso.get("lio_calculado_por")
+
+                    c1["lio_calculado"] = es_calc_1
+                    c1["lio_calculado_por"] = por_1
+                    c1["lio_calculo_opciones"] = opciones_1
+
+                    if opciones_1:
+                        ppal_1 = next((op for op in opciones_1 if op.get("tipo_opcion") == "principal"), opciones_1[0])
+                        c1["lente_tipo"] = ppal_1.get("modelo")
+                        c1["lente_dioptria"] = ppal_1.get("dioptria")
+                        c1["es_torico"] = bool(ppal_1.get("es_torico"))
+                        c1["lente_torico_valor"] = int(ppal_1.get("torico_valor")) if str(ppal_1.get("torico_valor")).isdigit() else (3 if ppal_1.get("es_torico") else 0)
+                        c1["lente_torico_eje"] = int(ppal_1.get("torico_eje")) if str(ppal_1.get("torico_eje")).isdigit() else 90
+                        c1["lio_formula"] = ppal_1.get("formula")
+                        c1["lio_target_refractivo"] = ppal_1.get("target_refractivo")
+                        c1["lleva_lente"] = True
+
                     resultado.append(c1)
                     
                 if not tiene_t2:
@@ -3444,6 +3466,28 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c2["codigo_caso"] = codigo_base
                     c2["codigo_turno"] = f"{codigo_base}-{ojo_2}"
                     c2["fecha_sugerida"] = f_2do
+
+                    # Extraer datos de cálculo de LIO para Ojo 2
+                    lio_2 = (chk.get(f"_lio_calculo_{ojo_2}") if isinstance(chk, dict) else None)
+                    opciones_2 = (lio_2.get("opciones") if isinstance(lio_2, dict) else None) or []
+                    es_calc_2 = bool(lio_2.get("lio_calculado")) if isinstance(lio_2, dict) else False
+                    por_2 = (lio_2.get("lio_calculado_por") if isinstance(lio_2, dict) else None) or caso.get("lio_calculado_por")
+
+                    c2["lio_calculado"] = es_calc_2
+                    c2["lio_calculado_por"] = por_2
+                    c2["lio_calculo_opciones"] = opciones_2
+
+                    if opciones_2:
+                        ppal_2 = next((op for op in opciones_2 if op.get("tipo_opcion") == "principal"), opciones_2[0])
+                        c2["lente_tipo"] = ppal_2.get("modelo")
+                        c2["lente_dioptria"] = ppal_2.get("dioptria")
+                        c2["es_torico"] = bool(ppal_2.get("es_torico"))
+                        c2["lente_torico_valor"] = int(ppal_2.get("torico_valor")) if str(ppal_2.get("torico_valor")).isdigit() else (3 if ppal_2.get("es_torico") else 0)
+                        c2["lente_torico_eje"] = int(ppal_2.get("torico_eje")) if str(ppal_2.get("torico_eje")).isdigit() else 90
+                        c2["lio_formula"] = ppal_2.get("formula")
+                        c2["lio_target_refractivo"] = ppal_2.get("target_refractivo")
+                        c2["lleva_lente"] = True
+
                     resultado.append(c2)
             else:
                 # Caso Unilateral (OD u OI) o AO Simultáneo: solo si no tiene turno y está confirmado
@@ -3453,6 +3497,27 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c_uni["id_compuesto"] = caso["id"]
                     c_uni["codigo_caso"] = codigo_base
                     c_uni["codigo_turno"] = f"{codigo_base}-{ojo_caso}"
+
+                    lio_u = (chk.get(f"_lio_calculo_{ojo_caso}") if isinstance(chk, dict) else None)
+                    opciones_u = (lio_u.get("opciones") if isinstance(lio_u, dict) else None) or caso.get("lio_calculo_opciones") or []
+                    es_calc_u = bool(lio_u.get("lio_calculado")) if isinstance(lio_u, dict) else bool(caso.get("lio_calculado"))
+                    por_u = (lio_u.get("lio_calculado_por") if isinstance(lio_u, dict) else None) or caso.get("lio_calculado_por")
+
+                    c_uni["lio_calculado"] = es_calc_u
+                    c_uni["lio_calculado_por"] = por_u
+                    c_uni["lio_calculo_opciones"] = opciones_u
+
+                    if opciones_u:
+                        ppal_u = next((op for op in opciones_u if op.get("tipo_opcion") == "principal"), opciones_u[0])
+                        c_uni["lente_tipo"] = ppal_u.get("modelo")
+                        c_uni["lente_dioptria"] = ppal_u.get("dioptria")
+                        c_uni["es_torico"] = bool(ppal_u.get("es_torico"))
+                        c_uni["lente_torico_valor"] = int(ppal_u.get("torico_valor")) if str(ppal_u.get("torico_valor")).isdigit() else (3 if ppal_u.get("es_torico") else 0)
+                        c_uni["lente_torico_eje"] = int(ppal_u.get("torico_eje")) if str(ppal_u.get("torico_eje")).isdigit() else 90
+                        c_uni["lio_formula"] = ppal_u.get("formula")
+                        c_uni["lio_target_refractivo"] = ppal_u.get("target_refractivo")
+                        c_uni["lleva_lente"] = True
+
                     resultado.append(c_uni)
                     
         return resultado
