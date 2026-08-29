@@ -3421,12 +3421,16 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                 
                 f_2do = (meta_bilateral or {}).get("fecha_probable_2do_ojo") or (meta_bilateral or {}).get("fecha_definitiva_2do_ojo") or caso.get("fecha_probable_2do_ojo")
                 
+                codigo_base = (chk if isinstance(chk, dict) else {}).get("_codigo_caso") or caso.get("codigo_caso") or "QX-26-0001"
+
                 if not tiene_t1:
                     c1 = dict(caso)
                     c1["sub_ojo"] = ojo_1
                     c1["es_sub_turno"] = True
                     c1["sub_ojo_etiqueta"] = f"1er Ojo ({ojo_1})"
                     c1["id_compuesto"] = f"{caso['id']}_{ojo_1}"
+                    c1["codigo_caso"] = codigo_base
+                    c1["codigo_turno"] = f"{codigo_base}-{ojo_1}"
                     c1["fecha_sugerida"] = caso.get("fecha_probable_cirugia") or caso.get("fecha_definitiva_cirugia")
                     resultado.append(c1)
                     
@@ -3436,13 +3440,18 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
                     c2["es_sub_turno"] = True
                     c2["sub_ojo_etiqueta"] = f"2do Ojo ({ojo_2})"
                     c2["id_compuesto"] = f"{caso['id']}_{ojo_2}"
+                    c2["codigo_caso"] = codigo_base
+                    c2["codigo_turno"] = f"{codigo_base}-{ojo_2}"
                     c2["fecha_sugerida"] = f_2do
                     resultado.append(c2)
             else:
                 # Caso Unilateral (OD u OI) o AO Simultáneo: solo si no tiene turno y está confirmado
                 if len(turnos_existentes) == 0 and caso.get("estado") == "confirmado":
+                    codigo_base = (chk if isinstance(chk, dict) else {}).get("_codigo_caso") or caso.get("codigo_caso") or "QX-26-0001"
                     c_uni = dict(caso)
                     c_uni["id_compuesto"] = caso["id"]
+                    c_uni["codigo_caso"] = codigo_base
+                    c_uni["codigo_turno"] = f"{codigo_base}-{ojo_caso}"
                     resultado.append(c_uni)
                     
         return resultado
