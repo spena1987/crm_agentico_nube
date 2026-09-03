@@ -37,6 +37,8 @@ import ModalHistorialPresupuestosPaciente from '@/components/ModalHistorialPresu
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import PanelAsesoriaQuirurgica from '@/components/PanelAsesoriaQuirurgica'
+import { getAuthHeaders, BACKEND_URL } from '@/lib/api'
+
 
 interface Paciente {
   id: string
@@ -161,10 +163,12 @@ export default function PacientesPage() {
     setSincronizandoGeclisa(true)
 
     try {
-      const res = await fetch(`/api/geclisa/pacientes/sincronizar/${pacienteSeleccionado.id}`, {
+      const authHeaders = await getAuthHeaders({ 'Accept': 'application/json' })
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/sincronizar/${pacienteSeleccionado.id}`, {
         method: 'POST',
-        headers: { 'Accept': 'application/json' }
+        headers: authHeaders
       })
+
 
       const data = await res.json()
 

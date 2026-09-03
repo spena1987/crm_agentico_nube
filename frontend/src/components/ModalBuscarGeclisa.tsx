@@ -21,8 +21,9 @@ import {
   Receipt
 } from 'lucide-react'
 import Link from 'next/link'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, getAuthHeaders } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+
 
 interface GeclisaPacienteData {
   encontrado: boolean
@@ -86,8 +87,9 @@ export default function ModalBuscarGeclisa({ isOpen, onClose, onPacienteImportad
         endpoint = `${BACKEND_URL}/api/geclisa/pacientes/buscar-por-ficha?ficha_id=${encodeURIComponent(query)}`
       }
 
+      const authHeaders = await getAuthHeaders({ 'Accept': 'application/json' })
       const res = await fetch(endpoint, {
-        headers: { 'Accept': 'application/json' }
+        headers: authHeaders
       })
 
       if (!res.ok) {
@@ -136,14 +138,16 @@ export default function ModalBuscarGeclisa({ isOpen, onClose, onPacienteImportad
 
       // 1. Intentar importar mediante el backend API
       try {
+        const importAuthHeaders = await getAuthHeaders({ 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        })
         const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/importar`, {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
+          headers: importAuthHeaders,
           body: JSON.stringify(payload)
         })
+
 
         const data = await res.json()
         if (res.ok && data.success && data.paciente) {

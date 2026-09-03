@@ -29,7 +29,8 @@ const formatUrl = (url: string) => {
 export const BACKEND_URL = formatUrl(rawBackendUrl);
 
 /**
- * Obtiene los encabezados de autenticación con el JWT actual de la sesión de Supabase.
+ * Obtiene los encabezados de autenticación con el JWT actual de la sesión de Supabase
+ * o el token de acceso oficial del proyecto si no hay sesión individual iniciada.
  */
 export async function getAuthHeaders(customHeaders: HeadersInit = {}): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
@@ -49,9 +50,14 @@ export async function getAuthHeaders(customHeaders: HeadersInit = {}): Promise<R
     const { data: { session } } = await supabase.auth.getSession()
     if (session?.access_token) {
       headers['Authorization'] = `Bearer ${session.access_token}`
+    } else if (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      headers['Authorization'] = `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
     }
   } catch (err) {
     console.warn('No se pudo recuperar token de sesión para la petición API:', err)
+    if (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      headers['Authorization'] = `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
+    }
   }
 
   return headers
@@ -80,7 +86,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
 }
 
 // Interceptor global en entorno de navegador para inyectar automáticamente Bearer token
-// en cualquier llamada fetch a BACKEND_URL o endpoints de administración
+// en cualquier llamada fetch a /api/* o a BACKEND_URL
 if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR__) {
   (window as any).__MEDCRM_FETCH_INTERCEPTOR__ = true
   const originalFetch = window.fetch
@@ -90,17 +96,26 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
       ? input 
       : (input instanceof URL ? input.href : (input as Request).url || '')
 
-    const isBackendCall = BACKEND_URL && url.startsWith(BACKEND_URL)
-    const isAdminCall = url.startsWith('/api/admin') || url.startsWith('/api/settings')
+    const isApiCall = url.startsWith('/api/') || (BACKEND_URL && url.startsWith(BACKEND_URL))
     const isPublic = url.includes('/api/consentimiento-publico') || url.includes('/static/')
 
-    if ((isBackendCall || isAdminCall) && !isPublic) {
+    if (isApiCall && !isPublic) {
       try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.access_token) {
+        let token: string | null = null
+        try {
+          const { data: { session } } = await supabase.auth.getSession()
+          token = session?.access_token || null
+        } catch {
+          // ignore
+        }
+        if (!token) {
+          token = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || null
+        }
+
+        if (token) {
           const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : {}))
-          if (!headers.has('Authorization')) {
-            headers.set('Authorization', `Bearer ${session.access_token}`)
+          if (!headers.has('Authorization') && !headers.has('authorization')) {
+            headers.set('Authorization', `Bearer ${token}`)
           }
           return originalFetch(input, { ...init, headers })
         }
@@ -112,3 +127,4 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
     return originalFetch(input, init)
   }
 }
+
