@@ -1,117 +1,48 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { 
-  FileHeart, 
   X, 
-  RefreshCw, 
-  Loader2, 
-  Search, 
-  Calendar, 
-  Clock, 
-  UserCheck, 
-  Stethoscope, 
-  AlertCircle, 
-  FileQuestion,
-  Sparkles,
-  ChevronDown,
-  ChevronUp,
-  FileText,
-  Pill,
-  ChevronsUpDown,
-  ChevronsDownUp,
-  Receipt,
-  Layers,
-  FolderDown,
-  Trash2,
-  Download,
-  ExternalLink,
-  FileCheck,
-  Eye,
-  Maximize2,
-  Minimize2
+  Activity, 
+  FileText, 
+  Pill, 
+  Glasses, 
+  BookOpen, 
+  ClipboardList, 
+  FolderDown, 
+  Loader2
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import HeaderPacienteFijo from './historia-clinica/HeaderPacienteFijo'
+import TabEvolucion from './historia-clinica/tabs/TabEvolucion'
+import TabEstudios from './historia-clinica/tabs/TabEstudios'
+import TabRecetasAnteojos from './historia-clinica/tabs/TabRecetasAnteojos'
+import TabRecetasMedicamentos from './historia-clinica/tabs/TabRecetasMedicamentos'
+import TabIndicaciones from './historia-clinica/tabs/TabIndicaciones'
+import TabPedidosEstudios from './historia-clinica/tabs/TabPedidosEstudios'
+import TabGeclisaLegado from './historia-clinica/tabs/TabGeclisaLegado'
+import ModalTicketOCR from './historia-clinica/ocr/ModalTicketOCR'
+import ModalResumenWhatsApp from './historia-clinica/whatsapp/ModalResumenWhatsApp'
+import ModalVideosWhatsApp from './historia-clinica/whatsapp/ModalVideosWhatsApp'
+import PrintContainer from './historia-clinica/print/PrintTemplates'
+import { 
+  PacienteData, 
+  HistoriaClinicaOftalmo, 
+  ConsultaOftalmo, 
+  EstudioOftalmo, 
+  RecetaAnteojos, 
+  RecetaFarmacos, 
+  PedidoEstudios 
+} from './historia-clinica/types'
 
-type TabTipo = 'evoluciones' | 'indicaciones' | 'archivos'
-
-interface EvolucionClinica {
-  hc_id: number
-  fecha: string
-  fecha_hora?: string
-  hora: string
-  prestador: string
-  especialidad: string
-  area: string
-  texto: string
-  nombre_plantilla: string
-}
-
-interface IndicacionMedica {
-  id: number
-  tipo: 'INDICACION' | 'MEDICACION_PROTOCOLO' | 'MEDICACION_ACTIVA' | 'RECETA' | string
-  tipo_label: string
-  fecha: string
-  hora: string
-  prestador: string
-  especialidad: string
-  titulo: string
-  texto: string
-  plantilla: string
-}
-
-interface ArchivoGeclisa {
-  id?: number
-  as_id: number
-  asId?: number
-  fecha: string
-  hora?: string
-  titulo: string
-  prestador: string
-  preNombre?: string
-  clase: string
-  acNombre?: string
-  formato: string
-  extension?: string
-  observaciones?: string
-  url?: string
-  download_url?: string
-}
-
-interface HistoriaClinicaResponse {
-  encontrado: boolean
-  motivo?: 'sin_dni' | 'sin_ficha_geclisa' | 'no_encontrado_geclisa' | string
-  mensaje?: string
-  paciente_id?: string
-  ficha_id?: number
-  paciente_nombre?: string
-  paciente_dni?: string
-  fecha_generacion?: string
-  evoluciones_recientes?: EvolucionClinica[]
-  total_evoluciones?: number
-}
-
-interface IndicacionesResponse {
-  encontrado: boolean
-  motivo?: 'sin_dni' | 'sin_ficha_geclisa' | 'no_encontrado_geclisa' | string
-  mensaje?: string
-  paciente_id?: string
-  ficha_id?: number
-  paciente_nombre?: string
-  paciente_dni?: string
-  indicaciones?: IndicacionMedica[]
-  total_indicaciones?: number
-}
-
-interface ArchivosResponse {
-  success: boolean
-  encontrado: boolean
-  ficha_id?: number
-  paciente_nombre?: string
-  archivos: ArchivoGeclisa[]
-  total_archivos?: number
-  mensaje?: string
-}
+type TabTipo = 
+  | 'evolucion' 
+  | 'estudios' 
+  | 'recetas_anteojos' 
+  | 'recetas_farmacos' 
+  | 'indicaciones' 
+  | 'pedidos_estudios' 
+  | 'geclisa'
 
 interface ModalHistoriaClinicaProps {
   isOpen: boolean
@@ -123,6 +54,11 @@ interface ModalHistoriaClinicaProps {
     geclisa_ficha_id?: number | null
     nro_hc?: string | null
     telefono?: string
+    fecha_nacimiento?: string | null
+    sexo?: string | null
+    obra_social?: string | null
+    plan_cobertura?: string | null
+    direccion?: string | null
   } | null
 }
 
@@ -131,1065 +67,632 @@ export default function ModalHistoriaClinica({
   onClose,
   paciente
 }: ModalHistoriaClinicaProps) {
-  // Pestaña activa (Evolución vs Indicaciones vs Archivos)
-  const [activeTab, setActiveTab] = useState<TabTipo | null>(null)
+  const [activeTab, setActiveTab] = useState<TabTipo>('evolucion')
 
-  // Estados de carga por pestaña (Carga Lazy / On-Demand)
-  const [cargandoEvoluciones, setCargandoEvoluciones] = useState<boolean>(false)
-  const [cargandoIndicaciones, setCargandoIndicaciones] = useState<boolean>(false)
-  const [cargandoArchivos, setCargandoArchivos] = useState<boolean>(false)
-  const [eliminandoArchivoId, setEliminandoArchivoId] = useState<number | null>(null)
+  const [pacienteData, setPacienteData] = useState<PacienteData | null>(null)
+  const [historiaData, setHistoriaData] = useState<HistoriaClinicaOftalmo | null>(null)
+  const [consultas, setConsultas] = useState<ConsultaOftalmo[]>([])
+  const [consultaActivaId, setConsultaActivaId] = useState<string | null>(null)
+  const [estudios, setEstudios] = useState<EstudioOftalmo[]>([])
+  const [recetasAnteojos, setRecetasAnteojos] = useState<RecetaAnteojos[]>([])
+  const [recetasFarmacos, setRecetasFarmacos] = useState<RecetaFarmacos[]>([])
+  const [pedidosEstudios, setPedidosEstudios] = useState<PedidoEstudios[]>([])
 
-  // Visor integrado In-App
-  const [archivoVisor, setArchivoVisor] = useState<ArchivoGeclisa | null>(null)
-  const [visorPantallaCompleta, setVisorPantallaCompleta] = useState<boolean>(false)
-  const [cargandoVisor, setCargandoVisor] = useState<boolean>(true)
+  const [cargando, setCargando] = useState<boolean>(true)
+  const [guardando, setGuardando] = useState<boolean>(false)
+  const [ultimoGuardado, setUltimoGuardado] = useState<string | null>(null)
+  const [sincronizandoGeclisa, setSincronizandoGeclisa] = useState<boolean>(false)
 
-  // Datos cacheados en sesión del modal
-  const [dataHc, setDataHc] = useState<HistoriaClinicaResponse | null>(null)
-  const [dataInd, setDataInd] = useState<IndicacionesResponse | null>(null)
-  const [dataArchivos, setDataArchivos] = useState<ArchivosResponse | null>(null)
+  const [modalOcrOpen, setModalOcrOpen] = useState(false)
+  const [modalWaResumenOpen, setModalWaResumenOpen] = useState(false)
+  const [modalWaVideosOpen, setModalWaVideosOpen] = useState(false)
+  const [videosEspeciales, setVideosEspeciales] = useState(false)
 
-  // Errores locales
-  const [errorHc, setErrorHc] = useState<string>('')
-  const [errorInd, setErrorInd] = useState<string>('')
-  const [errorArchivos, setErrorArchivos] = useState<string>('')
+  const [printConfig, setPrintConfig] = useState<{
+    tipo: 'ficha' | 'receta_anteojos' | 'receta_farmacos' | 'pedido_estudios' | 'indicaciones' | 'evolucion'
+    recetaAnteojos?: RecetaAnteojos
+    recetaFarmacos?: RecetaFarmacos
+    pedidoEstudios?: PedidoEstudios
+    indicacionesTexto?: { titulo: string; contenido: string }
+  } | null>(null)
 
-  // Búsqueda
-  const [busqueda, setBusqueda] = useState<string>('')
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const isInitialLoad = useRef<boolean>(true)
 
-  // Estado de tarjetas expandidas (IDs de evoluciones e indicaciones)
-  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({})
-
-  // Al abrir el modal, reiniciar estados y seleccionar 'evoluciones'
   useEffect(() => {
-    if (isOpen && paciente) {
-      setActiveTab('evoluciones')
-      setBusqueda('')
-      setExpandedItems({})
-      setArchivoVisor(null)
-      setVisorPantallaCompleta(false)
-      // Cargar evoluciones de inicio
-      cargarEvoluciones()
+    if (isOpen && paciente?.id) {
+      isInitialLoad.current = true
+      cargarHistoriaCompleta(paciente.id)
     } else {
-      setActiveTab(null)
-      setDataHc(null)
-      setDataInd(null)
-      setDataArchivos(null)
-      setErrorHc('')
-      setErrorInd('')
-      setErrorArchivos('')
-      setBusqueda('')
-      setExpandedItems({})
-      setArchivoVisor(null)
-      setVisorPantallaCompleta(false)
+      setPacienteData(null)
+      setHistoriaData(null)
+      setConsultas([])
+      setConsultaActivaId(null)
+      setEstudios([])
+      setRecetasAnteojos([])
+      setRecetasFarmacos([])
+      setPedidosEstudios([])
+      setActiveTab('evolucion')
+      setUltimoGuardado(null)
     }
   }, [isOpen, paciente?.id])
 
-  // Cerrar con Escape
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose])
-
-  const getQueryId = () => {
-    return paciente?.id || paciente?.dni || paciente?.geclisa_ficha_id
-  }
-
-  // 1. Cargar Evoluciones Recientes
-  const cargarEvoluciones = async (force: boolean = false) => {
-    const queryId = getQueryId()
-    if (!queryId) {
-      setErrorHc('El paciente no cuenta con ID ni DNI para consultar en Geclisa.')
-      return
-    }
-
-    if (dataHc && !force) return // Ya cargado en caché
-
-    setCargandoEvoluciones(true)
-    setErrorHc('')
-
+  const cargarHistoriaCompleta = async (pacienteId: string) => {
+    setCargando(true)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/historia-clinica`)
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.detail || errorData.mensaje || `Error al consultar Geclisa (HTTP ${res.status})`)
-      }
-      const data: HistoriaClinicaResponse = await res.json()
-      setDataHc(data)
-    } catch (err: any) {
-      console.error('Error al obtener evoluciones:', err)
-      setErrorHc(err.message || 'No se pudo conectar con el servidor de Geclisa.')
-    } finally {
-      setCargandoEvoluciones(false)
-    }
-  }
-
-  // 2. Cargar Indicaciones Médicas (Solo al hacer clic en el botón)
-  const cargarIndicaciones = async (force: boolean = false) => {
-    const queryId = getQueryId()
-    if (!queryId) {
-      setErrorInd('El paciente no cuenta con ID ni DNI para consultar en Geclisa.')
-      return
-    }
-
-    if (dataInd && !force) return // Ya cargado en caché
-
-    setCargandoIndicaciones(true)
-    setErrorInd('')
-
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/indicaciones`)
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.detail || errorData.mensaje || `Error al consultar Geclisa (HTTP ${res.status})`)
-      }
-      const data: IndicacionesResponse = await res.json()
-      setDataInd(data)
-    } catch (err: any) {
-      console.error('Error al obtener indicaciones:', err)
-      setErrorInd(err.message || 'No se pudo conectar con el servidor de Geclisa.')
-    } finally {
-      setCargandoIndicaciones(false)
-    }
-  }
-
-  // 3. Cargar Archivos / Documentos de Geclisa
-  const cargarArchivos = async (force: boolean = false) => {
-    const queryId = paciente?.id
-    if (!queryId) {
-      setErrorArchivos('El paciente no cuenta con ID para consultar archivos.')
-      return
-    }
-
-    if (dataArchivos && !force) return
-
-    setCargandoArchivos(true)
-    setErrorArchivos('')
-
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/archivos`)
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}))
-        throw new Error(errorData.detail || errorData.mensaje || `Error al consultar archivos en Geclisa (HTTP ${res.status})`)
-      }
-      const data: ArchivosResponse = await res.json()
-      setDataArchivos(data)
-    } catch (err: any) {
-      console.error('Error al obtener archivos de Geclisa:', err)
-      setErrorArchivos(err.message || 'No se pudo conectar con el servidor de Geclisa.')
-    } finally {
-      setCargandoArchivos(false)
-    }
-  }
-
-  // Eliminar archivo de Geclisa
-  const handleEliminarArchivo = async (asId: number) => {
-    if (!confirm(`¿Está seguro de eliminar el archivo #${asId} de la Historia Clínica en Geclisa? Esta acción borrará el registro hospitalario.`)) {
-      return
-    }
-    try {
-      setEliminandoArchivoId(asId)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/archivos/${asId}`, {
-        method: 'DELETE'
-      })
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${pacienteId}`)
+      if (!res.ok) throw new Error(`Error ${res.status}`)
       const data = await res.json()
-      if (res.ok && data.success) {
-        setDataArchivos((prev) => {
-          if (!prev) return prev
-          const filtrados = prev.archivos.filter((a) => a.as_id !== asId)
-          return {
-            ...prev,
-            archivos: filtrados,
-            total_archivos: filtrados.length
-          }
-        })
+
+      const p: PacienteData = {
+        id: data.paciente?.id || pacienteId,
+        nombre: data.paciente?.nombre || paciente?.nombre || '',
+        dni: data.paciente?.dni || paciente?.dni || '',
+        geclisa_ficha_id: data.paciente?.geclisa_ficha_id || paciente?.geclisa_ficha_id,
+        nro_hc: data.paciente?.nro_hc || paciente?.nro_hc || '',
+        telefono: data.paciente?.telefono || paciente?.telefono || '',
+        fecha_nacimiento: data.paciente?.fecha_nacimiento || paciente?.fecha_nacimiento || '',
+        sexo: data.paciente?.sexo || paciente?.sexo || '',
+        obra_social: data.paciente?.obra_social || paciente?.obra_social || '',
+        plan_cobertura: data.paciente?.plan_cobertura || paciente?.plan_cobertura || '',
+        direccion: data.paciente?.direccion || paciente?.direccion || ''
+      }
+      setPacienteData(p)
+
+      const h: HistoriaClinicaOftalmo = data.historia || {
+        paciente_id: pacienteId,
+        antecedentes_oculares: [],
+        antecedentes_generales: [],
+        medicacion_habitual: [],
+        medicacion_otra: '',
+        alergias: '',
+        observaciones_permanentes: ''
+      }
+      setHistoriaData(h)
+
+      const consList: ConsultaOftalmo[] = data.consultas || []
+      setConsultas(consList)
+      if (consList.length > 0) {
+        setConsultaActivaId(consList[0].id)
       } else {
-        alert(data.detail || data.error || 'Error al eliminar archivo de Geclisa')
+        const nuevaDraftId = `draft_${Date.now()}`
+        const draft: ConsultaOftalmo = {
+          id: nuevaDraftId,
+          paciente_id: pacienteId,
+          tipo: 'consulta',
+          fecha: new Date().toISOString().slice(0, 10),
+          motivo_consulta: 'Control oftalmologico de rutina',
+          agudeza_visual: { od: {}, oi: {}, ao: {} },
+          refraccion: { od: {}, oi: {} },
+          queratometria: { od: {}, oi: {} },
+          presion_intraocular: { od: {}, oi: {} },
+          superficie_ocular: { modo: 'ao', od: {}, oi: {} },
+          biomicroscopia: { modo: 'ao', od: '', oi: '' },
+          fondo_ojo: { modo: 'ao', od: '', oi: '' },
+          conducta: { modo_plan: 'ao', explico: [], valores_pasar: [] }
+        }
+        setConsultas([draft])
+        setConsultaActivaId(nuevaDraftId)
+      }
+
+      setEstudios(data.estudios || [])
+      setRecetasAnteojos(data.recetas_anteojos || [])
+      setRecetasFarmacos(data.recetas_farmacos || [])
+      setPedidosEstudios(data.pedidos_estudios || [])
+
+      setUltimoGuardado(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    } catch (err: any) {
+      console.error('Error cargando historia oftalmologica:', err)
+    } finally {
+      setCargando(false)
+      setTimeout(() => {
+        isInitialLoad.current = false
+      }, 500)
+    }
+  }
+
+  const triggerAutoSave = useCallback((
+    newPaciente: PacienteData,
+    newHistoria: HistoriaClinicaOftalmo,
+    currentConsulta?: ConsultaOftalmo
+  ) => {
+    if (isInitialLoad.current || !paciente?.id) return
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current)
+    }
+
+    setGuardando(true)
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/antecedentes`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            paciente: newPaciente,
+            historia: newHistoria
+          })
+        })
+
+        if (currentConsulta && !currentConsulta.id.startsWith('draft_')) {
+          await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(currentConsulta)
+          })
+        }
+
+        setUltimoGuardado(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      } catch (err) {
+        console.error('Error en auto-guardado:', err)
+      } finally {
+        setGuardando(false)
+      }
+    }, 450)
+  }, [paciente?.id])
+
+  const handleUpdatePaciente = (fields: Partial<PacienteData>) => {
+    if (!pacienteData) return
+    const updated = { ...pacienteData, ...fields }
+    setPacienteData(updated)
+    if (historiaData) {
+      const activeCons = consultas.find(c => c.id === consultaActivaId)
+      triggerAutoSave(updated, historiaData, activeCons)
+    }
+  }
+
+  const handleUpdateHistoria = (fields: Partial<HistoriaClinicaOftalmo>) => {
+    if (!historiaData || !pacienteData) return
+    const updated = { ...historiaData, ...fields }
+    setHistoriaData(updated)
+    const activeCons = consultas.find(c => c.id === consultaActivaId)
+    triggerAutoSave(pacienteData, updated, activeCons)
+  }
+
+  const handleUpdateConsultaActiva = (fields: Partial<ConsultaOftalmo>) => {
+    if (!consultaActivaId) return
+    setConsultas(prev => prev.map(c => {
+      if (c.id === consultaActivaId) {
+        const updated = { ...c, ...fields }
+        if (pacienteData && historiaData) {
+          triggerAutoSave(pacienteData, historiaData, updated)
+        }
+        return updated
+      }
+      return c
+    }))
+  }
+
+  const handleNuevaConsulta = async (tipo: 'consulta' | 'postop') => {
+    if (!paciente?.id) return
+    const hoy = new Date().toISOString().slice(0, 10)
+    const baseConsulta: Partial<ConsultaOftalmo> = {
+      tipo,
+      fecha: hoy,
+      motivo_consulta: tipo === 'postop' ? 'Control Postoperatorio' : 'Consulta Oftalmologica',
+      agudeza_visual: { od: {}, oi: {}, ao: {} },
+      refraccion: { od: {}, oi: {} },
+      queratometria: { od: {}, oi: {} },
+      presion_intraocular: { od: {}, oi: {} },
+      superficie_ocular: { modo: 'ao', od: {}, oi: {} },
+      biomicroscopia: { modo: 'ao', od: '', oi: '' },
+      fondo_ojo: { modo: 'ao', od: '', oi: '' },
+      conducta: { modo_plan: 'ao', explico: [], valores_pasar: [] },
+      datos_postop: tipo === 'postop' ? {
+        fecha_cx: hoy,
+        ojo: 'OD',
+        cx_realizada: 'Facoemulsificacion + LIO',
+        complicaciones: []
+      } : undefined
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseConsulta)
+      })
+      if (res.ok) {
+        const saved = await res.json()
+        setConsultas(prev => [saved, ...prev])
+        setConsultaActivaId(saved.id)
+      }
+    } catch (err) {
+      console.error('Error creando consulta:', err)
+    }
+  }
+
+  const handleEliminarConsulta = async (consultaId: string) => {
+    try {
+      await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${consultaId}`, { method: 'DELETE' })
+      const filtered = consultas.filter(c => c.id !== consultaId)
+      setConsultas(filtered)
+      if (consultaActivaId === consultaId) {
+        setConsultaActivaId(filtered.length > 0 ? filtered[0].id : null)
+      }
+    } catch (err) {
+      console.error('Error eliminando consulta:', err)
+    }
+  }
+
+  const handleSincronizarGeclisa = async (consultaId: string) => {
+    setSincronizandoGeclisa(true)
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${consultaId}/sincronizar-geclisa`, {
+        method: 'POST'
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setConsultas(prev => prev.map(c => {
+          if (c.id === consultaId) {
+            return {
+              ...c,
+              geclisa_sincronizado_en: data.sincronizado_en,
+              geclisa_as_id: data.as_id
+            }
+          }
+          return c
+        }))
+        alert('Consulta sincronizada y archivo adjuntado con exito a Geclisa.')
+      } else {
+        const err = await res.json()
+        alert(`Error al sincronizar con Geclisa: ${err.detail || 'Fallo de conexion'}`)
       }
     } catch (err: any) {
-      console.error('Error eliminando archivo de Geclisa:', err)
-      alert(err.message || 'Error de conexión.')
+      alert(`Error al conectar con Geclisa: ${err.message}`)
     } finally {
-      setEliminandoArchivoId(null)
+      setSincronizandoGeclisa(false)
     }
   }
 
-  // Cambio de Pestaña con llamada On-Demand
-  const handleSelectTab = (tab: TabTipo) => {
-    setActiveTab(tab)
-    setBusqueda('')
-    if (tab === 'evoluciones' && !dataHc) {
-      cargarEvoluciones()
-    } else if (tab === 'indicaciones' && !dataInd) {
-      cargarIndicaciones()
-    } else if (tab === 'archivos' && !dataArchivos) {
-      cargarArchivos()
+  const handleAddEstudio = async (estudioData: Omit<EstudioOftalmo, 'id' | 'paciente_id'>) => {
+    if (!paciente?.id) return
+    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/estudios`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(estudioData)
+    })
+    if (res.ok) {
+      const saved = await res.json()
+      setEstudios(prev => [saved, ...prev])
     }
   }
 
-  // Toggle individual de expansión de tarjeta
-  const toggleExpand = (id: string | number) => {
-    const key = String(id)
-    setExpandedItems((prev) => ({
-      ...prev,
-      [key]: !prev[key]
-    }))
+  const handleDeleteEstudio = async (id: string) => {
+    await fetch(`${BACKEND_URL}/api/oftalmo/estudios/${id}`, { method: 'DELETE' })
+    setEstudios(prev => prev.filter(e => e.id !== id))
+  }
+
+  const handleAddRecetaAnteojos = async (recetaData: Omit<RecetaAnteojos, 'id' | 'paciente_id'>) => {
+    if (!paciente?.id) return
+    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-anteojos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(recetaData)
+    })
+    if (res.ok) {
+      const saved = await res.json()
+      setRecetasAnteojos(prev => [saved, ...prev])
+      handleImprimir({ tipo: 'receta_anteojos', recetaAnteojos: saved })
+    }
+  }
+
+  const handleDeleteRecetaAnteojos = async (id: string) => {
+    await fetch(`${BACKEND_URL}/api/oftalmo/recetas-anteojos/${id}`, { method: 'DELETE' })
+    setRecetasAnteojos(prev => prev.filter(r => r.id !== id))
+  }
+
+  const handleAddRecetaFarmacos = async (recetaData: Omit<RecetaFarmacos, 'id' | 'paciente_id'>) => {
+    if (!paciente?.id) return
+    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-farmacos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(recetaData)
+    })
+    if (res.ok) {
+      const saved = await res.json()
+      setRecetasFarmacos(prev => [saved, ...prev])
+      handleImprimir({ tipo: 'receta_farmacos', recetaFarmacos: saved })
+    }
+  }
+
+  const handleDeleteRecetaFarmacos = async (id: string) => {
+    await fetch(`${BACKEND_URL}/api/oftalmo/recetas-farmacos/${id}`, { method: 'DELETE' })
+    setRecetasFarmacos(prev => prev.filter(r => r.id !== id))
+  }
+
+  const handleAddPedidoEstudios = async (pedidoData: Omit<PedidoEstudios, 'id' | 'paciente_id'>) => {
+    if (!paciente?.id) return
+    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/pedidos-estudios`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pedidoData)
+    })
+    if (res.ok) {
+      const saved = await res.json()
+      setPedidosEstudios(prev => [saved, ...prev])
+      handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: saved })
+    }
+  }
+
+  const handleDeletePedidoEstudios = async (id: string) => {
+    await fetch(`${BACKEND_URL}/api/oftalmo/pedidos-estudios/${id}`, { method: 'DELETE' })
+    setPedidosEstudios(prev => prev.filter(p => p.id !== id))
+  }
+
+  const handleImprimir = (config: {
+    tipo: 'ficha' | 'receta_anteojos' | 'receta_farmacos' | 'pedido_estudios' | 'indicaciones' | 'evolucion'
+    recetaAnteojos?: RecetaAnteojos
+    recetaFarmacos?: RecetaFarmacos
+    pedidoEstudios?: PedidoEstudios
+    indicacionesTexto?: { titulo: string; contenido: string }
+  }) => {
+    setPrintConfig(config)
+    setTimeout(() => {
+      window.print()
+    }, 200)
   }
 
   if (!isOpen || !paciente) return null
 
-  // Listados y filtros
-  const evoluciones = dataHc?.evoluciones_recientes || []
-  const evolucionesFiltradas = evoluciones.filter((ev) => {
-    if (!busqueda.trim()) return true
-    const q = busqueda.toLowerCase()
-    return (
-      (ev.texto && ev.texto.toLowerCase().includes(q)) ||
-      (ev.prestador && ev.prestador.toLowerCase().includes(q)) ||
-      (ev.especialidad && ev.especialidad.toLowerCase().includes(q)) ||
-      (ev.fecha && ev.fecha.includes(q)) ||
-      (ev.nombre_plantilla && ev.nombre_plantilla.toLowerCase().includes(q))
-    )
-  })
-
-  const indicaciones = dataInd?.indicaciones || []
-  const indicacionesFiltradas = indicaciones.filter((ind) => {
-    if (!busqueda.trim()) return true
-    const q = busqueda.toLowerCase()
-    return (
-      (ind.titulo && ind.titulo.toLowerCase().includes(q)) ||
-      (ind.texto && ind.texto.toLowerCase().includes(q)) ||
-      (ind.prestador && ind.prestador.toLowerCase().includes(q)) ||
-      (ind.especialidad && ind.especialidad.toLowerCase().includes(q)) ||
-      (ind.fecha && ind.fecha.includes(q)) ||
-      (ind.plantilla && ind.plantilla.toLowerCase().includes(q))
-    )
-  })
-
-  const archivos = dataArchivos?.archivos || []
-  const archivosFiltrados = archivos.filter((arc) => {
-    if (!busqueda.trim()) return true
-    const q = busqueda.toLowerCase()
-    return (
-      (arc.titulo && arc.titulo.toLowerCase().includes(q)) ||
-      (arc.prestador && arc.prestador.toLowerCase().includes(q)) ||
-      (arc.clase && arc.clase.toLowerCase().includes(q)) ||
-      (arc.fecha && arc.fecha.includes(q)) ||
-      (arc.as_id && String(arc.as_id).includes(q))
-    )
-  })
-
-  // Control Expandir / Contraer Todo
-  const currentItemsList = activeTab === 'evoluciones' 
-    ? evolucionesFiltradas.map((e) => String(e.hc_id))
-    : activeTab === 'indicaciones'
-    ? indicacionesFiltradas.map((i, idx) => String(i.id || idx))
-    : []
-
-  const allExpanded = currentItemsList.length > 0 && currentItemsList.every((k) => !!expandedItems[k])
-
-  const handleToggleExpandAll = () => {
-    const nextState = !allExpanded
-    const updated: Record<string, boolean> = { ...expandedItems }
-    currentItemsList.forEach((k) => {
-      updated[k] = nextState
-    })
-    setExpandedItems(updated)
-  }
-
-  const fichaIdActual = dataHc?.ficha_id || dataInd?.ficha_id || dataArchivos?.ficha_id || paciente.geclisa_ficha_id
-  const estaCargando = 
-    activeTab === 'evoluciones' 
-      ? cargandoEvoluciones 
-      : activeTab === 'indicaciones' 
-      ? cargandoIndicaciones 
-      : cargandoArchivos
-  const errorActual = 
-    activeTab === 'evoluciones' 
-      ? errorHc 
-      : activeTab === 'indicaciones' 
-      ? errorInd 
-      : errorArchivos
+  const consultaActiva = consultas.find(c => c.id === consultaActivaId)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh]">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+      <div className="bg-[#f0f4f7] rounded-2xl shadow-2xl border border-[#dde6ec] w-full max-w-7xl h-[94vh] flex flex-col overflow-hidden text-[#16323f]">
         
-        {/* Header del Pop-up */}
-        <div className="p-5 border-b border-[var(--border)] flex items-center justify-between bg-neutral-900/90">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shadow-inner">
-              <FileHeart className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold text-white tracking-tight">
-                  Expediente Clínico Geclisa
-                </h3>
-                {fichaIdActual && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-blue-500/10 text-blue-300 border border-blue-500/30">
-                    Ficha #{fichaIdActual}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-[var(--secondary)] flex items-center gap-1.5 mt-0.5">
-                <span className="text-gray-200 font-medium">{paciente.nombre}</span>
-                {paciente.dni && <span className="text-gray-400 font-mono">• DNI: {paciente.dni}</span>}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => {
-                if (activeTab === 'evoluciones') cargarEvoluciones(true)
-                if (activeTab === 'indicaciones') cargarIndicaciones(true)
-                if (activeTab === 'archivos') cargarArchivos(true)
-              }}
-              disabled={estaCargando}
-              title="Actualizar datos en vivo desde Geclisa"
-              className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-all border border-transparent hover:border-[var(--border)] disabled:opacity-50"
-            >
-              <RefreshCw size={16} className={estaCargando ? 'animate-spin text-rose-400' : ''} />
-            </button>
-            <button
-              onClick={onClose}
-              disabled={estaCargando}
-              className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-all border border-transparent hover:border-[var(--border)]"
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-
-        {/* Barra de Selección de Modo (3 Botones Principales: Evolución, Indicaciones y Archivos) */}
-        <div className="p-3 bg-neutral-950/60 border-b border-[var(--border)] flex items-center justify-between gap-2">
-          <div className="grid grid-cols-3 gap-2 w-full sm:w-auto">
-            {/* Botón 1: Evolución */}
-            <button
-              type="button"
-              onClick={() => handleSelectTab('evoluciones')}
-              className={`px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all border ${
-                activeTab === 'evoluciones'
-                  ? 'bg-rose-600 text-white border-rose-500 shadow-md shadow-rose-950/40'
-                  : 'bg-neutral-900/80 text-gray-300 border-[var(--border)] hover:bg-neutral-800 hover:text-white'
-              }`}
-            >
-              <FileText size={15} className={activeTab === 'evoluciones' ? 'text-white' : 'text-rose-400'} />
-              <span>Evolución</span>
-              {dataHc?.total_evoluciones !== undefined && (
-                <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
-                  activeTab === 'evoluciones' ? 'bg-rose-700 text-white' : 'bg-neutral-800 text-gray-400'
-                }`}>
-                  {dataHc.total_evoluciones}
-                </span>
-              )}
-            </button>
-
-            {/* Botón 2: Indicaciones */}
-            <button
-              type="button"
-              onClick={() => handleSelectTab('indicaciones')}
-              className={`px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all border ${
-                activeTab === 'indicaciones'
-                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-950/40'
-                  : 'bg-neutral-900/80 text-gray-300 border-[var(--border)] hover:bg-neutral-800 hover:text-white'
-              }`}
-            >
-              <Pill size={15} className={activeTab === 'indicaciones' ? 'text-white' : 'text-indigo-400'} />
-              <span>Indicaciones</span>
-              {dataInd?.total_indicaciones !== undefined && (
-                <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
-                  activeTab === 'indicaciones' ? 'bg-indigo-700 text-white' : 'bg-neutral-800 text-gray-400'
-                }`}>
-                  {dataInd.total_indicaciones}
-                </span>
-              )}
-            </button>
-
-            {/* Botón 3: Archivos y Documentos */}
-            <button
-              type="button"
-              onClick={() => handleSelectTab('archivos')}
-              className={`px-3 sm:px-4 py-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 sm:gap-2 transition-all border ${
-                activeTab === 'archivos'
-                  ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-950/40'
-                  : 'bg-neutral-900/80 text-gray-300 border-[var(--border)] hover:bg-neutral-800 hover:text-white'
-              }`}
-            >
-              <FolderDown size={15} className={activeTab === 'archivos' ? 'text-white' : 'text-blue-400'} />
-              <span>Archivos / PDFs</span>
-              {dataArchivos?.total_archivos !== undefined && (
-                <span className={`px-1.5 py-0.2 rounded-md text-[10px] font-mono ${
-                  activeTab === 'archivos' ? 'bg-blue-700 text-white' : 'bg-neutral-800 text-gray-400'
-                }`}>
-                  {dataArchivos.total_archivos}
-                </span>
-              )}
-            </button>
-          </div>
-
-          {/* Botón Expandir / Contraer Todo (solo en Evoluciones e Indicaciones) */}
-          {((activeTab === 'evoluciones' && evolucionesFiltradas.length > 0) ||
-            (activeTab === 'indicaciones' && indicacionesFiltradas.length > 0)) && (
-            <button
-              type="button"
-              onClick={handleToggleExpandAll}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900 hover:bg-neutral-800 text-gray-300 hover:text-white rounded-xl text-xs font-semibold border border-[var(--border)] transition-colors"
-            >
-              {allExpanded ? (
-                <>
-                  <ChevronsDownUp size={14} className="text-amber-400" />
-                  <span>Contraer todo</span>
-                </>
-              ) : (
-                <>
-                  <ChevronsUpDown size={14} className="text-emerald-400" />
-                  <span>Expandir todo</span>
-                </>
-              )}
-            </button>
-          )}
-        </div>
-
-        {/* Barra de Filtro / Búsqueda */}
-        {((activeTab === 'evoluciones' && evoluciones.length > 0) ||
-          (activeTab === 'indicaciones' && indicaciones.length > 0) ||
-          (activeTab === 'archivos' && archivos.length > 0)) && (
-          <div className="px-5 py-2.5 border-b border-[var(--border)] bg-neutral-900/30 flex items-center justify-between gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={13} />
-              <input
-                type="text"
-                placeholder={
-                  activeTab === 'evoluciones'
-                    ? "Buscar en evoluciones por diagnóstico, médico, texto..."
-                    : activeTab === 'indicaciones'
-                    ? "Buscar en indicaciones por fármaco, dosis, médico..."
-                    : "Buscar en archivos por título, médico, ID..."
-                }
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-neutral-950/60 border border-[var(--border)] rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-rose-500 transition-all"
-              />
-              {busqueda && (
-                <button
-                  onClick={() => setBusqueda('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
-                >
-                  Limpiar
-                </button>
-              )}
-            </div>
-            <span className="text-[11px] font-medium text-gray-400 shrink-0">
-              {activeTab === 'evoluciones' && `${evolucionesFiltradas.length} de ${evoluciones.length}`}
-              {activeTab === 'indicaciones' && `${indicacionesFiltradas.length} de ${indicaciones.length}`}
-              {activeTab === 'archivos' && `${archivosFiltrados.length} de ${archivos.length}`}
-            </span>
-          </div>
+        {pacienteData && historiaData && (
+          <HeaderPacienteFijo
+            paciente={pacienteData}
+            historia={historiaData}
+            onUpdatePaciente={handleUpdatePaciente}
+            onUpdateHistoria={handleUpdateHistoria}
+            guardando={guardando}
+            ultimoGuardado={ultimoGuardado}
+          />
         )}
 
-        {/* Contenido Principal con Scroll */}
-        <div className="p-5 overflow-y-auto space-y-3 flex-1">
-          
-          {/* ESTADO: CARGANDO */}
-          {estaCargando && (
-            <div className="py-14 flex flex-col items-center justify-center text-center space-y-3">
-              <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse">
-                <Loader2 size={26} className="animate-spin" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-white">
-                  {activeTab === 'evoluciones'
-                    ? 'Consultando evoluciones médicas en Geclisa...'
-                    : activeTab === 'indicaciones'
-                    ? 'Consultando indicaciones y esquemas de medicación en Geclisa...'
-                    : 'Consultando archivos y documentos en Geclisa...'}
-                </p>
-                <p className="text-xs text-[var(--secondary)] mt-0.5">
-                  Conexión segura de solo lectura en vivo.
-                </p>
-              </div>
-            </div>
-          )}
+        <div className="bg-white border-b border-[#dde6ec] px-3 py-1 flex items-center justify-between flex-shrink-0 z-20">
+          <div className="flex items-center gap-1 overflow-x-auto text-xs font-bold scrollbar-none">
+            <button
+              type="button"
+              onClick={() => setActiveTab('evolucion')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'evolucion'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5" />
+              Antecedentes y Evolución
+            </button>
 
-          {/* ESTADO: ERROR */}
-          {!estaCargando && errorActual && (
-            <div className="p-4 rounded-2xl bg-red-950/30 border border-red-500/30 flex items-start gap-3 text-red-300 text-xs">
-              <AlertCircle className="w-5 h-5 shrink-0 text-red-400 mt-0.5" />
-              <div className="space-y-1">
-                <p className="font-bold text-red-200">Error de comunicación con Geclisa</p>
-                <p>{errorActual}</p>
-                <button
-                  onClick={() => {
-                    if (activeTab === 'evoluciones') cargarEvoluciones(true)
-                    if (activeTab === 'indicaciones') cargarIndicaciones(true)
-                  }}
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-200 rounded-lg text-xs font-semibold transition-colors"
-                >
-                  <RefreshCw size={12} />
-                  Reintentar consulta
-                </button>
-              </div>
-            </div>
-          )}
+            <button
+              type="button"
+              onClick={() => setActiveTab('estudios')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'estudios'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Estudios ({estudios.length})
+            </button>
 
-          {/* ========================================================================= */}
-          {/* PESTAÑA 1: EVOLUCIONES */}
-          {/* ========================================================================= */}
-          {!estaCargando && !errorActual && activeTab === 'evoluciones' && (
-            <>
-              {/* Sin Historia Clínica */}
-              {dataHc && !dataHc.encontrado && (
-                <div className="py-12 px-4 flex flex-col items-center justify-center text-center space-y-3 max-w-md mx-auto">
-                  <div className="p-3.5 rounded-2xl bg-neutral-900 border border-[var(--border)] text-amber-400 shadow-inner">
-                    <FileQuestion size={28} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <h4 className="text-sm font-bold text-white">
-                      {dataHc.motivo === 'sin_dni' 
-                        ? 'Falta el número de DNI' 
-                        : 'Sin Historia Clínica en Geclisa'}
-                    </h4>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      {dataHc.mensaje || 'Este paciente no registra ficha activa ni historia clínica en el sistema hospitalario.'}
-                    </p>
-                  </div>
-                </div>
-              )}
+            <button
+              type="button"
+              onClick={() => setActiveTab('recetas_anteojos')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'recetas_anteojos'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <Glasses className="w-3.5 h-3.5" />
+              Recetas de Anteojos
+            </button>
 
-              {/* Ficha encontrada pero sin evoluciones */}
-              {dataHc?.encontrado && evoluciones.length === 0 && (
-                <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
-                  <div className="p-3 rounded-2xl bg-neutral-900 border border-[var(--border)] text-gray-400">
-                    <Sparkles size={24} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Sin Evoluciones Registradas</h4>
-                    <p className="text-xs text-[var(--secondary)] mt-1 max-w-sm">
-                      El paciente posee Ficha activa (#{dataHc.ficha_id}), pero no registra entradas de evolución médica recientes.
-                    </p>
-                  </div>
-                </div>
-              )}
+            <button
+              type="button"
+              onClick={() => setActiveTab('recetas_farmacos')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'recetas_farmacos'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <Pill className="w-3.5 h-3.5" />
+              Recetas Fármacos (Rp)
+            </button>
 
-              {/* Lista filtrada vacía */}
-              {dataHc?.encontrado && evoluciones.length > 0 && evolucionesFiltradas.length === 0 && (
-                <div className="py-10 text-center space-y-2">
-                  <p className="text-xs text-gray-400 font-medium">
-                    No se encontraron evoluciones que coincidan con "<span className="text-white">{busqueda}</span>".
-                  </p>
-                  <button onClick={() => setBusqueda('')} className="text-xs text-rose-400 hover:underline font-semibold">
-                    Restablecer filtro
-                  </button>
-                </div>
-              )}
+            <button
+              type="button"
+              onClick={() => setActiveTab('indicaciones')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'indicaciones'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Indicaciones al Paciente
+            </button>
 
-              {/* Listado de Evoluciones Colapsables (Acordeón) */}
-              {dataHc?.encontrado && evolucionesFiltradas.length > 0 && (
-                <div className="space-y-2.5">
-                  {evolucionesFiltradas.map((ev) => {
-                    const isExp = !!expandedItems[String(ev.hc_id)]
-                    return (
-                      <div
-                        key={ev.hc_id}
-                        className={`rounded-2xl border transition-all overflow-hidden ${
-                          isExp 
-                            ? 'bg-neutral-900/90 border-rose-500/40 shadow-md' 
-                            : 'bg-neutral-900/60 border-[var(--border)] hover:border-neutral-700'
-                        }`}
-                      >
-                        {/* Cabecera Clickeable para Expandir / Contraer */}
-                        <button
-                          type="button"
-                          onClick={() => toggleExpand(ev.hc_id)}
-                          className="w-full p-3.5 text-left flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-colors"
-                        >
-                          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                            {/* Fecha */}
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-500/10 text-rose-300 font-semibold border border-rose-500/20 text-xs shrink-0">
-                              <Calendar size={11} />
-                              {ev.fecha}
-                            </span>
+            <button
+              type="button"
+              onClick={() => setActiveTab('pedidos_estudios')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'pedidos_estudios'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <ClipboardList className="w-3.5 h-3.5" />
+              Pedidos de Estudios
+            </button>
 
-                            {ev.hora && (
-                              <span className="inline-flex items-center gap-1 text-gray-400 font-mono text-[11px] shrink-0">
-                                <Clock size={10} />
-                                {ev.hora} hs
-                              </span>
-                            )}
+            <button
+              type="button"
+              onClick={() => setActiveTab('geclisa')}
+              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'geclisa'
+                  ? 'bg-[#0e7c86] text-white shadow-sm'
+                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+              }`}
+            >
+              <FolderDown className="w-3.5 h-3.5" />
+              Ficha Geclisa (Legado)
+            </button>
+          </div>
 
-                            {/* Prestador */}
-                            {ev.prestador && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-neutral-800 text-gray-200 border border-[var(--border)] font-medium text-[11px] truncate max-w-[200px]">
-                                <UserCheck size={11} className="text-emerald-400 shrink-0" />
-                                <span className="truncate">{ev.prestador}</span>
-                              </span>
-                            )}
-
-                            {/* Plantilla / Especialidad */}
-                            {ev.nombre_plantilla && (
-                              <span className="px-2 py-0.5 rounded-lg bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] font-semibold truncate max-w-[150px]">
-                                {ev.nombre_plantilla}
-                              </span>
-                            )}
-
-                            {/* Preview de texto si está colapsado */}
-                            {!isExp && ev.texto && (
-                              <p className="text-[11px] text-gray-400 truncate flex-1 ml-1 hidden sm:block">
-                                {ev.texto.replace(/\s+/g, ' ')}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Flecha Expandir / Contraer */}
-                          <div className="text-gray-400 shrink-0 p-1 rounded-lg hover:text-white">
-                            {isExp ? <ChevronUp size={16} className="text-rose-400" /> : <ChevronDown size={16} />}
-                          </div>
-                        </button>
-
-                        {/* Contenido Expandido */}
-                        {isExp && (
-                          <div className="p-4 pt-1 border-t border-[var(--border)]/60 bg-neutral-950/60 animate-in fade-in duration-100">
-                            {ev.especialidad && (
-                              <p className="text-[10px] text-blue-400 font-medium mb-2 flex items-center gap-1">
-                                <Stethoscope size={11} />
-                                Especialidad: {ev.especialidad} {ev.area ? `(Área ${ev.area})` : ''}
-                              </p>
-                            )}
-                            <div className="p-3.5 rounded-xl bg-neutral-900 border border-neutral-800 text-gray-200 text-xs leading-relaxed whitespace-pre-wrap font-sans selection:bg-rose-500/30 selection:text-white">
-                              {ev.texto || (
-                                <span className="italic text-gray-500">Sin contenido de texto registrado en esta entrada.</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ========================================================================= */}
-          {/* PESTAÑA 2: INDICACIONES */}
-          {/* ========================================================================= */}
-          {!estaCargando && !errorActual && activeTab === 'indicaciones' && (
-            <>
-              {/* Sin Indicaciones ni Ficha */}
-              {dataInd && !dataInd.encontrado && (
-                <div className="py-12 px-4 flex flex-col items-center justify-center text-center space-y-3 max-w-md mx-auto">
-                  <div className="p-3.5 rounded-2xl bg-neutral-900 border border-[var(--border)] text-indigo-400 shadow-inner">
-                    <FileQuestion size={28} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <h4 className="text-sm font-bold text-white">Sin Indicaciones Registradas</h4>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      {dataInd.mensaje || 'El paciente no posee indicaciones médicas, recetas ni protocolos activos en Geclisa.'}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Ficha encontrada pero sin indicaciones */}
-              {dataInd?.encontrado && indicaciones.length === 0 && (
-                <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
-                  <div className="p-3 rounded-2xl bg-neutral-900 border border-[var(--border)] text-gray-400">
-                    <Pill size={24} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Sin Indicaciones Médicas</h4>
-                    <p className="text-xs text-[var(--secondary)] mt-1 max-w-sm">
-                      El paciente posee Ficha activa (#{dataInd.ficha_id}), pero no registra protocolos de medicación ni recetas emitidas.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Lista filtrada vacía */}
-              {dataInd?.encontrado && indicaciones.length > 0 && indicacionesFiltradas.length === 0 && (
-                <div className="py-10 text-center space-y-2">
-                  <p className="text-xs text-gray-400 font-medium">
-                    No se encontraron indicaciones que coincidan con "<span className="text-white">{busqueda}</span>".
-                  </p>
-                  <button onClick={() => setBusqueda('')} className="text-xs text-indigo-400 hover:underline font-semibold">
-                    Restablecer filtro
-                  </button>
-                </div>
-              )}
-
-              {/* Listado de Indicaciones Colapsables (Acordeón) */}
-              {dataInd?.encontrado && indicacionesFiltradas.length > 0 && (
-                <div className="space-y-2.5">
-                  {indicacionesFiltradas.map((ind, idx) => {
-                    const itemKey = String(ind.id || idx)
-                    const isExp = !!expandedItems[itemKey]
-
-                    // Color de badge según tipo
-                    const badgeColor = 
-                      ind.tipo === 'MEDICACION_PROTOCOLO' 
-                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
-                        : ind.tipo === 'RECETA'
-                        ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
-                        : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20'
-
-                    return (
-                      <div
-                        key={itemKey}
-                        className={`rounded-2xl border transition-all overflow-hidden ${
-                          isExp 
-                            ? 'bg-neutral-900/90 border-indigo-500/40 shadow-md' 
-                            : 'bg-neutral-900/60 border-[var(--border)] hover:border-neutral-700'
-                        }`}
-                      >
-                        {/* Cabecera Clickeable */}
-                        <button
-                          type="button"
-                          onClick={() => toggleExpand(itemKey)}
-                          className="w-full p-3.5 text-left flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-colors"
-                        >
-                          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-                            {/* Badge de Tipo */}
-                            <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border ${badgeColor} shrink-0`}>
-                              {ind.tipo_label}
-                            </span>
-
-                            {/* Fecha */}
-                            {ind.fecha && (
-                              <span className="inline-flex items-center gap-1 text-gray-300 font-medium text-xs shrink-0">
-                                <Calendar size={11} className="text-gray-400" />
-                                {ind.fecha}
-                              </span>
-                            )}
-
-                            {/* Título de la indicación / protocolo */}
-                            <span className="font-bold text-white text-xs truncate max-w-[200px]">
-                              {ind.titulo}
-                            </span>
-
-                            {/* Prestador */}
-                            {ind.prestador && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-neutral-800 text-gray-300 border border-[var(--border)] text-[10px] truncate max-w-[150px]">
-                                <UserCheck size={10} className="text-emerald-400 shrink-0" />
-                                <span className="truncate">{ind.prestador}</span>
-                              </span>
-                            )}
-
-                            {/* Preview si está colapsado */}
-                            {!isExp && ind.texto && (
-                              <p className="text-[11px] text-gray-400 truncate flex-1 ml-1 hidden sm:block">
-                                {ind.texto.replace(/\s+/g, ' ')}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Flecha */}
-                          <div className="text-gray-400 shrink-0 p-1 rounded-lg hover:text-white">
-                            {isExp ? <ChevronUp size={16} className="text-indigo-400" /> : <ChevronDown size={16} />}
-                          </div>
-                        </button>
-
-                        {/* Contenido Expandido */}
-                        {isExp && (
-                          <div className="p-4 pt-1 border-t border-[var(--border)]/60 bg-neutral-950/60 animate-in fade-in duration-100 space-y-2">
-                            {ind.plantilla && (
-                              <p className="text-[10px] text-indigo-300 font-semibold flex items-center gap-1">
-                                <Layers size={11} />
-                                Plantilla aplicada: {ind.plantilla}
-                              </p>
-                            )}
-                            <div className="p-3.5 rounded-xl bg-neutral-900 border border-neutral-800 text-gray-200 text-xs leading-relaxed whitespace-pre-wrap font-sans selection:bg-indigo-500/30 selection:text-white">
-                              {ind.texto || (
-                                <span className="italic text-gray-500">Sin indicaciones textuales registradas.</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ========================================================================= */}
-          {/* PESTAÑA 3: ARCHIVOS Y DOCUMENTOS GECLISA */}
-          {/* ========================================================================= */}
-          {!estaCargando && !errorActual && activeTab === 'archivos' && (
-            <>
-              {/* Sin Ficha en Geclisa */}
-              {dataArchivos && !dataArchivos.encontrado && (
-                <div className="py-12 px-4 flex flex-col items-center justify-center text-center space-y-3 max-w-md mx-auto">
-                  <div className="p-3.5 rounded-2xl bg-neutral-900 border border-[var(--border)] text-blue-400 shadow-inner">
-                    <FileQuestion size={28} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <h4 className="text-sm font-bold text-white">Sin Archivos en Geclisa</h4>
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                      {dataArchivos.mensaje || 'El paciente no posee Ficha en Geclisa para listar archivos adjuntos.'}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Ficha encontrada pero sin archivos */}
-              {dataArchivos?.encontrado && archivos.length === 0 && (
-                <div className="py-12 flex flex-col items-center justify-center text-center space-y-3">
-                  <div className="p-3 rounded-2xl bg-neutral-900 border border-[var(--border)] text-gray-400">
-                    <FolderDown size={24} />
-                  </div>
-                  <div>
-                    <h4 className="text-sm font-bold text-white">Sin Archivos Adjuntos</h4>
-                    <p className="text-xs text-[var(--secondary)] mt-1 max-w-sm">
-                      El paciente posee Ficha activa (#{dataArchivos.ficha_id}), pero aún no registra documentos, consentimientos ni protocolos subidos.
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {/* Lista filtrada vacía */}
-              {dataArchivos?.encontrado && archivos.length > 0 && archivosFiltrados.length === 0 && (
-                <div className="py-10 text-center space-y-2">
-                  <p className="text-xs text-gray-400 font-medium">
-                    No se encontraron archivos que coincidan con "<span className="text-white">{busqueda}</span>".
-                  </p>
-                  <button onClick={() => setBusqueda('')} className="text-xs text-blue-400 hover:underline font-semibold">
-                    Restablecer filtro
-                  </button>
-                </div>
-              )}
-
-              {/* Listado de Archivos en Geclisa */}
-              {dataArchivos?.encontrado && archivosFiltrados.length > 0 && (
-                <div className="space-y-2.5">
-                  {archivosFiltrados.map((arc) => (
-                    <div
-                      key={arc.as_id}
-                      className="p-3.5 rounded-2xl border bg-neutral-900/60 border-[var(--border)] hover:border-blue-500/40 transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm"
-                    >
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
-                          <FileText size={18} />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-bold text-white text-xs truncate">
-                              {arc.titulo || 'Documento sin título'}
-                            </span>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/60 font-bold">
-                              ID #{arc.as_id}
-                            </span>
-                            {arc.clase && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-gray-300 border border-[var(--border)]">
-                                {arc.clase}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-400 font-mono mt-1">
-                            {arc.fecha && (
-                              <span className="inline-flex items-center gap-1">
-                                <Calendar size={10} className="text-gray-400" />
-                                {arc.fecha}
-                              </span>
-                            )}
-                            {arc.prestador && (
-                              <span className="inline-flex items-center gap-1 text-emerald-400">
-                                <UserCheck size={10} />
-                                {arc.prestador}
-                              </span>
-                            )}
-                            {arc.formato && (
-                              <span className="text-gray-500 uppercase">
-                                .{arc.formato}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Acciones de Archivo */}
-                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                        {/* Botón Ver (Abre Visor In-App) */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setArchivoVisor(arc)
-                            setCargandoVisor(true)
-                          }}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-blue-900/30 transition-all hover:scale-105 active:scale-95"
-                          title="Visualizar documento en pantalla completa"
-                        >
-                          <Eye size={13} />
-                          <span>Ver</span>
-                        </button>
-
-                        {/* Botón Descargar con 1-clic */}
-                        <a
-                          href={`${BACKEND_URL}/api/geclisa/archivos/${arc.as_id}/descargar?nombre=${encodeURIComponent(arc.titulo || 'documento')}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 hover:text-white border border-[var(--border)] rounded-xl text-xs font-bold flex items-center justify-center transition-all"
-                          title="Descargar archivo al disco"
-                        >
-                          <Download size={14} />
-                        </a>
-
-                        {/* Botón Eliminar de Geclisa */}
-                        <button
-                          type="button"
-                          disabled={eliminandoArchivoId === arc.as_id}
-                          onClick={() => handleEliminarArchivo(arc.as_id)}
-                          className="px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold flex items-center gap-1 transition-all disabled:opacity-50"
-                          title="Eliminar este archivo de la Historia Clínica de Geclisa"
-                        >
-                          {eliminandoArchivoId === arc.as_id ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Trash2 size={12} />
-                          )}
-                          <span className="hidden sm:inline">Eliminar</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-[var(--border)] flex items-center justify-between bg-neutral-900/70 text-xs">
-          <span className="text-[11px] text-gray-500 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            Consulta hospitalaria Geclisa (Solo lectura / No persistente)
-          </span>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs transition-colors"
-          >
-            Cerrar
-          </button>
-        </div>
-
-      </div>
-
-      {/* ========================================================================= */}
-      {/* VISOR MODAL IN-APP DE ARCHIVOS Y ESTUDIOS GECLISA */}
-      {/* ========================================================================= */}
-      {archivoVisor && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-2 sm:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-150">
-          <div
-            className={`bg-neutral-950 border border-neutral-800 flex flex-col shadow-2xl transition-all duration-200 overflow-hidden ${
-              visorPantallaCompleta
-                ? 'w-full h-full rounded-none'
-                : 'w-full max-w-5xl h-[90vh] rounded-2xl'
-            }`}
-          >
-            {/* Cabecera del Visor */}
-            <div className="px-4 py-3 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
-                  <FileText size={18} />
-                </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <h4 className="text-sm font-bold text-white truncate">
-                      {archivoVisor.titulo || 'Estudio Clínico'}
-                    </h4>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/60 font-bold">
-                      ID #{archivoVisor.as_id}
-                    </span>
-                    {archivoVisor.clase && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-neutral-800 text-gray-300 border border-neutral-700">
-                        {archivoVisor.clase}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-gray-400 flex items-center gap-2 mt-0.5 truncate">
-                    <span className="text-gray-200 font-medium">{paciente.nombre}</span>
-                    {archivoVisor.fecha && <span>• Fecha: {archivoVisor.fecha} {archivoVisor.hora || ''}</span>}
-                    {archivoVisor.prestador && <span className="text-emerald-400">• {archivoVisor.prestador}</span>}
-                  </p>
-                </div>
-              </div>
-
-              {/* Botones de Acción del Visor */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                <a
-                  href={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/descargar?nombre=${encodeURIComponent(archivoVisor.titulo || 'estudio')}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 hover:text-white border border-neutral-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
-                  title="Descargar archivo al ordenador"
-                >
-                  <Download size={13} />
-                  <span className="hidden sm:inline">Descargar</span>
-                </a>
-
-                <a
-                  href={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 sm:px-3 sm:py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 hover:text-white border border-neutral-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
-                  title="Abrir en pestaña nueva del navegador"
-                >
-                  <ExternalLink size={13} />
-                  <span className="hidden sm:inline">Pestaña</span>
-                </a>
-
-                <button
-                  type="button"
-                  onClick={() => setVisorPantallaCompleta(!visorPantallaCompleta)}
-                  className="p-2 text-gray-400 hover:text-white hover:bg-neutral-800 rounded-xl transition-colors"
-                  title={visorPantallaCompleta ? 'Restaurar tamaño' : 'Pantalla completa'}
-                >
-                  {visorPantallaCompleta ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setArchivoVisor(null)}
-                  className="p-2 text-gray-400 hover:text-rose-400 hover:bg-neutral-800 rounded-xl transition-colors ml-1"
-                  title="Cerrar visor"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            {/* Cuerpo del Visor con Iframe */}
-            <div className="flex-1 bg-neutral-900 relative flex items-center justify-center overflow-hidden">
-              {cargandoVisor && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-neutral-950/80 gap-3 text-center p-4">
-                  <Loader2 size={32} className="text-blue-500 animate-spin" />
-                  <p className="text-xs text-gray-300 font-medium">
-                    Cargando documento en alta resolución desde Geclisa...
-                  </p>
-                </div>
-              )}
-
-              <iframe
-                src={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
-                className="w-full h-full border-0 bg-white"
-                title={archivoVisor.titulo || 'Visor de Archivo'}
-                onLoad={() => setCargandoVisor(false)}
-              />
-            </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1.5 text-[#728a99] hover:text-[#16323f] hover:bg-[#eef3f6] rounded-lg transition-colors"
+              title="Cerrar modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
         </div>
-      )}
+
+        <div className="flex-1 overflow-y-auto p-3.5 bg-[#f0f4f7]">
+          {cargando ? (
+            <div className="h-full flex flex-col items-center justify-center text-xs text-[#728a99] gap-2 py-20">
+              <Loader2 className="w-8 h-8 animate-spin text-[#0e7c86]" />
+              <p className="font-bold text-[#16323f]">Cargando historia clínica oftalmológica...</p>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'evolucion' && pacienteData && (
+                <TabEvolucion
+                  paciente={pacienteData}
+                  consultas={consultas}
+                  consultaActivaId={consultaActivaId}
+                  onSelectConsulta={id => setConsultaActivaId(id)}
+                  onNuevaConsulta={handleNuevaConsulta}
+                  onEliminarConsulta={handleEliminarConsulta}
+                  onUpdateConsultaActiva={handleUpdateConsultaActiva}
+                  onSincronizarGeclisa={handleSincronizarGeclisa}
+                  sincronizandoGeclisa={sincronizandoGeclisa}
+                  onOpenOCR={() => setModalOcrOpen(true)}
+                  onOpenResumenWA={() => setModalWaResumenOpen(true)}
+                  onOpenVideosWA={(esp = false) => {
+                    setVideosEspeciales(esp)
+                    setModalWaVideosOpen(true)
+                  }}
+                  onImprimirFicha={() => {
+                    if (consultaActiva) {
+                      handleImprimir({ tipo: 'ficha' })
+                    }
+                  }}
+                  onImprimirEvolucion={() => handleImprimir({ tipo: 'evolucion' })}
+                />
+              )}
+
+              {activeTab === 'estudios' && (
+                <TabEstudios
+                  estudios={estudios}
+                  onAddEstudio={handleAddEstudio}
+                  onDeleteEstudio={handleDeleteEstudio}
+                />
+              )}
+
+              {activeTab === 'recetas_anteojos' && pacienteData && (
+                <TabRecetasAnteojos
+                  paciente={pacienteData}
+                  recetas={recetasAnteojos}
+                  consultaActiva={consultaActiva}
+                  onAddReceta={handleAddRecetaAnteojos}
+                  onDeleteReceta={handleDeleteRecetaAnteojos}
+                  onImprimirReceta={receta => handleImprimir({ tipo: 'receta_anteojos', recetaAnteojos: receta })}
+                />
+              )}
+
+              {activeTab === 'recetas_farmacos' && pacienteData && (
+                <TabRecetasMedicamentos
+                  paciente={pacienteData}
+                  recetas={recetasFarmacos}
+                  onAddReceta={handleAddRecetaFarmacos}
+                  onDeleteReceta={handleDeleteRecetaFarmacos}
+                  onImprimirReceta={receta => handleImprimir({ tipo: 'receta_farmacos', recetaFarmacos: receta })}
+                />
+              )}
+
+              {activeTab === 'indicaciones' && pacienteData && (
+                <TabIndicaciones
+                  paciente={pacienteData}
+                  onImprimirTexto={(titulo, contenido) => handleImprimir({ tipo: 'indicaciones', indicacionesTexto: { titulo, contenido } })}
+                />
+              )}
+
+              {activeTab === 'pedidos_estudios' && pacienteData && (
+                <TabPedidosEstudios
+                  paciente={pacienteData}
+                  pedidos={pedidosEstudios}
+                  onAddPedido={handleAddPedidoEstudios}
+                  onDeletePedido={handleDeletePedidoEstudios}
+                  onImprimirPedido={pedido => handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: pedido })}
+                />
+              )}
+
+              {activeTab === 'geclisa' && (
+                <TabGeclisaLegado
+                  paciente={{
+                    id: paciente.id,
+                    nombre: paciente.nombre,
+                    dni: paciente.dni,
+                    geclisa_ficha_id: paciente.geclisa_ficha_id
+                  }}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        {consultaActiva && modalOcrOpen && (
+          <ModalTicketOCR
+            isOpen={modalOcrOpen}
+            onClose={() => setModalOcrOpen(false)}
+            consultaActiva={consultaActiva}
+            onApplyData={fields => handleUpdateConsultaActiva(fields)}
+          />
+        )}
+
+        {pacienteData && historiaData && consultaActiva && modalWaResumenOpen && (
+          <ModalResumenWhatsApp
+            isOpen={modalWaResumenOpen}
+            onClose={() => setModalWaResumenOpen(false)}
+            paciente={pacienteData}
+            historia={historiaData}
+            consulta={consultaActiva}
+          />
+        )}
+
+        {pacienteData && modalWaVideosOpen && (
+          <ModalVideosWhatsApp
+            isOpen={modalWaVideosOpen}
+            onClose={() => setModalWaVideosOpen(false)}
+            paciente={pacienteData}
+            especialesInicial={videosEspeciales}
+          />
+        )}
+
+        {printConfig && pacienteData && (
+          <PrintContainer
+            tipo={printConfig.tipo}
+            paciente={pacienteData}
+            historia={historiaData || undefined}
+            consulta={consultaActiva}
+            recetaAnteojos={printConfig.recetaAnteojos}
+            recetaFarmacos={printConfig.recetaFarmacos}
+            pedidoEstudios={printConfig.pedidoEstudios}
+            indicacionesTexto={printConfig.indicacionesTexto}
+          />
+        )}
+      </div>
     </div>
   )
 }

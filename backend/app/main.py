@@ -5583,3 +5583,128 @@ def reservar_stock_lio_endpoint(turno_id: str, payload: ReservarStockPayload):
     except Exception as e:
         logger.error(f"Error reservando stock de LIO para turno {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS HISTORIA CLÍNICA OFTALMOLÓGICA INTEGRAL
+# ====================================================================
+from app.services.historia_oftalmo_service import HistoriaOftalmoService
+
+@app.get("/api/oftalmo/historia/{paciente_id}")
+def get_historia_oftalmo_endpoint(paciente_id: str):
+    """Obtiene la historia clínica oftalmológica completa con visitas, estudios y recetas."""
+    try:
+        return HistoriaOftalmoService.get_or_create_historia(paciente_id)
+    except ValueError as ve:
+        raise HTTPException(status_code=404, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error al obtener historia oftalmológica para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/oftalmo/historia/{paciente_id}/antecedentes")
+def save_antecedentes_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
+    """Guarda los antecedentes oculares, generales, medicación y alergias fijos."""
+    try:
+        return HistoriaOftalmoService.save_antecedentes(paciente_id, payload)
+    except Exception as e:
+        logger.error(f"Error guardando antecedentes oftalmológicos para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/consultas/{paciente_id}")
+def save_consulta_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
+    """Guarda o actualiza una consulta o control postoperatorio con cálculos automáticos."""
+    try:
+        return HistoriaOftalmoService.save_consulta(paciente_id, payload)
+    except Exception as e:
+        logger.error(f"Error guardando consulta oftalmológica para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/oftalmo/consultas/{consulta_id}")
+def delete_consulta_oftalmo_endpoint(consulta_id: str):
+    """Elimina una consulta oftalmológica."""
+    try:
+        return HistoriaOftalmoService.delete_consulta(consulta_id)
+    except Exception as e:
+        logger.error(f"Error eliminando consulta oftalmológica {consulta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/consultas/{consulta_id}/sincronizar-geclisa")
+def sincronizar_consulta_geclisa_endpoint(consulta_id: str):
+    """Adjunta la consulta como documento oficial a la ficha del paciente en Geclisa."""
+    try:
+        return HistoriaOftalmoService.sincronizar_con_geclisa(consulta_id)
+    except Exception as e:
+        logger.error(f"Error sincronizando consulta {consulta_id} con Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/estudios/{paciente_id}")
+def add_estudio_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
+    """Registra un estudio complementario oftalmológico (Pentacam, OCT, Topografía, etc.)."""
+    try:
+        return HistoriaOftalmoService.add_estudio(paciente_id, payload)
+    except Exception as e:
+        logger.error(f"Error guardando estudio para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/oftalmo/estudios/{estudio_id}")
+def delete_estudio_oftalmo_endpoint(estudio_id: str):
+    """Elimina un estudio complementario."""
+    try:
+        return HistoriaOftalmoService.delete_estudio(estudio_id)
+    except Exception as e:
+        logger.error(f"Error eliminando estudio {estudio_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/recetas-anteojos/{paciente_id}")
+def save_receta_anteojos_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
+    """Guarda o actualiza una receta de anteojos."""
+    try:
+        return HistoriaOftalmoService.save_receta_anteojos(paciente_id, payload)
+    except Exception as e:
+        logger.error(f"Error guardando receta de anteojos para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/oftalmo/recetas-anteojos/{receta_id}")
+def delete_receta_anteojos_endpoint(receta_id: str):
+    """Elimina una receta de anteojos."""
+    try:
+        return HistoriaOftalmoService.delete_receta_anteojos(receta_id)
+    except Exception as e:
+        logger.error(f"Error eliminando receta de anteojos {receta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/recetas-farmacos/{paciente_id}")
+def save_receta_farmacos_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
+    """Guarda o actualiza una receta farmacológica (Rp)."""
+    try:
+        return HistoriaOftalmoService.save_receta_farmacos(paciente_id, payload)
+    except Exception as e:
+        logger.error(f"Error guardando receta farmacológica para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/oftalmo/recetas-farmacos/{receta_id}")
+def delete_receta_farmacos_endpoint(receta_id: str):
+    """Elimina una receta farmacológica."""
+    try:
+        return HistoriaOftalmoService.delete_receta_farmacos(receta_id)
+    except Exception as e:
+        logger.error(f"Error eliminando receta farmacológica {receta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/pedidos-estudios/{paciente_id}")
+def save_pedidos_estudios_endpoint(paciente_id: str, payload: List[Dict[str, Any]] = Body(...)):
+    """Guarda una o varias solicitudes de estudios complementarios."""
+    try:
+        return HistoriaOftalmoService.save_pedidos_estudios(paciente_id, payload)
+    except Exception as e:
+        logger.error(f"Error guardando pedidos de estudios para {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/oftalmo/pedidos-estudios/{lote_o_id}")
+def delete_pedidos_estudios_endpoint(lote_o_id: str):
+    """Elimina pedidos de estudios por ID o por lote agrupado."""
+    try:
+        return HistoriaOftalmoService.delete_pedidos_estudios(lote_o_id)
+    except Exception as e:
+        logger.error(f"Error eliminando pedidos de estudios {lote_o_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+

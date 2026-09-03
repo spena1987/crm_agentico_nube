@@ -855,3 +855,132 @@ exception when others then
   -- Ignorar advertencias si ya están añadidas
 end;
 
+-- ====================================================================
+-- HISTORIA CLÍNICA OFTALMOLÓGICA (ESTRUCTURA CLÍNICA INTEGRAL)
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS public.historias_clinicas_oftalmo (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL UNIQUE,
+    antecedentes_oculares JSONB DEFAULT '[]'::jsonb NOT NULL,
+    antecedentes_generales JSONB DEFAULT '[]'::jsonb NOT NULL,
+    medicacion_habitual JSONB DEFAULT '[]'::jsonb NOT NULL,
+    medicacion_otra TEXT,
+    alergias TEXT,
+    observaciones_permanentes TEXT,
+    extra_catalogos JSONB DEFAULT '{}'::jsonb NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hc_oftalmo_paciente ON public.historias_clinicas_oftalmo(paciente_id);
+
+CREATE TABLE IF NOT EXISTS public.consultas_oftalmo (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    historia_id UUID REFERENCES public.historias_clinicas_oftalmo(id) ON DELETE CASCADE NOT NULL,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
+    tipo VARCHAR(20) DEFAULT 'consulta' NOT NULL CHECK (tipo IN ('consulta', 'postop')),
+    fecha DATE DEFAULT CURRENT_DATE NOT NULL,
+    profesional_nombre VARCHAR(150),
+    motivo_consulta TEXT,
+    derivado_por VARCHAR(150),
+    ocupacion VARCHAR(200),
+    observaciones_consulta TEXT,
+    agudeza_visual JSONB DEFAULT '{}'::jsonb NOT NULL,
+    refraccion JSONB DEFAULT '{}'::jsonb NOT NULL,
+    lentes_anteriores JSONB DEFAULT '{}'::jsonb NOT NULL,
+    estabilidad_refractiva VARCHAR(100),
+    arm_cicloplejia JSONB DEFAULT '{}'::jsonb NOT NULL,
+    queratometria JSONB DEFAULT '{}'::jsonb NOT NULL,
+    presion_intraocular JSONB DEFAULT '{}'::jsonb NOT NULL,
+    lentes_contacto JSONB DEFAULT '{}'::jsonb NOT NULL,
+    examen_sensoriomotor JSONB DEFAULT '{}'::jsonb NOT NULL,
+    superficie_ocular JSONB DEFAULT '{}'::jsonb NOT NULL,
+    biomicroscopia JSONB DEFAULT '{}'::jsonb NOT NULL,
+    fondo_ojo JSONB DEFAULT '{}'::jsonb NOT NULL,
+    conducta JSONB DEFAULT '{}'::jsonb NOT NULL,
+    datos_postop JSONB DEFAULT '{}'::jsonb NOT NULL,
+    indicaciones_texto TEXT,
+    proximo_control VARCHAR(150),
+    notas_internas TEXT,
+    resumen_enviado_at TIMESTAMP WITH TIME ZONE,
+    videos_enviados JSONB DEFAULT '[]'::jsonb NOT NULL,
+    sincronizado_geclisa_at TIMESTAMP WITH TIME ZONE,
+    geclisa_archivo_id INTEGER,
+    geclisa_as_id INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_historia ON public.consultas_oftalmo(historia_id);
+CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_paciente ON public.consultas_oftalmo(paciente_id);
+CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_fecha ON public.consultas_oftalmo(fecha DESC);
+
+CREATE TABLE IF NOT EXISTS public.estudios_oftalmo (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
+    consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
+    tipo VARCHAR(100) NOT NULL,
+    ojo VARCHAR(5) DEFAULT 'AO' NOT NULL,
+    fecha DATE DEFAULT CURRENT_DATE NOT NULL,
+    notas TEXT,
+    archivo_url TEXT,
+    archivo_nombre VARCHAR(255),
+    geclisa_archivo_id INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_estudios_oftalmo_paciente ON public.estudios_oftalmo(paciente_id);
+
+CREATE TABLE IF NOT EXISTS public.recetas_anteojos_oftalmo (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
+    consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
+    fecha DATE DEFAULT CURRENT_DATE NOT NULL,
+    tipo_lente VARCHAR(100),
+    od_esfera VARCHAR(20),
+    od_cilindro VARCHAR(20),
+    od_eje VARCHAR(20),
+    od_adicion VARCHAR(20),
+    oi_esfera VARCHAR(20),
+    oi_cilindro VARCHAR(20),
+    oi_eje VARCHAR(20),
+    oi_adicion VARCHAR(20),
+    dnp VARCHAR(50),
+    tratamiento VARCHAR(200),
+    indicaciones_optico TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_recetas_anteojos_paciente ON public.recetas_anteojos_oftalmo(paciente_id);
+
+CREATE TABLE IF NOT EXISTS public.recetas_farmacos_oftalmo (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
+    consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
+    fecha DATE DEFAULT CURRENT_DATE NOT NULL,
+    items JSONB DEFAULT '[]'::jsonb NOT NULL,
+    indicaciones_generales TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_recetas_farmacos_paciente ON public.recetas_farmacos_oftalmo(paciente_id);
+
+CREATE TABLE IF NOT EXISTS public.pedidos_estudios_oftalmo (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
+    consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
+    lote_id UUID DEFAULT gen_random_uuid() NOT NULL,
+    fecha DATE DEFAULT CURRENT_DATE NOT NULL,
+    grupo_preset VARCHAR(100),
+    titulo VARCHAR(255) NOT NULL,
+    items JSONB DEFAULT '[]'::jsonb NOT NULL,
+    diagnostico TEXT,
+    observaciones TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_paciente ON public.pedidos_estudios_oftalmo(paciente_id);
+CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_lote ON public.pedidos_estudios_oftalmo(lote_id);
+
+
