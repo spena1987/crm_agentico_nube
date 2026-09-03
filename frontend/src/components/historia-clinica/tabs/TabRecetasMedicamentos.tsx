@@ -218,8 +218,9 @@ export default function TabRecetasMedicamentos({
                   <div className="text-[11px] text-[#728a99] mt-1 space-y-0.5">
                     {r.items?.map((it, i) => (
                       <div key={i}>
-                        • <span className="font-bold text-[#16323f]">{it.farmaco}</span> ({it.ojo}): {it.posologia}
+                        • <span className="font-bold text-[#16323f]">{it.farmaco || (it as any).med}</span> ({it.ojo || 'AO'}): {it.posologia || (it as any).pos}
                       </div>
+
                     ))}
                   </div>
                 </div>

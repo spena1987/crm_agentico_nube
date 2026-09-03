@@ -33,18 +33,20 @@ export default function PrintContainer({
   indicacionesTexto
 }: PrintContainerProps) {
   return (
-    <div className="hidden print:block print:w-full print:p-6 bg-white text-black font-sans text-xs">
-      {/* Membrete institucional */}
-      <div className="border-b-2 border-black pb-3 mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-black tracking-wide uppercase">CENTRO OFTALMOLÓGICO</h1>
-          <p className="text-[10px] text-gray-600">Cirugía Refractiva, Catarata y Glaucoma</p>
+    <>
+      <div id="historia-clinica-print-area" className="hidden print:block print:w-full bg-white text-black font-sans text-xs">
+        {/* Membrete institucional */}
+        <div className="border-b-2 border-black pb-3 mb-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-black tracking-wide uppercase">CENTRO OFTALMOLÓGICO</h1>
+            <p className="text-[10px] text-gray-600">Cirugía Refractiva, Catarata y Glaucoma</p>
+          </div>
+          <div className="text-right text-[10px] text-gray-600">
+            <div>Fecha: {new Date().toLocaleDateString('es-AR')}</div>
+            {paciente.geclisa_ficha_id && <div>HC Geclisa: #{paciente.geclisa_ficha_id}</div>}
+          </div>
         </div>
-        <div className="text-right text-[10px] text-gray-600">
-          <div>Fecha: {new Date().toLocaleDateString('es-AR')}</div>
-          {paciente.geclisa_ficha_id && <div>HC Geclisa: #{paciente.geclisa_ficha_id}</div>}
-        </div>
-      </div>
+
 
       {/* Recuadro de datos del paciente */}
       <div className="border border-gray-400 rounded p-2 mb-4 bg-gray-50/50">
@@ -248,16 +250,21 @@ export default function PrintContainer({
 
             <div className="space-y-4 text-sm font-serif">
               <div className="text-xl font-black italic">Rp.</div>
-              {recetaFarmacos.items?.map((it, idx) => (
-                <div key={idx} className="pl-4 space-y-1">
-                  <div className="font-bold text-base">
-                    {idx + 1}. {it.farmaco} ({it.ojo || 'AO'})
+              {recetaFarmacos.items?.map((it, idx) => {
+                const nombreFarmaco = it.farmaco || it.med || 'Medicamento'
+                const posologiaTxt = it.posologia || it.pos || 'Según indicación'
+                const ojoTxt = it.ojo || 'AO'
+                return (
+                  <div key={idx} className="pl-4 space-y-1">
+                    <div className="font-bold text-base">
+                      {idx + 1}. {nombreFarmaco} ({ojoTxt})
+                    </div>
+                    <div className="italic text-gray-700 pl-4">
+                      Posología: {posologiaTxt}
+                    </div>
                   </div>
-                  <div className="italic text-gray-700 pl-4">
-                    Posología: {it.posologia}
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {recetaFarmacos.indicaciones_generales && (
@@ -285,7 +292,7 @@ export default function PrintContainer({
             <div>
               <div className="font-bold uppercase text-xs mb-2">Estudios a realizar:</div>
               <ul className="space-y-1.5 pl-4">
-                {pedidoEstudios.estudios?.map((est, i) => (
+                {(pedidoEstudios.estudios || pedidoEstudios.items || [])?.map((est, i) => (
                   <li key={i} className="font-bold text-sm flex items-center gap-2">
                     <span className="w-3 h-3 border border-black inline-block" />
                     {est} ({pedidoEstudios.ojo || 'AO'})
@@ -322,7 +329,40 @@ export default function PrintContainer({
           <div className="text-[10px] text-gray-500">M.P. / Especialista en Oftalmología</div>
         </div>
       </div>
-    </div>
+      </div>
+
+      <style jsx global>{`
+        @media print {
+          body * {
+            visibility: hidden !important;
+          }
+          #historia-clinica-print-area,
+          #historia-clinica-print-area * {
+            visibility: visible !important;
+          }
+          #historia-clinica-print-area {
+            position: fixed !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            min-height: 100vh !important;
+            margin: 0 !important;
+            padding: 12mm 15mm !important;
+            background: white !important;
+            color: black !important;
+            z-index: 999999 !important;
+            display: block !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          @page {
+            size: A4 portrait;
+            margin: 10mm;
+          }
+        }
+      `}</style>
+    </>
   )
 }
+
 

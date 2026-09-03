@@ -12,8 +12,9 @@ import {
   FolderDown, 
   Loader2
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, getAuthHeaders } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+
 
 import HeaderPacienteFijo from './historia-clinica/HeaderPacienteFijo'
 import TabEvolucion from './historia-clinica/tabs/TabEvolucion'
@@ -446,31 +447,75 @@ export default function ModalHistoriaClinica({
   const handleAddRecetaAnteojos = async (recetaData: Omit<RecetaAnteojos, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
     let saved: RecetaAnteojos | null = null
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-anteojos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(recetaData)
-      })
-      if (res.ok) {
-        saved = await res.json()
-      }
-    } catch (e) {
-      console.warn('Backend no disponible para receta anteojos, guardando en Supabase')
+    const payload = {
+      ...recetaData,
+      paciente_id: paciente.id,
+      fecha: recetaData.fecha || new Date().toISOString().slice(0, 10),
     }
 
-    if (!saved) {
+    try {
+      const authHeaders = await getAuthHeaders({ 'Content-Type': 'application/json' })
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-anteojos`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        saved = data.receta || data
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para receta anteojos, guardando en Supabase:', e)
+    }
+
+    if (!saved || !saved.id) {
+      const od = recetaData.lejos?.od || {}
+      const oi = recetaData.lejos?.oi || {}
+      const cercaOd = recetaData.cerca?.od || {}
+      const cercaOi = recetaData.cerca?.oi || {}
+      const dbPayload = {
+        paciente_id: paciente.id,
+        fecha: payload.fecha,
+        tipo_lente: recetaData.tipo_cristal || (recetaData as any).tipo_lente || '',
+        tipo_cristal: recetaData.tipo_cristal || '',
+        od_esfera: od.esf || '',
+        od_cilindro: od.cil || '',
+        od_eje: od.eje || '',
+        od_adicion: cercaOd.esf || '',
+        oi_esfera: oi.esf || '',
+        oi_cilindro: oi.cil || '',
+        oi_eje: oi.eje || '',
+        oi_adicion: cercaOi.esf || '',
+        dnp: od.dnp || '',
+        indicaciones_optico: recetaData.observaciones || (recetaData as any).indicaciones_optico || '',
+        observaciones: recetaData.observaciones || '',
+        lejos: recetaData.lejos,
+        cerca: recetaData.cerca
+      }
       const { data, error } = await (supabase as any)
         .from('recetas_anteojos_oftalmo')
-        .insert({ ...recetaData, paciente_id: paciente.id })
+        .insert(dbPayload)
         .select()
         .single()
-      if (!error && data) saved = data as RecetaAnteojos
+      if (!error && data) {
+        saved = { ...data, ...recetaData } as RecetaAnteojos
+      } else if (error) {
+        console.error('Error insertando receta anteojos en Supabase:', error)
+      }
     }
 
     if (saved) {
-      setRecetasAnteojos(prev => [saved!, ...prev])
-      handleImprimir({ tipo: 'receta_anteojos', recetaAnteojos: saved })
+      const recetaCompleta: RecetaAnteojos = {
+        ...saved,
+        lejos: saved.lejos || recetaData.lejos,
+        cerca: saved.cerca || recetaData.cerca,
+        tipo_cristal: saved.tipo_cristal || recetaData.tipo_cristal,
+        observaciones: saved.observaciones || recetaData.observaciones
+      }
+      setRecetasAnteojos(prev => [recetaCompleta, ...prev])
+      handleImprimir({ tipo: 'receta_anteojos', recetaAnteojos: recetaCompleta })
+    } else {
+      alert('No se pudo guardar la receta de anteojos. Verifique la conexión.')
     }
   }
 
@@ -487,31 +532,54 @@ export default function ModalHistoriaClinica({
   const handleAddRecetaFarmacos = async (recetaData: Omit<RecetaFarmacos, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
     let saved: RecetaFarmacos | null = null
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-farmacos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(recetaData)
-      })
-      if (res.ok) {
-        saved = await res.json()
-      }
-    } catch (e) {
-      console.warn('Backend no disponible para receta farmacos, guardando en Supabase')
+    const payload = {
+      ...recetaData,
+      paciente_id: paciente.id,
+      fecha: recetaData.fecha || new Date().toISOString().slice(0, 10),
+      items: recetaData.items || [],
+      diagnostico: recetaData.diagnostico || '',
+      indicaciones_generales: recetaData.indicaciones_generales || ''
     }
 
-    if (!saved) {
+    try {
+      const authHeaders = await getAuthHeaders({ 'Content-Type': 'application/json' })
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-farmacos`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        saved = data.receta || data
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para receta farmacos, guardando en Supabase:', e)
+    }
+
+    if (!saved || !saved.id) {
       const { data, error } = await (supabase as any)
         .from('recetas_farmacos_oftalmo')
-        .insert({ ...recetaData, paciente_id: paciente.id })
+        .insert(payload)
         .select()
         .single()
-      if (!error && data) saved = data as RecetaFarmacos
+      if (!error && data) {
+        saved = data as RecetaFarmacos
+      } else if (error) {
+        console.error('Error insertando receta_farmacos en Supabase:', error)
+      }
     }
 
     if (saved) {
-      setRecetasFarmacos(prev => [saved!, ...prev])
-      handleImprimir({ tipo: 'receta_farmacos', recetaFarmacos: saved })
+      const recetaCompleta: RecetaFarmacos = {
+        ...saved,
+        diagnostico: saved.diagnostico || recetaData.diagnostico,
+        items: saved.items && saved.items.length > 0 ? saved.items : recetaData.items,
+        indicaciones_generales: saved.indicaciones_generales || recetaData.indicaciones_generales
+      }
+      setRecetasFarmacos(prev => [recetaCompleta, ...prev])
+      handleImprimir({ tipo: 'receta_farmacos', recetaFarmacos: recetaCompleta })
+    } else {
+      alert('No se pudo guardar la receta médica. Verifique la conexión.')
     }
   }
 
@@ -525,34 +593,63 @@ export default function ModalHistoriaClinica({
     setRecetasFarmacos(prev => prev.filter(r => r.id !== id))
   }
 
-  const handleAddPedidoEstudios = async (pedidoData: Omit<PedidoEstudios, 'id' | 'paciente_id'>) => {
+  const handleAddPedidoEstudios = async (pedidoData: any) => {
     if (!paciente?.id) return
     let saved: PedidoEstudios | null = null
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/pedidos-estudios`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(pedidoData)
-      })
-      if (res.ok) {
-        saved = await res.json()
-      }
-    } catch (e) {
-      console.warn('Backend no disponible para pedido estudios, guardando en Supabase')
+    const listaEstudios = pedidoData.estudios || pedidoData.items || []
+    const payload = {
+      paciente_id: paciente.id,
+      fecha: pedidoData.fecha || new Date().toISOString().slice(0, 10),
+      grupo_preset: pedidoData.grupo_preset || '',
+      titulo: pedidoData.titulo || (listaEstudios[0] ? `Estudios: ${listaEstudios[0]}` : 'Pedido de estudios'),
+      items: listaEstudios,
+      estudios: listaEstudios,
+      ojo: pedidoData.ojo || 'AO',
+      diagnostico: pedidoData.diagnostico || '',
+      observaciones: pedidoData.observaciones || ''
     }
 
-    if (!saved) {
+    try {
+      const authHeaders = await getAuthHeaders({ 'Content-Type': 'application/json' })
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/pedidos-estudios`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        const data = await res.json()
+        saved = (data.pedidos && data.pedidos[0]) || data.pedido || data
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para pedido estudios, guardando en Supabase:', e)
+    }
+
+    if (!saved || !saved.id) {
       const { data, error } = await (supabase as any)
         .from('pedidos_estudios_oftalmo')
-        .insert({ ...pedidoData, paciente_id: paciente.id })
+        .insert(payload)
         .select()
         .single()
-      if (!error && data) saved = data as PedidoEstudios
+      if (!error && data) {
+        saved = data as PedidoEstudios
+      } else if (error) {
+        console.error('Error insertando pedido_estudios en Supabase:', error)
+      }
     }
 
     if (saved) {
-      setPedidosEstudios(prev => [saved!, ...prev])
-      handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: saved })
+      const pedidoCompleto: PedidoEstudios = {
+        ...saved,
+        estudios: saved.estudios || listaEstudios,
+        items: saved.items || listaEstudios,
+        ojo: saved.ojo || pedidoData.ojo || 'AO',
+        diagnostico: saved.diagnostico || pedidoData.diagnostico,
+        observaciones: saved.observaciones || pedidoData.observaciones
+      }
+      setPedidosEstudios(prev => [pedidoCompleto, ...prev])
+      handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: pedidoCompleto })
+    } else {
+      alert('No se pudo guardar la orden de estudios. Verifique la conexión.')
     }
   }
 
@@ -566,8 +663,6 @@ export default function ModalHistoriaClinica({
     setPedidosEstudios(prev => prev.filter(p => p.id !== id))
   }
 
-
-
   const handleImprimir = (config: {
     tipo: 'ficha' | 'receta_anteojos' | 'receta_farmacos' | 'pedido_estudios' | 'indicaciones' | 'evolucion'
     recetaAnteojos?: RecetaAnteojos
@@ -578,8 +673,9 @@ export default function ModalHistoriaClinica({
     setPrintConfig(config)
     setTimeout(() => {
       window.print()
-    }, 200)
+    }, 250)
   }
+
 
   if (!isOpen || !paciente) return null
 

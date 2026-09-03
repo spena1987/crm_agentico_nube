@@ -217,8 +217,9 @@ export default function TabPedidosEstudios({
                     {p.diagnostico && <span className="text-[#0e7c86] font-semibold">({p.diagnostico})</span>}
                   </div>
                   <div className="text-[11px] text-[#728a99] mt-1">
-                    {p.estudios?.join(' · ')}
+                    {(p.estudios || p.items)?.join(' · ')}
                   </div>
+
                 </div>
 
                 <div className="flex items-center gap-2">

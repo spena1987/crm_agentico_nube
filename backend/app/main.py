@@ -5654,6 +5654,7 @@ def delete_estudio_oftalmo_endpoint(estudio_id: str):
         logger.error(f"Error eliminando estudio {estudio_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/oftalmo/{paciente_id}/recetas-anteojos")
 @app.post("/api/oftalmo/recetas-anteojos/{paciente_id}")
 def save_receta_anteojos_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """Guarda o actualiza una receta de anteojos."""
@@ -5672,6 +5673,7 @@ def delete_receta_anteojos_endpoint(receta_id: str):
         logger.error(f"Error eliminando receta de anteojos {receta_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/oftalmo/{paciente_id}/recetas-farmacos")
 @app.post("/api/oftalmo/recetas-farmacos/{paciente_id}")
 def save_receta_farmacos_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """Guarda o actualiza una receta farmacológica (Rp)."""
@@ -5690,14 +5692,16 @@ def delete_receta_farmacos_endpoint(receta_id: str):
         logger.error(f"Error eliminando receta farmacológica {receta_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/oftalmo/{paciente_id}/pedidos-estudios")
 @app.post("/api/oftalmo/pedidos-estudios/{paciente_id}")
-def save_pedidos_estudios_endpoint(paciente_id: str, payload: List[Dict[str, Any]] = Body(...)):
+def save_pedidos_estudios_endpoint(paciente_id: str, payload: Union[List[Dict[str, Any]], Dict[str, Any]] = Body(...)):
     """Guarda una o varias solicitudes de estudios complementarios."""
     try:
         return HistoriaOftalmoService.save_pedidos_estudios(paciente_id, payload)
     except Exception as e:
         logger.error(f"Error guardando pedidos de estudios para {paciente_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.delete("/api/oftalmo/pedidos-estudios/{lote_o_id}")
 def delete_pedidos_estudios_endpoint(lote_o_id: str):

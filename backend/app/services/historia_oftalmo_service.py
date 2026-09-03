@@ -1,4 +1,4 @@
-﻿import logging
+import logging
 import math
 import uuid
 from datetime import datetime, date, timezone
@@ -388,24 +388,30 @@ class HistoriaOftalmoService:
     @staticmethod
     def save_receta_anteojos(paciente_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         receta_id = data.get("id")
-        od = data.get("od") or {}
-        oi = data.get("oi") or {}
+        lejos = data.get("lejos") or {}
+        cerca = data.get("cerca") or {}
+        od = data.get("od") or lejos.get("od") or {}
+        oi = data.get("oi") or lejos.get("oi") or {}
         item = {
             "paciente_id": paciente_id,
             "consulta_id": data.get("consulta_id"),
             "fecha": data.get("fecha") or str(date.today()),
-            "tipo_lente": data.get("tipo_lente") or data.get("tipo", ""),
+            "tipo_lente": data.get("tipo_lente") or data.get("tipo_cristal") or data.get("tipo", ""),
+            "tipo_cristal": data.get("tipo_cristal") or data.get("tipo_lente", ""),
             "od_esfera": od.get("esf", ""),
             "od_cilindro": od.get("cil", ""),
             "od_eje": od.get("eje", ""),
-            "od_adicion": od.get("add", ""),
+            "od_adicion": od.get("add") or cerca.get("od", {}).get("esf", ""),
             "oi_esfera": oi.get("esf", ""),
             "oi_cilindro": oi.get("cil", ""),
             "oi_eje": oi.get("eje", ""),
-            "oi_adicion": oi.get("add", ""),
-            "dnp": data.get("dnp", ""),
+            "oi_adicion": oi.get("add") or cerca.get("oi", {}).get("esf", ""),
+            "dnp": data.get("dnp") or od.get("dnp", ""),
             "tratamiento": data.get("tratamiento", ""),
-            "indicaciones_optico": data.get("indicaciones_optico") or data.get("notas", "")
+            "indicaciones_optico": data.get("indicaciones_optico") or data.get("observaciones") or data.get("notas", ""),
+            "observaciones": data.get("observaciones") or data.get("indicaciones_optico", ""),
+            "lejos": lejos,
+            "cerca": cerca
         }
         if receta_id:
             res = supabase.table("recetas_anteojos_oftalmo").update(item).eq("id", receta_id).execute()
@@ -426,6 +432,7 @@ class HistoriaOftalmoService:
             "paciente_id": paciente_id,
             "consulta_id": data.get("consulta_id"),
             "fecha": data.get("fecha") or str(date.today()),
+            "diagnostico": data.get("diagnostico") or "",
             "items": data.get("items") or [],
             "indicaciones_generales": data.get("indicaciones_generales") or data.get("nota", "")
         }
@@ -442,10 +449,12 @@ class HistoriaOftalmoService:
         return {"success": True, "deleted_id": receta_id}
 
     @staticmethod
-    def save_pedidos_estudios(paciente_id: str, pedidos: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def save_pedidos_estudios(paciente_id: str, pedidos: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
+        lista = pedidos if isinstance(pedidos, list) else [pedidos]
         saved = []
         lote_id = str(uuid.uuid4())
-        for p in pedidos:
+        for p in lista:
+            estudios_list = p.get("estudios") or p.get("items") or []
             item = {
                 "paciente_id": paciente_id,
                 "consulta_id": p.get("consulta_id"),
@@ -453,7 +462,9 @@ class HistoriaOftalmoService:
                 "fecha": p.get("fecha") or str(date.today()),
                 "grupo_preset": p.get("grupo_preset") or p.get("grupo", ""),
                 "titulo": p.get("titulo", "Pedido de estudios"),
-                "items": p.get("items") or [p.get("titulo", "")],
+                "items": estudios_list if estudios_list else [p.get("titulo", "Pedido de estudios")],
+                "estudios": estudios_list,
+                "ojo": p.get("ojo") or "AO",
                 "diagnostico": p.get("diagnostico") or p.get("dx", ""),
                 "observaciones": p.get("observaciones") or p.get("nota", ""),
                 "created_at": "now()"
@@ -461,7 +472,10 @@ class HistoriaOftalmoService:
             res = supabase.table("pedidos_estudios_oftalmo").insert(item).execute()
             if res.data:
                 saved.append(res.data[0])
-        return {"success": True, "pedidos": saved}
+            else:
+                saved.append(item)
+        return {"success": True, "pedidos": saved, "pedido": saved[0] if saved else None}
+
 
     @staticmethod
     def delete_pedidos_estudios(lote_o_id: str) -> Dict[str, Any]:

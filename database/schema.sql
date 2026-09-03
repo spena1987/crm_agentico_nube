@@ -938,6 +938,7 @@ CREATE TABLE IF NOT EXISTS public.recetas_anteojos_oftalmo (
     consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
     fecha DATE DEFAULT CURRENT_DATE NOT NULL,
     tipo_lente VARCHAR(100),
+    tipo_cristal TEXT,
     od_esfera VARCHAR(20),
     od_cilindro VARCHAR(20),
     od_eje VARCHAR(20),
@@ -949,6 +950,9 @@ CREATE TABLE IF NOT EXISTS public.recetas_anteojos_oftalmo (
     dnp VARCHAR(50),
     tratamiento VARCHAR(200),
     indicaciones_optico TEXT,
+    observaciones TEXT,
+    lejos JSONB,
+    cerca JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
@@ -959,6 +963,7 @@ CREATE TABLE IF NOT EXISTS public.recetas_farmacos_oftalmo (
     paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
     consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
     fecha DATE DEFAULT CURRENT_DATE NOT NULL,
+    diagnostico TEXT,
     items JSONB DEFAULT '[]'::jsonb NOT NULL,
     indicaciones_generales TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -975,6 +980,8 @@ CREATE TABLE IF NOT EXISTS public.pedidos_estudios_oftalmo (
     grupo_preset VARCHAR(100),
     titulo VARCHAR(255) NOT NULL,
     items JSONB DEFAULT '[]'::jsonb NOT NULL,
+    estudios JSONB,
+    ojo VARCHAR(10) DEFAULT 'AO',
     diagnostico TEXT,
     observaciones TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
@@ -982,5 +989,6 @@ CREATE TABLE IF NOT EXISTS public.pedidos_estudios_oftalmo (
 
 CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_paciente ON public.pedidos_estudios_oftalmo(paciente_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_lote ON public.pedidos_estudios_oftalmo(lote_id);
+
 
 
