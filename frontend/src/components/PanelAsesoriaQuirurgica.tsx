@@ -45,21 +45,37 @@ export default function PanelAsesoriaQuirurgica({
         setLoading(true)
       }
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/paciente/${pacienteId}`)
-      const data = await res.json()
 
       let lista: AsesoriaQuirurgica[] = []
-      if (res.ok && data.success) {
-        lista = data.asesorias || []
-      } else {
-        // Fallback Supabase
+      let obtenido = false
+
+      // 1. Intentar por Backend si está disponible
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/paciente/${pacienteId}`)
+        if (res.ok) {
+          const data = await res.json()
+          if (data.success && data.asesorias) {
+            lista = data.asesorias
+            obtenido = true
+          }
+        }
+      } catch (backendErr) {
+        // Si el backend no responde o falla la red, continuamos transparentemente a Supabase
+        console.warn('Backend no disponible temporalmente, usando Supabase directo:', backendErr)
+      }
+
+      // 2. Si no se obtuvo del backend, consultar Supabase directamente
+      if (!obtenido) {
         const { data: sbData, error: sbErr } = await supabase
           .from('asesorias_quirurgicas')
           .select('*')
           .eq('paciente_id', pacienteId)
           .order('created_at', { ascending: false })
 
-        if (!sbErr && sbData) {
+        if (sbErr) {
+          throw sbErr
+        }
+        if (sbData) {
           lista = sbData as AsesoriaQuirurgica[]
         }
       }
@@ -77,6 +93,7 @@ export default function PanelAsesoriaQuirurgica({
       }
     }
   }
+
 
   useEffect(() => {
     setDesplegados({})

@@ -13,6 +13,8 @@ import {
   Loader2
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
+
 import HeaderPacienteFijo from './historia-clinica/HeaderPacienteFijo'
 import TabEvolucion from './historia-clinica/tabs/TabEvolucion'
 import TabEstudios from './historia-clinica/tabs/TabEstudios'
@@ -120,12 +122,42 @@ export default function ModalHistoriaClinica({
   const cargarHistoriaCompleta = async (pacienteId: string) => {
     setCargando(true)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${pacienteId}`)
-      if (!res.ok) throw new Error(`Error ${res.status}`)
-      const data = await res.json()
+      let data: any = null
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/oftalmo/${pacienteId}`)
+        if (res.ok) {
+          data = await res.json()
+        }
+      } catch (backendErr) {
+        console.warn('Backend API no disponible temporalmente, consultando Supabase:', backendErr)
+      }
+
+      if (!data) {
+        // Fallback directo a Supabase
+        const [pRes, hRes, cRes, eRes, raRes, rfRes, peRes] = await Promise.all([
+          supabase.from('pacientes').select('*').eq('id', pacienteId).maybeSingle(),
+          (supabase as any).from('historias_clinicas_oftalmo').select('*').eq('paciente_id', pacienteId).maybeSingle(),
+          (supabase as any).from('consultas_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
+          (supabase as any).from('estudios_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
+          (supabase as any).from('recetas_anteojos_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
+          (supabase as any).from('recetas_farmacos_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
+          (supabase as any).from('pedidos_estudios_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false })
+        ])
+
+        data = {
+          paciente: pRes.data || null,
+          historia: hRes.data || null,
+          consultas: cRes.data || [],
+          estudios: eRes.data || [],
+          recetas_anteojos: raRes.data || [],
+          recetas_farmacos: rfRes.data || [],
+          pedidos_estudios: peRes.data || []
+        }
+      }
 
       const p: PacienteData = {
         id: data.paciente?.id || pacienteId,
+
         nombre: data.paciente?.nombre || paciente?.nombre || '',
         dni: data.paciente?.dni || paciente?.dni || '',
         geclisa_ficha_id: data.paciente?.geclisa_ficha_id || paciente?.geclisa_ficha_id,
@@ -205,21 +237,46 @@ export default function ModalHistoriaClinica({
     setGuardando(true)
     saveTimeoutRef.current = setTimeout(async () => {
       try {
-        await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/antecedentes`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            paciente: newPaciente,
-            historia: newHistoria
-          })
-        })
-
-        if (currentConsulta && !currentConsulta.id.startsWith('draft_')) {
-          await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
-            method: 'POST',
+        let guardadoBackend = false
+        try {
+          const resAntecedentes = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/antecedentes`, {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(currentConsulta)
+            body: JSON.stringify({
+              paciente: newPaciente,
+              historia: newHistoria
+            })
           })
+
+          if (currentConsulta && !currentConsulta.id.startsWith('draft_')) {
+            await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(currentConsulta)
+            })
+          }
+          if (resAntecedentes.ok) {
+            guardadoBackend = true
+          }
+        } catch (backendSaveErr) {
+          console.warn('Backend API no disponible para guardado, usando Supabase directo:', backendSaveErr)
+        }
+
+        if (!guardadoBackend) {
+          // Fallback directo a Supabase
+          await (supabase as any).from('historias_clinicas_oftalmo').upsert({
+            paciente_id: paciente.id,
+            antecedentes_oculares: newHistoria.antecedentes_oculares || [],
+            antecedentes_generales: newHistoria.antecedentes_generales || [],
+            medicacion_habitual: newHistoria.medicacion_habitual || [],
+            medicacion_otra: newHistoria.medicacion_otra || '',
+            alergias: newHistoria.alergias || '',
+            observaciones_permanentes: newHistoria.observaciones_permanentes || ''
+          }, { onConflict: 'paciente_id' })
+
+          if (currentConsulta && !currentConsulta.id.startsWith('draft_')) {
+            await (supabase as any).from('consultas_oftalmo').upsert(currentConsulta)
+          }
         }
 
         setUltimoGuardado(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
@@ -230,6 +287,7 @@ export default function ModalHistoriaClinica({
       }
     }, 450)
   }, [paciente?.id])
+
 
   const handleUpdatePaciente = (fields: Partial<PacienteData>) => {
     if (!pacienteData) return
@@ -347,78 +405,168 @@ export default function ModalHistoriaClinica({
 
   const handleAddEstudio = async (estudioData: Omit<EstudioOftalmo, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
-    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/estudios`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(estudioData)
-    })
-    if (res.ok) {
-      const saved = await res.json()
-      setEstudios(prev => [saved, ...prev])
+    let saved: EstudioOftalmo | null = null
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/estudios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(estudioData)
+      })
+      if (res.ok) {
+        saved = await res.json()
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para estudio, guardando en Supabase')
+    }
+
+    if (!saved) {
+      const { data, error } = await (supabase as any)
+        .from('estudios_oftalmo')
+        .insert({ ...estudioData, paciente_id: paciente.id })
+        .select()
+        .single()
+      if (!error && data) saved = data as EstudioOftalmo
+    }
+
+    if (saved) {
+      setEstudios(prev => [saved!, ...prev])
     }
   }
 
   const handleDeleteEstudio = async (id: string) => {
-    await fetch(`${BACKEND_URL}/api/oftalmo/estudios/${id}`, { method: 'DELETE' })
+    try {
+      await fetch(`${BACKEND_URL}/api/oftalmo/estudios/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      // ignore
+    }
+    await (supabase as any).from('estudios_oftalmo').delete().eq('id', id)
     setEstudios(prev => prev.filter(e => e.id !== id))
   }
 
   const handleAddRecetaAnteojos = async (recetaData: Omit<RecetaAnteojos, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
-    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-anteojos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(recetaData)
-    })
-    if (res.ok) {
-      const saved = await res.json()
-      setRecetasAnteojos(prev => [saved, ...prev])
+    let saved: RecetaAnteojos | null = null
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-anteojos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(recetaData)
+      })
+      if (res.ok) {
+        saved = await res.json()
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para receta anteojos, guardando en Supabase')
+    }
+
+    if (!saved) {
+      const { data, error } = await (supabase as any)
+        .from('recetas_anteojos_oftalmo')
+        .insert({ ...recetaData, paciente_id: paciente.id })
+        .select()
+        .single()
+      if (!error && data) saved = data as RecetaAnteojos
+    }
+
+    if (saved) {
+      setRecetasAnteojos(prev => [saved!, ...prev])
       handleImprimir({ tipo: 'receta_anteojos', recetaAnteojos: saved })
     }
   }
 
   const handleDeleteRecetaAnteojos = async (id: string) => {
-    await fetch(`${BACKEND_URL}/api/oftalmo/recetas-anteojos/${id}`, { method: 'DELETE' })
+    try {
+      await fetch(`${BACKEND_URL}/api/oftalmo/recetas-anteojos/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      // ignore
+    }
+    await (supabase as any).from('recetas_anteojos_oftalmo').delete().eq('id', id)
     setRecetasAnteojos(prev => prev.filter(r => r.id !== id))
   }
 
   const handleAddRecetaFarmacos = async (recetaData: Omit<RecetaFarmacos, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
-    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-farmacos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(recetaData)
-    })
-    if (res.ok) {
-      const saved = await res.json()
-      setRecetasFarmacos(prev => [saved, ...prev])
+    let saved: RecetaFarmacos | null = null
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/recetas-farmacos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(recetaData)
+      })
+      if (res.ok) {
+        saved = await res.json()
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para receta farmacos, guardando en Supabase')
+    }
+
+    if (!saved) {
+      const { data, error } = await (supabase as any)
+        .from('recetas_farmacos_oftalmo')
+        .insert({ ...recetaData, paciente_id: paciente.id })
+        .select()
+        .single()
+      if (!error && data) saved = data as RecetaFarmacos
+    }
+
+    if (saved) {
+      setRecetasFarmacos(prev => [saved!, ...prev])
       handleImprimir({ tipo: 'receta_farmacos', recetaFarmacos: saved })
     }
   }
 
   const handleDeleteRecetaFarmacos = async (id: string) => {
-    await fetch(`${BACKEND_URL}/api/oftalmo/recetas-farmacos/${id}`, { method: 'DELETE' })
+    try {
+      await fetch(`${BACKEND_URL}/api/oftalmo/recetas-farmacos/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      // ignore
+    }
+    await (supabase as any).from('recetas_farmacos_oftalmo').delete().eq('id', id)
     setRecetasFarmacos(prev => prev.filter(r => r.id !== id))
   }
 
   const handleAddPedidoEstudios = async (pedidoData: Omit<PedidoEstudios, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
-    const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/pedidos-estudios`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pedidoData)
-    })
-    if (res.ok) {
-      const saved = await res.json()
-      setPedidosEstudios(prev => [saved, ...prev])
+    let saved: PedidoEstudios | null = null
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/pedidos-estudios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pedidoData)
+      })
+      if (res.ok) {
+        saved = await res.json()
+      }
+    } catch (e) {
+      console.warn('Backend no disponible para pedido estudios, guardando en Supabase')
+    }
+
+    if (!saved) {
+      const { data, error } = await (supabase as any)
+        .from('pedidos_estudios_oftalmo')
+        .insert({ ...pedidoData, paciente_id: paciente.id })
+        .select()
+        .single()
+      if (!error && data) saved = data as PedidoEstudios
+    }
+
+    if (saved) {
+      setPedidosEstudios(prev => [saved!, ...prev])
       handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: saved })
     }
   }
 
   const handleDeletePedidoEstudios = async (id: string) => {
-    await fetch(`${BACKEND_URL}/api/oftalmo/pedidos-estudios/${id}`, { method: 'DELETE' })
+    try {
+      await fetch(`${BACKEND_URL}/api/oftalmo/pedidos-estudios/${id}`, { method: 'DELETE' })
+    } catch (e) {
+      // ignore
+    }
+    await (supabase as any).from('pedidos_estudios_oftalmo').delete().eq('id', id)
     setPedidosEstudios(prev => prev.filter(p => p.id !== id))
   }
+
+
 
   const handleImprimir = (config: {
     tipo: 'ficha' | 'receta_anteojos' | 'receta_farmacos' | 'pedido_estudios' | 'indicaciones' | 'evolucion'
