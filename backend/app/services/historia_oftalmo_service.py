@@ -2,7 +2,7 @@ import logging
 import math
 import uuid
 from datetime import datetime, date, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from app.db import supabase
 from app.services.logger_service import log_event
 from app.services.geclisa_client import GeclisaClient
