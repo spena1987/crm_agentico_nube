@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { verifyServerAdmin } from '@/lib/serverAuth'
 
 // GET: Obtener la configuración actual de seguridad y tiempos de sesión
 export async function GET() {
@@ -29,9 +30,14 @@ export async function GET() {
   }
 }
 
-// PATCH: Guardar nueva configuración de seguridad
+// PATCH: Guardar nueva configuración de seguridad (solo administradores)
 export async function PATCH(request: Request) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const body = await request.json()
     const { inactividad_minutos, aviso_segundos, inactividad_habilitada } = body
 

@@ -2,8 +2,9 @@ import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
+from conftest import make_test_token
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": f"Bearer {make_test_token()}"})
 
 def test_listar_prestadores_geclisa_endpoint():
     with patch("app.services.geclisa_client.geclisa_client.buscar_prestadores") as mock_buscar:

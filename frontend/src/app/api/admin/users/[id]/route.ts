@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { verifyServerAdmin } from '@/lib/serverAuth'
 
 // PATCH: Actualizar perfil o contraseña de un usuario
 export async function PATCH(
@@ -7,6 +8,11 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const userId = params.id
     const body = await request.json()
     const { 
@@ -99,6 +105,11 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const userId = params.id
 
     // 1. Eliminar usuario en Supabase Auth (eliminará por CASCADE en usuarios_perfil)

@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { verifyServerAdmin } from '@/lib/serverAuth'
 
 // GET: Listar todos los usuarios y perfiles
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const { data: profiles, error } = await supabaseAdmin
       .from('usuarios_perfil')
       .select(`
@@ -43,6 +49,11 @@ export async function GET() {
 // POST: Crear usuario en Supabase Auth y en usuarios_perfil
 export async function POST(request: Request) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const body = await request.json()
     const { 
       email, 

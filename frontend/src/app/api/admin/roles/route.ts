@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { verifyServerAdmin } from '@/lib/serverAuth'
 
 // GET: Listar todos los roles con sus permisos asociados
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const { data: roles, error: rolesError } = await supabaseAdmin
       .from('roles')
       .select(`
@@ -36,6 +42,11 @@ export async function GET() {
 // POST: Crear un nuevo rol y sus permisos
 export async function POST(request: Request) {
   try {
+    const auth = await verifyServerAdmin(request)
+    if (!auth.isAdmin) {
+      return auth.errorResponse!
+    }
+
     const body = await request.json()
     const { nombre, descripcion, permisos = [] } = body
 

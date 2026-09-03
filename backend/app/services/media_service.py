@@ -86,7 +86,7 @@ class MediaService:
         file_size = len(data)
         relative_url = f"/static/media/{subfolder}/{unique_name}"
         
-        # URL completa para el frontend
+        # URL completa por defecto
         public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
         base_api_url = os.getenv("API_BASE_URL") or os.getenv("PUBLIC_URL")
         if not base_api_url and public_domain:
@@ -96,6 +96,25 @@ class MediaService:
         
         full_url = f"{base_api_url}{relative_url}"
 
+        # Persistencia en la nube garantizada en Supabase Storage (Bucket 'whatsapp-media')
+        storage_url = None
+        try:
+            from app.db import supabase
+            if supabase:
+                storage_path = f"{subfolder}/{unique_name}"
+                supabase.storage.from_("whatsapp-media").upload(
+                    path=storage_path,
+                    file=data,
+                    file_options={"content-type": mime_type, "upsert": "true"}
+                )
+                storage_url = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
+                if storage_url:
+                    storage_url = storage_url.rstrip("?")
+                    full_url = storage_url
+                    logger.info(f"Multimedia sincronizada a Supabase Storage: {storage_url}")
+        except Exception as storage_err:
+            logger.warning(f"No se pudo sincronizar a Supabase Storage ({unique_name}), usando URL local: {storage_err}")
+
         logger.info(f"Archivo multimedia guardado: {filepath} ({file_size} bytes, tipo={mime_type})")
 
         return {
@@ -104,6 +123,7 @@ class MediaService:
             "unique_name": unique_name,
             "relative_url": relative_url,
             "media_url": full_url,
+            "storage_url": storage_url,
             "file_size_bytes": file_size,
             "mime_type": mime_type,
             "subfolder": subfolder

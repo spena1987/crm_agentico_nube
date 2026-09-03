@@ -3,8 +3,9 @@ from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.geclisa_client import GeclisaClient
+from conftest import make_test_token
 
-client = TestClient(app)
+client = TestClient(app, headers={"Authorization": f"Bearer {make_test_token()}"})
 
 def test_adjuntar_archivo_historia_clinica_payload():
     """Valida la correcta construcción del payload multipart para Geclisa."""

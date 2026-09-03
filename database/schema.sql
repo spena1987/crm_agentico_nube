@@ -525,19 +525,333 @@ create table public.configuracion_quirurgica (
 );
 
 -- ====================================================================
--- SUPABASE REALTIME CONFIGURATION
+-- 14. CONFIGURACIÓN DEL NOMENCLADOR & PRÁCTICAS CRM
 -- ====================================================================
--- Habilitar replicación en tiempo real para mensajería y logs en el CRM
+create table if not exists public.configuracion_nomenclador (
+    id uuid primary key default gen_random_uuid(),
+    nomencladores_activos integer[] default '{1,6}'::integer[] not null,
+    geclisa_particular_os_id integer default 8118 not null,
+    geclisa_particular_plan_id integer default 215 not null,
+    geclisa_area_default varchar default 'A' not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.practicas_crm (
+    id uuid primary key default gen_random_uuid(),
+    codigo varchar not null,
+    nombre varchar not null,
+    categoria varchar default 'General',
+    precio numeric not null,
+    descripcion text,
+    requiere_lente boolean default false,
+    activo boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.practicas_precios_override (
+    id uuid primary key default gen_random_uuid(),
+    nom_id integer not null,
+    nom_cod varchar not null,
+    nombre_referencia varchar not null,
+    precio_override numeric not null,
+    observacion text,
+    activo boolean default true not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- ====================================================================
+-- 15. SESIONES DE WHATSAPP (PERSISTENCIA POSTGRES)
+-- ====================================================================
+create table if not exists public.whatsapp_sessions (
+    key varchar primary key,
+    value jsonb not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- ====================================================================
+-- 16. MÓDULO DE QUIRÓFANOS & PROGRAMACIÓN QUIRÚRGICA
+-- ====================================================================
+create table if not exists public.configuracion_quirofano (
+    id varchar primary key default 'default',
+    hora_apertura_general varchar default '08:00',
+    hora_cierre_general varchar default '15:00',
+    slot_intervalo_general integer default 10,
+    vigencia_enlace_horas integer default 72,
+    duraciones_prestaciones jsonb default '{"lasik": 15, "inyeccion": 10, "vitrectomia": 60, "catarata_faco": 20, "catarata_compleja": 30}'::jsonb,
+    plantillas_consentimiento jsonb default '[]'::jsonb,
+    whatsapp_mensaje_envio text default 'Hola {paciente}, confirmamos tu turno de cirugía de {cirugia} ({ojo_intervenido}) para el día {fecha_cirugia} a las {hora_cirugia} hs con el Dr. {cirujano}. Por favor, revisá y firmá tu Consentimiento Informado en tu celular desde el siguiente enlace seguro: {enlace_firma}',
+    whatsapp_mensaje_confirmacion text default '¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}. Recordá concurrir con 8 horas de ayuno total (líquidos y sólidos).',
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.quirofanos (
+    id uuid primary key default gen_random_uuid(),
+    nombre varchar not null,
+    codigo varchar not null unique,
+    color varchar default '#3B82F6',
+    orden integer default 0,
+    duracion_slot_minutos integer default 15,
+    hora_inicio varchar default '08:00',
+    hora_fin varchar default '14:00',
+    dias_operativos jsonb default '[1, 2, 3, 4, 5]'::jsonb,
+    activo boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.quirofano_bloques_medicos (
+    id uuid primary key default gen_random_uuid(),
+    quirofano_id uuid references public.quirofanos(id) on delete cascade not null,
+    medico_id integer not null,
+    medico_nombre varchar not null,
+    dia_semana integer not null check (dia_semana between 1 and 7),
+    hora_desde time not null,
+    hora_hasta time not null,
+    activo boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.quirofano_bloqueos (
+    id uuid primary key default gen_random_uuid(),
+    quirofano_id uuid references public.quirofanos(id) on delete cascade not null,
+    fecha date not null,
+    hora_desde time not null,
+    hora_hasta time not null,
+    motivo varchar not null,
+    descripcion text,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- ====================================================================
+-- 17. PRESTADORES MÉDICOS & PROFESIONALES
+-- ====================================================================
+create table if not exists public.prestadores (
+    id uuid primary key default gen_random_uuid(),
+    matricula varchar,
+    nombre_apellido varchar not null,
+    rol varchar not null,
+    telefono varchar,
+    email varchar,
+    activo boolean default true,
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now()
+);
+
+-- ====================================================================
+-- 18. PLANTILLAS DE PREPARACIONES Y CONSENTIMIENTOS
+-- ====================================================================
+create table if not exists public.plantillas_preparaciones (
+    id uuid primary key default gen_random_uuid(),
+    titulo varchar not null,
+    categoria varchar default 'Oftalmología',
+    texto_indicaciones text not null,
+    ayuno_horas integer default 8,
+    dias_previos_aviso integer default 2,
+    observaciones text,
+    activo boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table if not exists public.plantillas_consentimientos (
+    id uuid primary key default gen_random_uuid(),
+    titulo varchar not null,
+    especialidad varchar default 'Oftalmología',
+    cuerpo_legal text not null,
+    version varchar default '1.0' not null,
+    activo boolean default true not null,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- ====================================================================
+-- 19. TURNOS DE QUIRÓFANO & TRAZABILIDAD INTRAOPERATORIA
+-- ====================================================================
+create table if not exists public.turnos_quirofano (
+    id uuid primary key default gen_random_uuid(),
+    asesoria_id uuid references public.asesorias_quirurgicas(id) on delete set null,
+    paciente_id uuid references public.pacientes(id) on delete cascade not null,
+    quirofano_id uuid references public.quirofanos(id) on delete restrict not null,
+    fecha_cirugia date not null,
+    hora_inicio time not null,
+    duracion_minutos integer default 20 not null,
+    ojo varchar not null,
+    es_bilateral_escalonada boolean default false,
+    turno_par_id uuid,
+    cirujano_id integer,
+    cirujano_nombre varchar not null,
+    ayudante_nombre varchar,
+    anestesiologo_nombre varchar,
+    instrumentador_nombre varchar,
+    medico_derivador_nombre varchar,
+    practica_codigo varchar,
+    practica_nombre varchar not null,
+    codigo_obra_social varchar,
+    obra_social varchar default 'Particular',
+    plan_obra_social varchar,
+    token_autorizacion varchar,
+    tipo_anestesia varchar default 'Local Asistida',
+    checks_adicionales jsonb default '{"uti": false, "biopsia": false, "arco_en_c": false, "monitoreo": true, "tratamiento_dolor": false, "ficha_prequirurgica": false}'::jsonb,
+    estado varchar default 'programado',
+    codigo_turno varchar,
+    
+    -- Lente Intraocular (LIO)
+    lleva_lente boolean default false,
+    es_torico boolean default false,
+    lente_tipo varchar,
+    lente_dioptria varchar,
+    lente_lote varchar,
+    lente_serie varchar,
+    lente_torico_valor integer,
+    lente_torico_eje integer,
+    lente_vencimiento date,
+    lente_foto_url text,
+    lio_calculado boolean default false,
+    lio_calculado_at timestamp with time zone,
+    lio_calculado_por text,
+    lio_calculo_opciones jsonb default '[]'::jsonb,
+    lio_stock_reservado boolean default false,
+    lio_stock_reservado_at timestamp with time zone,
+    lio_stock_observaciones text,
+    lio_opcion_implantada_id text,
+    
+    -- Trazabilidad y Quirófano en Vivo
+    llegada_at timestamp with time zone,
+    ingreso_pre_quirofano_at timestamp with time zone,
+    inicio_cirugia_at timestamp with time zone,
+    fin_cirugia_at timestamp with time zone,
+    observaciones text,
+    observaciones_intraoperatorias text,
+    checklist_seguridad_quirurgica jsonb default '{}'::jsonb,
+    parte_quirurgico_pdf_url text,
+    parte_quirurgico_geclisa_archivo_id integer,
+    parte_quirurgico_geclisa_sincronizado_at timestamp with time zone,
+    
+    -- Consentimiento Informado Digital
+    consentimiento_estado varchar default 'pendiente_envio',
+    consentimiento_token varchar,
+    consentimiento_pdf_url text,
+    consentimiento_enviado_at timestamp with time zone,
+    consentimiento_firmado_at timestamp with time zone,
+    consentimiento_firma_ip varchar,
+    consentimiento_firma_img text,
+    consentimiento_geclisa_archivo_id integer,
+    consentimiento_geclisa_sincronizado_at timestamp with time zone,
+    
+    usuario_alta varchar,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_turnos_quirofano_fecha on public.turnos_quirofano(fecha_cirugia);
+create index if not exists idx_turnos_quirofano_paciente on public.turnos_quirofano(paciente_id);
+create index if not exists idx_turnos_quirofano_quirofano on public.turnos_quirofano(quirofano_id);
+create index if not exists idx_turnos_quirofano_token on public.turnos_quirofano(consentimiento_token);
+
+-- ====================================================================
+-- 20. CATÁLOGO MAESTRO LIO & GTIN ALCON
+-- ====================================================================
+create table if not exists public.modelos_lio (
+    id uuid primary key default gen_random_uuid(),
+    marca varchar not null,
+    modelo varchar not null,
+    tipo_optica varchar default 'Monofocal',
+    descripcion text,
+    constante_a numeric default 118.9,
+    acd_estimado numeric default 5.0,
+    rango_dioptrias_min numeric default 10.0,
+    rango_dioptrias_max numeric default 30.0,
+    paso_dioptrias numeric default 0.5,
+    admite_toricos boolean default false,
+    apto_sulcus boolean default false,
+    deposito_defecto_id integer default 1,
+    activo boolean default true,
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now()
+);
+
+create table if not exists public.modelos_lio_items (
+    id uuid primary key default gen_random_uuid(),
+    modelo_lio_id uuid references public.modelos_lio(id) on delete cascade not null,
+    geclisa_ele_id integer not null,
+    geclisa_ele_cod text not null,
+    geclisa_nombre text,
+    dioptria numeric not null,
+    es_torico boolean default false,
+    torico_valor text,
+    created_at timestamp with time zone default now(),
+    updated_at timestamp with time zone default now()
+);
+
+create table if not exists public.catalogo_maestro_gtin (
+    id uuid primary key default gen_random_uuid(),
+    gtin_14 varchar not null,
+    gtin_12 varchar,
+    marca varchar default 'Alcon' not null,
+    nombre_producto text not null,
+    internacional varchar,
+    categoria varchar default 'LIO' not null,
+    familia_nombre varchar,
+    modelo_lio_id uuid references public.modelos_lio(id) on delete set null,
+    tipo_optica varchar,
+    dioptria numeric,
+    es_torico boolean default false not null,
+    torico_valor varchar,
+    constante_a numeric default 118.9,
+    acd_estimado numeric default 5.0,
+    geclisa_ele_id integer,
+    geclisa_ele_cod varchar,
+    origen varchar default 'MANUAL' not null,
+    observaciones text,
+    activo boolean default true not null,
+    created_at timestamp with time zone default now() not null,
+    updated_at timestamp with time zone default now() not null
+);
+
+create index if not exists idx_catalogo_gtin_14 on public.catalogo_maestro_gtin(gtin_14);
+create index if not exists idx_catalogo_gtin_dioptria on public.catalogo_maestro_gtin(dioptria);
+
+-- ====================================================================
+-- RLS POLICIES PARA LAS NUEVAS TABLAS
+-- ====================================================================
+alter table public.configuracion_nomenclador enable row level security;
+alter table public.practicas_crm enable row level security;
+alter table public.practicas_precios_override enable row level security;
+alter table public.whatsapp_sessions enable row level security;
+alter table public.configuracion_quirofano enable row level security;
+alter table public.quirofanos enable row level security;
+alter table public.quirofano_bloques_medicos enable row level security;
+alter table public.quirofano_bloqueos enable row level security;
+alter table public.prestadores enable row level security;
+alter table public.plantillas_preparaciones enable row level security;
+alter table public.plantillas_consentimientos enable row level security;
+alter table public.turnos_quirofano enable row level security;
+alter table public.modelos_lio enable row level security;
+alter table public.modelos_lio_items enable row level security;
+alter table public.catalogo_maestro_gtin enable row level security;
+
+create policy "Acceso total personal autenticado en quirofanos" on public.quirofanos for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "Acceso total personal autenticado en turnos_quirofano" on public.turnos_quirofano for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "Acceso total personal autenticado en prestadores" on public.prestadores for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "Acceso total personal autenticado en modelos_lio" on public.modelos_lio for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+create policy "Lectura publica catalogo GTIN" on public.catalogo_maestro_gtin for select using (true);
+create policy "Lectura publica plantillas consentimiento" on public.plantillas_consentimientos for select using (true);
+
+-- ====================================================================
+-- SUPABASE REALTIME CONFIGURATION (COMPLETA)
+-- ====================================================================
 begin;
   alter publication supabase_realtime add table public.conversaciones;
   alter publication supabase_realtime add table public.mensajes;
+  alter publication supabase_realtime add table public.presupuestos;
   alter publication supabase_realtime add table public.system_logs;
   alter publication supabase_realtime add table public.agentes_directivas_globales;
   alter publication supabase_realtime add table public.agentes_situacionales;
   alter publication supabase_realtime add table public.asesorias_quirurgicas;
   alter publication supabase_realtime add table public.asesoria_evoluciones;
   alter publication supabase_realtime add table public.configuracion_quirurgica;
+  alter publication supabase_realtime add table public.turnos_quirofano;
+  alter publication supabase_realtime add table public.quirofanos;
 exception when others then
-  -- Ignorar errores si la publicación o la relación ya existe
+  -- Ignorar advertencias si ya están añadidas
 end;
 

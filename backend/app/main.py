@@ -5,7 +5,7 @@ import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, Query, Request
+from fastapi import FastAPI, HTTPException, Body, UploadFile, File, Form, BackgroundTasks, Query, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -251,14 +251,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configuración de CORS
+from app.auth import AuthSecurityMiddleware, verify_webhook_secret
+
+# Configuración de CORS con orígenes permitidos configurables
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
+allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()] if allowed_origins_env != "*" else ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Middleware de Seguridad: Exige Bearer Token Supabase en todas las rutas /api/*
+app.add_middleware(AuthSecurityMiddleware)
 
 # ====================================================================
 # SERVIDOR INTELIGENTE DE ESTÁTICOS Y PDFs ON-DEMAND (CON AUTO-REGENERACIÓN)
@@ -577,7 +585,11 @@ def unwrap_whatsapp_message(msg_dict: Any) -> Dict[str, Any]:
     return current if isinstance(current, dict) else {}
 
 @app.post("/api/whatsapp/webhook/incoming")
-async def receive_incoming_whatsapp_message(request: Request, background_tasks: BackgroundTasks):
+async def receive_incoming_whatsapp_message(
+    request: Request, 
+    background_tasks: BackgroundTasks,
+    _auth: bool = Depends(verify_webhook_secret)
+):
     """
     Webhook unificado que recibe eventos y mensajes entrantes de WhatsApp desde Evolution API v2,
     persiste el mensaje en Supabase y despacha el Agente IA en segundo plano.
