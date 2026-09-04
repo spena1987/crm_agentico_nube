@@ -38,6 +38,17 @@ import {
   PedidoEstudios 
 } from './historia-clinica/types'
 
+const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 type TabTipo = 
   | 'evolucion' 
   | 'estudios' 
@@ -188,7 +199,7 @@ export default function ModalHistoriaClinica({
       if (consList.length > 0) {
         setConsultaActivaId(consList[0].id)
       } else {
-        const nuevaDraftId = `draft_${Date.now()}`
+        const nuevaDraftId = generateUUID()
         const draft: ConsultaOftalmo = {
           id: nuevaDraftId,
           paciente_id: pacienteId,
@@ -240,21 +251,29 @@ export default function ModalHistoriaClinica({
       try {
         let guardadoBackend = false
         try {
+          const authHeaders = await getAuthHeaders()
           const resAntecedentes = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/antecedentes`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: authHeaders,
             body: JSON.stringify({
               paciente: newPaciente,
               historia: newHistoria
             })
           })
 
-          if (currentConsulta && !currentConsulta.id.startsWith('draft_')) {
-            await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
+          if (currentConsulta) {
+            const resCons = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: authHeaders,
               body: JSON.stringify(currentConsulta)
             })
+            if (resCons.ok) {
+              const saved = await resCons.json()
+              if (saved?.id && saved.id !== currentConsulta.id) {
+                setConsultas(prev => prev.map(c => c.id === currentConsulta.id ? { ...c, id: saved.id } : c))
+                setConsultaActivaId(prev => prev === currentConsulta.id ? saved.id : prev)
+              }
+            }
           }
           if (resAntecedentes.ok) {
             guardadoBackend = true
@@ -275,7 +294,7 @@ export default function ModalHistoriaClinica({
             observaciones_permanentes: newHistoria.observaciones_permanentes || ''
           }, { onConflict: 'paciente_id' })
 
-          if (currentConsulta && !currentConsulta.id.startsWith('draft_')) {
+          if (currentConsulta) {
             await (supabase as any).from('consultas_oftalmo').upsert(currentConsulta)
           }
         }
@@ -377,14 +396,41 @@ export default function ModalHistoriaClinica({
   const handleSincronizarGeclisa = async (consultaId: string) => {
     setSincronizandoGeclisa(true)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${consultaId}/sincronizar-geclisa`, {
-        method: 'POST'
+      const authHeaders = await getAuthHeaders()
+      // 1. Asegurar que la consulta activa esté guardada en el backend antes de sincronizar
+      const activeCons = consultas.find(c => c.id === consultaId)
+      let targetId = consultaId
+      if (activeCons && paciente?.id) {
+        try {
+          const saveRes = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(activeCons)
+          })
+          if (saveRes.ok) {
+            const saved = await saveRes.json()
+            if (saved?.id && saved.id !== consultaId) {
+              targetId = saved.id
+              setConsultas(prev => prev.map(c => c.id === activeCons.id ? { ...c, id: saved.id } : c))
+              setConsultaActivaId(saved.id)
+            }
+          }
+        } catch (e) {
+          console.warn('Error asegurando guardado previo a sincronización:', e)
+        }
+      }
+
+      // 2. Ejecutar la sincronización con Geclisa
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${targetId}/sincronizar-geclisa`, {
+        method: 'POST',
+        headers: authHeaders
       })
-      if (res.ok) {
-        const data = await res.json()
+      const data = await res.json()
+
+      if (res.ok && data.success) {
         const assignedHcId = data.geclisa_hc_id || data.hc_id
         setConsultas(prev => prev.map(c => {
-          if (c.id === consultaId) {
+          if (c.id === targetId || c.id === consultaId) {
             return {
               ...c,
               geclisa_sincronizado_en: new Date().toISOString(),
@@ -396,11 +442,11 @@ export default function ModalHistoriaClinica({
         }))
         alert(data.mensaje || `Evolución inyectada en la Historia Clínica nativa de Geclisa con éxito (hcId: ${assignedHcId}).`)
       } else {
-        const err = await res.json()
-        alert(`Error al sincronizar con Geclisa: ${err.detail || err.motivo || err.error || 'Fallo de conexión'}`)
+        const errMsg = data.detail || data.error || data.motivo || 'Fallo desconocido al sincronizar con Geclisa'
+        alert(`Error al sincronizar con Geclisa: ${errMsg}`)
       }
     } catch (err: any) {
-      alert(`Error al conectar con Geclisa: ${err.message}`)
+      alert(`Error al conectar con el servidor: ${err.message}`)
     } finally {
       setSincronizandoGeclisa(false)
     }

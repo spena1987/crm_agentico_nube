@@ -1,6 +1,7 @@
 import logging
 import math
 import uuid
+import time
 from datetime import datetime, date, timezone
 from typing import Dict, Any, List, Optional, Union
 from app.db import supabase
@@ -429,9 +430,23 @@ class HistoriaOftalmoService:
             }
 
             consulta_id = consulta_data.get("id")
+            is_valid_uuid = False
             if consulta_id:
-                res = supabase.table("consultas_oftalmo").update(registro).eq("id", consulta_id).execute()
-                saved_consulta = res.data[0] if res.data else registro
+                try:
+                    uuid.UUID(str(consulta_id))
+                    is_valid_uuid = True
+                except (ValueError, TypeError, AttributeError):
+                    is_valid_uuid = False
+
+            if consulta_id and is_valid_uuid:
+                exists_res = supabase.table("consultas_oftalmo").select("id").eq("id", consulta_id).limit(1).execute()
+                if exists_res.data:
+                    res = supabase.table("consultas_oftalmo").update(registro).eq("id", consulta_id).execute()
+                else:
+                    registro["id"] = consulta_id
+                    registro["created_at"] = "now()"
+                    res = supabase.table("consultas_oftalmo").insert(registro).execute()
+                saved_consulta = res.data[0] if res.data else {**registro, "id": consulta_id}
             else:
                 registro["created_at"] = "now()"
                 res = supabase.table("consultas_oftalmo").insert(registro).execute()
@@ -491,6 +506,15 @@ class HistoriaOftalmoService:
         - Si ya tiene geclisa_hc_id: Valida con Geclisa y actualiza la evolución existente sin duplicar.
         """
         try:
+            try:
+                uuid.UUID(str(consulta_id))
+            except (ValueError, TypeError, AttributeError):
+                return {
+                    "success": False,
+                    "sincronizado": False,
+                    "error": f"ID de consulta inválido ('{consulta_id}'). Asegúrese de guardar la consulta antes de sincronizar."
+                }
+
             c_res = supabase.table("consultas_oftalmo").select("*, pacientes(*)").eq("id", consulta_id).limit(1).execute()
             if not c_res.data:
                 raise ValueError("Consulta no encontrada")
@@ -564,7 +588,15 @@ class HistoriaOftalmoService:
             if assigned_hc_id:
                 update_data["geclisa_hc_id"] = int(assigned_hc_id)
 
-            supabase.table("consultas_oftalmo").update(update_data).eq("id", consulta_id).execute()
+            try:
+                supabase.table("consultas_oftalmo").update(update_data).eq("id", consulta_id).execute()
+            except Exception as up_err:
+                logger.warning(f"Reintentando actualización de consulta {consulta_id} en Supabase tras error: {up_err}")
+                try:
+                    time.sleep(0.5)
+                    supabase.table("consultas_oftalmo").update(update_data).eq("id", consulta_id).execute()
+                except Exception as up_err2:
+                    logger.error(f"No se pudo actualizar consulta {consulta_id} en Supabase: {up_err2}")
 
             return {
                 "success": True,

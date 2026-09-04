@@ -1083,15 +1083,20 @@ class GeclisaClient:
         tz_mza = timezone(timedelta(hours=-3))
         now_mza = datetime.now(tz_mza)
 
-        fecha_str = fecha_evolucion or now_mza.strftime("%Y-%m-%d")
-        hora_str = hora_evolucion or now_mza.strftime("%H:%M")
+        # Geclisa en .NET concatena fechaEvolucion + horaEvolucion directamente para DateTime.Parse.
+        # Debe asegurarse un espacio intermedio ('YYYY-MM-DD ' + 'HH:MM') para evitar errores de parseo.
+        fecha_raw = (fecha_evolucion or now_mza.strftime("%Y-%m-%d")).strip()
+        fecha_str = f"{fecha_raw} "
+        hora_str = (hora_evolucion or now_mza.strftime("%H:%M")).strip()
 
         target_hc_id = int(hc_id) if (hc_id and int(hc_id) > 0) else None
 
+        # En Geclisa DTO, meId y preId son enteros requeridos no nulos (int32).
+        # Si no se proveen, deben enviarse como 0 en lugar de null.
         payload = {
             "fichaId": int(ficha_id),
-            "meId": int(me_id) if me_id else None,
-            "preId": int(pre_id) if pre_id else None,
+            "meId": int(me_id) if me_id else 0,
+            "preId": int(pre_id) if pre_id else 0,
             "espId": int(esp_id) if esp_id else None,
             "hcId": target_hc_id,
             "fechaEvolucion": fecha_str,
@@ -1126,8 +1131,13 @@ class GeclisaClient:
             assigned_hc_id = None
             if isinstance(res_data, int):
                 assigned_hc_id = res_data
+            elif isinstance(res_data, str) and res_data.strip().isdigit():
+                assigned_hc_id = int(res_data.strip())
             elif isinstance(res_data, dict):
                 assigned_hc_id = res_data.get("hcId") or res_data.get("id") or target_hc_id
+
+            if not assigned_hc_id and resp.text and resp.text.strip().isdigit():
+                assigned_hc_id = int(resp.text.strip())
 
             # Si era nuevo y no vino el hcId en la respuesta, lo rescatamos consultando las evoluciones recientes
             if not assigned_hc_id and not target_hc_id:

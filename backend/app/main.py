@@ -5633,7 +5633,13 @@ def delete_consulta_oftalmo_endpoint(consulta_id: str):
 def sincronizar_consulta_geclisa_endpoint(consulta_id: str):
     """Inyecta la consulta como evolución de texto libre en la Historia Clínica nativa de Geclisa."""
     try:
-        return HistoriaOftalmoService.sincronizar_con_geclisa(consulta_id)
+        res = HistoriaOftalmoService.sincronizar_con_geclisa(consulta_id)
+        if not res.get("success"):
+            err_msg = res.get("error") or res.get("motivo") or "Error al sincronizar con Geclisa"
+            raise HTTPException(status_code=400, detail=err_msg)
+        return res
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error sincronizando consulta {consulta_id} con Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
