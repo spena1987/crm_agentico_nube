@@ -221,15 +221,25 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
           ) : dataHc?.evoluciones_recientes?.length ? (
             dataHc.evoluciones_recientes.map(ev => {
               const isExpanded = expandedItems[`ev_${ev.hc_id}`] !== false
+              const isCrm = ev.texto?.includes('CRM Oftalmológico') || (ev as any).origen === 'crm' || (ev as any).es_crm
               return (
                 <div key={ev.hc_id} className="bg-white border border-[#dde6ec] rounded-lg p-3 text-xs shadow-sm space-y-2">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-extrabold text-[#0e7c86]">{ev.fecha}</span>
                       <span className="text-[10px] text-[#728a99]">{ev.hora}</span>
                       <span className="text-[10px] bg-gray-100 px-2 py-0.5 rounded font-semibold text-gray-700">
                         {ev.prestador} ({ev.especialidad || 'Oftalmología'})
                       </span>
+                      {isCrm ? (
+                        <span className="text-[9.5px] bg-[#e4f3f4] text-[#0e7c86] border border-[#c3e2e4] px-2 py-0.5 rounded-full font-black">
+                          CRM Oftalmológico • hcId #{ev.hc_id}
+                        </span>
+                      ) : (
+                        <span className="text-[9.5px] bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full font-bold">
+                          Geclisa Escritorio • hcId #{ev.hc_id}
+                        </span>
+                      )}
                     </div>
                     <button
                       type="button"

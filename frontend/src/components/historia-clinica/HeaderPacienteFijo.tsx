@@ -1,4 +1,4 @@
-﻿'use client'
+'use client'
 
 import React, { useMemo } from 'react'
 import { User, Shield, AlertCircle, Phone, Calendar, CheckCircle } from 'lucide-react'
@@ -36,6 +36,20 @@ export default function HeaderPacienteFijo({
     return edad >= 0 && edad < 125 ? `${edad} años` : ''
   }, [paciente.fecha_nacimiento])
 
+  const handleAddExtraTag = (catKey: string, newTag: string) => {
+    const currentExtra = historia.extra_catalogos || {}
+    const list = currentExtra[catKey] || []
+    if (!list.includes(newTag)) {
+      const updatedList = [...list, newTag]
+      onUpdateHistoria({
+        extra_catalogos: {
+          ...currentExtra,
+          [catKey]: updatedList
+        }
+      })
+    }
+  }
+
   return (
     <div className="bg-white border-b border-[#dde6ec] shadow-sm z-30 flex-shrink-0 text-[#16323f]">
       {/* Barra superior con título y estado de guardado */}
@@ -59,31 +73,29 @@ export default function HeaderPacienteFijo({
               </>
             ) : ultimoGuardado ? (
               <>
-                <CheckCircle className="w-3 h-3 text-[#1a7f4b]" />
-                <span className="text-[#1a7f4b] font-semibold">{ultimoGuardado}</span>
+                <CheckCircle className="w-3.5 h-3.5 text-[#1a7f4b]" />
+                <span className="text-[#1a7f4b]">Guardado {ultimoGuardado}</span>
               </>
-            ) : (
-              <span>—</span>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
 
-      {/* Grid de 2 columnas: Datos Personales (Izq) / Antecedentes Relevantes (Der) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-[#eef3f6]">
-        {/* Columna Izquierda: Datos Personales */}
-        <div className="lg:col-span-5 p-2.5">
-          <div className="text-[9px] uppercase tracking-wider font-extrabold text-[#9db0bc] mb-1.5">
-            Datos Personales
+      {/* Cuerpo del Header: 2 Columnas principales */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-0 divide-y lg:divide-y-0 lg:divide-x divide-[#eef3f6]">
+        {/* Columna Izquierda: Datos filiatorios (4 cols) */}
+        <div className="lg:col-span-4 p-3 bg-white space-y-2">
+          <div className="text-[8.5px] uppercase tracking-wider font-extrabold text-[#9db0bc]">
+            Datos del Paciente
           </div>
-          <div className="grid grid-cols-4 gap-1.5 text-xs">
+          <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="col-span-2">
-              <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">Apellido y nombre</label>
+              <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">Nombre y Apellido</label>
               <input
                 type="text"
                 value={paciente.nombre || ''}
                 onChange={e => onUpdatePaciente({ nombre: e.target.value })}
-                className="w-full font-extrabold text-[#16323f] border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none"
+                className="w-full font-black text-sm text-[#16323f] border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none"
               />
             </div>
             <div>
@@ -92,33 +104,32 @@ export default function HeaderPacienteFijo({
                 type="text"
                 value={paciente.dni || ''}
                 onChange={e => onUpdatePaciente({ dni: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-1.5 py-1 focus:border-[#0e7c86] outline-none text-center font-semibold"
+                className="w-full font-semibold border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none"
               />
             </div>
             <div>
-              <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">N° HC</label>
+              <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">Teléfono</label>
               <input
                 type="text"
-                value={paciente.nro_hc || ''}
-                onChange={e => onUpdatePaciente({ nro_hc: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-1.5 py-1 focus:border-[#0e7c86] outline-none text-center font-semibold"
+                value={paciente.telefono || ''}
+                onChange={e => onUpdatePaciente({ telefono: e.target.value })}
+                className="w-full font-semibold border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none"
               />
             </div>
-
             <div>
-              <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">Fecha Nac.</label>
+              <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">Nacimiento</label>
               <input
                 type="date"
-                value={paciente.fecha_nacimiento ? paciente.fecha_nacimiento.slice(0, 10) : ''}
+                value={paciente.fecha_nacimiento || ''}
                 onChange={e => onUpdatePaciente({ fecha_nacimiento: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-1.5 py-1 focus:border-[#0e7c86] outline-none text-[11px]"
+                className="w-full border border-[#dde6ec] rounded px-1.5 py-1 text-xs bg-white focus:border-[#0e7c86] outline-none"
               />
             </div>
             <div>
               <label className="text-[9px] uppercase font-bold text-[#9db0bc] block mb-0.5">Edad</label>
               <input
                 type="text"
-                value={edadCalculada}
+                value={edadCalculada || '—'}
                 readOnly
                 className="w-full border border-[#c3e2e4] rounded px-1.5 py-1 bg-[#e4f3f4] text-[#0e7c86] font-bold text-center outline-none cursor-default"
               />
@@ -195,6 +206,8 @@ export default function HeaderPacienteFijo({
                 onChange={tags => onUpdateHistoria({ antecedentes_oculares: tags })}
                 placeholder="agregar antecedentes"
                 label="Antecedentes Oculares"
+                extraItems={historia.extra_catalogos?.['antOc'] || []}
+                onAddExtra={tag => handleAddExtraTag('antOc', tag)}
               />
             </div>
 
@@ -209,6 +222,8 @@ export default function HeaderPacienteFijo({
                 onChange={tags => onUpdateHistoria({ antecedentes_generales: tags })}
                 placeholder="agregar generales"
                 label="Antecedentes Generales"
+                extraItems={historia.extra_catalogos?.['antGr'] || []}
+                onAddExtra={tag => handleAddExtraTag('antGr', tag)}
               />
             </div>
           </div>
@@ -223,6 +238,8 @@ export default function HeaderPacienteFijo({
                 onChange={tags => onUpdateHistoria({ medicacion_habitual: tags })}
                 placeholder="medicación de riesgo / gotas"
                 label="Medicación"
+                extraItems={historia.extra_catalogos?.['medic'] || []}
+                onAddExtra={tag => handleAddExtraTag('medic', tag)}
               />
               <input
                 type="text"

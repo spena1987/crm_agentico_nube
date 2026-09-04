@@ -164,6 +164,7 @@ export interface ConsultaOftalmo {
   sincronizado_geclisa_at?: string
   geclisa_sincronizado_en?: string
   geclisa_as_id?: number
+  geclisa_hc_id?: number | null
   created_at?: string
 }
 
@@ -253,11 +254,26 @@ export interface PedidoEstudio {
 export type PedidoEstudios = PedidoEstudio
 
 
+export interface EvolucionGeclisa {
+  hc_id?: number
+  fecha?: string
+  fecha_hora?: string
+  hora?: string
+  prestador?: string
+  especialidad?: string
+  area?: string
+  texto?: string
+  nombre_plantilla?: string
+  origen?: 'crm' | 'geclisa_escritorio'
+  es_crm?: boolean
+}
+
 export interface HistoriaOftalmoPayload {
   success: boolean
   paciente: PacienteData
   historia: HistoriaClinicaOftalmo
   consultas: ConsultaOftalmo[]
+  evoluciones_geclisa?: EvolucionGeclisa[]
   estudios: EstudioOftalmo[]
   recetas_anteojos: RecetaAnteojos[]
   recetas_farmacos: RecetaFarmacos[]

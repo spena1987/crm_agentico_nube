@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useMemo } from 'react'
-import { ConsultaOftalmo } from '../types'
+import React, { useMemo, useState } from 'react'
+import { ConsultaOftalmo, RecetaAnteojos } from '../types'
 import TagSelectorPopover from '../TagSelectorPopover'
 import { 
   MOTIVOS, 
@@ -9,21 +9,26 @@ import {
   CATARATA, 
   CONDUCTAS 
 } from '../catalogos'
-import { MessageSquare, Video, Sparkles } from 'lucide-react'
+import { MessageSquare, Video, Sparkles, Glasses, Copy, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 interface FormConsultaProps {
   consulta: ConsultaOftalmo
   onChange: (fields: Partial<ConsultaOftalmo>) => void
   onOpenResumenWA: () => void
   onOpenVideosWA: (esp?: boolean) => void
+  onGenerarRecetaAnteojos?: (receta: Omit<RecetaAnteojos, 'id' | 'paciente_id'>) => Promise<void>
 }
 
 export default function FormConsulta({
   consulta,
   onChange,
   onOpenResumenWA,
-  onOpenVideosWA
+  onOpenVideosWA,
+  onGenerarRecetaAnteojos
 }: FormConsultaProps) {
+  const [generandoReceta, setGenerandoReceta] = useState(false)
+  const [recetaGeneradaOk, setRecetaGeneradaOk] = useState(false)
+
   const updateNested = (parentKey: keyof ConsultaOftalmo, subKey: string, val: any) => {
     const parentObj = (consulta[parentKey] as Record<string, any>) || {}
     onChange({
@@ -81,6 +86,181 @@ export default function FormConsulta({
       updateNested('conducta', 'modo_plan', nuevo)
     }
   }
+
+  // Duplicar Refracción OD -> OI
+  const handleCopiarOdAOi = () => {
+    const od = consulta.refraccion?.od || {}
+    onChange({
+      refraccion: {
+        od: {
+          esf: od.esf || '',
+          cil: od.cil || '',
+          eje: od.eje || '',
+          add: od.add || ''
+        },
+        oi: {
+          esf: od.esf || '',
+          cil: od.cil || '',
+          eje: od.eje || '',
+          add: od.add || ''
+        }
+      }
+    })
+  }
+
+  // Sincronización automática de Adición OD -> OI si OI está vacío o sincronizado
+  const handleUpdateAddOd = (val: string) => {
+    const prevOd = consulta.refraccion?.od || {}
+    const prevOi = consulta.refraccion?.oi || {}
+    const debeSincronizarOi = !prevOi.add || prevOi.add === prevOd.add
+    onChange({
+      refraccion: {
+        od: { ...prevOd, add: val },
+        oi: debeSincronizarOi ? { ...prevOi, add: val } : prevOi
+      }
+    })
+  }
+
+  // Prescripción Óptica 1-Clic
+  const handleGenerarReceta1Clic = async () => {
+    if (!onGenerarRecetaAnteojos) return
+    const od = consulta.refraccion?.od || {}
+    const oi = consulta.refraccion?.oi || {}
+
+    const calcCercaEsf = (esfStr?: string, addStr?: string) => {
+      const e = parseFloat(String(esfStr || '').replace(',', '.'))
+      const a = parseFloat(String(addStr || '').replace(',', '.'))
+      if (isNaN(e) && isNaN(a)) return ''
+      const total = (isNaN(e) ? 0 : e) + (isNaN(a) ? 0 : a)
+      return total > 0 ? `+${total.toFixed(2)}` : total.toFixed(2)
+    }
+
+    const tieneAdd = !!(od.add?.trim() || oi.add?.trim())
+    const cercaOdEsf = calcCercaEsf(od.esf, od.add)
+    const cercaOiEsf = calcCercaEsf(oi.esf, oi.add)
+
+    let tipoCristal = 'Monofocales'
+    if (tieneAdd) {
+      if (consulta.lentes_anteriores?.tipo?.toLowerCase().includes('bifocal')) {
+        tipoCristal = 'Bifocales'
+      } else {
+        tipoCristal = 'Multifocales / progresivos'
+      }
+    } else if (consulta.lentes_anteriores?.tipo) {
+      tipoCristal = consulta.lentes_anteriores.tipo
+    }
+
+    const obsArray: string[] = []
+    if (consulta.lentes_anteriores?.tipo) {
+      obsArray.push(`Uso previo: ${consulta.lentes_anteriores.tipo}`)
+    }
+    if (consulta.estabilidad_refractiva) {
+      obsArray.push(`Estabilidad: ${consulta.estabilidad_refractiva}`)
+    }
+    const observaciones = obsArray.join('. ')
+
+    const payload: Omit<RecetaAnteojos, 'id' | 'paciente_id'> = {
+      consulta_id: consulta.id,
+      fecha: consulta.fecha || new Date().toISOString().slice(0, 10),
+      tipo_lente: tipoCristal,
+      tipo_cristal: tipoCristal,
+      od_esfera: od.esf || '',
+      od_cilindro: od.cil || '',
+      od_eje: od.eje || '',
+      od_adicion: od.add || '',
+      oi_esfera: oi.esf || '',
+      oi_cilindro: oi.cil || '',
+      oi_eje: oi.eje || '',
+      oi_adicion: oi.add || '',
+      observaciones,
+      indicaciones_optico: observaciones,
+      lejos: {
+        od: { esf: od.esf || '', cil: od.cil || '', eje: od.eje || '', dnp: '' },
+        oi: { esf: oi.esf || '', cil: oi.cil || '', eje: oi.eje || '', dnp: '' }
+      },
+      cerca: {
+        od: { esf: tieneAdd ? cercaOdEsf : '', cil: tieneAdd ? (od.cil || '') : '', eje: tieneAdd ? (od.eje || '') : '', dnp: '' },
+        oi: { esf: tieneAdd ? cercaOiEsf : '', cil: tieneAdd ? (oi.cil || '') : '', eje: tieneAdd ? (oi.eje || '') : '', dnp: '' }
+      }
+    }
+
+    try {
+      setGenerandoReceta(true)
+      await onGenerarRecetaAnteojos(payload)
+      setRecetaGeneradaOk(true)
+      setTimeout(() => setRecetaGeneradaOk(false), 4000)
+    } finally {
+      setGenerandoReceta(false)
+    }
+  }
+
+  // Macro Examen Normal AO (1-Clic)
+  const handleCargarExamenNormalAO = () => {
+    onChange({
+      superficie_ocular: {
+        ...(consulta.superficie_ocular || {}),
+        modo: 'ao',
+        od: { but: '10', tin: 'Negativa', mei: 'Normal y clara' },
+        oi: { but: '10', tin: 'Negativa', mei: 'Normal y clara' },
+        blef: 'No',
+        demodex: 'No',
+        frota: 'No'
+      },
+      biomicroscopia: {
+        ...(consulta.biomicroscopia || {}),
+        modo: 'ao',
+        od: 'Córnea transparente, cámara anterior profunda, libre de Tyndall y Flare, iris regular, cristalino transparente, pupila reactiva.',
+        oi: 'Córnea transparente, cámara anterior profunda, libre de Tyndall y Flare, iris regular, cristalino transparente, pupila reactiva.',
+        cat_od: 'Transparente',
+        cat_oi: 'Transparente',
+        dilata: 'Buena'
+      },
+      fondo_ojo: {
+        ...(consulta.fondo_ojo || {}),
+        modo: 'ao',
+        od: 'Papila de bordes netos, coloración rosada fisiológica, excavación 0.3, mácula con brillo foveal conservado, retina aplicada, vasos de calibre y trayecto normales.',
+        oi: 'Papila de bordes netos, coloración rosada fisiológica, excavación 0.3, mácula con brillo foveal conservado, retina aplicada, vasos de calibre y trayecto normales.'
+      }
+    })
+  }
+
+  // Presets Agudeza Visual
+  const handleSetAvPresetLejos = (valor: string) => {
+    const curAv = consulta.agudeza_visual || {}
+    onChange({
+      agudeza_visual: {
+        ...curAv,
+        od: { ...(curAv.od || {}), sc: valor },
+        oi: { ...(curAv.oi || {}), sc: valor },
+        ao: { ...(curAv.ao || {}), sc: valor }
+      }
+    })
+  }
+
+  const handleSetAvPresetCerca = (valor: string) => {
+    const curAv = consulta.agudeza_visual || {}
+    onChange({
+      agudeza_visual: {
+        ...curAv,
+        cerca_od: { ...((curAv as any).cerca_od || {}), sc: valor },
+        cerca_oi: { ...((curAv as any).cerca_oi || {}), sc: valor },
+        cerca_ao: { ...((curAv as any).cerca_ao || {}), sc: valor }
+      }
+    })
+  }
+
+  // Helper alerta PIO
+  const isHighPio = (val?: string) => {
+    if (!val) return false
+    const num = parseFloat(String(val).replace(',', '.'))
+    return !isNaN(num) && num >= 21
+  }
+
+  const hayPioElevada = 
+    isHighPio(consulta.presion_intraocular?.od?.aire) ||
+    isHighPio(consulta.presion_intraocular?.od?.apl) ||
+    isHighPio(consulta.presion_intraocular?.oi?.aire) ||
+    isHighPio(consulta.presion_intraocular?.oi?.apl)
 
   return (
     <div className="space-y-3 text-[#16323f]">
@@ -160,7 +340,23 @@ export default function FormConsulta({
 
           <div className="space-y-2">
             <div>
-              <div className="text-[9.5px] uppercase font-extrabold text-[#728a99] mb-1">Visión de Lejos</div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9.5px] uppercase font-extrabold text-[#728a99]">Visión de Lejos</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[8.5px] uppercase font-bold text-[#9db0bc]">Chips AO:</span>
+                  {['20/20', '20/25', '20/30', '20/40', 'CF', 'MM'].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => handleSetAvPresetLejos(val)}
+                      className="px-1 py-0.2 text-[9px] font-bold bg-[#f0f4f7] hover:bg-[#e4f3f4] text-[#16323f] hover:text-[#0e7c86] rounded border border-[#dde6ec] transition-colors"
+                      title={`Fijar ${val} en OD, OI y AO`}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <table className="w-full border-collapse text-center text-xs">
                 <thead>
                   <tr className="bg-[#f7fafb] text-[9px] uppercase text-[#728a99] font-bold">
@@ -201,7 +397,23 @@ export default function FormConsulta({
             </div>
 
             <div>
-              <div className="text-[9.5px] uppercase font-extrabold text-[#728a99] mb-1">Visión de Cerca</div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9.5px] uppercase font-extrabold text-[#728a99]">Visión de Cerca</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-[8.5px] uppercase font-bold text-[#9db0bc]">Chips AO:</span>
+                  {['J1', 'J2', 'J3', '1.0'].map(val => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => handleSetAvPresetCerca(val)}
+                      className="px-1 py-0.2 text-[9px] font-bold bg-[#f0f4f7] hover:bg-[#e4f3f4] text-[#16323f] hover:text-[#0e7c86] rounded border border-[#dde6ec] transition-colors"
+                      title={`Fijar ${val} en OD, OI y AO cerca`}
+                    >
+                      {val}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <table className="w-full border-collapse text-center text-xs">
                 <thead>
                   <tr className="bg-[#f7fafb] text-[9px] uppercase text-[#728a99] font-bold">
@@ -248,15 +460,26 @@ export default function FormConsulta({
         {/* Refracción Subjetiva y Lentes Anteriores */}
         <div className="lg:col-span-7 bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm text-xs">
           <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#eef3f6]">
-            <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
-              Refracción Subjetiva
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
+                Refracción Subjetiva
+              </h2>
+              <button
+                type="button"
+                onClick={handleCopiarOdAOi}
+                className="text-[10px] text-[#0e7c86] hover:text-[#095f67] font-bold flex items-center gap-1 bg-[#e4f3f4] hover:bg-[#c3e2e4] px-2 py-0.5 rounded transition-colors"
+                title="Copiar datos refractivos de Ojo Derecho a Ojo Izquierdo"
+              >
+                <Copy className="w-3 h-3" />
+                Copiar OD ➔ OI
+              </button>
+            </div>
             <span className="text-[10px] font-bold text-[#0e7c86] bg-[#e4f3f4] px-2 py-0.5 rounded border border-[#c3e2e4]">
               EE se calcula solo
             </span>
           </div>
 
-          <table className="w-full border-collapse text-center text-xs mb-3">
+          <table className="w-full border-collapse text-center text-xs mb-2">
             <thead>
               <tr className="bg-[#f7fafb] text-[9px] uppercase text-[#728a99] font-bold">
                 <th className="p-1 w-8"></th>
@@ -310,7 +533,13 @@ export default function FormConsulta({
                       <input
                         type="text"
                         value={curRx.add || ''}
-                        onChange={e => updateEyeNested('refraccion', eye, 'add', e.target.value)}
+                        onChange={e => {
+                          if (eye === 'od') {
+                            handleUpdateAddOd(e.target.value)
+                          } else {
+                            updateEyeNested('refraccion', eye, 'add', e.target.value)
+                          }
+                        }}
                         className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
                       />
                     </td>
@@ -319,6 +548,36 @@ export default function FormConsulta({
               })}
             </tbody>
           </table>
+
+          {/* Botón Prescripción Óptica 1-Clic */}
+          <div className="flex items-center justify-between mb-3 pt-2 border-t border-[#eef3f6]">
+            <button
+              type="button"
+              onClick={handleGenerarReceta1Clic}
+              disabled={generandoReceta || (!rxOd.esf && !rxOi.esf && !rxOd.cil && !rxOi.cil)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded shadow-sm transition-all ${
+                recetaGeneradaOk
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-[#0e7c86] hover:bg-[#095f67] text-white disabled:opacity-40 disabled:cursor-not-allowed'
+              }`}
+              title="Genera la receta de anteojos calculando cerca automáticamente e imprime de inmediato sin salir de esta pestaña"
+            >
+              {recetaGeneradaOk ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  ¡Receta Generada e Impresa!
+                </>
+              ) : (
+                <>
+                  <Glasses className="w-3.5 h-3.5" />
+                  {generandoReceta ? 'Generando receta...' : 'Generar e Imprimir Receta de Anteojos (1-Clic)'}
+                </>
+              )}
+            </button>
+            <span className="text-[10px] text-[#728a99]">
+              {rxOd.add || rxOi.add ? 'Auto-cálculo: Multifocal / Cerca' : 'Monofocales Lejos'}
+            </span>
+          </div>
 
           {/* Lentes anteriores y Estabilidad */}
           <div className="pt-2 border-t border-[#eef3f6]">
@@ -514,6 +773,8 @@ export default function FormConsulta({
             <tbody className="divide-y divide-[#eef3f6]">
               {(['od', 'oi'] as const).map(eye => {
                 const pioEye = consulta.presion_intraocular?.[eye] || {}
+                const aireElevada = isHighPio(pioEye.aire)
+                const aplElevada = isHighPio(pioEye.apl)
                 return (
                   <tr key={eye}>
                     <td className="p-1 font-extrabold text-[#0e7c86] bg-[#f7fafb] rounded">{eye.toUpperCase()}</td>
@@ -522,7 +783,12 @@ export default function FormConsulta({
                         type="text"
                         value={pioEye.aire || ''}
                         onChange={e => updateEyeNested('presion_intraocular', eye, 'aire', e.target.value)}
-                        className="w-full border border-[#dde6ec] rounded py-0.5 px-0.5 text-center text-xs font-semibold focus:border-[#0e7c86] outline-none"
+                        className={`w-full border rounded py-0.5 px-0.5 text-center text-xs font-semibold focus:border-[#0e7c86] outline-none ${
+                          aireElevada
+                            ? 'bg-red-50 text-red-700 border-red-400 ring-1 ring-red-400 font-black'
+                            : 'border-[#dde6ec]'
+                        }`}
+                        title={aireElevada ? 'PIO Aire elevada (≥21 mmHg)' : ''}
                       />
                     </td>
                     <td className="p-0.5">
@@ -530,7 +796,12 @@ export default function FormConsulta({
                         type="text"
                         value={pioEye.apl || ''}
                         onChange={e => updateEyeNested('presion_intraocular', eye, 'apl', e.target.value)}
-                        className="w-full border border-[#dde6ec] rounded py-0.5 px-0.5 text-center text-xs font-semibold focus:border-[#0e7c86] outline-none"
+                        className={`w-full border rounded py-0.5 px-0.5 text-center text-xs font-semibold focus:border-[#0e7c86] outline-none ${
+                          aplElevada
+                            ? 'bg-red-50 text-red-700 border-red-400 ring-1 ring-red-400 font-black'
+                            : 'border-[#dde6ec]'
+                        }`}
+                        title={aplElevada ? 'PIO Aplanación elevada (≥21 mmHg)' : ''}
                       />
                     </td>
                     <td className="p-0.5">
@@ -546,6 +817,12 @@ export default function FormConsulta({
               })}
             </tbody>
           </table>
+          {hayPioElevada && (
+            <div className="mt-1.5 p-1.5 bg-red-50 border border-red-200 rounded text-[10px] text-red-700 font-bold flex items-center gap-1.5 animate-pulse">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 text-red-600" />
+              <span>PIO ≥ 21 mmHg detectada.</span>
+            </div>
+          )}
           <div className="mt-2">
             <input
               type="text"
@@ -556,6 +833,27 @@ export default function FormConsulta({
             />
           </div>
         </div>
+      </div>
+
+      {/* Barra de Cabecera Examen Físico Ocular + Macro Normal AO */}
+      <div className="bg-white border border-[#dde6ec] rounded-lg px-3 py-2 shadow-sm flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
+            Examen Físico Ocular
+          </span>
+          <span className="text-[10px] text-[#728a99] hidden sm:inline">
+            Superficie Ocular, Biomicroscopía y Fondo de Ojo
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={handleCargarExamenNormalAO}
+          className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded shadow-sm transition-all"
+          title="Pre-carga automática de hallazgos fisiológicos normales bilaterales (AO)"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Cargar Examen Normal AO
+        </button>
       </div>
 
       {/* Examen ocular: Superficie Ocular, Biomicroscopía, Fondo de Ojo */}

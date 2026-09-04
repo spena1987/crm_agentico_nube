@@ -59,6 +59,185 @@ def calc_dias_postop(fecha_cx_str: Optional[str], fecha_visita_str: Optional[str
     except Exception:
         return ""
 
+def formatear_evolucion_texto_geclisa(consulta: Dict[str, Any], paciente: Dict[str, Any]) -> str:
+    """
+    Compila el estado clínico de la consulta en un texto estructurado, limpio y profesional
+    apto para la Historia Clínica nativa de Geclisa (POST /api/Pantallas/texto-libre/HC).
+    Omite automáticamente secciones y campos sin datos.
+    """
+    tipo = consulta.get("tipo", "consulta")
+    tipo_label = "CONTROL POSTOPERATORIO" if tipo == "postop" else "CONSULTA OFTALMOLÓGICA"
+    fecha = consulta.get("fecha") or str(date.today())
+    prof = consulta.get("profesional_nombre") or "Oftalmología CREO"
+    p_nombre = paciente.get("nombre", "")
+    p_dni = paciente.get("dni", "")
+    p_ficha = paciente.get("geclisa_ficha_id", "")
+
+    lineas = [
+        f"=== {tipo_label} ===",
+        f"Fecha: {fecha} | Profesional: {prof}",
+        f"Paciente: {p_nombre} | DNI: {p_dni} | Ficha: {p_ficha}",
+    ]
+
+    motivo = (consulta.get("motivo_consulta") or "").strip()
+    if motivo:
+        lineas.append(f"Motivo de consulta: {motivo}")
+    derivado = (consulta.get("derivado_por") or "").strip()
+    if derivado:
+        lineas.append(f"Derivado por: {derivado}")
+    ocupacion = (consulta.get("ocupacion") or "").strip()
+    if ocupacion:
+        lineas.append(f"Ocupación: {ocupacion}")
+
+    # 1. Agudeza Visual
+    av = consulta.get("agudeza_visual") or {}
+    av_od = av.get("od") or {}
+    av_oi = av.get("oi") or {}
+    av_ao = av.get("ao") or {}
+    av_items = []
+    if any(av_od.values()):
+        av_items.append(f"OD: SC {av_od.get('sc','-')} | CC {av_od.get('cc','-')} | Est {av_od.get('est','-')}")
+    if any(av_oi.values()):
+        av_items.append(f"OI: SC {av_oi.get('sc','-')} | CC {av_oi.get('cc','-')} | Est {av_oi.get('est','-')}")
+    if any(av_ao.values()):
+        av_items.append(f"AO: SC {av_ao.get('sc','-')} | CC {av_ao.get('cc','-')}")
+    cerca_od = av.get("cerca_od") or {}
+    cerca_oi = av.get("cerca_oi") or {}
+    if any(cerca_od.values()) or any(cerca_oi.values()):
+        av_items.append(f"Cerca: OD {cerca_od.get('cc','-')} | OI {cerca_oi.get('cc','-')}")
+
+    if av_items:
+        lineas.append("\n[AGUDEZA VISUAL]")
+        lineas.extend([f"  • {item}" for item in av_items])
+
+    # 2. Refracción Subjetiva
+    rx = consulta.get("refraccion") or {}
+    rx_od = rx.get("od") or {}
+    rx_oi = rx.get("oi") or {}
+    rx_items = []
+    if any(rx_od.values()):
+        ee_str = f" (EE: {rx_od.get('ee')})" if rx_od.get('ee') is not None else ""
+        add_str = f" | Add: {rx_od.get('add')}" if rx_od.get('add') else ""
+        rx_items.append(f"OD: {rx_od.get('esf','')} {rx_od.get('cil','')} x {rx_od.get('eje','')}°{ee_str}{add_str}".strip())
+    if any(rx_oi.values()):
+        ee_str = f" (EE: {rx_oi.get('ee')})" if rx_oi.get('ee') is not None else ""
+        add_str = f" | Add: {rx_oi.get('add')}" if rx_oi.get('add') else ""
+        rx_items.append(f"OI: {rx_oi.get('esf','')} {rx_oi.get('cil','')} x {rx_oi.get('eje','')}°{ee_str}{add_str}".strip())
+    if rx_items:
+        lineas.append("\n[REFRACCIÓN SUBJETIVA]")
+        lineas.extend([f"  • {item}" for item in rx_items])
+
+    # 3. Queratometría
+    k = consulta.get("queratometria") or {}
+    k_od = k.get("od") or {}
+    k_oi = k.get("oi") or {}
+    k_items = []
+    if any(k_od.values()):
+        cil_c = f" | Cil corneal: {k_od.get('cil')}" if k_od.get('cil') else ""
+        k_items.append(f"OD: K1 {k_od.get('k1','-')} / K2 {k_od.get('k2','-')} x {k_od.get('eje','-')}°{cil_c}")
+    if any(k_oi.values()):
+        cil_c = f" | Cil corneal: {k_oi.get('cil')}" if k_oi.get('cil') else ""
+        k_items.append(f"OI: K1 {k_oi.get('k1','-')} / K2 {k_oi.get('k2','-')} x {k_oi.get('eje','-')}°{cil_c}")
+    if k_items:
+        lineas.append("\n[QUERATOMETRÍA]")
+        lineas.extend([f"  • {item}" for item in k_items])
+
+    # 4. Presión Intraocular (PIO)
+    pio = consulta.get("presion_intraocular") or {}
+    pio_od = pio.get("od") or {}
+    pio_oi = pio.get("oi") or {}
+    pio_items = []
+    if any(pio_od.values()) or any(pio_oi.values()):
+        tto = f" (Tto: {pio.get('tto')})" if pio.get("tto") else ""
+        pio_items.append(f"OD: Aplanación {pio_od.get('apl','-')} mmHg / Aire {pio_od.get('aire','-')} mmHg")
+        pio_items.append(f"OI: Aplanación {pio_oi.get('apl','-')} mmHg / Aire {pio_oi.get('aire','-')} mmHg{tto}")
+    if pio_items:
+        lineas.append("\n[PRESIÓN INTRAOCULAR]")
+        lineas.extend([f"  • {item}" for item in pio_items])
+
+    # 5. Biomicroscopía
+    bio = consulta.get("biomicroscopia") or {}
+    bio_items = []
+    if bio.get("modo") == "ao" and bio.get("od"):
+        bio_items.append(f"AO: {bio.get('od')}")
+    else:
+        if bio.get("od"):
+            cat = f" (Catarata: {bio.get('cat_od')})" if bio.get('cat_od') else ""
+            bio_items.append(f"OD: {bio.get('od')}{cat}")
+        if bio.get("oi"):
+            cat = f" (Catarata: {bio.get('cat_oi')})" if bio.get('cat_oi') else ""
+            bio_items.append(f"OI: {bio.get('oi')}{cat}")
+    if bio.get("dilata"):
+        bio_items.append(f"Dilatación: {bio.get('dilata')}")
+    if bio_items:
+        lineas.append("\n[BIOMICROSCOPÍA]")
+        lineas.extend([f"  • {item}" for item in bio_items])
+
+    # 6. Fondo de Ojo
+    fo = consulta.get("fondo_ojo") or {}
+    fo_items = []
+    if fo.get("modo") == "ao" and fo.get("od"):
+        fo_items.append(f"AO: {fo.get('od')}")
+    else:
+        if fo.get("od"):
+            fo_items.append(f"OD: {fo.get('od')}")
+        if fo.get("oi"):
+            fo_items.append(f"OI: {fo.get('oi')}")
+    if fo_items:
+        lineas.append("\n[FONDO DE OJO]")
+        lineas.extend([f"  • {item}" for item in fo_items])
+
+    # 7. Datos Postoperatorios (si aplica)
+    if tipo == "postop":
+        pop = consulta.get("datos_postop") or {}
+        pop_items = []
+        if pop.get("cx_realizada"):
+            pop_items.append(f"Cirugía: {pop.get('cx_realizada')} ({pop.get('ojo','AO')})")
+        if pop.get("fecha_cx"):
+            dias = pop.get("dias_postop") or calc_dias_postop(pop.get("fecha_cx"), fecha)
+            pop_items.append(f"Fecha Cx: {pop.get('fecha_cx')} (Tiempo posquirúrgico: {dias})")
+        if pop.get("cirujano"):
+            pop_items.append(f"Cirujano: {pop.get('cirujano')}")
+        if pop.get("evolucion"):
+            pop_items.append(f"Evolución: {pop.get('evolucion')}")
+        if pop.get("satisfaccion"):
+            pop_items.append(f"Satisfacción: {pop.get('satisfaccion')}")
+        compl = pop.get("complicaciones") or []
+        if compl:
+            det = f" - {pop.get('complic_detalle')}" if pop.get("complic_detalle") else ""
+            pop_items.append(f"Complicaciones: {', '.join(compl)}{det}")
+        if pop_items:
+            lineas.append("\n[CONTROL POSQUIRÚRGICO]")
+            lineas.extend([f"  • {item}" for item in pop_items])
+
+    # 8. Conducta y Diagnóstico
+    conducta = consulta.get("conducta") or {}
+    c_items = []
+    if conducta.get("dx_presuntivo"):
+        c_items.append(f"Diagnóstico: {conducta.get('dx_presuntivo')}")
+    if conducta.get("plan_cx"):
+        ojo_txt = f" ({conducta.get('plan_ojo')})" if conducta.get('plan_ojo') else ""
+        c_items.append(f"Plan quirúrgico: {conducta.get('plan_cx')}{ojo_txt}")
+    if conducta.get("plan_cx2"):
+        c_items.append(f"Segundo procedimiento: {conducta.get('plan_cx2')}")
+    if conducta.get("explico"):
+        c_items.append(f"Explicado al paciente: {', '.join(conducta.get('explico'))}")
+    if c_items:
+        lineas.append("\n[DIAGNÓSTICO Y CONDUCTA]")
+        lineas.extend([f"  • {item}" for item in c_items])
+
+    # 9. Indicaciones y Próximo Control
+    indicaciones = (consulta.get("indicaciones_texto") or "").strip()
+    if indicaciones:
+        lineas.append(f"\n[INDICACIONES]\n{indicaciones}")
+    prox = (consulta.get("proximo_control") or "").strip()
+    if prox:
+        lineas.append(f"Próximo control: {prox}")
+
+    lineas.append("\n------------------------------------------------------------")
+    lineas.append("[Registrado digitalmente vía CRM Oftalmológico]")
+    return "\n".join(lineas)
+
 class HistoriaOftalmoService:
     @staticmethod
     def get_or_create_historia(paciente_id: str) -> Dict[str, Any]:
@@ -114,11 +293,30 @@ class HistoriaOftalmoService:
             pedidos_res = supabase.table("pedidos_estudios_oftalmo").select("*").eq("paciente_id", paciente_id).order("fecha", desc=True).execute()
             pedidos_estudios = pedidos_res.data or []
 
+            # Coexistencia: Obtener evoluciones vivas de Geclisa para el Timeline Híbrido
+            evoluciones_geclisa = []
+            ficha_id = paciente.get("geclisa_ficha_id")
+            if ficha_id:
+                try:
+                    geclisa = GeclisaClient()
+                    resumen_gec = geclisa.obtener_historia_clinica_resumen(int(ficha_id))
+                    if resumen_gec and resumen_gec.get("encontrado"):
+                        raw_evs = resumen_gec.get("evoluciones_recientes") or []
+                        crm_hc_ids = {c.get("geclisa_hc_id") for c in consultas if c.get("geclisa_hc_id")}
+                        for ev in raw_evs:
+                            h_id = ev.get("hc_id")
+                            ev["es_crm"] = h_id in crm_hc_ids
+                            ev["origen"] = "crm" if h_id in crm_hc_ids else "geclisa_escritorio"
+                            evoluciones_geclisa.append(ev)
+                except Exception as ex_gec:
+                    logger.warning(f"No se pudieron consultar evoluciones de Geclisa para ficha {ficha_id}: {ex_gec}")
+
             return {
                 "success": True,
                 "paciente": paciente,
                 "historia": historia,
                 "consultas": consultas,
+                "evoluciones_geclisa": evoluciones_geclisa,
                 "estudios": estudios,
                 "recetas_anteojos": recetas_anteojos,
                 "recetas_farmacos": recetas_farmacos,
@@ -262,6 +460,22 @@ class HistoriaOftalmoService:
     @staticmethod
     def delete_consulta(consulta_id: str) -> Dict[str, Any]:
         try:
+            # Coexistencia: Verificar si tiene un hcId en Geclisa para darlo de baja si está permitido
+            c_res = supabase.table("consultas_oftalmo").select("id, geclisa_hc_id").eq("id", consulta_id).limit(1).execute()
+            if c_res.data:
+                ghc_id = c_res.data[0].get("geclisa_hc_id")
+                if ghc_id and int(ghc_id) > 0:
+                    try:
+                        geclisa = GeclisaClient()
+                        val = geclisa.validar_editar_eliminar_hc(int(ghc_id))
+                        if val.get("permitido", True):
+                            geclisa.eliminar_hc(int(ghc_id))
+                            logger.info(f"Evolución hcId {ghc_id} eliminada en Geclisa correctamente.")
+                        else:
+                            logger.warning(f"Geclisa no permitió eliminar hcId {ghc_id}: {val.get('motivo')}")
+                    except Exception as ex_del_gec:
+                        logger.warning(f"Error intentando dar de baja en Geclisa hcId {ghc_id}: {ex_del_gec}")
+
             supabase.table("consultas_oftalmo").delete().eq("id", consulta_id).execute()
             return {"success": True, "deleted_id": consulta_id}
         except Exception as e:
@@ -269,7 +483,13 @@ class HistoriaOftalmoService:
             raise
 
     @staticmethod
-    def sincronizar_con_geclisa(consulta_id: str) -> Dict[str, Any]:
+    def sincronizar_con_geclisa(consulta_id: str, usuario_actual: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Sincroniza la consulta oftalmológica inyectándola como evolución clínica de texto libre
+        directamente en la Historia Clínica nativa de Geclisa (POST /api/Pantallas/texto-libre/HC).
+        - Si no tiene geclisa_hc_id: Inserta nuevo registro y almacena el hcId retornado por Geclisa.
+        - Si ya tiene geclisa_hc_id: Valida con Geclisa y actualiza la evolución existente sin duplicar.
+        """
         try:
             c_res = supabase.table("consultas_oftalmo").select("*, pacientes(*)").eq("id", consulta_id).limit(1).execute()
             if not c_res.data:
@@ -284,56 +504,74 @@ class HistoriaOftalmoService:
                     "motivo": "El paciente no tiene un número de Ficha asignado en Geclisa."
                 }
 
-            tipo_label = "Control Postoperatorio" if c.get("tipo") == "postop" else "Consulta Oftalmológica"
-            fecha_str = c.get("fecha", "")
-            prof = c.get("profesional_nombre") or "Oftalmología CREO"
-            motivo = c.get("motivo_consulta") or ""
-            rx = c.get("refraccion") or {}
-            rx_od = rx.get("od") or {}
-            rx_oi = rx.get("oi") or {}
-            rx_str = f"OD: {rx_od.get('esf','')} {rx_od.get('cil','')} x {rx_od.get('eje','')} (EE {rx_od.get('ee','')}) | OI: {rx_oi.get('esf','')} {rx_oi.get('cil','')} x {rx_oi.get('eje','')} (EE {rx_oi.get('ee','')})"
-            conducta = c.get("conducta") or {}
-            plan = conducta.get("plan_cx") or ""
-            indicaciones = c.get("indicaciones_texto") or ""
-
-            texto_informe = (
-                f"=== INFORME {tipo_label.upper()} ===\n"
-                f"Fecha: {fecha_str} | Profesional: {prof}\n"
-                f"Paciente: {paciente.get('nombre','')} (DNI: {paciente.get('dni','')})\n"
-                f"Motivo: {motivo}\n\n"
-                f"-- REFRACCIÓN Y EXAMEN --\n"
-                f"{rx_str}\n\n"
-                f"-- CONDUCTA Y PLAN --\n"
-                f"Conducta: {plan}\n"
-                f"Indicaciones: {indicaciones}\n"
-                f"Próximo control: {c.get('proximo_control','')}\n"
-                f"\nRegistrado vía CRM Oftalmológico Integrado."
-            )
-
-            contenido_bytes = texto_informe.encode("utf-8")
-            nombre_archivo = f"HC_Oftalmo_{fecha_str}_{consulta_id[:8]}.txt"
-
             geclisa = GeclisaClient()
-            subida = geclisa.adjuntar_archivo_historia_clinica(
+            existing_hc_id = c.get("geclisa_hc_id")
+
+            # Coexistencia y validación previa si es una edición
+            if existing_hc_id and int(existing_hc_id) > 0:
+                val = geclisa.validar_editar_eliminar_hc(int(existing_hc_id))
+                if not val.get("permitido", True):
+                    return {
+                        "success": False,
+                        "sincronizado": False,
+                        "motivo": val.get("motivo") or "Geclisa no permite modificar esta evolución clínica según sus reglas de negocio."
+                    }
+
+            # Compilar evolución en texto clínico estructurado y legible
+            texto_evolucion = formatear_evolucion_texto_geclisa(consulta=c, paciente=paciente)
+
+            # Extraer fecha y hora
+            fecha_str = c.get("fecha") or str(date.today())
+            hora_str = None
+            if c.get("created_at"):
+                try:
+                    hora_str = c["created_at"][11:16]
+                except Exception:
+                    hora_str = None
+
+            # Prestador médico si está disponible en la sesión
+            pre_id = None
+            me_id = None
+            if usuario_actual:
+                pre_id = usuario_actual.get("geclisa_pre_id") or usuario_actual.get("pre_id")
+                me_id = usuario_actual.get("geclisa_me_id") or usuario_actual.get("me_id")
+
+            # Inyectar evolución nativa de texto libre en Geclisa
+            res_geclisa = geclisa.grabar_texto_libre_hc(
                 ficha_id=int(ficha_id),
-                archivo_bytes=contenido_bytes,
-                nombre_archivo=nombre_archivo,
-                titulo=f"{tipo_label} {fecha_str}",
-                observaciones=f"Registro oftalmológico {prof}",
-                ac_id=1
+                evolucion=texto_evolucion,
+                fecha_evolucion=fecha_str,
+                hora_evolucion=hora_str,
+                hc_id=existing_hc_id,
+                pre_id=pre_id,
+                me_id=me_id,
+                tev_cod="HC"
             )
+
+            if not res_geclisa.get("success"):
+                return {
+                    "success": False,
+                    "sincronizado": False,
+                    "error": res_geclisa.get("error", "Error desconocido de Geclisa al grabar evolución.")
+                }
+
+            assigned_hc_id = res_geclisa.get("hc_id") or existing_hc_id
             now_iso = datetime.now(timezone.utc).isoformat()
-            as_id = subida.get("as_id") or subida.get("asId")
-            supabase.table("consultas_oftalmo").update({
-                "sincronizado_geclisa_at": now_iso,
-                "geclisa_as_id": as_id
-            }).eq("id", consulta_id).execute()
+
+            update_data = {
+                "sincronizado_geclisa_at": now_iso
+            }
+            if assigned_hc_id:
+                update_data["geclisa_hc_id"] = int(assigned_hc_id)
+
+            supabase.table("consultas_oftalmo").update(update_data).eq("id", consulta_id).execute()
 
             return {
                 "success": True,
                 "sincronizado": True,
-                "geclisa_as_id": as_id,
-                "mensaje": "Informe sincronizado y adjuntado a la ficha de Geclisa con éxito."
+                "geclisa_hc_id": assigned_hc_id,
+                "es_actualizacion": bool(existing_hc_id),
+                "mensaje": f"Evolución {'actualizada' if existing_hc_id else 'creada'} e inyectada en la Historia Clínica nativa de Geclisa con éxito (hcId: {assigned_hc_id})."
             }
         except Exception as e:
             logger.error(f"Error sincronizando consulta {consulta_id} con Geclisa: {e}")

@@ -5601,6 +5601,7 @@ def get_historia_oftalmo_endpoint(paciente_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/oftalmo/historia/{paciente_id}/antecedentes")
+@app.put("/api/oftalmo/{paciente_id}/antecedentes")
 def save_antecedentes_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """Guarda los antecedentes oculares, generales, medicación y alergias fijos."""
     try:
@@ -5610,6 +5611,7 @@ def save_antecedentes_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any]
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/oftalmo/consultas/{paciente_id}")
+@app.post("/api/oftalmo/{paciente_id}/consultas")
 def save_consulta_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """Guarda o actualiza una consulta o control postoperatorio con cálculos automáticos."""
     try:
@@ -5629,14 +5631,31 @@ def delete_consulta_oftalmo_endpoint(consulta_id: str):
 
 @app.post("/api/oftalmo/consultas/{consulta_id}/sincronizar-geclisa")
 def sincronizar_consulta_geclisa_endpoint(consulta_id: str):
-    """Adjunta la consulta como documento oficial a la ficha del paciente en Geclisa."""
+    """Inyecta la consulta como evolución de texto libre en la Historia Clínica nativa de Geclisa."""
     try:
         return HistoriaOftalmoService.sincronizar_con_geclisa(consulta_id)
     except Exception as e:
         logger.error(f"Error sincronizando consulta {consulta_id} con Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/oftalmo/consultas/{consulta_id}/validar-geclisa")
+def validar_consulta_geclisa_endpoint(consulta_id: str):
+    """Consulta en tiempo real a Geclisa si la evolución asociada permite edición o eliminación."""
+    try:
+        c_res = supabase.table("consultas_oftalmo").select("id, geclisa_hc_id").eq("id", consulta_id).limit(1).execute()
+        if not c_res.data:
+            raise HTTPException(status_code=404, detail="Consulta no encontrada")
+        ghc_id = c_res.data[0].get("geclisa_hc_id")
+        if not ghc_id:
+            return {"permitido": True, "sincronizado": False}
+        geclisa = GeclisaClient()
+        return geclisa.validar_editar_eliminar_hc(int(ghc_id))
+    except Exception as e:
+        logger.error(f"Error validando consulta {consulta_id} en Geclisa: {e}")
+        return {"permitido": True, "error": str(e)}
+
 @app.post("/api/oftalmo/estudios/{paciente_id}")
+@app.post("/api/oftalmo/{paciente_id}/estudios")
 def add_estudio_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """Registra un estudio complementario oftalmológico (Pentacam, OCT, Topografía, etc.)."""
     try:

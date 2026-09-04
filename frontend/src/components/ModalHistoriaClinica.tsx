@@ -382,20 +382,22 @@ export default function ModalHistoriaClinica({
       })
       if (res.ok) {
         const data = await res.json()
+        const assignedHcId = data.geclisa_hc_id || data.hc_id
         setConsultas(prev => prev.map(c => {
           if (c.id === consultaId) {
             return {
               ...c,
-              geclisa_sincronizado_en: data.sincronizado_en,
-              geclisa_as_id: data.as_id
+              geclisa_sincronizado_en: new Date().toISOString(),
+              sincronizado_geclisa_at: new Date().toISOString(),
+              geclisa_hc_id: assignedHcId
             }
           }
           return c
         }))
-        alert('Consulta sincronizada y archivo adjuntado con exito a Geclisa.')
+        alert(data.mensaje || `Evolución inyectada en la Historia Clínica nativa de Geclisa con éxito (hcId: ${assignedHcId}).`)
       } else {
         const err = await res.json()
-        alert(`Error al sincronizar con Geclisa: ${err.detail || 'Fallo de conexion'}`)
+        alert(`Error al sincronizar con Geclisa: ${err.detail || err.motivo || err.error || 'Fallo de conexión'}`)
       }
     } catch (err: any) {
       alert(`Error al conectar con Geclisa: ${err.message}`)
@@ -833,6 +835,7 @@ export default function ModalHistoriaClinica({
                     }
                   }}
                   onImprimirEvolucion={() => handleImprimir({ tipo: 'evolucion' })}
+                  onGenerarRecetaAnteojos={handleAddRecetaAnteojos}
                 />
               )}
 

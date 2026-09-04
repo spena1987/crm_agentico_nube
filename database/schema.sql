@@ -908,6 +908,7 @@ CREATE TABLE IF NOT EXISTS public.consultas_oftalmo (
     sincronizado_geclisa_at TIMESTAMP WITH TIME ZONE,
     geclisa_archivo_id INTEGER,
     geclisa_as_id INTEGER,
+    geclisa_hc_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -915,6 +916,7 @@ CREATE TABLE IF NOT EXISTS public.consultas_oftalmo (
 CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_historia ON public.consultas_oftalmo(historia_id);
 CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_paciente ON public.consultas_oftalmo(paciente_id);
 CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_fecha ON public.consultas_oftalmo(fecha DESC);
+CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_geclisa_hc_id ON public.consultas_oftalmo(geclisa_hc_id);
 
 CREATE TABLE IF NOT EXISTS public.estudios_oftalmo (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

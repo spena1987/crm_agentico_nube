@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { ConsultaOftalmo, PacienteData } from '../types'
+import { ConsultaOftalmo, PacienteData, RecetaAnteojos } from '../types'
 import FormConsulta from './FormConsulta'
 import FormPostop from './FormPostop'
 import TablaEvolucionClinica, { TipoEvolucion } from './TablaEvolucionClinica'
@@ -32,6 +32,7 @@ interface TabEvolucionProps {
   onOpenVideosWA: (esp?: boolean) => void
   onImprimirFicha: () => void
   onImprimirEvolucion: (tipo: TipoEvolucion) => void
+  onGenerarRecetaAnteojos?: (receta: Omit<RecetaAnteojos, 'id' | 'paciente_id'>) => Promise<void>
 }
 
 export default function TabEvolucion({
@@ -48,7 +49,8 @@ export default function TabEvolucion({
   onOpenResumenWA,
   onOpenVideosWA,
   onImprimirFicha,
-  onImprimirEvolucion
+  onImprimirEvolucion,
+  onGenerarRecetaAnteojos
 }: TabEvolucionProps) {
   const [modoEvolucion, setModoEvolucion] = useState<TipoEvolucion | null>(null)
 
@@ -132,6 +134,11 @@ export default function TabEvolucion({
                       >
                         {isPostop ? 'Postop' : 'Consulta'}
                       </span>
+                      {c.geclisa_hc_id && (
+                        <span className="text-[8px] font-mono bg-[#e4f3f4] text-[#0e7c86] border border-[#c3e2e4] px-1 py-0.2 rounded font-bold" title="Sincronizado en Geclisa">
+                          hc#{c.geclisa_hc_id}
+                        </span>
+                      )}
                     </div>
 
                     <div className="text-[11px] text-[#728a99] mt-0.5 truncate font-medium">
@@ -208,25 +215,38 @@ export default function TabEvolucion({
               <span className="text-[#0e7c86] font-bold">#{paciente.geclisa_ficha_id}</span>
             </div>
             <p className="text-[11px] text-[#728a99]">
-              Genera la evolución y adjunta el resumen clínico a la historia de Geclisa.
+              Inyecta la evolución estructurada de texto directamente en la Historia Clínica nativa de Geclisa.
             </p>
             {consultaActiva && (
               <button
                 type="button"
                 disabled={sincronizandoGeclisa}
                 onClick={() => onSincronizarGeclisa(consultaActiva.id)}
-                className="w-full py-1.5 px-2 bg-white border border-[#dde6ec] hover:bg-[#e4f3f4] text-[#0e7c86] font-bold rounded text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                className={`w-full py-1.5 px-2 font-bold rounded text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 border ${
+                  consultaActiva.geclisa_hc_id
+                    ? 'bg-[#e4f3f4] text-[#0e7c86] border-[#c3e2e4] hover:bg-[#d0ecee]'
+                    : 'bg-white text-[#0e7c86] border-[#dde6ec] hover:bg-[#e4f3f4]'
+                }`}
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${sincronizandoGeclisa ? 'animate-spin' : ''}`} />
-                {sincronizandoGeclisa ? 'Sincronizando...' : 'Sincronizar con Geclisa'}
+                {sincronizandoGeclisa
+                  ? 'Sincronizando...'
+                  : consultaActiva.geclisa_hc_id
+                  ? `Actualizar en Geclisa (hcId #${consultaActiva.geclisa_hc_id})`
+                  : 'Inyectar en HC Geclisa'}
               </button>
             )}
-            {consultaActiva?.geclisa_sincronizado_en && (
+            {consultaActiva?.geclisa_hc_id ? (
+              <div className="text-[10px] text-[#1a7f4b] font-bold flex items-center gap-1 bg-[#e6f5ec] px-2 py-1 rounded border border-[#b8e5cb]">
+                <Check className="w-3.5 h-3.5" />
+                Registrado en Geclisa nativo (hcId: #{consultaActiva.geclisa_hc_id})
+              </div>
+            ) : consultaActiva?.geclisa_sincronizado_en ? (
               <div className="text-[10px] text-[#1a7f4b] font-medium flex items-center gap-1">
                 <Check className="w-3 h-3" />
                 Sincronizado {consultaActiva.geclisa_sincronizado_en.slice(0, 16).replace('T', ' ')}
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </div>
@@ -301,6 +321,7 @@ export default function TabEvolucion({
                 onChange={onUpdateConsultaActiva}
                 onOpenResumenWA={onOpenResumenWA}
                 onOpenVideosWA={onOpenVideosWA}
+                onGenerarRecetaAnteojos={onGenerarRecetaAnteojos}
               />
             )}
           </div>

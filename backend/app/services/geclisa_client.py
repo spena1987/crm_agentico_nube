@@ -1052,6 +1052,206 @@ class GeclisaClient:
                 "mensaje": f"No se pudo consultar la historia clínica en Geclisa: {str(e)}"
             }
 
+    def grabar_texto_libre_hc(
+        self,
+        ficha_id: int,
+        evolucion: str,
+        fecha_evolucion: Optional[str] = None,
+        hora_evolucion: Optional[str] = None,
+        hc_id: Optional[int] = None,
+        me_id: Optional[int] = None,
+        pre_id: Optional[int] = None,
+        esp_id: Optional[int] = None,
+        tev_cod: str = "HC"
+    ) -> Dict[str, Any]:
+        """
+        Inserta o actualiza una evolución clínica de texto libre estructurado en Geclisa.
+        Ruta: POST /api/Pantallas/texto-libre/{tevCod}
+        - tev_cod: 'HC' (Historia Clínica), '4' (Evolución), etc.
+        - Si hc_id es None o 0: Se inserta un nuevo registro y Geclisa asigna el próximo hcId.
+        - Si hc_id > 0: Geclisa actualiza la evolución existente.
+        """
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/Pantallas/texto-libre/{tev_cod}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+
+        from datetime import datetime, timezone, timedelta
+        tz_mza = timezone(timedelta(hours=-3))
+        now_mza = datetime.now(tz_mza)
+
+        fecha_str = fecha_evolucion or now_mza.strftime("%Y-%m-%d")
+        hora_str = hora_evolucion or now_mza.strftime("%H:%M")
+
+        target_hc_id = int(hc_id) if (hc_id and int(hc_id) > 0) else None
+
+        payload = {
+            "fichaId": int(ficha_id),
+            "meId": int(me_id) if me_id else None,
+            "preId": int(pre_id) if pre_id else None,
+            "espId": int(esp_id) if esp_id else None,
+            "hcId": target_hc_id,
+            "fechaEvolucion": fecha_str,
+            "horaEvolucion": hora_str,
+            "evolucion": evolucion,
+            "apdId": None,
+            "nivelPrivacidad": None,
+            "esNutricionista": False,
+            "esEvolucionAsistida": False
+        }
+
+        t_start = time.time()
+        try:
+            resp = self._do_request("POST", url, headers=headers, json=payload, timeout=20)
+            duracion = int((time.time() - t_start) * 1000)
+
+            if resp.status_code >= 400:
+                err_body = resp.text
+                logger.error(f"Error Geclisa grabar_texto_libre_hc ({resp.status_code}): {err_body}")
+                return {
+                    "success": False,
+                    "status_code": resp.status_code,
+                    "error": f"Error Geclisa HTTP {resp.status_code}: {err_body}"
+                }
+
+            res_data = None
+            try:
+                res_data = resp.json()
+            except Exception:
+                res_data = {"raw": resp.text}
+
+            assigned_hc_id = None
+            if isinstance(res_data, int):
+                assigned_hc_id = res_data
+            elif isinstance(res_data, dict):
+                assigned_hc_id = res_data.get("hcId") or res_data.get("id") or target_hc_id
+
+            # Si era nuevo y no vino el hcId en la respuesta, lo rescatamos consultando las evoluciones recientes
+            if not assigned_hc_id and not target_hc_id:
+                try:
+                    resumen = self.obtener_historia_clinica_resumen(int(ficha_id))
+                    if resumen and resumen.get("encontrado"):
+                        evs = resumen.get("evoluciones_recientes") or []
+                        if evs:
+                            assigned_hc_id = evs[0].get("hc_id")
+                except Exception as ex_rec:
+                    logger.warning(f"No se pudo recuperar hcId de evoluciones recientes: {ex_rec}")
+
+            log_event(
+                nivel="INFO",
+                modulo="GECLISA",
+                accion="GRABAR_TEXTO_LIBRE_HC",
+                mensaje=f"Evolución grabada en Geclisa para ficha #{ficha_id} (hcId asignado: {assigned_hc_id})",
+                detalles={"hc_id": assigned_hc_id, "tev_cod": tev_cod},
+                duracion_ms=duracion,
+                http_status=resp.status_code
+            )
+
+            return {
+                "success": True,
+                "hc_id": assigned_hc_id,
+                "data": res_data
+            }
+
+        except Exception as e:
+            duracion = int((time.time() - t_start) * 1000)
+            logger.error(f"Excepción en grabar_texto_libre_hc para ficha {ficha_id}: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def eliminar_hc(self, hc_id: int) -> Dict[str, Any]:
+        """
+        Elimina una evolución en Geclisa.
+        Ruta: DELETE /api/HistoriaClinica/eliminar-hc/{hcId}
+        """
+        if not hc_id or int(hc_id) <= 0:
+            return {"success": False, "error": "hcId inválido"}
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/HistoriaClinica/eliminar-hc/{hc_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        t_start = time.time()
+        try:
+            resp = self._do_request("DELETE", url, headers=headers, timeout=15)
+            duracion = int((time.time() - t_start) * 1000)
+            if resp.status_code >= 400:
+                return {"success": False, "status_code": resp.status_code, "error": resp.text}
+
+            res_data = None
+            try:
+                res_data = resp.json()
+            except Exception:
+                res_data = resp.text
+
+            return {"success": True, "hc_id": hc_id, "data": res_data}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def validar_editar_eliminar_hc(self, hc_id: int) -> Dict[str, Any]:
+        """
+        Consulta si una evolución en Geclisa puede ser editada o eliminada según las reglas de negocio.
+        Ruta: GET /api/HistoriaClinica/validar-editar-eliminar-hc/{hcId}
+        """
+        if not hc_id or int(hc_id) <= 0:
+            return {"permitido": True, "mensaje": "Registro nuevo sin sincronizar previo"}
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/HistoriaClinica/validar-editar-eliminar-hc/{hc_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        try:
+            resp = self._do_request("GET", url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    if isinstance(data, bool):
+                        return {"permitido": data, "data": data}
+                    elif isinstance(data, dict):
+                        permitido = data.get("puedeEditar", True) and data.get("puedeEliminar", True)
+                        return {"permitido": permitido, "data": data}
+                    return {"permitido": True, "data": data}
+                except Exception:
+                    return {"permitido": True, "raw": resp.text}
+            elif resp.status_code == 404:
+                return {"permitido": False, "motivo": "Evolución no encontrada en Geclisa (posiblemente eliminada externamente)."}
+            else:
+                return {"permitido": False, "motivo": f"Validación de Geclisa rechazó acción (HTTP {resp.status_code})"}
+        except Exception as e:
+            logger.warning(f"Error consultando validar_editar_eliminar_hc para hcId {hc_id}: {e}")
+            return {"permitido": True, "advertencia": str(e)}
+
+    def obtener_detalle_hc(self, hc_id: int) -> Dict[str, Any]:
+        """
+        Consulta el detalle de una evolución clínica en Geclisa por su hcId.
+        Ruta: GET /api/Pantallas/historia-clinica/{hcId}
+        """
+        if not hc_id:
+            return {"encontrado": False, "mensaje": "hcId no especificado"}
+        token = self._obtener_token()
+        url = f"{self.base_url}/api/Pantallas/historia-clinica/{hc_id}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+        try:
+            resp = self._do_request("GET", url, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                return {"encontrado": True, "data": resp.json()}
+            elif resp.status_code == 404:
+                return {"encontrado": False, "mensaje": "Evolución no encontrada en Geclisa"}
+            else:
+                return {"encontrado": False, "status_code": resp.status_code, "error": resp.text}
+        except Exception as e:
+            return {"encontrado": False, "error": str(e)}
+
     def obtener_indicaciones_medicas(self, ficha_id: int) -> dict:
         """
         Consulta en vivo todas las indicaciones médicas, protocolos de medicación y recetas
