@@ -219,8 +219,13 @@ export default function PanelAsesoriaQuirurgica({
     setTimeout(() => setMensajeExito(null), 3000)
   }
 
-  // Estado para el filtro de casos: 'todos' | 'activos' | 'cerrados'
-  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'activos' | 'cerrados'>('todos')
+  // Estado para el filtro de casos: 'activos' (predeterminado) | 'cerrados' | 'todos'
+  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'activos' | 'cerrados'>('activos')
+
+  // Restablecer a 'activos' cada vez que cambia el paciente seleccionado
+  useEffect(() => {
+    setFiltroEstado('activos')
+  }, [pacienteId])
 
   // Helper para determinar si un caso está activo
   const esCasoActivo = (a: AsesoriaQuirurgica) =>
@@ -246,91 +251,129 @@ export default function PanelAsesoriaQuirurgica({
     <div className="space-y-4 pt-4 border-t border-[var(--border)]">
       
       {/* ==================================================================== */}
-      {/* HEADER PRINCIPAL DEL SECTOR DE ASESORAMIENTO QUIRÚRGICO */}
+      {/* HEADER PRINCIPAL REDISEÑADO DEL SECTOR DE ASESORAMIENTO QUIRÚRGICO */}
       {/* ==================================================================== */}
-      <div className="flex items-center justify-between flex-wrap gap-3 p-4 rounded-2xl bg-neutral-900/80 border border-blue-500/20 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shadow-inner">
-            <Stethoscope className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-black text-white tracking-tight">
+      <div className="p-4 md:p-5 rounded-2xl bg-neutral-900/80 border border-blue-500/20 shadow-sm space-y-4">
+        {/* Fila 1: Título del sector, contexto del paciente y botón de acción */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shadow-inner shrink-0">
+              <Stethoscope className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm md:text-base font-black text-white tracking-tight">
                 Sector de Asesoramiento Quirúrgico & Cirugías
               </h3>
-              
-              {/* Botón Filtro: Todos los Procedimientos */}
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Gestión individual y secuencial de cada cirugía programada para <strong className="text-white">{pacienteNombre}</strong>.
+              </p>
+            </div>
+          </div>
+
+          {/* Botón para registrar nueva cirugía */}
+          <button
+            type="button"
+            onClick={handleCrearNuevaCirugia}
+            disabled={creandoNuevo || loading}
+            className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center justify-center gap-1.5 shrink-0"
+          >
+            {creandoNuevo ? (
+              <>
+                <Loader2 size={14} className="animate-spin" />
+                Creando sector...
+              </>
+            ) : (
+              <>
+                <Plus size={14} />
+                <span>Nueva Cirugía / Procedimiento</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Fila 2: Barra Segmentada de Filtros y Métrica de Visualización */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-neutral-800/80">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-400 flex items-center gap-1.5 mr-1">
+              <Filter size={13} className="text-blue-400" />
+              <span>Filtrar procedimientos:</span>
+            </span>
+
+            {/* Segmented Control Bar */}
+            <div className="inline-flex items-center p-1 rounded-xl bg-black/40 border border-neutral-800 shadow-inner gap-1">
+              {/* Opción 1: Activos (Predeterminado) */}
+              <button
+                type="button"
+                onClick={() => setFiltroEstado('activos')}
+                title="Ver sólo procedimientos activos en curso"
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  filtroEstado === 'activos'
+                    ? 'bg-emerald-600 text-white shadow-md ring-1 ring-emerald-400'
+                    : 'text-gray-400 hover:text-emerald-300 hover:bg-neutral-800/60'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full ${casosActivos > 0 ? (filtroEstado === 'activos' ? 'bg-white' : 'bg-emerald-400') : 'bg-gray-500'}`} />
+                <span>Activos</span>
+                <span className={`ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  filtroEstado === 'activos' ? 'bg-emerald-800/80 text-white' : 'bg-neutral-800 text-gray-400'
+                }`}>
+                  {casosActivos}
+                </span>
+              </button>
+
+              {/* Opción 2: Cerrados */}
+              <button
+                type="button"
+                onClick={() => setFiltroEstado('cerrados')}
+                title="Ver procedimientos finalizados u operados"
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  filtroEstado === 'cerrados'
+                    ? 'bg-neutral-700 text-white shadow-md ring-1 ring-neutral-400'
+                    : 'text-gray-400 hover:text-gray-200 hover:bg-neutral-800/60'
+                }`}
+              >
+                <span>Cerrados</span>
+                <span className={`ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  filtroEstado === 'cerrados' ? 'bg-neutral-900 text-white' : 'bg-neutral-800 text-gray-400'
+                }`}>
+                  {casosCerrados}
+                </span>
+              </button>
+
+              {/* Opción 3: Todos */}
               <button
                 type="button"
                 onClick={() => setFiltroEstado('todos')}
-                title="Mostrar todos los procedimientos"
-                className={`text-xs font-mono font-bold px-2.5 py-1 rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
+                title="Ver todos los procedimientos del paciente"
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                   filtroEstado === 'todos'
-                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 ring-2 ring-blue-400 scale-105'
-                    : 'bg-blue-950/70 text-blue-300 border border-blue-800/40 hover:bg-blue-900 hover:text-white opacity-80 hover:opacity-100 hover:scale-102'
+                    ? 'bg-blue-600 text-white shadow-md ring-1 ring-blue-400'
+                    : 'text-gray-400 hover:text-blue-300 hover:bg-neutral-800/60'
                 }`}
               >
-                {filtroEstado === 'todos' && <Filter size={10} className="animate-pulse" />}
-                <span>{totalCasos} {totalCasos === 1 ? 'Procedimiento' : 'Procedimientos'}</span>
+                <span>Todos</span>
+                <span className={`ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  filtroEstado === 'todos' ? 'bg-blue-800/80 text-white' : 'bg-neutral-800 text-gray-400'
+                }`}>
+                  {totalCasos}
+                </span>
               </button>
-
-              {/* Botones Filtro: Activos y Cerrados */}
-              {totalCasos > 0 && (
-                <div className="flex items-center gap-1.5 text-[11px] font-mono">
-                  <button
-                    type="button"
-                    onClick={() => setFiltroEstado('activos')}
-                    title="Filtrar sólo procedimientos activos en curso"
-                    className={`px-2.5 py-1 rounded-lg font-bold transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
-                      filtroEstado === 'activos'
-                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-400 scale-105'
-                        : 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-900/80 hover:text-white opacity-80 hover:opacity-100 hover:scale-102'
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full ${filtroEstado === 'activos' ? 'bg-white' : 'bg-emerald-400'}`} />
-                    <span>{casosActivos} {casosActivos === 1 ? 'Activo' : 'Activos'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFiltroEstado('cerrados')}
-                    title="Filtrar procedimientos finalizados u operados"
-                    className={`px-2.5 py-1 rounded-lg font-bold transition-all duration-200 cursor-pointer flex items-center gap-1.5 ${
-                      filtroEstado === 'cerrados'
-                        ? 'bg-neutral-600 text-white shadow-lg shadow-neutral-600/30 ring-2 ring-neutral-300 scale-105'
-                        : 'bg-neutral-950 text-gray-400 border border-neutral-700 hover:bg-neutral-800 hover:text-gray-200 opacity-80 hover:opacity-100 hover:scale-102'
-                    }`}
-                  >
-                    <span>{casosCerrados} {casosCerrados === 1 ? 'Cerrado' : 'Cerrados'}</span>
-                  </button>
-                </div>
-              )}
             </div>
-            <p className="text-xs text-[var(--secondary)]">
-              Gestión individual y secuencial de cada cirugía programada para <strong className="text-white">{pacienteNombre}</strong>.
-            </p>
+          </div>
+
+          {/* Información de estado de la vista */}
+          <div className="text-xs text-gray-400 font-mono flex items-center gap-1.5">
+            <span className="text-gray-500">Mostrando:</span>
+            <span className="font-bold text-white">
+              {asesoriasFiltradas.length} {asesoriasFiltradas.length === 1 ? 'cirugía' : 'cirugías'}
+            </span>
+            {filtroEstado !== 'todos' && (
+              <span className="text-[11px] text-gray-500">
+                (de {totalCasos} en total)
+              </span>
+            )}
           </div>
         </div>
-
-        {/* Botón para incorporar nueva cirugía / procedimiento */}
-        <button
-          type="button"
-          onClick={handleCrearNuevaCirugia}
-          disabled={creandoNuevo || loading}
-          className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5"
-        >
-          {creandoNuevo ? (
-            <>
-              <Loader2 size={14} className="animate-spin" />
-              Creando sector...
-            </>
-          ) : (
-            <>
-              <Plus size={14} />
-              + Nueva Cirugía / Procedimiento
-            </>
-          )}
-        </button>
       </div>
 
       {error && (
@@ -393,13 +436,24 @@ export default function PanelAsesoriaQuirurgica({
                 : `Este paciente tiene ${casosActivos} procedimiento(s) activo(s) en seguimiento.`}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setFiltroEstado('todos')}
-            className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-blue-400 hover:text-blue-300 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 border border-neutral-700"
-          >
-            <span>Ver todos los procedimientos ({totalCasos})</span>
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            {filtroEstado === 'activos' && casosCerrados > 0 && (
+              <button
+                type="button"
+                onClick={() => setFiltroEstado('cerrados')}
+                className="px-3.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 border border-neutral-700"
+              >
+                <span>Ver procedimientos cerrados ({casosCerrados})</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFiltroEstado('todos')}
+              className="px-3.5 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 border border-blue-500/30"
+            >
+              <span>Ver todos ({totalCasos})</span>
+            </button>
+          </div>
         </div>
       ) : (
         /* Lista de Tarjetas de Acordeón Quirúrgico Filtradas */
