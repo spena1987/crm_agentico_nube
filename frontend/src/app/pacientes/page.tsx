@@ -50,6 +50,7 @@ interface Paciente {
   nro_hc?: string | null
   obra_social?: string | null
   plan_cobertura?: string | null
+  nro_afiliado?: string | null
   fecha_nacimiento?: string | null
   sexo?: string | null
   direccion?: string | null
@@ -208,6 +209,7 @@ export default function PacientesPage() {
           email: datos.email || null,
           obra_social: datos.obra_social || null,
           plan_cobertura: datos.plan_cobertura || null,
+          nro_afiliado: datos.nro_afiliado || null,
           medico_cabecera: datos.medico_cabecera || null,
           telefono_fijo: datos.telefono_fijo || null,
           direccion: datos.direccion || null,
@@ -789,6 +791,11 @@ export default function PacientesPage() {
                   ) : (
                     <div className="text-[11px] text-gray-500">
                       Plan no especificado
+                    </div>
+                  )}
+                  {pacienteSeleccionado.nro_afiliado && (
+                    <div className="text-[11px] text-gray-400 font-mono">
+                      Afiliado: <span className="text-gray-200 font-semibold">{pacienteSeleccionado.nro_afiliado}</span>
                     </div>
                   )}
                 </div>

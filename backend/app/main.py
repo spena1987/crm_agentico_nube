@@ -2082,6 +2082,7 @@ def sincronizar_paciente_geclisa(paciente_id: str):
             "nro_hc": datos_geclisa.get("nro_hc") or paciente_actual.get("nro_hc"),
             "obra_social": datos_geclisa.get("obra_social") or paciente_actual.get("obra_social"),
             "plan_cobertura": datos_geclisa.get("plan_cobertura") or paciente_actual.get("plan_cobertura"),
+            "nro_afiliado": datos_geclisa.get("nro_afiliado") or paciente_actual.get("nro_afiliado"),
             "direccion": datos_geclisa.get("direccion") or paciente_actual.get("direccion"),
             "fecha_nacimiento": datos_geclisa.get("fecha_nacimiento") or paciente_actual.get("fecha_nacimiento"),
             "sexo": datos_geclisa.get("sexo") or paciente_actual.get("sexo"),

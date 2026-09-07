@@ -12,6 +12,7 @@ interface PacienteData {
   email?: string | null
   obra_social?: string | null
   plan_cobertura?: string | null
+  nro_afiliado?: string | null
   medico_cabecera?: string | null
   telefono_fijo?: string | null
   direccion?: string | null
@@ -43,6 +44,7 @@ export default function ModalEditarPaciente({
   const [email, setEmail] = useState('')
   const [obraSocial, setObraSocial] = useState('')
   const [planCobertura, setPlanCobertura] = useState('')
+  const [nroAfiliado, setNroAfiliado] = useState('')
   const [medicoCabecera, setMedicoCabecera] = useState('')
   const [telefonoFijo, setTelefonoFijo] = useState('')
   const [direccion, setDireccion] = useState('')
@@ -60,6 +62,7 @@ export default function ModalEditarPaciente({
       setEmail(paciente.email || '')
       setObraSocial(paciente.obra_social || '')
       setPlanCobertura(paciente.plan_cobertura || '')
+      setNroAfiliado(paciente.nro_afiliado || '')
       setMedicoCabecera(paciente.medico_cabecera || '')
       setTelefonoFijo(paciente.telefono_fijo || '')
       setDireccion(paciente.direccion || '')
@@ -90,6 +93,7 @@ export default function ModalEditarPaciente({
         email: email.trim() || null,
         obra_social: obraSocial.trim() || null,
         plan_cobertura: planCobertura.trim() || null,
+        nro_afiliado: nroAfiliado.trim() || null,
         medico_cabecera: medicoCabecera.trim() || null,
         telefono_fijo: telefonoFijo.trim() || null,
         direccion: direccion.trim() || null,
@@ -274,6 +278,17 @@ export default function ModalEditarPaciente({
                   onChange={(e) => setPlanCobertura(e.target.value)}
                   placeholder="Ej: 210, 310, Galeno Oro"
                   className="px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="sm:col-span-2 flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-gray-300">Nº de Afiliado / Credencial</label>
+                <input
+                  type="text"
+                  value={nroAfiliado}
+                  onChange={(e) => setNroAfiliado(e.target.value)}
+                  placeholder="Ej: 8000061154099011010"
+                  className="px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-neutral-900 text-white font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
             </div>

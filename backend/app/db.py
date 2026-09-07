@@ -242,6 +242,7 @@ def crear_o_actualizar_paciente_geclisa(payload: dict):
             "nro_hc": str(payload.get("nro_hc")) if payload.get("nro_hc") else None,
             "obra_social": payload.get("obra_social") or None,
             "plan_cobertura": payload.get("plan_cobertura") or payload.get("plan") or None,
+            "nro_afiliado": str(payload.get("nro_afiliado")).strip() if payload.get("nro_afiliado") else None,
             "fecha_nacimiento": payload.get("fecha_nacimiento") or None,
             "sexo": payload.get("sexo") or None,
             "direccion": payload.get("direccion") or None,

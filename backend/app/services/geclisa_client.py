@@ -179,6 +179,101 @@ class GeclisaClient:
             logger.error(f"Error en obtener_usuario_actual: {e}")
             return {"error": str(e)}
 
+    def obtener_cobertura_paciente(self, ficha_id: int) -> dict:
+        """
+        Consulta y resuelve la obra social, plan y número de afiliado activo de la ficha del paciente
+        utilizando prioritariamente /api/Pacientes/os-plan/{fichaId} (con detección de 'ultimoUsado')
+        y /api/Ficha/ficha-plan?fichaId={fichaId} (módulo Ficha oficial).
+        """
+        obra_social = None
+        plan = None
+        nro_afiliado = None
+        planes_disponibles = []
+        try:
+            headers = self._get_headers()
+        except Exception as auth_err:
+            logger.error(f"Error de autenticación obteniendo cobertura para ficha {ficha_id}: {auth_err}")
+            return {"obra_social": None, "plan_cobertura": None, "nro_afiliado": None, "planes": []}
+
+        # 1. Consulta A: /api/Pacientes/os-plan/{fichaId}
+        try:
+            url_os = f"{self.base_url}/api/Pacientes/os-plan/{ficha_id}"
+            resp_os = self._do_request("GET", url_os, headers=headers, timeout=8)
+            if resp_os.status_code == 200:
+                raw_os = resp_os.json()
+                items = []
+                if isinstance(raw_os, dict) and "data" in raw_os and isinstance(raw_os["data"], list):
+                    items = raw_os["data"]
+                elif isinstance(raw_os, list):
+                    items = raw_os
+
+                for it in items:
+                    os_nom = str(it.get("osNombre") or it.get("osSigla") or "").strip()
+                    p_nom = str(it.get("planNombre") or "").strip()
+                    n_afi = str(it.get("nroAfiliado") or "").strip()
+                    ult_usado = bool(it.get("ultimoUsado"))
+
+                    planes_disponibles.append({
+                        "os_id": it.get("osId"),
+                        "obra_social": os_nom,
+                        "os_sigla": it.get("osSigla"),
+                        "plan_id": it.get("planId"),
+                        "plan": p_nom,
+                        "nro_afiliado": n_afi,
+                        "ultimo_usado": ult_usado
+                    })
+
+                    # Si es el último usado y no es "PARTICULAR" (o el único disponible)
+                    if ult_usado and os_nom:
+                        obra_social = it.get("osNombre") or it.get("osSigla") or os_nom
+                        plan = p_nom
+                        nro_afiliado = n_afi
+        except Exception as os_err:
+            logger.warning(f"Error consultando /api/Pacientes/os-plan para ficha {ficha_id}: {os_err}")
+
+        # 2. Consulta B: /api/Ficha/ficha-plan?fichaId={fichaId} (Endpoint específico de /api/Ficha)
+        if not obra_social or len(planes_disponibles) == 0:
+            try:
+                url_fp = f"{self.base_url}/api/Ficha/ficha-plan?fichaId={ficha_id}"
+                resp_fp = self._do_request("GET", url_fp, headers=headers, timeout=8)
+                if resp_fp.status_code == 200:
+                    raw_fp = resp_fp.json()
+                    items_fp = raw_fp if isinstance(raw_fp, list) else (raw_fp.get("data") if isinstance(raw_fp, dict) else [])
+                    for fp in items_fp:
+                        os_nom = str(fp.get("osNombre") or "").strip()
+                        p_nom = str(fp.get("planNombre") or "").strip()
+                        n_afi = str(fp.get("nroAfiliado") or "").strip()
+
+                        planes_disponibles.append({
+                            "os_id": fp.get("osId"),
+                            "obra_social": os_nom,
+                            "plan_id": fp.get("planId"),
+                            "plan": p_nom,
+                            "nro_afiliado": n_afi,
+                            "ultimo_usado": False
+                        })
+                        if not obra_social and os_nom and os_nom.upper() != "PARTICULAR":
+                            obra_social = os_nom
+                            plan = p_nom
+                            nro_afiliado = n_afi
+            except Exception as fp_err:
+                logger.warning(f"Error consultando /api/Ficha/ficha-plan para ficha {ficha_id}: {fp_err}")
+
+        # Fallback: Si aún no se seleccionó ninguna, tomar la primera cobertura no particular de la lista
+        if not obra_social and planes_disponibles:
+            no_part = [p for p in planes_disponibles if (p.get("obra_social") or "").upper() != "PARTICULAR"]
+            elegido = no_part[0] if no_part else planes_disponibles[0]
+            obra_social = elegido.get("obra_social")
+            plan = elegido.get("plan")
+            nro_afiliado = elegido.get("nro_afiliado")
+
+        return {
+            "obra_social": obra_social,
+            "plan_cobertura": plan,
+            "nro_afiliado": nro_afiliado,
+            "planes": planes_disponibles
+        }
+
     def obtener_ficha_completa(self, ficha_id: int) -> dict:
         """
         Consulta la ficha detallada (FichaPatientDTO) y la obra social/plan asociado.
@@ -201,27 +296,13 @@ class GeclisaClient:
             if not paciente_data:
                 return {"encontrado": False, "mensaje": f"Ficha {ficha_id} no encontrada."}
 
-            # 2. Obra Social / Plan (Consulta exhaustiva con múltiples endpoints de Geclisa)
-            obra_social_nombre = None
-            plan_nombre = None
+            # 2. Obra Social / Plan / Afiliado (Consulta exhaustiva con /api/Pacientes/os-plan y /api/Ficha/ficha-plan)
+            cobertura_info = self.obtener_cobertura_paciente(ficha_id)
+            obra_social_nombre = cobertura_info.get("obra_social")
+            plan_nombre = cobertura_info.get("plan_cobertura")
+            nro_afiliado = cobertura_info.get("nro_afiliado")
 
-            # Intento A: Endpoint específico /api/Pacientes/os-plan/{fichaId}
-            try:
-                url_os = f"{self.base_url}/api/Pacientes/os-plan/{ficha_id}"
-                resp_os = self._do_request("GET", url_os, headers=headers, timeout=8)
-                if resp_os.status_code == 200:
-                    os_data = resp_os.json()
-                    if isinstance(os_data, list) and len(os_data) > 0:
-                        item_os = os_data[0]
-                        obra_social_nombre = item_os.get("osNombre") or item_os.get("obraSocial") or item_os.get("osDescrip") or item_os.get("osNombreCorto")
-                        plan_nombre = item_os.get("planNombre") or item_os.get("plan") or item_os.get("planDescrip")
-                    elif isinstance(os_data, dict):
-                        obra_social_nombre = os_data.get("osNombre") or os_data.get("obraSocial") or os_data.get("osDescrip")
-                        plan_nombre = os_data.get("planNombre") or os_data.get("plan") or os_data.get("planDescrip")
-            except Exception as os_err:
-                logger.warning(f"No se pudo consultar /api/Pacientes/os-plan para ficha {ficha_id}: {os_err}")
-
-            # Intento B: Si no se obtuvo de os-plan, buscar en los datos del paciente (patient DTO)
+            # Fallback en datos del paciente si vinieran directamente
             if not obra_social_nombre and isinstance(paciente_data, dict):
                 obra_social_nombre = (
                     paciente_data.get("osNombre") 
@@ -231,23 +312,12 @@ class GeclisaClient:
                 )
                 plan_nombre = plan_nombre or paciente_data.get("planNombre") or paciente_data.get("ficPlan") or paciente_data.get("plan")
 
-            # Intento C: Fallback a /api/Ficha si aún no se tiene la obra social
-            if not obra_social_nombre:
-                try:
-                    url_ficha_extra = f"{self.base_url}/api/Ficha?fichaId={ficha_id}"
-                    resp_fe = self._do_request("GET", url_ficha_extra, headers=headers, timeout=8)
-                    if resp_fe.status_code == 200:
-                        fe_data = resp_fe.json()
-                        if isinstance(fe_data, dict):
-                            obra_social_nombre = fe_data.get("osNombre") or fe_data.get("obraSocial") or fe_data.get("ficObrasoc") or fe_data.get("osDescrip")
-                            plan_nombre = plan_nombre or fe_data.get("planNombre") or fe_data.get("ficPlan")
-                except Exception as fe_err:
-                    logger.debug(f"Fallback /api/Ficha sin datos de OS para {ficha_id}: {fe_err}")
-
             if obra_social_nombre:
                 obra_social_nombre = str(obra_social_nombre).strip()
             if plan_nombre:
                 plan_nombre = str(plan_nombre).strip()
+            if nro_afiliado:
+                nro_afiliado = str(nro_afiliado).strip()
 
             # 3. Formatear y normalizar
             nombre = (paciente_data.get("ficNombre") or paciente_data.get("nombre") or "").strip()
@@ -283,6 +353,8 @@ class GeclisaClient:
                 "sexo": paciente_data.get("ficSexo") or paciente_data.get("sexo"),
                 "obra_social": obra_social_nombre,
                 "plan_cobertura": plan_nombre,
+                "nro_afiliado": nro_afiliado,
+                "planes_disponibles": cobertura_info.get("planes", []),
                 "direccion": direccion,
                 "raw": paciente_data
             }

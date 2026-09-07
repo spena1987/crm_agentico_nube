@@ -24,7 +24,7 @@ import {
   Minimize2,
   X
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, getAuthHeaders } from '@/lib/api'
 
 type TabTipo = 'evoluciones' | 'indicaciones' | 'archivos'
 
@@ -91,6 +91,9 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
 
   const [archivoVisor, setArchivoVisor] = useState<ArchivoGeclisa | null>(null)
   const [visorPantallaCompleta, setVisorPantallaCompleta] = useState(false)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [cargandoVisor, setCargandoVisor] = useState(false)
+  const [errorVisor, setErrorVisor] = useState('')
 
   const queryId = paciente.geclisa_ficha_id || paciente.id || paciente.dni
 
@@ -98,13 +101,66 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
     cargarEvoluciones()
   }, [paciente.id, paciente.geclisa_ficha_id])
 
+  useEffect(() => {
+    if (!archivoVisor) {
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl)
+        setBlobUrl(null)
+      }
+      setErrorVisor('')
+      setCargandoVisor(false)
+      return
+    }
+
+    let isMounted = true
+    const cargarBlob = async () => {
+      setCargandoVisor(true)
+      setErrorVisor('')
+      try {
+        const headers = await getAuthHeaders()
+        const res = await fetch(`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`, {
+          headers
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null)
+          throw new Error(errData?.detail || `Error HTTP ${res.status} al obtener archivo`)
+        }
+        const blob = await res.blob()
+        if (isMounted) {
+          const url = URL.createObjectURL(blob)
+          setBlobUrl(url)
+        }
+      } catch (err: any) {
+        if (isMounted) {
+          setErrorVisor(err.message || 'No se pudo cargar el archivo desde Geclisa.')
+        }
+      } finally {
+        if (isMounted) {
+          setCargandoVisor(false)
+        }
+      }
+    }
+
+    cargarBlob()
+
+    return () => {
+      isMounted = false
+    }
+  }, [archivoVisor])
+
   const cargarEvoluciones = async () => {
     if (!queryId) return
     setCargandoEvoluciones(true)
     setErrorHc('')
     try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/historia-clinica`)
-      if (!res.ok) throw new Error(`Error ${res.status}`)
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/historia-clinica`, {
+        headers
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        throw new Error(errData?.detail || `Error ${res.status}`)
+      }
       const data = await res.json()
       setDataHc(data)
     } catch (err: any) {
@@ -119,8 +175,14 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
     setCargandoIndicaciones(true)
     setErrorInd('')
     try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/indicaciones`)
-      if (!res.ok) throw new Error(`Error ${res.status}`)
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/indicaciones`, {
+        headers
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        throw new Error(errData?.detail || `Error ${res.status}`)
+      }
       const data = await res.json()
       setDataInd(data)
     } catch (err: any) {
@@ -135,8 +197,14 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
     setCargandoArchivos(true)
     setErrorArchivos('')
     try {
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/archivos`)
-      if (!res.ok) throw new Error(`Error ${res.status}`)
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(queryId)}/archivos`, {
+        headers
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        throw new Error(errData?.detail || `Error ${res.status}`)
+      }
       const data = await res.json()
       setDataArchivos(data)
     } catch (err: any) {
@@ -354,10 +422,21 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
             <div className="flex items-center justify-between px-4 py-2.5 border-b bg-[#f7fafb]">
               <span className="font-bold text-xs truncate max-w-md">{archivoVisor.titulo}</span>
               <div className="flex items-center gap-2">
+                {blobUrl && (
+                  <a
+                    href={blobUrl}
+                    download={archivoVisor.titulo || `archivo_${archivoVisor.as_id}`}
+                    className="p-1 text-[#728a99] hover:text-[#0e7c86]"
+                    title="Descargar documento"
+                  >
+                    <FolderDown className="w-4 h-4" />
+                  </a>
+                )}
                 <button
                   type="button"
                   onClick={() => setVisorPantallaCompleta(!visorPantallaCompleta)}
                   className="p-1 text-[#728a99] hover:text-[#16323f]"
+                  title={visorPantallaCompleta ? 'Reducir' : 'Pantalla completa'}
                 >
                   {visorPantallaCompleta ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                 </button>
@@ -365,17 +444,41 @@ export default function TabGeclisaLegado({ paciente }: TabGeclisaLegadoProps) {
                   type="button"
                   onClick={() => setArchivoVisor(null)}
                   className="p-1 text-[#728a99] hover:text-[#16323f]"
+                  title="Cerrar visor"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
             </div>
-            <div className="flex-1 bg-gray-100 p-2">
-              <iframe
-                src={`${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
-                className="w-full h-full rounded border border-gray-300"
-                title={archivoVisor.titulo}
-              />
+            <div className="flex-1 bg-gray-100 p-2 flex flex-col items-center justify-center">
+              {cargandoVisor ? (
+                <div className="flex flex-col items-center gap-3 text-[#728a99]">
+                  <Loader2 className="w-8 h-8 animate-spin text-[#0e7c86]" />
+                  <span className="text-xs font-semibold">Descargando y preparando archivo desde Geclisa...</span>
+                </div>
+              ) : errorVisor ? (
+                <div className="flex flex-col items-center gap-3 text-red-600 p-6 text-center max-w-md bg-red-50 border border-red-200 rounded-lg">
+                  <AlertCircle className="w-8 h-8 text-red-500" />
+                  <span className="text-xs font-semibold">{errorVisor}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const curr = archivoVisor
+                      setArchivoVisor(null)
+                      setTimeout(() => setArchivoVisor(curr), 50)
+                    }}
+                    className="mt-2 px-3 py-1 bg-red-600 text-white rounded text-xs font-bold hover:bg-red-700"
+                  >
+                    Reintentar
+                  </button>
+                </div>
+              ) : (
+                <iframe
+                  src={blobUrl || `${BACKEND_URL}/api/geclisa/archivos/${archivoVisor.as_id}/ver`}
+                  className="w-full h-full rounded border border-gray-300"
+                  title={archivoVisor.titulo}
+                />
+              )}
             </div>
           </div>
         </div>

@@ -177,20 +177,28 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
         if any(path.startswith(prefix) for prefix in public_prefixes):
             return await call_next(request)
 
+        # Rutas de visualización y descarga directa de archivos Geclisa para iframes y navegadores
+        if path.startswith("/api/geclisa/archivos/") and ("/ver" in path or "/descargar" in path):
+            return await call_next(request)
+
         # Si no empieza con /api/, permitir libremente (ej: root / healthchecks)
         if not path.startswith("/api/"):
             return await call_next(request)
 
-        # 3. Validar encabezado Authorization Bearer
+        # 3. Validar encabezado Authorization Bearer o parámetro query 'token'
         auth_header = request.headers.get("Authorization") or request.headers.get("authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        token = None
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        elif request.query_params.get("token"):
+            token = request.query_params.get("token").strip()
+
+        if not token:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Acceso no autorizado: Se requiere encabezado 'Authorization: Bearer <token>' emitido por Supabase."},
                 headers={"WWW-Authenticate": "Bearer"}
             )
-
-        token = auth_header.split(" ", 1)[1].strip()
         try:
             user_payload = decode_supabase_jwt(token)
             request.state.user = user_payload
