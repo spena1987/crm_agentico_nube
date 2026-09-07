@@ -230,6 +230,48 @@ export function buildTicketRows(p: ParsedTicketData, currentData?: Record<string
   return R
 }
 
+export function buildTicketRowsFromExtracted(extracted: Record<string, any>, currentData?: Record<string, any>): TicketRow[] {
+  const R: TicketRow[] = []
+  const cur = (k: string) => (currentData ? currentData[k] || '' : '')
+
+  const add = (k: string, lbl: string, fld: string, val: any, tgt: 'arm' | 'k' | 'pio' | 'paq') => {
+    if (val !== undefined && val !== null && String(val).trim().length > 0 && String(val) !== 'null' && String(val) !== 'ERR') {
+      R.push({ key: k, label: lbl, field: fld, value: val, current: cur(fld), target: tgt, selected: true })
+    }
+  }
+
+  // ARM
+  add('arm_od_esf', 'ARM OD Esfera', 'arm_od_esf', extracted.arm_od_esf, 'arm')
+  add('arm_od_cil', 'ARM OD Cilindro', 'arm_od_cil', extracted.arm_od_cil, 'arm')
+  add('arm_od_eje', 'ARM OD Eje', 'arm_od_eje', extracted.arm_od_eje, 'arm')
+  add('arm_oi_esf', 'ARM OI Esfera', 'arm_oi_esf', extracted.arm_oi_esf, 'arm')
+  add('arm_oi_cil', 'ARM OI Cilindro', 'arm_oi_cil', extracted.arm_oi_cil, 'arm')
+  add('arm_oi_eje', 'ARM OI Eje', 'arm_oi_eje', extracted.arm_oi_eje, 'arm')
+
+  // K
+  add('k_od_k1', 'K OD K1', 'k_od_k1', extracted.k_od_k1, 'k')
+  add('k_od_k2', 'K OD K2', 'k_od_k2', extracted.k_od_k2, 'k')
+  add('k_od_ejec', 'K OD Eje curvo', 'k_od_ejec', extracted.k_od_ejec, 'k')
+  add('k_od_cil', 'K OD Cil', 'k_od_cil', extracted.k_od_cil, 'k')
+  add('k_od_eje', 'K OD Eje', 'k_od_eje', extracted.k_od_eje, 'k')
+
+  add('k_oi_k1', 'K OI K1', 'k_oi_k1', extracted.k_oi_k1, 'k')
+  add('k_oi_k2', 'K OI K2', 'k_oi_k2', extracted.k_oi_k2, 'k')
+  add('k_oi_ejec', 'K OI Eje curvo', 'k_oi_ejec', extracted.k_oi_ejec, 'k')
+  add('k_oi_cil', 'K OI Cil', 'k_oi_cil', extracted.k_oi_cil, 'k')
+  add('k_oi_eje', 'K OI Eje', 'k_oi_eje', extracted.k_oi_eje, 'k')
+
+  // PIO
+  add('pio_od_aire', 'PIO aire OD', 'pio_od_aire', extracted.pio_od_aire, 'pio')
+  add('pio_oi_aire', 'PIO aire OI', 'pio_oi_aire', extracted.pio_oi_aire, 'pio')
+
+  // Paquimetria
+  add('paq_od_aire', 'Paquimetría OD', 'paq_od_aire', extracted.paq_od_aire, 'paq')
+  add('paq_oi_aire', 'Paquimetría OI', 'paq_oi_aire', extracted.paq_oi_aire, 'paq')
+
+  return R
+}
+
 export const DEMO_TICKET = `[REF DATA]
 VD:12.0  CYL:(-)
 << R >>

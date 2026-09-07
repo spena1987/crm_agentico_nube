@@ -5661,6 +5661,56 @@ def validar_consulta_geclisa_endpoint(consulta_id: str):
         logger.error(f"Error validando consulta {consulta_id} en Geclisa: {e}")
         return {"permitido": True, "error": str(e)}
 
+@app.post("/api/oftalmo/ocr-ticket")
+async def ocr_ticket_endpoint(request: Request):
+    """
+    Procesa un ticket de autorefractometría/queratometría/tonometría con Gemini Flash.
+    Soporta:
+    - JSON: { "image_base64": "...", "mime_type": "image/jpeg" }
+    - JSON: { "raw_text": "..." }
+    - Multipart/form-data: archivo en campo 'file'
+    """
+    import base64
+    from app.services.ocr_ticket_service import OcrTicketService
+
+    try:
+        content_type = request.headers.get("content-type", "")
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            upload = form.get("file")
+            if not upload:
+                raise HTTPException(status_code=400, detail="No se incluyó ningún archivo en la petición.")
+            image_bytes = await upload.read()
+            mime_type = upload.content_type or "image/jpeg"
+            return OcrTicketService.procesar_ticket_imagen(image_bytes, mime_type=mime_type)
+
+        body = await request.json()
+        image_base64 = body.get("image_base64")
+        if image_base64:
+            mime_type = body.get("mime_type", "image/jpeg")
+            if "," in image_base64 and "data:" in image_base64:
+                header_part, image_base64 = image_base64.split(",", 1)
+                if "image/png" in header_part:
+                    mime_type = "image/png"
+                elif "image/webp" in header_part:
+                    mime_type = "image/webp"
+                elif "image/jpeg" in header_part or "image/jpg" in header_part:
+                    mime_type = "image/jpeg"
+
+            image_bytes = base64.b64decode(image_base64)
+            return OcrTicketService.procesar_ticket_imagen(image_bytes, mime_type=mime_type)
+
+        raw_text = body.get("raw_text") or body.get("text")
+        if raw_text:
+            return OcrTicketService.procesar_ticket_texto(raw_text)
+
+        raise HTTPException(status_code=400, detail="Debe proporcionar 'image_base64', 'raw_text' o un archivo en 'file'.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error procesando OCR de ticket con Gemini Flash: {e}")
+        raise HTTPException(status_code=500, detail=f"Error en lectura de ticket: {str(e)}")
+
 @app.post("/api/oftalmo/estudios/{paciente_id}")
 @app.post("/api/oftalmo/{paciente_id}/estudios")
 def add_estudio_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = Body(...)):

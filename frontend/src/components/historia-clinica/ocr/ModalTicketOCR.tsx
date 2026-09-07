@@ -1,9 +1,10 @@
 'use client'
 
 import React, { useState, useRef, useEffect } from 'react'
-import { X, Camera, Upload, Check, AlertCircle, RefreshCw, FileText } from 'lucide-react'
-import { parseTicket, buildTicketRows, TicketRow, DEMO_TICKET } from '../ocrTicketParser'
+import { X, Camera, Upload, Check, AlertCircle, RefreshCw, FileText, Loader2, Sparkles, Image as ImageIcon } from 'lucide-react'
+import { parseTicket, buildTicketRows, buildTicketRowsFromExtracted, TicketRow, DEMO_TICKET } from '../ocrTicketParser'
 import { ConsultaOftalmo } from '../types'
+import { BACKEND_URL, getAuthHeaders } from '@/lib/api'
 
 interface ModalTicketOCRProps {
   isOpen: boolean
@@ -22,6 +23,10 @@ export default function ModalTicketOCR({
   const [rawText, setRawText] = useState('')
   const [rows, setRows] = useState<TicketRow[]>([])
   const [cameraActive, setCameraActive] = useState(false)
+  const [procesandoIA, setProcesandoIA] = useState(false)
+  const [errorIA, setErrorIA] = useState('')
+  const [previewImagen, setPreviewImagen] = useState<string | null>(null)
+  const [equipoDetectado, setEquipoDetectado] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
 
@@ -36,11 +41,34 @@ export default function ModalTicketOCR({
 
   if (!isOpen) return null
 
+  const getCurrentValues = (): Record<string, any> => ({
+    arm_od_esf: consultaActiva.arm_cicloplejia?.arm_od_esf,
+    arm_od_cil: consultaActiva.arm_cicloplejia?.arm_od_cil,
+    arm_od_eje: consultaActiva.arm_cicloplejia?.arm_od_eje,
+    arm_oi_esf: consultaActiva.arm_cicloplejia?.arm_oi_esf,
+    arm_oi_cil: consultaActiva.arm_cicloplejia?.arm_oi_cil,
+    arm_oi_eje: consultaActiva.arm_cicloplejia?.arm_oi_eje,
+    k_od_k1: consultaActiva.queratometria?.od?.k1,
+    k_od_k2: consultaActiva.queratometria?.od?.k2,
+    k_od_ejec: consultaActiva.queratometria?.od?.ejec,
+    k_od_cil: consultaActiva.queratometria?.od?.cil,
+    k_od_eje: consultaActiva.queratometria?.od?.eje,
+    k_oi_k1: consultaActiva.queratometria?.oi?.k1,
+    k_oi_k2: consultaActiva.queratometria?.oi?.k2,
+    k_oi_ejec: consultaActiva.queratometria?.oi?.ejec,
+    k_oi_cil: consultaActiva.queratometria?.oi?.cil,
+    k_oi_eje: consultaActiva.queratometria?.oi?.eje,
+    pio_od_aire: consultaActiva.presion_intraocular?.od?.aire,
+    pio_oi_aire: consultaActiva.presion_intraocular?.oi?.aire,
+    paq_od_aire: consultaActiva.presion_intraocular?.od?.paq_aire,
+    paq_oi_aire: consultaActiva.presion_intraocular?.oi?.paq_aire
+  })
+
   // Iniciar cámara
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
       })
       streamRef.current = stream
       if (videoRef.current) {
@@ -60,21 +88,86 @@ export default function ModalTicketOCR({
     setCameraActive(false)
   }
 
+  // Procesar imagen con Gemini Vision en Backend
+  const procesarImagenConGemini = async (imageBase64: string, mimeType: string = 'image/jpeg') => {
+    setProcesandoIA(true)
+    setErrorIA('')
+    setPreviewImagen(imageBase64)
+    try {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/ocr-ticket`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          image_base64: imageBase64,
+          mime_type: mimeType
+        })
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null)
+        throw new Error(errData?.detail || `Error HTTP ${res.status} al procesar con IA`)
+      }
+
+      const data = await res.json()
+      setRawText(data.transcripcion_texto || '')
+      setEquipoDetectado(data.equipo || 'Autorefractómetro')
+
+      const currentVals = getCurrentValues()
+      const extractedRows = buildTicketRowsFromExtracted(data.extracted_fields || {}, currentVals)
+      setRows(extractedRows)
+      setTab('text')
+    } catch (err: any) {
+      setErrorIA(err.message || 'No se pudo leer el ticket con la IA.')
+    } finally {
+      setProcesandoIA(false)
+    }
+  }
+
+  // Procesar texto con Gemini o Fallback
+  const procesarTextoConGemini = async (text: string) => {
+    if (!text.trim()) return
+    setProcesandoIA(true)
+    setErrorIA('')
+    try {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/ocr-ticket`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ raw_text: text })
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        setEquipoDetectado(data.equipo || null)
+        const currentVals = getCurrentValues()
+        const extractedRows = buildTicketRowsFromExtracted(data.extracted_fields || {}, currentVals)
+        setRows(extractedRows)
+      } else {
+        // Fallback al parser regex local
+        parseAndBuild(text)
+      }
+    } catch (err) {
+      // Fallback local en caso de desconexión
+      parseAndBuild(text)
+    } finally {
+      setProcesandoIA(false)
+    }
+  }
+
   // Capturar foto desde canvas
   const capturePhoto = () => {
     if (!videoRef.current) return
     const video = videoRef.current
     const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth || 640
-    canvas.height = video.videoHeight || 480
+    canvas.width = video.videoWidth || 1280
+    canvas.height = video.videoHeight || 720
     const ctx = canvas.getContext('2d')
     if (ctx) {
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       stopCamera()
-      // En modo demo o procesar con demo
-      setRawText(DEMO_TICKET)
-      parseAndBuild(DEMO_TICKET)
-      setTab('text')
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+      procesarImagenConGemini(dataUrl, 'image/jpeg')
     }
   }
 
@@ -82,49 +175,29 @@ export default function ModalTicketOCR({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    // Si es un archivo de texto o imagen
     if (file.type.includes('text')) {
       const reader = new FileReader()
       reader.onload = evt => {
         const text = String(evt.target?.result || '')
         setRawText(text)
-        parseAndBuild(text)
+        procesarTextoConGemini(text)
         setTab('text')
       }
       reader.readAsText(file)
     } else {
-      // Imagen: para propósitos interactivos, cargamos el ticket simulado
-      setRawText(DEMO_TICKET)
-      parseAndBuild(DEMO_TICKET)
-      setTab('text')
+      const reader = new FileReader()
+      reader.onload = evt => {
+        const dataUrl = String(evt.target?.result || '')
+        procesarImagenConGemini(dataUrl, file.type || 'image/jpeg')
+      }
+      reader.readAsDataURL(file)
     }
   }
 
-  // Parsear texto del ticket
+  // Parsear texto del ticket (modo fallback local)
   const parseAndBuild = (text: string) => {
     const parsed = parseTicket(text)
-    const currentValues: Record<string, any> = {
-      arm_od_esf: consultaActiva.arm_cicloplejia?.arm_od_esf,
-      arm_od_cil: consultaActiva.arm_cicloplejia?.arm_od_cil,
-      arm_od_eje: consultaActiva.arm_cicloplejia?.arm_od_eje,
-      arm_oi_esf: consultaActiva.arm_cicloplejia?.arm_oi_esf,
-      arm_oi_cil: consultaActiva.arm_cicloplejia?.arm_oi_cil,
-      arm_oi_eje: consultaActiva.arm_cicloplejia?.arm_oi_eje,
-      k_od_k1: consultaActiva.queratometria?.od?.k1,
-      k_od_k2: consultaActiva.queratometria?.od?.k2,
-      k_od_ejec: consultaActiva.queratometria?.od?.ejec,
-      k_od_cil: consultaActiva.queratometria?.od?.cil,
-      k_od_eje: consultaActiva.queratometria?.od?.eje,
-      k_oi_k1: consultaActiva.queratometria?.oi?.k1,
-      k_oi_k2: consultaActiva.queratometria?.oi?.k2,
-      k_oi_ejec: consultaActiva.queratometria?.oi?.ejec,
-      k_oi_cil: consultaActiva.queratometria?.oi?.cil,
-      k_oi_eje: consultaActiva.queratometria?.oi?.eje,
-      pio_od_aire: consultaActiva.presion_intraocular?.od?.aire,
-      pio_oi_aire: consultaActiva.presion_intraocular?.oi?.aire,
-      paq_od_aire: consultaActiva.presion_intraocular?.od?.paq_aire,
-      paq_oi_aire: consultaActiva.presion_intraocular?.oi?.paq_aire
-    }
+    const currentValues = getCurrentValues()
     const r = buildTicketRows(parsed, currentValues)
     setRows(r)
   }
@@ -245,37 +318,89 @@ export default function ModalTicketOCR({
 
         {/* Cuerpo del Modal */}
         <div className="p-4 overflow-y-auto flex-1 space-y-3">
-          {tab === 'text' && (
+          {/* Alerta de Error */}
+          {errorIA && (
+            <div className="p-3 bg-red-50 text-red-600 text-xs rounded-lg border border-red-200 flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorIA}</span>
+            </div>
+          )}
+
+          {/* Miniatura de Imagen Procesada */}
+          {previewImagen && !procesandoIA && (
+            <div className="flex items-center gap-3 p-2 bg-[#f7fafb] rounded-lg border border-[#dde6ec]">
+              <img src={previewImagen} alt="Ticket" className="w-12 h-16 object-cover rounded border shadow-sm" />
+              <div className="flex-1 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[#16323f]">Ticket Procesado</span>
+                  {equipoDetectado && (
+                    <span className="bg-[#e4f3f4] text-[#0e7c86] font-extrabold text-[10px] px-2 py-0.5 rounded">
+                      {equipoDetectado}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] text-[#728a99]">Lectura completada por Gemini Vision AI</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setPreviewImagen(null); setRows([]); setRawText(''); setEquipoDetectado(null) }}
+                className="text-xs text-[#728a99] hover:text-red-500 font-bold px-2 py-1"
+              >
+                Limpiar
+              </button>
+            </div>
+          )}
+
+          {/* Spinner de procesamiento IA */}
+          {procesandoIA && (
+            <div className="py-10 flex flex-col items-center justify-center gap-3 text-[#0e7c86] bg-[#f7fafb] rounded-xl border border-[#dde6ec]">
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="text-xs font-bold text-[#16323f]">Analizando ticket con Gemini Vision AI...</span>
+              <span className="text-[11px] text-[#728a99]">Extrayendo refracción, queratometría, tonometría y paquimetría</span>
+            </div>
+          )}
+
+          {!procesandoIA && tab === 'text' && (
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <label className="font-bold text-[#728a99]">
                   Texto reconocido o pegado del ticket:
                 </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRawText(DEMO_TICKET)
-                    parseAndBuild(DEMO_TICKET)
-                  }}
-                  className="text-xs text-[#0e7c86] font-bold hover:underline"
-                >
-                  Cargar ticket de ejemplo (Nidek / Topcon)
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRawText(DEMO_TICKET)
+                      procesarTextoConGemini(DEMO_TICKET)
+                    }}
+                    className="text-xs text-[#0e7c86] font-bold hover:underline"
+                  >
+                    Cargar ticket de ejemplo (Nidek / Topcon)
+                  </button>
+                </div>
               </div>
               <textarea
                 rows={6}
                 value={rawText}
-                onChange={e => {
-                  setRawText(e.target.value)
-                  parseAndBuild(e.target.value)
-                }}
+                onChange={e => setRawText(e.target.value)}
                 placeholder="Pegue aquí el texto o escaneo del ticket..."
                 className="w-full border border-[#dde6ec] rounded-lg p-2 font-mono text-xs focus:border-[#0e7c86] outline-none"
               />
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => procesarTextoConGemini(rawText)}
+                  disabled={!rawText.trim()}
+                  className="px-3 py-1.5 bg-[#0e7c86] hover:bg-[#0a636b] text-white font-bold rounded-lg text-xs transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Procesar Texto con IA
+                </button>
+              </div>
             </div>
           )}
 
-          {tab === 'camera' && (
+          {!procesandoIA && tab === 'camera' && (
             <div className="flex flex-col items-center space-y-3 py-2">
               <div className="relative w-full max-w-sm aspect-[4/3] bg-black rounded-lg overflow-hidden flex items-center justify-center">
                 <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
@@ -296,20 +421,20 @@ export default function ModalTicketOCR({
                   className="px-4 py-2 bg-[#0e7c86] hover:bg-[#0a636b] text-white font-bold rounded-lg text-xs shadow-sm flex items-center gap-2"
                 >
                   <Camera className="w-4 h-4" />
-                  Capturar y Procesar Ticket
+                  Capturar y Procesar con IA
                 </button>
               )}
             </div>
           )}
 
-          {tab === 'upload' && (
+          {!procesandoIA && tab === 'upload' && (
             <div className="p-8 border-2 border-dashed border-[#dde6ec] hover:border-[#0e7c86] rounded-xl text-center space-y-2 cursor-pointer bg-[#f7fafb]">
               <Upload className="w-8 h-8 mx-auto text-[#0e7c86]" />
               <div className="text-xs font-bold text-[#16323f]">
                 Haga clic para seleccionar una foto o archivo del ticket
               </div>
               <p className="text-[11px] text-[#728a99]">
-                Formatos compatibles: JPG, PNG, TXT
+                Formatos compatibles: JPG, PNG, WEBP, TXT
               </p>
               <input
                 type="file"
