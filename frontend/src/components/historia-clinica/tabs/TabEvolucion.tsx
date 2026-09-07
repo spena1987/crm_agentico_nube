@@ -58,11 +58,11 @@ export default function TabEvolucion({
   const consultaActiva = consultas.find(c => c.id === consultaActivaId) || sortedConsultas[0]
 
   return (
-    <div className="flex flex-col lg:flex-row gap-3">
+    <div className="flex flex-col lg:flex-row gap-2.5">
       {/* Sidebar Izquierda: Lista de Consultas y Vistas de Evolución */}
-      <div className="w-full lg:w-64 flex-shrink-0 space-y-3">
+      <div className="w-full lg:w-56 flex-shrink-0 space-y-2">
         {/* Acciones principales de nueva visita */}
-        <div className="bg-white border border-[#dde6ec] rounded-lg p-2.5 shadow-sm space-y-2">
+        <div className="bg-white border border-[#dde6ec] rounded-lg p-2 shadow-xs space-y-1.5">
           <div className="text-[9px] uppercase font-black text-[#9db0bc] tracking-wider">
             Consultas y Controles
           </div>

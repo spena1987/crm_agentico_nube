@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useRef, useEffect } from 'react'
 import { ConsultaOftalmo, RecetaAnteojos } from '../types'
 import TagSelectorPopover from '../TagSelectorPopover'
 import { 
@@ -28,6 +28,24 @@ export default function FormConsulta({
 }: FormConsultaProps) {
   const [generandoReceta, setGenerandoReceta] = useState(false)
   const [recetaGeneradaOk, setRecetaGeneradaOk] = useState(false)
+
+  // Auto-resize para observaciones de la consulta
+  const obsConsultaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (obsConsultaRef.current) {
+      obsConsultaRef.current.style.height = 'auto'
+      obsConsultaRef.current.style.height = `${Math.min(Math.max(obsConsultaRef.current.scrollHeight, 26), 130)}px`
+    }
+  }, [consulta.observaciones_consulta])
+
+  // Auto-resize para indicaciones al paciente
+  const indicacionesRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (indicacionesRef.current) {
+      indicacionesRef.current.style.height = 'auto'
+      indicacionesRef.current.style.height = `${Math.min(Math.max(indicacionesRef.current.scrollHeight, 36), 140)}px`
+    }
+  }, [consulta.indicaciones_texto])
 
   const updateNested = (parentKey: keyof ConsultaOftalmo, subKey: string, val: any) => {
     const parentObj = (consulta[parentKey] as Record<string, any>) || {}
@@ -264,24 +282,21 @@ export default function FormConsulta({
 
   return (
     <div className="space-y-3 text-[#16323f]">
-      {/* 1. Datos de la consulta */}
-      <div className="bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm">
-        <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#eef3f6]">
-          <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
-            Consulta Médica
+      {/* 1. Datos de la consulta (Compacto y Ergonómico) */}
+      <div className="bg-white border border-[#dde6ec] rounded-lg p-2.5 shadow-xs space-y-1.5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[10px] font-black uppercase text-[#0e7c86] tracking-wider flex items-center gap-1">
+            <span>Consulta Médica</span>
           </h2>
-          <span className="text-[10px] text-[#728a99]">
-            Los datos personales y antecedentes quedan fijos en la cabecera superior
-          </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-2 text-xs">
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-1.5 text-xs items-end">
           <div className="md:col-span-4">
-            <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Motivo de consulta</label>
+            <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Motivo de consulta</label>
             <select
               value={consulta.motivo_consulta || ''}
               onChange={e => onChange({ motivo_consulta: e.target.value })}
-              className="w-full border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none"
+              className="w-full border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none text-xs font-semibold"
             >
               <option value="">Seleccione motivo...</option>
               {MOTIVOS.map(m => (
@@ -290,41 +305,46 @@ export default function FormConsulta({
             </select>
           </div>
           <div className="md:col-span-3">
-            <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Evaluada por</label>
+            <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Evaluada por</label>
             <input
               type="text"
               placeholder="quién atiende hoy"
               value={consulta.profesional_nombre || ''}
               onChange={e => onChange({ profesional_nombre: e.target.value })}
-              className="w-full border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none"
+              className="w-full border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none text-xs"
             />
           </div>
           <div className="md:col-span-2">
-            <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Derivado por</label>
+            <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Derivado por</label>
             <input
               type="text"
               value={consulta.derivado_por || ''}
               onChange={e => onChange({ derivado_por: e.target.value })}
-              className="w-full border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none"
+              className="w-full border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none text-xs"
             />
           </div>
           <div className="md:col-span-3">
-            <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Ocupación / hobbies</label>
+            <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Ocupación / hobbies</label>
             <input
               type="text"
               placeholder="deportes, computación..."
               value={consulta.ocupacion || ''}
               onChange={e => onChange({ ocupacion: e.target.value })}
-              className="w-full border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none"
+              className="w-full border border-[#dde6ec] rounded px-2 py-1 focus:border-[#0e7c86] outline-none text-xs"
             />
           </div>
-          <div className="md:col-span-12">
-            <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Observaciones de la consulta</label>
+          <div className="md:col-span-12 pt-0.5">
+            <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">
+              Observaciones de la consulta (auto-expansible al escribir)
+            </label>
             <textarea
+              ref={obsConsultaRef}
               rows={1}
+              placeholder="anotaciones clínicas, síntomas referidos o evolución de hoy (se amplía dinámicamente)..."
               value={consulta.observaciones_consulta || ''}
               onChange={e => onChange({ observaciones_consulta: e.target.value })}
-              className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs focus:border-[#0e7c86] outline-none resize-y"
+              className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs focus:border-[#0e7c86] outline-none transition-all duration-150 leading-relaxed resize-y overflow-y-auto"
+              style={{ minHeight: '28px', maxHeight: '130px' }}
             />
           </div>
         </div>
@@ -1220,13 +1240,15 @@ export default function FormConsulta({
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
             <div className="md:col-span-8">
-              <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Indicaciones</label>
+              <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Indicaciones (auto-expansible)</label>
               <textarea
+                ref={indicacionesRef}
                 rows={2}
-                placeholder="Olopatadina + lubricación. Explico NO FROTAR."
+                placeholder="Olopatadina + lubricación. Explico NO FROTAR (se amplía automáticamente)..."
                 value={consulta.indicaciones_texto || ''}
                 onChange={e => onChange({ indicaciones_texto: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs focus:border-[#0e7c86] outline-none resize-y"
+                className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs focus:border-[#0e7c86] outline-none transition-all duration-150 leading-relaxed resize-y overflow-y-auto"
+                style={{ minHeight: '36px', maxHeight: '140px' }}
               />
             </div>
             <div className="md:col-span-4">

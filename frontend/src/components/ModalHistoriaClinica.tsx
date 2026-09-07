@@ -744,15 +744,16 @@ export default function ModalHistoriaClinica({
           />
         )}
 
-        <div className="bg-white border-b border-[#dde6ec] px-3 py-1 flex items-center justify-between flex-shrink-0 z-20">
-          <div className="flex items-center gap-1 overflow-x-auto text-xs font-bold scrollbar-none">
+        {/* Cinta de pestañas destacada con relieve físico de archivador clínico */}
+        <div className="bg-[#dbe7ed] border-b-2 border-[#b8cdd6] px-3 pt-2 pb-0 flex items-center justify-between flex-shrink-0 z-20 shadow-inner">
+          <div className="flex items-end gap-1.5 overflow-x-auto text-xs font-bold scrollbar-none">
             <button
               type="button"
               onClick={() => setActiveTab('evolucion')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'evolucion'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <Activity className="w-3.5 h-3.5" />
@@ -762,23 +763,28 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => setActiveTab('estudios')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'estudios'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <FileText className="w-3.5 h-3.5" />
-              Estudios ({estudios.length})
+              <span>Estudios</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                activeTab === 'estudios' ? 'bg-[#e4f3f4] text-[#0e7c86]' : 'bg-[#b6c7d2] text-[#2c4453]'
+              }`}>
+                {estudios.length}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('recetas_anteojos')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'recetas_anteojos'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <Glasses className="w-3.5 h-3.5" />
@@ -788,10 +794,10 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => setActiveTab('recetas_farmacos')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'recetas_farmacos'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <Pill className="w-3.5 h-3.5" />
@@ -801,10 +807,10 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => setActiveTab('indicaciones')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'indicaciones'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
@@ -814,10 +820,10 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => setActiveTab('pedidos_estudios')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'pedidos_estudios'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <ClipboardList className="w-3.5 h-3.5" />
@@ -827,10 +833,10 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => setActiveTab('geclisa')}
-              className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
                 activeTab === 'geclisa'
-                  ? 'bg-[#0e7c86] text-white shadow-sm'
-                  : 'text-[#728a99] hover:bg-[#f7fafb] hover:text-[#16323f]'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
               }`}
             >
               <FolderDown className="w-3.5 h-3.5" />
@@ -838,11 +844,11 @@ export default function ModalHistoriaClinica({
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pb-1.5">
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-[#728a99] hover:text-[#16323f] hover:bg-[#eef3f6] rounded-lg transition-colors"
+              className="p-1.5 text-[#597182] hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-200"
               title="Cerrar modal"
             >
               <X className="w-5 h-5" />
