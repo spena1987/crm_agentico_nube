@@ -730,8 +730,8 @@ export default function ModalHistoriaClinica({
   const consultaActiva = consultas.find(c => c.id === consultaActivaId)
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-      <div className="bg-[#f0f4f7] rounded-2xl shadow-2xl border border-[#dde6ec] w-full max-w-7xl h-[94vh] flex flex-col overflow-hidden text-[#16323f]">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-0 sm:p-1.5 lg:p-2 overflow-hidden">
+      <div className="bg-[#f0f4f7] rounded-none sm:rounded-2xl shadow-2xl border-0 sm:border border-[#dde6ec] w-full max-w-full sm:max-w-[99vw] 2xl:max-w-[1900px] h-full sm:h-[98vh] flex flex-col overflow-hidden text-[#16323f]">
         
         {pacienteData && historiaData && (
           <HeaderPacienteFijo

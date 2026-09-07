@@ -33,7 +33,7 @@ export default function HeaderPacienteFijo({
     if (m < 0 || (m === 0 && hoy.getDate() < fn.getDate())) {
       edad--
     }
-    return edad >= 0 && edad < 125 ? `${edad} años` : ''
+    return edad >= 0 && edad < 125 ? `${edad}a` : ''
   }, [paciente.fecha_nacimiento])
 
   const handleAddExtraTag = (catKey: string, newTag: string) => {
@@ -92,20 +92,21 @@ export default function HeaderPacienteFijo({
       </div>
 
       {/* Grid de 2 bloques horizontales optimizados */}
-      <div className="p-2 space-y-2 text-xs">
-        {/* BLOQUE 1: DATOS DEL PACIENTE (2 FILAS HORIZONTALES) */}
-        <div className="bg-[#fafcfd] border border-[#e4ecf0] rounded-lg p-2 space-y-1.5 shadow-xs">
-          <div className="flex items-center justify-between">
+      <div className="p-2 space-y-1.5 text-xs">
+        {/* BLOQUE 1: DATOS DEL PACIENTE (1 SOLA FILA CONTINUA) */}
+        <div className="bg-[#fafcfd] border border-[#e4ecf0] rounded-lg px-2 py-1.5 shadow-xs">
+          <div className="flex items-center gap-2 mb-1">
             <span className="text-[8.5px] uppercase tracking-wider font-extrabold text-[#728a99] flex items-center gap-1">
               <User className="w-3 h-3 text-[#0e7c86]" />
               Datos del Paciente
             </span>
           </div>
 
-          {/* Fila 1 Biometría y Filiación */}
-          <div className="grid grid-cols-12 gap-1.5 items-end">
-            <div className="col-span-12 sm:col-span-4 lg:col-span-3">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Nombre y Apellido</label>
+          {/* Fila única de datos del paciente con adaptación elástica */}
+          <div className="flex items-end gap-1.5 flex-wrap xl:flex-nowrap">
+            {/* Nombre y Apellido */}
+            <div className="flex-[2.5] min-w-[190px]">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Nombre y Apellido</label>
               <input
                 type="text"
                 value={paciente.nombre || ''}
@@ -114,8 +115,10 @@ export default function HeaderPacienteFijo({
                 placeholder="Nombre completo"
               />
             </div>
-            <div className="col-span-6 sm:col-span-2 lg:col-span-2">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">DNI</label>
+
+            {/* DNI */}
+            <div className="w-24 sm:w-28 flex-shrink-0">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">DNI</label>
               <input
                 type="text"
                 value={paciente.dni || ''}
@@ -123,8 +126,10 @@ export default function HeaderPacienteFijo({
                 className="w-full font-semibold border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none text-xs"
               />
             </div>
-            <div className="col-span-6 sm:col-span-2 lg:col-span-2">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Nacimiento</label>
+
+            {/* Nacimiento */}
+            <div className="w-28 sm:w-32 flex-shrink-0">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Nacimiento</label>
               <input
                 type="date"
                 value={paciente.fecha_nacimiento || ''}
@@ -132,17 +137,22 @@ export default function HeaderPacienteFijo({
                 className="w-full border border-[#dde6ec] rounded px-1.5 py-1 text-xs bg-white focus:border-[#0e7c86] outline-none"
               />
             </div>
-            <div className="col-span-4 sm:col-span-1 lg:col-span-1">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5 text-center">Edad</label>
+
+            {/* Edad */}
+            <div className="w-16 flex-shrink-0">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5 text-center">Edad</label>
               <input
                 type="text"
                 value={edadCalculada || '—'}
                 readOnly
                 className="w-full border border-[#c3e2e4] rounded px-1 py-1 bg-[#e4f3f4] text-[#0e7c86] font-extrabold text-center text-xs outline-none cursor-default"
+                title={edadCalculada ? `${edadCalculada} calculados` : ''}
               />
             </div>
-            <div className="col-span-3 sm:col-span-1 lg:col-span-1">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5 text-center">Sexo</label>
+
+            {/* Sexo */}
+            <div className="w-14 flex-shrink-0">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5 text-center">Sexo</label>
               <select
                 value={paciente.sexo || ''}
                 onChange={e => onUpdatePaciente({ sexo: e.target.value })}
@@ -154,57 +164,59 @@ export default function HeaderPacienteFijo({
                 <option value="X">X</option>
               </select>
             </div>
-            <div className="col-span-5 sm:col-span-2 lg:col-span-3">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Teléfono / Celular</label>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={paciente.telefono || ''}
-                  onChange={e => onUpdatePaciente({ telefono: e.target.value })}
-                  className="w-full font-semibold border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none text-xs"
-                  placeholder="Teléfono"
-                />
-              </div>
-            </div>
-          </div>
 
-          {/* Fila 2 Cobertura Médica y N° Afiliado */}
-          <div className="grid grid-cols-12 gap-1.5 items-end pt-1 border-t border-[#edf3f6]">
-            <div className="col-span-12 sm:col-span-4 lg:col-span-4">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Obra Social / Prepaga</label>
+            {/* Teléfono / Celular */}
+            <div className="w-28 sm:w-32 flex-shrink-0">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Teléfono / Celular</label>
+              <input
+                type="text"
+                value={paciente.telefono || ''}
+                onChange={e => onUpdatePaciente({ telefono: e.target.value })}
+                className="w-full font-semibold border border-[#dde6ec] rounded px-2 py-1 bg-white focus:border-[#0e7c86] outline-none text-xs"
+                placeholder="Teléfono"
+              />
+            </div>
+
+            {/* Obra Social / Prepaga */}
+            <div className="flex-[2] min-w-[150px]">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Obra Social / Prepaga</label>
               <input
                 type="text"
                 value={paciente.obra_social || ''}
                 onChange={e => onUpdatePaciente({ obra_social: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-2 py-0.5 text-xs bg-white focus:border-[#0e7c86] outline-none"
-                placeholder="Ej. SWISS MEDICAL, OSDE..."
+                className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs bg-white focus:border-[#0e7c86] outline-none"
+                placeholder="SWISS MEDICAL, OSDE..."
               />
             </div>
-            <div className="col-span-6 sm:col-span-3 lg:col-span-3">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Plan</label>
+
+            {/* Plan */}
+            <div className="w-24 sm:w-28 flex-shrink-0">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">Plan</label>
               <input
                 type="text"
                 value={paciente.plan_cobertura || ''}
                 onChange={e => onUpdatePaciente({ plan_cobertura: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-2 py-0.5 text-xs bg-white focus:border-[#0e7c86] outline-none"
+                className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs bg-white focus:border-[#0e7c86] outline-none"
                 placeholder="Plan"
               />
             </div>
-            <div className="col-span-6 sm:col-span-5 lg:col-span-5">
-              <label className="text-[8.5px] uppercase font-bold text-[#8ba0ae] block mb-0.5">N° de Afiliado / Dirección</label>
+
+            {/* N° de Afiliado / Dirección */}
+            <div className="flex-[2] min-w-[150px]">
+              <label className="text-[8px] uppercase font-bold text-[#8ba0ae] block mb-0.5">N° Afiliado / Credencial</label>
               <input
                 type="text"
                 value={paciente.direccion || ''}
                 onChange={e => onUpdatePaciente({ direccion: e.target.value })}
-                className="w-full border border-[#dde6ec] rounded px-2 py-0.5 text-xs bg-white focus:border-[#0e7c86] outline-none"
-                placeholder="Credencial / N° de afiliado"
+                className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs bg-white focus:border-[#0e7c86] outline-none"
+                placeholder="N° credencial o afiliado"
               />
             </div>
           </div>
         </div>
 
-        {/* BLOQUE 2: DATOS RELEVANTES Y FACTORES DE RIESGO (FILAS 1, 2 Y OBSERVACIONES CON AUTO-RESIZE) */}
-        <div className="bg-[#f7fafb] border border-[#dde6ec] rounded-lg p-2 space-y-1.5 shadow-xs">
+        {/* BLOQUE 2: DATOS RELEVANTES Y FACTORES DE RIESGO (1 FILA + OBSERVACIONES AUTO-RESIZE) */}
+        <div className="bg-[#f7fafb] border border-[#dde6ec] rounded-lg px-2 py-1.5 shadow-xs space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[8.5px] uppercase tracking-wider font-extrabold text-[#728a99] flex items-center gap-1">
               <HeartPulse className="w-3 h-3 text-[#0e7c86]" />
@@ -212,36 +224,39 @@ export default function HeaderPacienteFijo({
             </span>
           </div>
 
-          {/* Fila 1: Antecedentes Oculares, Generales y Alergias */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
-            <div className="md:col-span-4">
-              <span className="text-[8.5px] uppercase font-extrabold text-[#728a99] block mb-0.5">Antecedentes Oculares</span>
+          {/* Fila 1: Antecedentes, Alergias y Medicación alineados en 1 sola fila continua */}
+          <div className="flex items-center gap-1.5 flex-wrap xl:flex-nowrap">
+            {/* Antecedentes Oculares */}
+            <div className="flex-1 min-w-[180px]">
+              <span className="text-[8px] uppercase font-extrabold text-[#728a99] block mb-0.5">Antecedentes Oculares</span>
               <TagSelectorPopover
                 catKey="antOc"
                 values={historia.antecedentes_oculares || []}
                 onChange={tags => onUpdateHistoria({ antecedentes_oculares: tags })}
-                placeholder="agregar antecedentes oculares"
+                placeholder="antecedentes oculares"
                 label="Antecedentes Oculares"
                 extraItems={historia.extra_catalogos?.['antOc'] || []}
                 onAddExtra={tag => handleAddExtraTag('antOc', tag)}
               />
             </div>
 
-            <div className="md:col-span-4">
-              <span className="text-[8.5px] uppercase font-extrabold text-[#728a99] block mb-0.5">Antec. Generales</span>
+            {/* Antecedentes Generales */}
+            <div className="flex-1 min-w-[180px]">
+              <span className="text-[8px] uppercase font-extrabold text-[#728a99] block mb-0.5">Antec. Generales</span>
               <TagSelectorPopover
                 catKey="antGr"
                 values={historia.antecedentes_generales || []}
                 onChange={tags => onUpdateHistoria({ antecedentes_generales: tags })}
-                placeholder="agregar generales"
+                placeholder="generales"
                 label="Antecedentes Generales"
                 extraItems={historia.extra_catalogos?.['antGr'] || []}
                 onAddExtra={tag => handleAddExtraTag('antGr', tag)}
               />
             </div>
 
-            <div className="md:col-span-4">
-              <span className="text-[8.5px] uppercase font-extrabold text-[#728a99] block mb-0.5">Alergias</span>
+            {/* Alergias */}
+            <div className="w-36 sm:w-44 flex-shrink-0">
+              <span className="text-[8px] uppercase font-extrabold text-[#728a99] block mb-0.5">Alergias</span>
               <input
                 type="text"
                 placeholder="—"
@@ -254,12 +269,10 @@ export default function HeaderPacienteFijo({
                 }`}
               />
             </div>
-          </div>
 
-          {/* Fila 2: Medicación Habitual + Otra Medicación */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
-            <div className="md:col-span-6">
-              <span className="text-[8.5px] uppercase font-extrabold text-[#728a99] block mb-0.5">Medicación Habitual (Riesgo / Gotas)</span>
+            {/* Medicación Habitual */}
+            <div className="flex-1 min-w-[180px]">
+              <span className="text-[8px] uppercase font-extrabold text-[#728a99] block mb-0.5">Medicación Habitual</span>
               <TagSelectorPopover
                 catKey="medic"
                 values={historia.medicacion_habitual || []}
@@ -270,11 +283,13 @@ export default function HeaderPacienteFijo({
                 onAddExtra={tag => handleAddExtraTag('medic', tag)}
               />
             </div>
-            <div className="md:col-span-6">
-              <span className="text-[8.5px] uppercase font-extrabold text-[#728a99] block mb-0.5">Dosis, Horario u Otra Medicación</span>
+
+            {/* Dosis / Horario / Otra */}
+            <div className="flex-1 min-w-[170px]">
+              <span className="text-[8px] uppercase font-extrabold text-[#728a99] block mb-0.5">Dosis, Horario u Otra Medicación</span>
               <input
                 type="text"
-                placeholder="dosis, horario, fármacos no listados..."
+                placeholder="dosis, horario, otros fármacos..."
                 value={historia.medicacion_otra || ''}
                 onChange={e => onUpdateHistoria({ medicacion_otra: e.target.value })}
                 className="w-full border border-[#dde6ec] rounded px-2 py-0.5 text-xs bg-white focus:border-[#0e7c86] outline-none"
@@ -282,11 +297,11 @@ export default function HeaderPacienteFijo({
             </div>
           </div>
 
-          {/* Fila 3: Observaciones Fijas con Auto-expansión dinámica multilínea */}
+          {/* Fila 2: Observaciones Fijas con Auto-expansión dinámica multilínea */}
           <div>
             <div className="flex items-center justify-between mb-0.5">
-              <span className="text-[8.5px] uppercase font-extrabold text-[#728a99]">
-                Observaciones Fijas (Texto permanente que se amplía al escribir multilíneas)
+              <span className="text-[8px] uppercase font-extrabold text-[#728a99]">
+                Observaciones Fijas (permanente en la HC, se amplía automáticamente)
               </span>
               {historia.observaciones_permanentes && (
                 <span className="text-[9px] text-[#0e7c86] font-semibold">
@@ -301,7 +316,7 @@ export default function HeaderPacienteFijo({
               value={historia.observaciones_permanentes || ''}
               onChange={e => onUpdateHistoria({ observaciones_permanentes: e.target.value })}
               className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs bg-white focus:border-[#0e7c86] outline-none transition-all duration-150 leading-relaxed resize-y overflow-y-auto"
-              style={{ minHeight: '28px', maxHeight: '140px' }}
+              style={{ minHeight: '26px', maxHeight: '130px' }}
             />
           </div>
         </div>
