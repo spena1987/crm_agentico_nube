@@ -83,6 +83,29 @@ interface CasoFormularioActivoProps {
   onEnviarPresupuestoWhatsApp?: (presupuesto: PresupuestoPaciente) => void
 }
 
+const sumarDiasFecha = (fechaStr: string, dias: number): string => {
+  if (!fechaStr) return ''
+  try {
+    const d = new Date(fechaStr + 'T00:00:00')
+    d.setDate(d.getDate() + dias)
+    return d.toISOString().split('T')[0]
+  } catch {
+    return ''
+  }
+}
+
+const calcularDiferenciaDias = (fecha1: string, fecha2: string): number | null => {
+  if (!fecha1 || !fecha2) return null
+  try {
+    const d1 = new Date(fecha1 + 'T00:00:00')
+    const d2 = new Date(fecha2 + 'T00:00:00')
+    const diffTime = d2.getTime() - d1.getTime()
+    return Math.round(diffTime / (1000 * 60 * 60 * 24))
+  } catch {
+    return null
+  }
+}
+
 export default function CasoFormularioActivo({
   caso,
   pacienteId,
@@ -703,7 +726,64 @@ export default function CasoFormularioActivo({
               )}
             </div>
 
-            {/* Selector Ergonómico de Lateralidad / Ojo Quirúrgico */}
+            {/* 1. Fechas Quirúrgicas (Inmediatamente debajo de la Práctica) */}
+            <div className="p-3 bg-neutral-950/70 border border-amber-500/20 rounded-xl space-y-2.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                  <Calendar size={14} className="text-amber-400" />
+                  Programación de Fechas de Cirugía
+                </label>
+                {fechaDefinitiva ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                    <CheckCircle2 size={10} /> Fijada en Quirófano
+                  </span>
+                ) : fechaProbable ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    Fecha Estimada
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-gray-400 font-medium block mb-1">
+                    {ojo === 'AO' && modalidadBilateral === 'escalonada'
+                      ? `Fecha Probable (${ordenOjos === 'OD_primero' ? '1° Ojo Derecho - OD' : '1° Ojo Izquierdo - OI'})`
+                      : 'Fecha Probable / Tentativa'}
+                  </label>
+                  <input
+                    type="date"
+                    disabled={guardando}
+                    value={fechaProbable}
+                    onChange={(e) => {
+                      const nueva = e.target.value
+                      setFechaProbable(nueva)
+                      if (ojo === 'AO' && modalidadBilateral === 'escalonada' && nueva && !fechaProbable2doOjo) {
+                        setFechaProbable2doOjo(sumarDiasFecha(nueva, 7))
+                      }
+                    }}
+                    className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-xl text-white font-mono focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] text-emerald-400 font-bold block mb-1">
+                    {ojo === 'AO' && modalidadBilateral === 'escalonada'
+                      ? `Fecha Definitiva (${ordenOjos === 'OD_primero' ? '1° Ojo OD' : '1° Ojo OI'})`
+                      : 'Fecha Definitiva (Fijada en Qx)'}
+                  </label>
+                  <input
+                    type="date"
+                    disabled={guardando}
+                    value={fechaDefinitiva}
+                    onChange={(e) => setFechaDefinitiva(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-emerald-300 font-mono font-bold focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Selector Ergonómico de Lateralidad / Ojo Quirúrgico */}
             <div className="p-3 bg-neutral-950/70 border border-blue-500/20 rounded-xl space-y-2.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
@@ -745,7 +825,12 @@ export default function CasoFormularioActivo({
 
                 <button
                   type="button"
-                  onClick={() => setOjo('AO')}
+                  onClick={() => {
+                    setOjo('AO')
+                    if (!fechaProbable2doOjo && fechaProbable) {
+                      setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, 7))
+                    }
+                  }}
                   className={`p-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 border ${
                     ojo === 'AO'
                       ? 'bg-purple-600/30 border-purple-500 text-purple-300 shadow-md shadow-purple-500/10'
@@ -758,12 +843,17 @@ export default function CasoFormularioActivo({
 
               {/* Opciones Avanzadas si es Ambos Ojos (AO) */}
               {ojo === 'AO' && (
-                <div className="pt-2 border-t border-gray-800 space-y-2 text-xs">
+                <div className="pt-2 border-t border-gray-800 space-y-3 text-xs">
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-gray-400 font-medium">Modalidad:</span>
                     <button
                       type="button"
-                      onClick={() => setModalidadBilateral('escalonada')}
+                      onClick={() => {
+                        setModalidadBilateral('escalonada')
+                        if (!fechaProbable2doOjo && fechaProbable) {
+                          setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, 7))
+                        }
+                      }}
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
                         modalidadBilateral === 'escalonada'
                           ? 'bg-purple-600 text-white border-purple-500'
@@ -786,97 +876,180 @@ export default function CasoFormularioActivo({
                   </div>
 
                   {modalidadBilateral === 'escalonada' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 block mb-1">Orden de Intervención:</label>
-                        <select
-                          value={ordenOjos}
-                          onChange={(e) => setOrdenOjos(e.target.value as any)}
-                          className="w-full p-1.5 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-purple-500"
-                        >
-                          <option value="OD_primero">1° Ojo Derecho (OD) ➔ 2° Ojo Izquierdo (OI)</option>
-                          <option value="OI_primero">1° Ojo Izquierdo (OI) ➔ 2° Ojo Derecho (OD)</option>
-                        </select>
+                    <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="text-[10px] font-bold text-purple-300 block mb-1">
+                            Orden de Intervención:
+                          </label>
+                          <select
+                            value={ordenOjos}
+                            onChange={(e) => setOrdenOjos(e.target.value as any)}
+                            className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-purple-500"
+                          >
+                            <option value="OD_primero">1° Ojo Derecho (OD) ➔ 2° Ojo Izquierdo (OI)</option>
+                            <option value="OI_primero">1° Ojo Izquierdo (OI) ➔ 2° Ojo Derecho (OD)</option>
+                          </select>
+                        </div>
+
+                        {/* Resumen fecha 1er ojo tomada de la fecha elegida arriba */}
+                        <div className="p-2 rounded-lg bg-neutral-900/80 border border-[var(--border)] flex flex-col justify-center">
+                          <span className="text-[10px] text-gray-400">
+                            Fecha 1° Ojo ({ordenOjos === 'OD_primero' ? 'OD' : 'OI'}):
+                          </span>
+                          <span className="font-mono text-xs font-bold text-amber-300">
+                            {fechaProbable
+                              ? `${fechaProbable.split('-').reverse().join('/')} ${fechaDefinitiva ? '(Fijada Qx)' : '(Probable)'}`
+                              : '⚠️ Sin fecha probable definida arriba'}
+                          </span>
+                        </div>
                       </div>
 
-                      <div>
-                        <label className="text-[10px] font-bold text-gray-400 block mb-1">Fecha Estimada 2do Ojo:</label>
-                        <input
-                          type="date"
-                          value={fechaProbable2doOjo}
-                          onChange={(e) => setFechaProbable2doOjo(e.target.value)}
-                          className="w-full p-1.5 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-purple-500"
-                        />
+                      {/* Configuración de Fecha para el 2do Ojo con relación directa a la 1ra fecha */}
+                      <div className="space-y-2 pt-2 border-t border-purple-500/20">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                          <label className="text-[11px] font-bold text-purple-200 flex items-center gap-1">
+                            <span>Fecha Estimada 2° Ojo ({ordenOjos === 'OD_primero' ? 'OI' : 'OD'}):</span>
+                          </label>
+
+                          {/* Botones de cálculo rápido basados en la fecha 1 */}
+                          {fechaProbable && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-400 mr-0.5">Sugerir intervalo:</span>
+                              {[7, 14, 21, 30].map((dias) => (
+                                <button
+                                  key={dias}
+                                  type="button"
+                                  onClick={() => setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, dias))}
+                                  className="px-2 py-0.5 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/30 text-[10px] font-bold transition"
+                                  title={`Fijar a ${dias} días de la fecha del 1° ojo`}
+                                >
+                                  +{dias}d
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="text-[10px] text-gray-400 block mb-1">Fecha Probable 2° Ojo:</label>
+                            <input
+                              type="date"
+                              value={fechaProbable2doOjo}
+                              min={fechaProbable || undefined}
+                              onChange={(e) => setFechaProbable2doOjo(e.target.value)}
+                              className="w-full p-2 rounded-xl bg-neutral-900 border border-purple-500/40 text-xs text-white font-mono outline-none focus:border-purple-400"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="text-[10px] text-emerald-400 font-bold block mb-1">Fecha Definitiva 2° Ojo (Qx):</label>
+                            <input
+                              type="date"
+                              value={fechaDefinitiva2doOjo}
+                              min={fechaDefinitiva || fechaProbable || undefined}
+                              onChange={(e) => setFechaDefinitiva2doOjo(e.target.value)}
+                              className="w-full p-2 rounded-xl bg-neutral-900 border border-emerald-500/30 text-xs text-emerald-300 font-mono outline-none focus:border-emerald-400"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Indicador de relación de intervalo entre ambos ojos */}
+                        {(() => {
+                          const diff = calcularDiferenciaDias(fechaProbable, fechaProbable2doOjo)
+                          if (diff === null) return null
+                          if (diff > 0) {
+                            return (
+                              <p className="text-[11px] text-purple-300 flex items-center gap-1 font-medium bg-purple-950/40 px-2 py-1 rounded-lg border border-purple-500/20">
+                                <span>✔ Programado con un intervalo de <strong>{diff} días</strong> entre el 1° y 2° ojo.</span>
+                              </p>
+                            )
+                          } else if (diff === 0) {
+                            return (
+                              <p className="text-[11px] text-amber-300 flex items-center gap-1 font-medium bg-amber-950/40 px-2 py-1 rounded-lg border border-amber-500/20">
+                                <span>⚠️ Ambas fechas son el mismo día. Si opera en simultáneo, puedes elegir la modalidad &quot;Mismo Acto&quot;.</span>
+                              </p>
+                            )
+                          } else {
+                            return (
+                              <p className="text-[11px] text-red-400 flex items-center gap-1 font-medium bg-red-950/40 px-2 py-1 rounded-lg border border-red-500/20">
+                                <span>⚠️ La fecha del 2° ojo no puede ser anterior a la del 1° ojo.</span>
+                              </p>
+                            )
+                          }
+                        })()}
                       </div>
                     </div>
                   )}
                 </div>
               )}
-
-              {/* Tarjeta de Cálculo Biométrico de LIO & Acceso Directo */}
-              <div className={`p-3 rounded-xl border space-y-2 transition-all ${
-                tieneLioCalculado
-                  ? 'bg-emerald-950/40 border-emerald-500/40'
-                  : 'bg-neutral-950/60 border-[var(--border)]'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-bold">
-                    <Sparkles size={14} className={tieneLioCalculado ? 'text-emerald-400' : 'text-blue-400'} />
-                    <span className={tieneLioCalculado ? 'text-emerald-300' : 'text-gray-300'}>
-                      {tieneLioCalculado ? 'Cálculo Biométrico de LIO Sellado' : 'Mesa Biométrica & Cálculo de LIO'}
-                    </span>
-                  </div>
-                  <a
-                    href="/calculo-lio"
-                    target="_blank"
-                    rel="noreferrer"
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shadow-sm ${
-                      tieneLioCalculado
-                        ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                        : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40'
-                    }`}
-                  >
-                    <span>{tieneLioCalculado ? 'Ver Mesa Biométrica' : 'Abrir Cálculo LIO ➔'}</span>
-                    <ExternalLink size={11} />
-                  </a>
-                </div>
-
-                {tieneLioCalculado ? (
-                  <div className="space-y-1 text-xs text-gray-300 font-mono">
-                    {lioOD && (
-                      <div className="flex items-center gap-2">
-                        <span className="px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold">OD</span>
-                        <span className="text-white font-bold">{lioOD.opciones?.[0]?.modelo || 'Lente OD'}</span>
-                        <span className="text-cyan-400 font-extrabold">+{lioOD.opciones?.[0]?.dioptria || '20.00'} D</span>
-                        {lioOD.opciones?.[0]?.es_torico && (
-                          <span className="text-[10px] text-purple-300">T{lioOD.opciones?.[0]?.torico_valor} @ {lioOD.opciones?.[0]?.torico_eje}°</span>
-                        )}
-                      </div>
-                    )}
-                    {lioOI && (
-                      <div className="flex items-center gap-2">
-                        <span className="px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 text-[10px] font-bold">OI</span>
-                        <span className="text-white font-bold">{lioOI.opciones?.[0]?.modelo || 'Lente OI'}</span>
-                        <span className="text-cyan-400 font-extrabold">+{lioOI.opciones?.[0]?.dioptria || '20.00'} D</span>
-                        {lioOI.opciones?.[0]?.es_torico && (
-                          <span className="text-[10px] text-purple-300">T{lioOI.opciones?.[0]?.torico_valor} @ {lioOI.opciones?.[0]?.torico_eje}°</span>
-                        )}
-                      </div>
-                    )}
-                    {(!lioOD && !lioOI && caso.lente_tipo) && (
-                      <div className="text-white font-bold">
-                        {caso.lente_tipo} (+{caso.lente_dioptria || '21.50'} D)
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-[11px] text-gray-400">
-                    Define la biometría y selección de lente intraocular para esta práctica en la mesa de cálculo.
-                  </p>
-                )}
-              </div>
             </div>
 
+            {/* 3. Tarjeta de Cálculo Biométrico de LIO & Acceso Directo */}
+            <div className={`p-3 rounded-xl border space-y-2 transition-all ${
+              tieneLioCalculado
+                ? 'bg-emerald-950/40 border-emerald-500/40'
+                : 'bg-neutral-950/60 border-[var(--border)]'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold">
+                  <Sparkles size={14} className={tieneLioCalculado ? 'text-emerald-400' : 'text-blue-400'} />
+                  <span className={tieneLioCalculado ? 'text-emerald-300' : 'text-gray-300'}>
+                    {tieneLioCalculado ? 'Cálculo Biométrico de LIO Sellado' : 'Mesa Biométrica & Cálculo de LIO'}
+                  </span>
+                </div>
+                <a
+                  href="/calculo-lio"
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shadow-sm ${
+                    tieneLioCalculado
+                      ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40'
+                  }`}
+                >
+                  <span>{tieneLioCalculado ? 'Ver Mesa Biométrica' : 'Abrir Cálculo LIO ➔'}</span>
+                  <ExternalLink size={11} />
+                </a>
+              </div>
+
+              {tieneLioCalculado ? (
+                <div className="space-y-1 text-xs text-gray-300 font-mono">
+                  {lioOD && (
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold">OD</span>
+                      <span className="text-white font-bold">{lioOD.opciones?.[0]?.modelo || 'Lente OD'}</span>
+                      <span className="text-cyan-400 font-extrabold">+{lioOD.opciones?.[0]?.dioptria || '20.00'} D</span>
+                      {lioOD.opciones?.[0]?.es_torico && (
+                        <span className="text-[10px] text-purple-300">T{lioOD.opciones?.[0]?.torico_valor} @ {lioOD.opciones?.[0]?.torico_eje}°</span>
+                      )}
+                    </div>
+                  )}
+                  {lioOI && (
+                    <div className="flex items-center gap-2">
+                      <span className="px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 text-[10px] font-bold">OI</span>
+                      <span className="text-white font-bold">{lioOI.opciones?.[0]?.modelo || 'Lente OI'}</span>
+                      <span className="text-cyan-400 font-extrabold">+{lioOI.opciones?.[0]?.dioptria || '20.00'} D</span>
+                      {lioOI.opciones?.[0]?.es_torico && (
+                        <span className="text-[10px] text-purple-300">T{lioOI.opciones?.[0]?.torico_valor} @ {lioOI.opciones?.[0]?.torico_eje}°</span>
+                      )}
+                    </div>
+                  )}
+                  {(!lioOD && !lioOI && caso.lente_tipo) && (
+                    <div className="text-white font-bold">
+                      {caso.lente_tipo} (+{caso.lente_dioptria || '21.50'} D)
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-400">
+                  Define la biometría y selección de lente intraocular para esta práctica en la mesa de cálculo.
+                </p>
+              )}
+            </div>
+
+            {/* 4. Cobertura */}
             <div className="flex items-center gap-2 pt-1">
               <span className="text-[11px] text-gray-400">Cobertura:</span>
               <input
@@ -1028,38 +1201,6 @@ export default function CasoFormularioActivo({
                     )}
                   </div>
                 )}
-              </div>
-            </div>
-          </div>
-
-          {/* Card: Fechas Quirúrgicas (Probable vs Definitiva) */}
-          <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">
-            <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-              <Calendar size={14} className="text-amber-400" />
-              Programación de Fechas de Cirugía
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-[11px] text-gray-400 font-medium block mb-1">Fecha Probable / Tentativa</label>
-                <input
-                  type="date"
-                  disabled={guardando}
-                  value={fechaProbable}
-                  onChange={(e) => setFechaProbable(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-xl text-white font-mono focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] text-emerald-400 font-bold block mb-1">Fecha Definitiva (Fijada en Qx)</label>
-                <input
-                  type="date"
-                  disabled={guardando}
-                  value={fechaDefinitiva}
-                  onChange={(e) => setFechaDefinitiva(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-emerald-300 font-mono font-bold focus:outline-none"
-                />
               </div>
             </div>
           </div>
