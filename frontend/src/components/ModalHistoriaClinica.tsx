@@ -744,29 +744,29 @@ export default function ModalHistoriaClinica({
           />
         )}
 
-        {/* Cinta de pestañas destacada con relieve físico de archivador clínico */}
-        <div className="bg-[#dbe7ed] border-b-2 border-[#b8cdd6] px-3 pt-2 pb-0 flex items-center justify-between flex-shrink-0 z-20 shadow-inner">
-          <div className="flex items-end gap-1.5 overflow-x-auto text-xs font-bold scrollbar-none">
+        {/* Cinta de pestañas destacada con relieve físico de archivador clínico (Sin barras de scroll) */}
+        <div className="bg-[#dbe7ed] border-b-2 border-[#b8cdd6] px-2.5 pt-1.5 pb-0 flex items-end justify-between flex-shrink-0 z-20 overflow-hidden">
+          <div className="flex items-end gap-1 text-xs font-bold flex-wrap sm:flex-nowrap">
             <button
               type="button"
               onClick={() => setActiveTab('evolucion')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'evolucion'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <Activity className="w-3.5 h-3.5" />
-              Antecedentes y Evolución
+              Evolución
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('estudios')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'estudios'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <FileText className="w-3.5 h-3.5" />
@@ -781,74 +781,74 @@ export default function ModalHistoriaClinica({
             <button
               type="button"
               onClick={() => setActiveTab('recetas_anteojos')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'recetas_anteojos'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <Glasses className="w-3.5 h-3.5" />
-              Recetas de Anteojos
+              Recetas Anteojos
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('recetas_farmacos')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'recetas_farmacos'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <Pill className="w-3.5 h-3.5" />
-              Recetas Fármacos (Rp)
+              Fármacos (Rp)
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('indicaciones')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'indicaciones'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
-              Indicaciones al Paciente
+              Indicaciones
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('pedidos_estudios')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'pedidos_estudios'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <ClipboardList className="w-3.5 h-3.5" />
-              Pedidos de Estudios
+              Pedidos Estudios
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('geclisa')}
-              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg ${
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'geclisa'
-                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3.5 py-2 -mb-[2px] shadow-sm z-10'
-                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-3 py-1.5 font-bold mb-0'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
               }`}
             >
               <FolderDown className="w-3.5 h-3.5" />
-              Ficha Geclisa (Legado)
+              Ficha Geclisa
             </button>
           </div>
 
-          <div className="flex items-center gap-2 pb-1.5">
+          <div className="flex items-center gap-2 pb-1">
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 text-[#597182] hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-200"
+              className="p-1 text-[#597182] hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-200"
               title="Cerrar modal"
             >
               <X className="w-5 h-5" />
