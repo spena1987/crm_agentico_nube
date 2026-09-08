@@ -394,6 +394,7 @@ export default function ItemCasoQuirurgicoAcordeon({
 
     await handleGuardarCambios(payloadActualizacion)
     setMostrarModalPresupuesto(false)
+    setPresupuestoParaEnviarWA(nuevoPresupuesto)
   }
 
   const estadoNormalizado = caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado
@@ -536,6 +537,25 @@ export default function ItemCasoQuirurgicoAcordeon({
           telefonoDefault={pacienteTelefono || ''}
           totalArs={presupuestoParaEnviarWA.total}
           pdfUrl={presupuestoParaEnviarWA.pdf_url}
+          onSuccess={async () => {
+            const nuevoEstado: AsesoriaQuirurgica['estado'] = 'en_analisis'
+            const presId = presupuestoParaEnviarWA?.id || caso.presupuesto_id
+            const casoActualizado: AsesoriaQuirurgica = {
+              ...caso,
+              estado: nuevoEstado,
+              presupuesto_id: presId
+            }
+            onCasoActualizado(casoActualizado)
+            try {
+              await handleGuardarCambios({
+                estado: nuevoEstado,
+                presupuesto_id: presId
+              })
+            } catch (err) {
+              console.error('Error al actualizar estado del caso a en_analisis:', err)
+            }
+            setPresupuestoParaEnviarWA(null)
+          }}
         />
       )}
 

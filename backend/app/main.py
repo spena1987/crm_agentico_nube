@@ -5151,10 +5151,10 @@ def listar_pacientes_calculo_lio(
             }
             items.append(item)
 
-        # 2. Consultar asesorías confirmadas, programadas o en proceso que aún no tengan turno agendado para cada ojo
+        # 2. Consultar asesorías confirmadas o programadas que aún no tengan turno agendado para cada ojo
         q_asesorias = supabase.table("asesorias_quirurgicas").select(
             "*, pacientes(*)"
-        ).in_("estado", ["confirmado", "programado", "en_asesoramiento", "presupuesto_enviado", "en_analisis"]).order("created_at", desc=True)
+        ).in_("estado", ["confirmado", "programado"]).order("created_at", desc=True)
 
         res_as = q_asesorias.execute()
         for a in (res_as.data or []):

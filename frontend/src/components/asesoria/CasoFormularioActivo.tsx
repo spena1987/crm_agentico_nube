@@ -1311,7 +1311,10 @@ export default function CasoFormularioActivo({
                             {onEnviarPresupuestoWhatsApp && (
                               <button
                                 type="button"
-                                onClick={() => onEnviarPresupuestoWhatsApp(p)}
+                                onClick={() => {
+                                  handleGuardarCambios()
+                                  onEnviarPresupuestoWhatsApp(p)
+                                }}
                                 className="p-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/50 rounded-lg text-xs font-bold transition-all"
                                 title="Enviar presupuesto por WhatsApp"
                               >

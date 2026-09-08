@@ -2851,19 +2851,38 @@ def enviar_presupuesto_por_whatsapp(
     # 6. Actualizar estado del presupuesto a 'enviado'
     supabase.table("presupuestos").update({"estado": "enviado"}).eq("id", presupuesto_id).execute()
     
-    # 7. Sincronizar asesoría quirúrgica si existe
+    # 7. Sincronizar asesoría quirúrgica si existe y registrar evolución
+    asesoria_actualizada = None
     if presupuesto.get("asesoria_id"):
-        supabase.table("asesorias_quirurgicas") \
+        as_id = presupuesto["asesoria_id"]
+        res_as = supabase.table("asesorias_quirurgicas") \
             .update({"estado": "en_analisis", "updated_at": "now()"}) \
-            .eq("id", presupuesto["asesoria_id"]) \
+            .eq("id", as_id) \
+            .select() \
             .execute()
+        if res_as.data:
+            asesoria_actualizada = res_as.data[0]
+
+        try:
+            crear_evolucion_asesoria({
+                "asesoria_id": as_id,
+                "paciente_id": paciente.get("id"),
+                "usuario_nombre": "Asesoramiento Quirúrgico (Sistema)",
+                "tipo_contacto": "whatsapp",
+                "contenido": f"Presupuesto médico oficial #{presupuesto_id[:8]} enviado exitosamente por WhatsApp al número {clean_phone}. Caso quirúrgico avanza a etapa 'En Análisis'."
+            })
+        except Exception as err_ev:
+            logger.warning(f"No se pudo registrar evolución automática al enviar presupuesto: {err_ev}")
             
     return {
         "success": True,
         "mensaje": "Presupuesto y PDF enviados exitosamente por WhatsApp.",
         "whatsapp_result": w_res,
         "telefono": clean_phone,
-        "caption": mensaje_final
+        "caption": mensaje_final,
+        "asesoria_id": presupuesto.get("asesoria_id"),
+        "nuevo_estado": "en_analisis" if presupuesto.get("asesoria_id") else None,
+        "asesoria": asesoria_actualizada
     }
 
 

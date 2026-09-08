@@ -987,6 +987,20 @@ export default function PacientesPage() {
           pdfUrl={presupuestoParaWhatsApp.pdf_url}
           totalArs={presupuestoParaWhatsApp.total_ars || presupuestoParaWhatsApp.total || 0}
           totalUsd={presupuestoParaWhatsApp.total_usd || 0}
+          onSuccess={(resData) => {
+            const asId = presupuestoParaWhatsApp.asesoria_id || (resData && resData.asesoria_id)
+            if (asId) {
+              setPacientes((prev) =>
+                prev.map((p) => {
+                  if (p.id !== pacienteSeleccionado.id) return p
+                  const asesoriasActualizadas = (p.asesorias_quirurgicas || []).map((as) =>
+                    as.id === asId ? { ...as, estado: 'en_analisis' } : as
+                  )
+                  return { ...p, asesorias_quirurgicas: asesoriasActualizadas }
+                })
+              )
+            }
+          }}
         />
       )}
 

@@ -27,7 +27,7 @@ interface ModalEnviarPresupuestoWhatsAppProps {
   pdfUrl?: string | null
   totalArs?: number
   totalUsd?: number
-  onSuccess?: () => void
+  onSuccess?: (resData?: any) => void
 }
 
 export default function ModalEnviarPresupuestoWhatsApp({
@@ -124,7 +124,7 @@ export default function ModalEnviarPresupuestoWhatsApp({
       if (res.ok && data.success) {
         setSuccessMsg('¡Presupuesto y mensaje enviados exitosamente por WhatsApp!')
         setTimeout(() => {
-          if (onSuccess) onSuccess()
+          if (onSuccess) onSuccess(data)
           onClose()
         }, 1200)
       } else {
