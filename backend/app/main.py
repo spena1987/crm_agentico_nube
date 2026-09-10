@@ -149,7 +149,8 @@ from app.services.copilot_service import (
 from app.services.phone_normalizer import normalize_phone_number
 from app.whatsapp import (
     iniciar_daemon_whatsapp, 
-    whatsapp_manager
+    whatsapp_manager,
+    get_active_jid_for_paciente_o_conversacion
 )
 from app.services.pdf_service import PDF_DIR
 from app.services.media_service import media_service, STATIC_MEDIA_DIR
@@ -516,10 +517,27 @@ class IncomingWebhookMessage(BaseModel):
 
 def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto: str, remote_jid: Optional[str] = None):
     """
-    Ejecuta el Agente IA de Gemini en segundo plano con filtro rápido de escalamiento
-    y auto-lectura al responder con éxito, enrutando por el canal activo dinámico.
+    Ejecuta el Agente IA de Gemini en segundo plano con comprobación de período de gracia (15m),
+    emisión de presencia ('Escribiendo...'), filtro rápido de escalamiento y auto-lectura al responder.
     """
     try:
+        # 1. Comprobar bloqueo y período de gracia (15 minutos desde el último mensaje de operador humano)
+        if conversacion_id and supabase:
+            try:
+                c_res = supabase.table("conversaciones").select("metadata_json, bot_disabled").eq("id", conversacion_id).execute()
+                if c_res.data:
+                    c_row = c_res.data[0]
+                    if c_row.get("bot_disabled"):
+                        logger.info(f"Bot IA desactivado manualmente para conversación {conversacion_id}. Omitiendo respuesta.")
+                        return
+                    c_meta = c_row.get("metadata_json") or {}
+                    last_human = c_meta.get("ultimo_mensaje_humano_at")
+                    if last_human and (time.time() - float(last_human) < 900):
+                        logger.info(f"Conversación {conversacion_id} en período de gracia de operador humano ({int(time.time() - float(last_human))}s < 900s). Omitiendo respuesta de IA.")
+                        return
+            except Exception as grace_err:
+                logger.warning(f"Error comprobando período de gracia en bot: {grace_err}")
+
         texto_lower = texto.lower()
         # Filtro rápido de palabras clave para derivación inmediata a operador humano (0ms latencia)
         patron_humano = r'\b(humano|persona|secretaria|operador|asesor|asesora|hablar con alguien|atencion humana|atención personalizada)\b'
@@ -536,7 +554,14 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
             )
             return
 
-        respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
+        # Enviar presencia 'composing' (Escribiendo...) hacia WhatsApp mientras Gemini formula la respuesta médica
+        target_jid = remote_jid or clean_phone
+        whatsapp_manager.enviar_presencia(remote_jid=target_jid, presence="composing")
+        try:
+            respuesta_agente = procesar_mensaje_agente(conversacion_id=conversacion_id, mensaje_texto_o_paciente_id=texto)
+        finally:
+            whatsapp_manager.enviar_presencia(remote_jid=target_jid, presence="paused")
+
         if respuesta_agente:
             whatsapp_manager.enviar_mensaje(clean_phone, respuesta_agente, conversacion_id=conversacion_id, emisor="bot", remote_jid=remote_jid)
             # Auto-lectura de la consulta gestionada 100% por IA (no generar badges falsos a operadores humanos)
@@ -632,6 +657,22 @@ async def receive_incoming_whatsapp_message(
                         except Exception as upd_err:
                             logger.warning(f"Error actualizando delivery_status para {msg_id}: {upd_err}")
                 return {"status": "processed", "event": event_name}
+
+            # 1.1b Actualización reactiva de QR (QRCODE_UPDATED)
+            if event_name in ["QRCODE_UPDATED", "QRCODE.UPDATED"]:
+                qrcode_data = data.get("qrcode") or {}
+                b64 = qrcode_data.get("base64") or data.get("base64")
+                pairing_code = qrcode_data.get("pairingCode") or data.get("pairingCode")
+                if b64:
+                    whatsapp_manager.set_cached_qr(b64, pairing_code=pairing_code)
+                return {"status": "processed", "event": "QRCODE_UPDATED"}
+
+            # 1.1c Actualización reactiva de Conexión (CONNECTION_UPDATE)
+            if event_name in ["CONNECTION_UPDATE", "CONNECTION.UPDATE"]:
+                state = data.get("state") or data.get("status")
+                if state:
+                    whatsapp_manager.handle_connection_update(state, data)
+                return {"status": "processed", "event": "CONNECTION_UPDATE"}
 
             # 1.2 Mensaje entrante de WhatsApp (MESSAGES_UPSERT)
             if event_name in ["MESSAGES_UPSERT", "MESSAGES.UPSERT"]:
@@ -1059,12 +1100,34 @@ def marcar_conversacion_leida_api(conversacion_id: str):
         w_ids = res.get("whatsapp_message_ids", [])
         telefono = res.get("telefono")
 
-        if telefono and w_ids:
-            whatsapp_manager.marcar_como_leido(telefono_o_jid=telefono, message_ids=w_ids)
+        if w_ids:
+            whatsapp_manager.marcar_como_leido(
+                telefono_o_jid=telefono or "",
+                message_ids=w_ids,
+                conversacion_id=conversacion_id
+            )
 
         return {"success": True, "mensajes_marcados": len(w_ids)}
     except Exception as e:
         logger.error(f"Error marcando conversación {conversacion_id} como leída: {e}")
+        return {"success": False, "error": str(e)}
+
+class PresenceRequest(BaseModel):
+    presence: str = "composing"  # "composing" o "paused"
+
+@app.post("/api/conversaciones/{conversacion_id}/presencia")
+def enviar_presencia_conversacion_api(conversacion_id: str, payload: PresenceRequest):
+    """
+    Emite el estado 'Escribiendo...' ('composing') o 'En pausa' ('paused') hacia WhatsApp
+    mientras el operador redacta en la interfaz web del CRM.
+    """
+    try:
+        active_lid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id)
+        if active_lid:
+            ok = whatsapp_manager.enviar_presencia(remote_jid=active_lid, presence=payload.presence)
+            return {"success": ok}
+        return {"success": False, "reason": "no_active_jid"}
+    except Exception as e:
         return {"success": False, "error": str(e)}
 
 @app.post("/api/conversaciones/{conversacion_id}/marcar-no-leido")
@@ -1308,6 +1371,18 @@ def send_message_api(payload: SendMessageRequest):
     )
     if "error" in result and not result.get("guardado_db"):
         raise HTTPException(status_code=400, detail=result["error"])
+
+    # Registrar marca de tiempo del operador para activar el período de gracia de 15 minutos en el Bot IA
+    if conversacion_id and supabase:
+        try:
+            c_res = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+            if c_res.data:
+                c_meta = c_res.data[0].get("metadata_json") or {}
+                c_meta["ultimo_mensaje_humano_at"] = time.time()
+                supabase.table("conversaciones").update({"metadata_json": c_meta}).eq("id", conversacion_id).execute()
+        except Exception as grace_upd_err:
+            logger.warning(f"Error actualizando timestamp de último mensaje humano: {grace_upd_err}")
+
     return result
 
 @app.post("/api/mensajes/{mensaje_id}/reaccionar")
@@ -5372,28 +5447,107 @@ def listar_pacientes_calculo_lio(
     except Exception as e:
         logger.error(f"Error al listar pacientes para cálculo de LIO: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error al listar pacientes para cálculo de LIO: {str(e)}")
+class OpcionLioItemPayload(BaseModel):
+    id: Optional[str] = None
+    tipo_opcion: Optional[str] = "principal"
+    etiqueta: Optional[str] = None
+    modelo: str
+    modelo_lio_id: Optional[str] = None
+    dioptria: Union[str, float]
+    es_torico: Optional[bool] = False
+    torico_valor: Optional[Union[str, int, float]] = None
+    torico_eje: Optional[Union[str, int, float]] = None
+    target_refractivo: Optional[str] = None
+    formula: Optional[str] = None
+    observaciones: Optional[str] = None
+    es_implantado: Optional[bool] = False
+    es_personalizado: Optional[bool] = False
+    constante_a_custom: Optional[float] = None
+
 class GuardarCalculoLioPayload(BaseModel):
     turno_id: Optional[str] = None
     asesoria_id: Optional[str] = None
     paciente_id: Optional[str] = None
-    lio_calculado_por: str
-    opciones: List[Dict[str, Any]]
+    lio_calculado_por: Optional[str] = None
+    opciones: List[OpcionLioItemPayload]
     confirmar: bool = True
     formula: Optional[str] = None
     target_refractivo: Optional[str] = None
     observaciones: Optional[str] = None
     ojo: Optional[str] = None
 
+def normalizar_torico_valor(val: Any) -> Optional[int]:
+    """Normaliza valores como 3, '3', 'T3', 't3' a un entero entre 1 y 9."""
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s or s.lower() in ["none", "null", "0"]:
+        return None
+    match = re.search(r'(\d+)', s)
+    if match:
+        n = int(match.group(1))
+        return n if 1 <= n <= 9 else None
+    return None
+
+def normalizar_torico_eje(val: Any) -> Optional[int]:
+    """Normaliza el eje quirúrgico al rango fisiológico estándar [0, 180]."""
+    if val is None:
+        return None
+    try:
+        eje = int(round(float(val)))
+        if 0 <= eje <= 180:
+            return eje
+    except Exception:
+        pass
+    return 90
+
+def validar_y_normalizar_dioptria(val: Any) -> str:
+    """Valida que la dioptría esté dentro del rango médico estándar (-10.00 D a +35.00 D)."""
+    try:
+        s = str(val).replace("+", "").replace("D", "").strip()
+        d = float(s)
+        if not (-10.0 <= d <= 35.0):
+            raise ValueError(f"Dioptría {d:+.2f} fuera del rango clínico estándar (-10.0 D a +35.0 D).")
+        return f"{d:+.2f}" if d != 0 else "0.00"
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Graduación de lente inválida: {val}. {str(e)}")
+
 @app.post("/api/calculo-lio/guardar")
-def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
+def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload, request: Request):
     """
-    Guarda o confirma el cálculo de LIO para un paciente, protegiendo la lateralidad bilateral de asesorías.
+    Guarda o confirma el cálculo de LIO para un paciente, validando dioptrías,
+    normalizando valores tóricos y registrando la firma médico-legal del operador.
     """
     try:
         from datetime import datetime, timezone
         ahora_iso = datetime.now(timezone.utc).isoformat()
+
+        # Extraer operador autenticado del middleware
+        user_info = getattr(request.state, "user", None) or {}
+        firmado_por = (
+            user_info.get("email")
+            or user_info.get("nombre")
+            or payload.lio_calculado_por
+            or "Cirujano"
+        )
         
-        opciones = payload.opciones or []
+        opciones_raw = payload.opciones or []
+        if not opciones_raw:
+            raise HTTPException(status_code=422, detail="Debe proporcionar al menos una opción de lente intraocular.")
+
+        # Validar y serializar opciones a diccionario seguro
+        opciones_dict: List[Dict[str, Any]] = []
+        for op in opciones_raw:
+            diop_norm = validar_y_normalizar_dioptria(op.dioptria)
+            t_val = normalizar_torico_valor(op.torico_valor) if op.es_torico else None
+            t_eje = normalizar_torico_eje(op.torico_eje) if op.es_torico else None
+
+            op_item = op.model_dump() if hasattr(op, "model_dump") else op.dict()
+            op_item["dioptria"] = diop_norm
+            op_item["torico_valor"] = t_val
+            op_item["torico_eje"] = t_eje
+            opciones_dict.append(op_item)
+
         modelo_ppal = None
         dioptria_ppal = None
         es_torico_ppal = False
@@ -5401,21 +5555,20 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
         torico_eje_ppal = None
 
         # Determinar valores principales del primer lente / plan A
-        if opciones:
-            ppal = next((op for op in opciones if op.get("tipo_opcion") == "principal"), opciones[0])
-            modelo_ppal = ppal.get("modelo")
-            dioptria_ppal = ppal.get("dioptria")
-            es_torico_ppal = bool(ppal.get("es_torico"))
-            torico_valor_ppal = ppal.get("torico_valor")
-            torico_eje_ppal = ppal.get("torico_eje")
+        ppal = next((op for op in opciones_dict if op.get("tipo_opcion") == "principal"), opciones_dict[0])
+        modelo_ppal = ppal.get("modelo")
+        dioptria_ppal = ppal.get("dioptria")
+        es_torico_ppal = bool(ppal.get("es_torico"))
+        torico_valor_ppal = ppal.get("torico_valor")
+        torico_eje_ppal = ppal.get("torico_eje")
 
         es_confirmado = bool(payload.confirmar)
 
         upd_data = {
             "lio_calculado": es_confirmado,
             "lio_calculado_at": ahora_iso if es_confirmado else None,
-            "lio_calculado_por": payload.lio_calculado_por if es_confirmado else None,
-            "lio_calculo_opciones": opciones
+            "lio_calculado_por": firmado_por if es_confirmado else None,
+            "lio_calculo_opciones": opciones_dict
         }
 
         # 1. Si hay turno_id, actualizar turnos_quirofano
@@ -5431,9 +5584,9 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
                 turno_upd["lente_dioptria"] = dioptria_ppal
             turno_upd["es_torico"] = es_torico_ppal
             if torico_valor_ppal is not None:
-                turno_upd["lente_torico_valor"] = int(torico_valor_ppal) if str(torico_valor_ppal).isdigit() else 0
+                turno_upd["lente_torico_valor"] = torico_valor_ppal
             if torico_eje_ppal is not None:
-                turno_upd["lente_torico_eje"] = int(torico_eje_ppal) if str(torico_eje_ppal).isdigit() else 90
+                turno_upd["lente_torico_eje"] = torico_eje_ppal
 
             supabase.table("turnos_quirofano").update(turno_upd).eq("id", payload.turno_id).execute()
 
@@ -5451,8 +5604,8 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
                 chk_existente[f"_lio_calculo_{ojo_guardar}"] = {
                     "lio_calculado": es_confirmado,
                     "lio_calculado_at": ahora_iso if es_confirmado else None,
-                    "lio_calculado_por": payload.lio_calculado_por if es_confirmado else None,
-                    "opciones": opciones
+                    "lio_calculado_por": firmado_por if es_confirmado else None,
+                    "opciones": opciones_dict
                 }
                 as_upd = {
                     "checklist_prequirurgico": chk_existente,
@@ -5468,14 +5621,22 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
                 supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
 
         accion_log = "CALCULO_LIO_CONFIRMADO" if es_confirmado else "CALCULO_LIO_BORRADOR"
-        mensaje_log = f"Cálculo de LIO {'confirmado' if es_confirmado else 'guardado como borrador'} ({len(opciones)} opciones) para {payload.ojo or 'OD'} por {payload.lio_calculado_por}"
+        mensaje_log = f"Cálculo de LIO {'confirmado' if es_confirmado else 'guardado como borrador'} ({len(opciones_dict)} opciones) para {payload.ojo or 'OD'} por {firmado_por}"
 
         log_event(
             nivel="INFO",
             modulo="QUIROFANO",
             accion=accion_log,
             mensaje=mensaje_log,
-            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id, "ojo": payload.ojo, "opciones_count": len(opciones), "confirmado": es_confirmado}
+            detalles={
+                "turno_id": payload.turno_id,
+                "asesoria_id": payload.asesoria_id,
+                "ojo": payload.ojo,
+                "opciones_count": len(opciones_dict),
+                "confirmado": es_confirmado,
+                "firmado_por": firmado_por,
+                "operador_auth": user_info.get("email")
+            }
         )
 
         return {
@@ -5483,10 +5644,13 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload):
             "mensaje": "Cálculo de LIO confirmado y sellado exitosamente." if es_confirmado else "Borrador de cálculo de LIO guardado.",
             "lio_calculado": es_confirmado,
             "lio_calculado_at": ahora_iso if es_confirmado else None,
-            "opciones": opciones
+            "lio_calculado_por": firmado_por if es_confirmado else None,
+            "opciones": opciones_dict
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error al guardar cálculo de LIO: {e}")
+        logger.error(f"Error al guardar cálculo de LIO: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 class ReabrirCalculoPayload(BaseModel):
@@ -5496,13 +5660,21 @@ class ReabrirCalculoPayload(BaseModel):
     ojo: Optional[str] = None
 
 @app.post("/api/calculo-lio/reabrir")
-def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload):
+def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload, request: Request):
     """
-    Reabre un cálculo de LIO confirmado para permitir su rectificación o ajuste médico por ojo.
+    Reabre un cálculo de LIO confirmado para permitir su rectificación médica.
+    Cualquier usuario autenticado del sistema puede reabrirlo, registrando la auditoría.
     """
     try:
         from datetime import datetime, timezone
         ahora_iso = datetime.now(timezone.utc).isoformat()
+
+        user_info = getattr(request.state, "user", None) or {}
+        usuario_reapertura = (
+            user_info.get("email")
+            or payload.usuario
+            or "Usuario del Sistema"
+        )
         
         upd = {
             "lio_calculado": False,
@@ -5537,12 +5709,19 @@ def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload):
             nivel="INFO",
             modulo="QUIROFANO",
             accion="CALCULO_LIO_REABIERTO",
-            mensaje=f"Cálculo de LIO reabierto para edición ({payload.ojo or 'OD'}) por {payload.usuario or 'Cirujano'}",
-            detalles={"turno_id": payload.turno_id, "asesoria_id": payload.asesoria_id, "ojo": payload.ojo}
+            mensaje=f"Cálculo de LIO reabierto para edición ({payload.ojo or 'OD'}) por {usuario_reapertura}",
+            detalles={
+                "turno_id": payload.turno_id,
+                "asesoria_id": payload.asesoria_id,
+                "ojo": payload.ojo,
+                "reabierto_por": usuario_reapertura
+            }
         )
         return {"success": True, "mensaje": "Cálculo reabierto para edición.", "lio_calculado": False}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error al reabrir cálculo de LIO: {e}")
+        logger.error(f"Error al reabrir cálculo de LIO: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 class ReservarStockPayload(BaseModel):

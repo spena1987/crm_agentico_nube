@@ -41,10 +41,13 @@ import {
   Boxes,
   Compass,
   SlidersHorizontal,
-  Info
+  Info,
+  Calculator
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso } from '@/lib/dateUtils'
+import { useDebounce } from '@/lib/useDebounce'
+import ModalAsistenteSRKT from '@/components/calculo-lio/ModalAsistenteSRKT'
 
 interface OpcionLio {
   id: string
@@ -57,24 +60,12 @@ interface OpcionLio {
   torico_valor: number | null
   torico_eje: number | null
   target_refractivo: string
-  formula: string
+  formula?: string
   observaciones: string
   es_implantado?: boolean
   es_personalizado?: boolean
   constante_a_custom?: number
 }
-
-const FORMULAS_LIO = [
-  'Barrett Universal II',
-  'Kane',
-  'EVO 2.0',
-  'Hill-RBF 3.0',
-  'Haigis',
-  'SRK/T',
-  'Holladay 1',
-  'Hoffer Q',
-  'Olsen'
-]
 
 const TARGETS_REFRACTIVOS = [
   'Emetropía (0.00 D)',
@@ -103,6 +94,8 @@ export default function CalculoLioPage() {
   const [cirujanoSeleccionado, setCirujanoSeleccionado] = useState<string>('todos')
   const [estadoFiltro, setEstadoFiltro] = useState<string>('todos') // 'todos' | 'pendientes' | 'calculados' | 'stock_pendiente'
   const [busqueda, setBusqueda] = useState<string>('')
+  const busquedaDebounced = useDebounce<string>(busqueda, 300)
+
   const [cargando, setCargando] = useState<boolean>(true)
   const [guardandoBorrador, setGuardandoBorrador] = useState<boolean>(false)
   const [confirmandoCalculo, setConfirmandoCalculo] = useState<boolean>(false)
@@ -113,6 +106,9 @@ export default function CalculoLioPage() {
   const [opcionesLio, setOpcionesLio] = useState<OpcionLio[]>([])
   const [modelosLio, setModelosLio] = useState<any[]>([])
   const [modoEdicion, setModoEdicion] = useState<boolean>(false)
+
+  // Asistente Biométrico SRK/T (Modal Manual)
+  const [modalSrktAbierto, setModalSrktAbierto] = useState<boolean>(false)
 
   // Resolución en tiempo real de SKU y Stock de Geclisa (por opción ID)
   const [skusResueltos, setSkusResueltos] = useState<Record<string, any>>({})
@@ -129,7 +125,7 @@ export default function CalculoLioPage() {
   useEffect(() => {
     const fetchModelos = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/modelos-lio?solo_activos=true`)
+        const res = await apiFetch('/api/modelos-lio?solo_activos=true')
         const data = await res.json()
         if (data.success && data.modelos) {
           setModelosLio(data.modelos)
@@ -141,19 +137,19 @@ export default function CalculoLioPage() {
     fetchModelos()
   }, [])
 
-  // Cargar pacientes para cálculo de LIO (siempre carga universo completo para calcular métricas consistentes)
-  const fetchPacientes = async () => {
+  // Cargar pacientes para cálculo de LIO con señal de aborto
+  const fetchPacientes = async (signal?: AbortSignal) => {
     try {
       setCargando(true)
-      let url = `${BACKEND_URL}/api/calculo-lio/pacientes?estado_calculo=todos`
+      let url = `/api/calculo-lio/pacientes?estado_calculo=todos`
       if (cirujanoSeleccionado !== 'todos') {
         url += `&cirujano_nombre=${encodeURIComponent(cirujanoSeleccionado)}`
       }
-      if (busqueda.trim()) {
-        url += `&busqueda=${encodeURIComponent(busqueda.trim())}`
+      if (busquedaDebounced.trim()) {
+        url += `&busqueda=${encodeURIComponent(busquedaDebounced.trim())}`
       }
 
-      const res = await fetch(url)
+      const res = await apiFetch(url, { signal })
       const data = await res.json()
       if (res.ok && data.success) {
         const listado = data.pacientes || []
@@ -177,16 +173,22 @@ export default function CalculoLioPage() {
       } else {
         setTodosPacientes([])
       }
-    } catch (e) {
-      console.error('Error cargando pacientes para cálculo de LIO:', e)
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        console.error('Error cargando pacientes para cálculo de LIO:', e)
+      }
     } finally {
       setCargando(false)
     }
   }
 
   useEffect(() => {
-    fetchPacientes()
-  }, [cirujanoSeleccionado, busqueda])
+    const controller = new AbortController()
+    fetchPacientes(controller.signal)
+    return () => {
+      controller.abort()
+    }
+  }, [cirujanoSeleccionado, busquedaDebounced])
 
   // Filtrado reactivo en memoria para el listado lateral según tarjeta seleccionada
   const pacientesFiltrados = useMemo(() => {
@@ -254,8 +256,10 @@ export default function CalculoLioPage() {
     setModoEdicion(!p.lio_calculado)
   }
 
-  // Hook de resolución en tiempo real de SKU y Stock de Geclisa para cada opción
+  // Hook de resolución en tiempo real de SKU y Stock de Geclisa para cada opción (con limpieza controlada de timers)
   useEffect(() => {
+    const timers: NodeJS.Timeout[] = []
+
     opcionesLio.forEach((op) => {
       const diopNum = parseFloat(op.dioptria)
       if (!op.modelo || isNaN(diopNum)) {
@@ -284,9 +288,8 @@ export default function CalculoLioPage() {
             es_torico: Boolean(op.es_torico)
           }
 
-          const res = await fetch(`${BACKEND_URL}/api/modelos-lio/resolver-sku`, {
+          const res = await apiFetch('/api/modelos-lio/resolver-sku', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
           })
           const data = await res.json()
@@ -303,8 +306,12 @@ export default function CalculoLioPage() {
         }
       }, 300)
 
-      return () => clearTimeout(timer)
+      timers.push(timer)
     })
+
+    return () => {
+      timers.forEach((t) => clearTimeout(t))
+    }
   }, [opcionesLio, modelosLio])
 
   // Agregar nueva opción de lente con 1 clic
@@ -443,9 +450,8 @@ export default function CalculoLioPage() {
         ojo: pacienteActivo.ojo
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/calculo-lio/guardar`, {
+      const res = await apiFetch('/api/calculo-lio/guardar', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
       const data = await res.json()
@@ -492,9 +498,8 @@ export default function CalculoLioPage() {
         ojo: pacienteActivo.ojo
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/calculo-lio/guardar`, {
+      const res = await apiFetch('/api/calculo-lio/guardar', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
       const data = await res.json()
@@ -523,9 +528,8 @@ export default function CalculoLioPage() {
 
     try {
       setReabriendo(true)
-      const res = await fetch(`${BACKEND_URL}/api/calculo-lio/reabrir`, {
+      const res = await apiFetch('/api/calculo-lio/reabrir', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           turno_id: pacienteActivo.turno_id,
           asesoria_id: pacienteActivo.asesoria_id,
@@ -561,9 +565,8 @@ export default function CalculoLioPage() {
     try {
       setReservandoStock(true)
       const nuevoEstado = !pacienteActivo.lio_stock_reservado
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${pacienteActivo.turno_id}/reservar-stock`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${pacienteActivo.turno_id}/reservar-stock`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reservado: nuevoEstado })
       })
       const data = await res.json()
@@ -589,7 +592,7 @@ export default function CalculoLioPage() {
     setCargandoArchivos(true)
     try {
       const qId = pacienteActivo.geclisa_ficha_id || pacienteActivo.paciente_dni || pacienteActivo.paciente_id
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${qId}/archivos`)
+      const res = await apiFetch(`/api/geclisa/pacientes/${qId}/archivos`)
       const data = await res.json()
       if (res.ok && data.success) {
         setArchivosGeclisa(data.archivos || [])
@@ -649,9 +652,20 @@ export default function CalculoLioPage() {
             </select>
           </div>
 
+          {/* Asistente Biométrico SRK/T (Consulta Manual) */}
           <button
             type="button"
-            onClick={fetchPacientes}
+            onClick={() => setModalSrktAbierto(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border border-cyan-500/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 text-xs font-bold transition shadow-xs cursor-pointer"
+            title="Abrir Calculadora Asistida SRK/T para verificar biometría"
+          >
+            <Calculator size={14} />
+            <span className="hidden sm:inline">Calculadora SRK/T</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => fetchPacientes()}
             className="p-2 rounded-2xl border border-[var(--border)] bg-[var(--card)] text-slate-500 hover:text-[var(--foreground)] transition shadow-xs cursor-pointer"
             title="Refrescar listado"
           >
@@ -1382,45 +1396,22 @@ export default function CalculoLioPage() {
                           )}
                         </div>
 
-                        {/* Fórmula y Observaciones */}
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-bold text-[var(--secondary)]">Fórmula Biometría</label>
-                            {deshabilitado ? (
-                              <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs text-[var(--foreground)]">
-                                {op.formula}
-                              </div>
-                            ) : (
-                              <select
-                                value={op.formula}
-                                onChange={(e) => actualizarOpcionLio(op.id, 'formula', e.target.value)}
-                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none cursor-pointer"
-                              >
-                                {FORMULAS_LIO.map((f) => (
-                                  <option key={f} value={f}>
-                                    {f}
-                                  </option>
-                                ))}
-                              </select>
-                            )}
-                          </div>
-
-                          <div className="sm:col-span-2 space-y-1">
-                            <label className="text-[10px] font-bold text-[var(--secondary)]">Notas Quirúrgicas</label>
-                            {deshabilitado ? (
-                              <div className="px-2.5 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs text-[var(--foreground)]">
-                                {op.observaciones || 'Sin notas especiales'}
-                              </div>
-                            ) : (
-                              <input
-                                type="text"
-                                value={op.observaciones}
-                                onChange={(e) => actualizarOpcionLio(op.id, 'observaciones', e.target.value)}
-                                placeholder="Ej: En caso de desgarro capsular implantar en sulcus..."
-                                className="w-full px-2.5 py-1.5 bg-white dark:bg-slate-900 rounded-lg border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500"
-                              />
-                            )}
-                          </div>
+                        {/* Notas Quirúrgicas / Observaciones (Ancho Completo) */}
+                        <div className="pt-1 space-y-1">
+                          <label className="text-[10px] font-bold text-[var(--secondary)]">Notas Quirúrgicas / Observaciones</label>
+                          {deshabilitado ? (
+                            <div className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-[var(--foreground)]">
+                              {op.observaciones || 'Sin notas especiales'}
+                            </div>
+                          ) : (
+                            <input
+                              type="text"
+                              value={op.observaciones}
+                              onChange={(e) => actualizarOpcionLio(op.id, 'observaciones', e.target.value)}
+                              placeholder="Ej: En caso de desgarro capsular implantar en sulcus..."
+                              className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:border-cyan-500 shadow-xs"
+                            />
+                          )}
                         </div>
                       </div>
                     )
@@ -1576,15 +1567,32 @@ export default function CalculoLioPage() {
                   ))}
                 </div>
 
-                {/* Previsualizador */}
+                {/* Previsualizador Seguro con Fallback */}
                 <div className="md:col-span-8 border border-[var(--border)] rounded-2xl overflow-hidden bg-slate-100 dark:bg-slate-900/60 flex items-center justify-center min-h-[350px]">
                   {archivoVisor ? (
                     archivoVisor.arcUrl || archivoVisor.url ? (
-                      <iframe
-                        src={archivoVisor.arcUrl || archivoVisor.url}
-                        className="w-full h-full min-h-[450px]"
-                        title="Visor de Documento"
-                      />
+                      <div className="flex flex-col w-full h-full min-h-[450px]">
+                        <div className="flex items-center justify-between px-3 py-1.5 bg-slate-200 dark:bg-slate-800 text-[11px] text-[var(--secondary)] border-b border-[var(--border)]">
+                          <span className="truncate font-bold">
+                            {archivoVisor.arcNombre || archivoVisor.nombre || 'Documento'}
+                          </span>
+                          <a
+                            href={archivoVisor.arcUrl || archivoVisor.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1 font-extrabold shrink-0"
+                          >
+                            <span>Abrir en pestaña nueva</span>
+                            <ExternalLink size={12} />
+                          </a>
+                        </div>
+                        <iframe
+                          src={archivoVisor.arcUrl || archivoVisor.url}
+                          className="w-full flex-1 min-h-[420px]"
+                          title="Visor de Documento"
+                          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                        />
+                      </div>
                     ) : (
                       <div className="text-center p-8 space-y-2">
                         <FileText size={32} className="mx-auto text-cyan-600" />
@@ -1605,6 +1613,20 @@ export default function CalculoLioPage() {
           </div>
         </div>
       )}
+
+      {/* 5. MODAL ASISTENTE BIOMÉTRICO SRK/T (CONSULTA MANUAL) */}
+      <ModalAsistenteSRKT
+        abierto={modalSrktAbierto}
+        onCerrar={() => setModalSrktAbierto(false)}
+        constanteAInicial={
+          opcionesLio[0]?.constante_a_custom || 118.9
+        }
+        onAplicarDioptria={(diop) => {
+          if (opcionesLio.length > 0) {
+            actualizarOpcionLio(opcionesLio[0].id, 'dioptria', diop.replace('+', ''))
+          }
+        }}
+      />
     </div>
   )
 }

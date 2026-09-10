@@ -52,6 +52,11 @@ class WhatsAppManager:
             "apikey": self.evo_key,
             "Content-Type": "application/json"
         }
+        # Caché inteligente de QR para evitar rotación destructiva de claves de Baileys
+        self._cached_qr_uri: Optional[str] = None
+        self._cached_qr_updated_at: float = 0.0
+        self._cached_qr_ttl: float = 50.0  # 50 segundos de TTL para el QR antes de refrescar
+        self._cached_pairing_code: Optional[str] = None
         
         self.add_log("INFO", f"WhatsAppManager inicializado con Evolution API v2 ({self.evo_url}) [Instancia: {self.evo_instance}].")
         threading.Thread(target=self._bootstrap_evolution_instance, daemon=True).start()
@@ -85,7 +90,7 @@ class WhatsAppManager:
                     "enabled": True,
                     "url": self.webhook_url,
                     "byEvents": False,
-                    "base64": True,
+                    "base64": False,
                     "events": [
                         "MESSAGES_UPSERT",
                         "MESSAGES_UPDATE",
@@ -98,7 +103,7 @@ class WhatsAppManager:
                 }
             }
             httpx.post(f"{self.evo_url}/webhook/set/{self.evo_instance}", headers=self._headers, json=webhook_payload, timeout=8.0)
-            self.add_log("INFO", f"Webhook de Evolution API vinculado exitosamente a {self.webhook_url}.")
+            self.add_log("INFO", f"Webhook de Evolution API vinculado exitosamente a {self.webhook_url} (modo liviano base64=False).")
         except Exception as e:
             self.add_log("WARNING", f"Error en bootstrap de Evolution API: {e}")
 
@@ -114,7 +119,8 @@ class WhatsAppManager:
 
     def _start_watchdog(self):
         """
-        Inicia un hilo guardián que sincroniza el estado de Evolution API cada 15 segundos.
+        Inicia un hilo guardián que sincroniza pasivamente el estado de Evolution API cada 15 segundos,
+        sin forzar generación continua de QR para no invalidar claves de Baileys.
         """
         def _watchdog_loop():
             time.sleep(5)
@@ -156,9 +162,67 @@ class WhatsAppManager:
         else:
             logger.info(message)
 
+    def set_cached_qr(self, b64: str, pairing_code: Optional[str] = None):
+        """
+        Actualiza el código QR en memoria cuando llega el evento QRCODE_UPDATED vía webhook.
+        """
+        if b64 and not b64.startswith("data:image"):
+            b64 = f"data:image/png;base64,{b64}"
+        self._cached_qr_uri = b64
+        self._cached_pairing_code = pairing_code
+        self._cached_qr_updated_at = time.time()
+        self.status = "PAIRING_QR_READY"
+        self.add_log("INFO", "Código QR reactivo actualizado vía evento QRCODE_UPDATED.")
+
+    def handle_connection_update(self, state: str, data: Optional[Dict[str, Any]] = None):
+        """
+        Maneja actualizaciones de estado de conexión emitidas en tiempo real por Evolution API.
+        """
+        state_str = str(state).lower()
+        if state_str in ["open", "connected"]:
+            self.status = "CONNECTED"
+            self._cached_qr_uri = None
+            self.add_log("INFO", "WhatsApp conectado y operativo (CONNECTION_UPDATE: OPEN).")
+        elif state_str in ["connecting"]:
+            self.status = "PAIRING_QR_READY"
+            self.add_log("INFO", "WhatsApp en espera de vinculación (CONNECTION_UPDATE: CONNECTING).")
+        elif state_str in ["close", "closed", "disconnected"]:
+            self.status = "DISCONNECTED"
+            self.add_log("WARNING", f"WhatsApp desconectado (CONNECTION_UPDATE: {state}).")
+            if data and isinstance(data, dict):
+                disc_code = data.get("disconnectionReasonCode") or data.get("statusCode")
+                if disc_code in [401, 403, 405]:
+                    self.add_log("WARNING", f"Sesión revocada por WhatsApp (Código {disc_code}). Disparando purga automática...")
+                    threading.Thread(target=self.purgar_y_recrear_instancia, daemon=True).start()
+
+    def enviar_presencia(self, remote_jid: str, presence: str = "composing") -> bool:
+        """
+        Envía el estado de presencia ('composing' para 'Escribiendo...', 'paused' para detener)
+        hacia el chat de WhatsApp del paciente.
+        """
+        if not remote_jid:
+            return False
+        try:
+            target = remote_jid if "@" in remote_jid else f"{remote_jid}@s.whatsapp.net"
+            payload = {
+                "number": target,
+                "presence": presence,
+                "delay": 1200
+            }
+            r = httpx.post(
+                f"{self.evo_url}/chat/sendPresence/{self.evo_instance}",
+                headers=self._headers,
+                json=payload,
+                timeout=4.0
+            )
+            return r.status_code in [200, 201]
+        except Exception as e:
+            logger.debug(f"Error enviando presencia a Evolution API: {e}")
+            return False
+
     def get_status(self) -> Dict[str, Any]:
         """
-        Consulta el estado vivo de la instancia en Evolution API v2.
+        Consulta el estado vivo de la instancia en Evolution API v2 de forma pasiva y eficiente.
         """
         try:
             r = httpx.get(f"{self.evo_url}/instance/connectionState/{self.evo_instance}", headers=self._headers, timeout=4.0)
@@ -205,19 +269,13 @@ class WhatsAppManager:
                     except Exception:
                         pass
 
-                qr_data_uri = None
-                if not is_logged:
-                    try:
-                        r_qr = httpx.get(f"{self.evo_url}/instance/connect/{self.evo_instance}", headers=self._headers, timeout=3.0)
-                        if r_qr.status_code == 200:
-                            qr_json = r_qr.json()
-                            b64 = qr_json.get("base64")
-                            if b64:
-                                qr_data_uri = b64 if b64.startswith("data:image") else f"data:image/png;base64,{b64}"
-                                qr_ready = True
-                                self.status = "PAIRING_QR_READY"
-                    except Exception:
-                        pass
+                qr_data_uri = self._cached_qr_uri
+                now = time.time()
+                # Solo si no hay QR en caché o expiró, lo cargamos pasivamente
+                if not is_logged and not qr_data_uri:
+                    qr_res = self.get_qr_data(force_refresh=False)
+                    qr_data_uri = qr_res.get("qr_data_uri")
+                    qr_ready = bool(qr_data_uri)
 
                 # Auto-detección y recuperación de sesiones revocadas (403 Forbidden / 401)
                 try:
@@ -231,6 +289,8 @@ class WhatsAppManager:
                 except Exception:
                     pass
 
+                ttl_rem = max(5, int(self._cached_qr_ttl - (now - self._cached_qr_updated_at))) if self._cached_qr_uri else 30
+
                 return {
                     "available": True,
                     "engine": "Evolution API v2",
@@ -238,8 +298,8 @@ class WhatsAppManager:
                     "is_logged_in": is_logged,
                     "qr_ready": qr_ready,
                     "qr_data_uri": qr_data_uri,
-                    "qr_expires_in": 30,
-                    "pairing_code": None,
+                    "qr_expires_in": ttl_rem,
+                    "pairing_code": self._cached_pairing_code,
                     "pairing_phone": None,
                     "device_info": device_info,
                     "session_dir": "PostgreSQL"
@@ -262,10 +322,21 @@ class WhatsAppManager:
             "session_dir": "PostgreSQL"
         }
 
-    def get_qr_data(self) -> Dict[str, Any]:
+    def get_qr_data(self, force_refresh: bool = False) -> Dict[str, Any]:
         """
-        Retorna el código QR activo en base64 Data-URI generado por Evolution API v2.
+        Retorna el código QR activo en base64 Data-URI, sirviéndolo desde caché con TTL
+        para proteger la estabilidad del handshake criptográfico de Baileys.
         """
+        now = time.time()
+        if not force_refresh and self._cached_qr_uri and (now - self._cached_qr_updated_at < self._cached_qr_ttl):
+            ttl_rem = max(5, int(self._cached_qr_ttl - (now - self._cached_qr_updated_at)))
+            return {
+                "qr_data_uri": self._cached_qr_uri,
+                "pairing_code": self._cached_pairing_code,
+                "expires_in": ttl_rem,
+                "status": "PAIRING_QR_READY"
+            }
+
         try:
             r = httpx.get(f"{self.evo_url}/instance/connect/{self.evo_instance}", headers=self._headers, timeout=5.0)
             if r.status_code == 200:
@@ -273,15 +344,18 @@ class WhatsAppManager:
                 b64 = data.get("base64")
                 if b64 and not b64.startswith("data:image"):
                     b64 = f"data:image/png;base64,{b64}"
+                self._cached_qr_uri = b64
+                self._cached_pairing_code = data.get("pairingCode")
+                self._cached_qr_updated_at = time.time()
                 return {
                     "qr_data_uri": b64,
                     "pairing_code": data.get("pairingCode"),
-                    "expires_in": 30,
+                    "expires_in": int(self._cached_qr_ttl),
                     "status": "PAIRING_QR_READY"
                 }
         except Exception as e:
             self.add_log("WARNING", f"Error obteniendo QR de Evolution API: {e}")
-        return {"qr_data_uri": None, "expires_in": 30, "status": self.status}
+        return {"qr_data_uri": self._cached_qr_uri, "expires_in": 30, "status": self.status}
 
     def solicitar_codigo_vinculacion(self, telefono: str) -> Dict[str, Any]:
         """
@@ -430,14 +504,15 @@ class WhatsAppManager:
         self,
         telefono_o_jid: str,
         message_ids: Optional[List[str]] = None,
-        remote_jid: Optional[str] = None
+        remote_jid: Optional[str] = None,
+        conversacion_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Envía confirmación de lectura a WhatsApp para activar el doble tilde azul en el teléfono del paciente.
         """
         telefono = normalize_phone_number(telefono_o_jid) if telefono_o_jid else ""
         clean_digits = clean_phone_digits(telefono)
-        active_lid = get_active_jid_for_paciente_o_conversacion(telefono=telefono_o_jid)
+        active_lid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono_o_jid)
         target_jid = active_lid or remote_jid or (f"{clean_digits}@s.whatsapp.net" if clean_digits else "")
         
         try:

@@ -182,6 +182,50 @@ export default function ChatInbox() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastPresenceSentRef = useRef<number>(0)
+
+  const sendPresence = async (convId: string, presence: 'composing' | 'paused') => {
+    if (!convId) return
+    try {
+      await fetch(`${BACKEND_URL}/api/conversaciones/${convId}/presencia`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presence })
+      })
+    } catch (e) {
+      // Silenciar errores de red en presencia
+    }
+  }
+
+  const handleTypingPresence = () => {
+    if (isInternalNote || !selectedConvId) return
+
+    const now = Date.now()
+    if (now - lastPresenceSentRef.current > 3000) {
+      lastPresenceSentRef.current = now
+      sendPresence(selectedConvId, 'composing')
+    }
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      if (selectedConvId && !isInternalNote) {
+        sendPresence(selectedConvId, 'paused')
+      }
+    }, 2500)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current)
+        typingTimeoutRef.current = null
+      }
+    }
+  }, [selectedConvId])
 
   const fetchWAStatus = async () => {
     try {
@@ -738,6 +782,14 @@ export default function ChatInbox() {
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+      typingTimeoutRef.current = null
+    }
+    if (selectedConvId && !isInternalNote) {
+      sendPresence(selectedConvId, 'paused')
+    }
 
     const mensajeAEnviar = nuevoMensaje.trim()
     const esNotaInternaActual = isInternalNote
@@ -1867,7 +1919,19 @@ export default function ChatInbox() {
                     ref={messageInputRef}
                     rows={1}
                     value={nuevoMensaje}
-                    onChange={(e) => setNuevoMensaje(e.target.value)}
+                    onChange={(e) => {
+                      setNuevoMensaje(e.target.value)
+                      handleTypingPresence()
+                    }}
+                    onBlur={() => {
+                      if (typingTimeoutRef.current) {
+                        clearTimeout(typingTimeoutRef.current)
+                        typingTimeoutRef.current = null
+                      }
+                      if (selectedConvId && !isInternalNote) {
+                        sendPresence(selectedConvId, 'paused')
+                      }
+                    }}
                     onPaste={handlePaste}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
