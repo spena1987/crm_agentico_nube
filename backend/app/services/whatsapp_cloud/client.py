@@ -404,6 +404,35 @@ class WhatsAppCloudClient:
             "raw_response": res
         }
 
+    async def send_document(
+        self,
+        to_phone: str,
+        document_url: str,
+        filename: Optional[str] = None,
+        caption: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Envía un documento PDF o DOCX a través de WhatsApp Cloud API mediante URL pública.
+        """
+        doc_data: Dict[str, Any] = {"link": document_url}
+        if filename:
+            doc_data["filename"] = filename
+        if caption:
+            doc_data["caption"] = caption
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_phone,
+            "type": "document",
+            "document": doc_data
+        }
+        res = await self._request_with_retry("POST", "messages", payload)
+        return {
+            "wamid": res.get("messages", [{}])[0].get("id"),
+            "raw_response": res
+        }
+
     async def send_media(
         self,
         to_phone: str,

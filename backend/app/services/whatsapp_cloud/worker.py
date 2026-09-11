@@ -5,6 +5,7 @@ y despacho reactivo al Agente Clínico o CRM.
 """
 
 import os
+import re
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -453,8 +454,20 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     }).execute()
                     logger.info(f"[Worker Inbound] Mensaje {wamid} ({msg_type}) sincronizado en public.mensajes para chat del CRM.")
 
-                # 4.2 Despachar el Agente IA (Gemini) si el bot no está deshabilitado
-                if not bot_disabled and text_content and msg_type in ("text", "interactive", "audio"):
+                # 4.2 Intercepción de Botones Interactivos Automatizados (Presupuesto PDF y Confirmación de Turnos)
+                interactive_handled = False
+                if msg_type == "interactive" or interactive_id:
+                    interactive_handled = await handle_automated_interactive_action(
+                        button_id=interactive_id,
+                        text_content=text_content,
+                        paciente_id=paciente_id,
+                        normalized_phone=normalized_phone,
+                        crm_conv_id=crm_conv_id,
+                        account_id=account_id
+                    )
+
+                # 4.3 Despachar el Agente IA (Gemini) si no fue una acción interactiva determinística y el bot no está deshabilitado
+                if not interactive_handled and not bot_disabled and text_content and msg_type in ("text", "interactive", "audio"):
                     import asyncio
                     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 
@@ -504,32 +517,296 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
             except Exception as err_sync:
                 logger.error(f"[Worker Sync Error] Error sincronizando con chat del CRM: {err_sync}", exc_info=True)
 
-        # 5. Manejar botones interactivos de turnos clínicos si corresponde
-        if interactive_id:
-            await handle_turnos_interactive_reply(interactive_id, paciente_id, normalized_phone)
-
         logger.info(f"[Worker Inbound] Mensaje de {normalized_phone} procesado exitosamente.")
 
     except Exception as e:
         logger.error(f"[Worker Inbound] Error procesando mensaje de {normalized_phone}: {e}", exc_info=True)
 
 
+async def handle_automated_interactive_action(
+    button_id: Optional[str],
+    text_content: str,
+    paciente_id: Optional[str],
+    normalized_phone: str,
+    crm_conv_id: Optional[str],
+    account_id: Optional[str]
+) -> bool:
+    """
+    Ruteo determinístico para clics en botones interactivos de plantillas y mensajes:
+      - Opción 2: Presupuesto en PDF directo en el chat de WhatsApp.
+      - Confirmación / Reprogramación de turnos quirúrgicos.
+    Retorna True si la acción fue resuelta determinísticamente, False para delegar al agente IA.
+    """
+    btn_id = (button_id or "").lower().strip()
+    title_str = (text_content or "").lower().strip()
+    logger.info(f"[Interactive Auto] Evaluando botón: id='{btn_id}', texto='{title_str}' para paciente={paciente_id}")
+
+    from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
+
+    # =========================================================================
+    # CASO 1: SOLICITUD / RECEPCIÓN DE PRESUPUESTO EN PDF DIRECTO EN WHATSAPP
+    # =========================================================================
+    is_presupuesto = any(k in title_str or k in btn_id for k in [
+        "presupuesto", "pdf", "cotizacion", "cotización", "recibir presupuesto", 
+        "ver presupuesto", "descargar presupuesto"
+    ]) or btn_id.startswith("presupuesto_")
+
+    if is_presupuesto:
+        logger.info(f"[Interactive Auto] Intención de Presupuesto PDF para {normalized_phone}")
+        paciente_nombre = "Paciente"
+        if paciente_id:
+            try:
+                p_resp = supabase.table("pacientes").select("nombre").eq("id", paciente_id).execute()
+                if p_resp.data and p_resp.data[0].get("nombre"):
+                    paciente_nombre = p_resp.data[0]["nombre"]
+            except Exception as pe:
+                logger.warning(f"[Interactive Presupuesto] Error leyendo paciente: {pe}")
+
+        presupuesto = None
+        if paciente_id:
+            try:
+                pres_resp = supabase.table("presupuestos") \
+                    .select("id, total, total_ars, total_usd, pdf_url, created_at") \
+                    .eq("paciente_id", paciente_id) \
+                    .order("created_at", desc=True) \
+                    .limit(1) \
+                    .execute()
+                if pres_resp.data and len(pres_resp.data) > 0:
+                    presupuesto = pres_resp.data[0]
+            except Exception as pre:
+                logger.error(f"[Interactive Presupuesto] Error consultando presupuestos: {pre}")
+
+        phone_id, token = get_whatsapp_cloud_credentials()
+        if not phone_id or not token:
+            logger.error("[Interactive Presupuesto] Credenciales Meta WABA no configuradas.")
+            return True
+
+        wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+        try:
+            if presupuesto:
+                pres_id = presupuesto["id"]
+                base_backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app").rstrip("/")
+                pdf_full_url = f"{base_backend_url}/static/presupuesto_{pres_id}.pdf"
+                safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', paciente_nombre).strip('_')
+                filename = f"Presupuesto_{safe_name}.pdf"
+                caption = f"📄 Estimado/a {paciente_nombre}, le adjuntamos su presupuesto oficial en formato PDF. Si desea coordinar la fecha de cirugía o financiarlo, puede respondernos por este medio."
+
+                doc_res = await wa_client.send_document(
+                    to_phone=normalized_phone,
+                    document_url=pdf_full_url,
+                    filename=filename,
+                    caption=caption
+                )
+                doc_wamid = doc_res.get("wamid")
+
+                # Auditoría en whatsapp_messages
+                await record_outbound_audit_message(
+                    to_phone=normalized_phone,
+                    wamid=doc_wamid,
+                    message_type="document",
+                    content_text=f"[DOCUMENTO PDF: {filename}]",
+                    payload={"document_url": pdf_full_url, "presupuesto_id": pres_id},
+                    billing_category="service"
+                )
+
+                # Reflejar en la conversación activa de MedCRM
+                if crm_conv_id:
+                    supabase.table("mensajes").insert({
+                        "conversacion_id": crm_conv_id,
+                        "emisor": "bot",
+                        "contenido": f"📄 Presupuesto PDF enviado: {filename}",
+                        "metadata_json": {
+                            "wamid": doc_wamid,
+                            "tipo": "documento",
+                            "media_url": pdf_full_url,
+                            "file_name": filename,
+                            "caption": caption,
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api"
+                        }
+                    }).execute()
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": f"📄 [Documento PDF] {filename}",
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", crm_conv_id).execute()
+
+                logger.info(f"[Interactive Presupuesto] Documento {filename} entregado exitosamente a {normalized_phone}")
+            else:
+                sin_pres_txt = f"Estimado/a {paciente_nombre}, aún no figura un presupuesto emitido en su ficha médica. Un asesor quirúrgico se comunicará para brindarle la cotización correspondiente."
+                txt_res = await wa_client.send_free_text(normalized_phone, sin_pres_txt)
+                txt_wamid = txt_res.get("wamid")
+
+                if crm_conv_id:
+                    supabase.table("mensajes").insert({
+                        "conversacion_id": crm_conv_id,
+                        "emisor": "bot",
+                        "contenido": sin_pres_txt,
+                        "metadata_json": {
+                            "wamid": txt_wamid,
+                            "tipo": "text",
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api"
+                        }
+                    }).execute()
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": sin_pres_txt,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", crm_conv_id).execute()
+        finally:
+            await wa_client.close()
+
+        return True
+
+    # =========================================================================
+    # CASO 2: CONFIRMACIÓN DE TURNO QUIRÚRGICO / CONSULTA
+    # =========================================================================
+    is_confirm = any(k in title_str or k in btn_id for k in [
+        "confirmar", "confirmar turno", "confirmar asistencia", "si, confirmo", "asistiré", "asistire"
+    ]) or btn_id.startswith("confirmar_turno")
+
+    if is_confirm:
+        logger.info(f"[Interactive Auto] Confirmación de turno para paciente {paciente_id} ({normalized_phone})")
+        turno_id = None
+        if btn_id.startswith("confirmar_turno_"):
+            turno_id = button_id.replace("CONFIRMAR_TURNO_", "").replace("confirmar_turno_", "")
+
+        turno_data = None
+        if paciente_id:
+            try:
+                today_str = datetime.now(timezone.utc).date().isoformat()
+                t_query = supabase.table("turnos_quirofano").select("id, fecha, hora_inicio, estado, quirofanos(nombre)")
+                if turno_id:
+                    t_query = t_query.eq("id", turno_id)
+                else:
+                    t_query = t_query.eq("paciente_id", paciente_id).gte("fecha", today_str).order("fecha", desc=False).limit(1)
+                t_res = t_query.execute()
+                if t_res.data and len(t_res.data) > 0:
+                    turno_data = t_res.data[0]
+                    target_tid = turno_data["id"]
+                    supabase.table("turnos_quirofano").update({
+                        "estado": "confirmado",
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", target_tid).execute()
+                    logger.info(f"[Turnos] Turno quirúrgico {target_tid} confirmado en Supabase.")
+            except Exception as te:
+                logger.error(f"[Interactive Turnos] Error confirmando turno: {te}")
+
+        if turno_data:
+            f_val = turno_data.get("fecha") or ""
+            h_val = str(turno_data.get("hora_inicio") or "")[:5]
+            hora_str = f" a las {h_val} hs" if h_val else ""
+            reply_text = f"✅ ¡Excelente! Su turno programado para el día {f_val}{hora_str} ha sido confirmado con éxito. Lo esperamos puntualmente en el centro médico."
+        else:
+            reply_text = "✅ ¡Muchas gracias! Su asistencia ha sido confirmada correctamente en nuestro sistema. ¡Lo esperamos!"
+
+        phone_id, token = get_whatsapp_cloud_credentials()
+        if phone_id and token:
+            wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+            try:
+                txt_res = await wa_client.send_free_text(normalized_phone, reply_text)
+                txt_wamid = txt_res.get("wamid")
+
+                await record_outbound_audit_message(
+                    to_phone=normalized_phone,
+                    wamid=txt_wamid,
+                    message_type="text",
+                    content_text=reply_text,
+                    payload={"intent": "confirmar_turno", "turno_id": turno_data.get("id") if turno_data else None},
+                    billing_category="service"
+                )
+
+                if crm_conv_id:
+                    supabase.table("mensajes").insert({
+                        "conversacion_id": crm_conv_id,
+                        "emisor": "bot",
+                        "contenido": reply_text,
+                        "metadata_json": {
+                            "wamid": txt_wamid,
+                            "tipo": "text",
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api"
+                        }
+                    }).execute()
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": reply_text,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", crm_conv_id).execute()
+            finally:
+                await wa_client.close()
+
+        return True
+
+    # =========================================================================
+    # CASO 3: REPROGRAMACIÓN O CANCELACIÓN DE TURNO
+    # =========================================================================
+    is_reschedule = any(k in title_str or k in btn_id for k in [
+        "reprogramar", "cancelar", "cambiar fecha", "no puedo"
+    ]) or btn_id.startswith("cancelar_turno")
+
+    if is_reschedule:
+        logger.info(f"[Interactive Auto] Reprogramación de turno para paciente {paciente_id} ({normalized_phone})")
+        if paciente_id:
+            try:
+                today_str = datetime.now(timezone.utc).date().isoformat()
+                supabase.table("turnos_quirofano").update({
+                    "estado": "reprogramar",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("paciente_id", paciente_id).gte("fecha", today_str).execute()
+            except Exception as re_err:
+                logger.warning(f"[Interactive Turnos] Advertencia actualizando a reprogramar: {re_err}")
+
+        reply_text = "📅 Hemos registrado su solicitud para reprogramar su turno. Nuestro equipo de coordinación se comunicará a la brevedad para ofrecerle alternativas de agenda."
+
+        phone_id, token = get_whatsapp_cloud_credentials()
+        if phone_id and token:
+            wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+            try:
+                txt_res = await wa_client.send_free_text(normalized_phone, reply_text)
+                txt_wamid = txt_res.get("wamid")
+
+                await record_outbound_audit_message(
+                    to_phone=normalized_phone,
+                    wamid=txt_wamid,
+                    message_type="text",
+                    content_text=reply_text,
+                    payload={"intent": "reprogramar_turno"},
+                    billing_category="service"
+                )
+
+                if crm_conv_id:
+                    supabase.table("mensajes").insert({
+                        "conversacion_id": crm_conv_id,
+                        "emisor": "bot",
+                        "contenido": reply_text,
+                        "metadata_json": {
+                            "wamid": txt_wamid,
+                            "tipo": "text",
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api"
+                        }
+                    }).execute()
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": reply_text,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", crm_conv_id).execute()
+            finally:
+                await wa_client.close()
+
+        return True
+
+    return False
+
+
 async def handle_turnos_interactive_reply(button_id: str, paciente_id: Optional[str], phone: str):
-    """
-    Ruteo de respuestas a botones de turnos clínicos:
-    Ejemplo IDs:
-      - CONFIRMAR_TURNO_{turno_id}
-      - CANCELAR_TURNO_{turno_id}
-    """
-    logger.info(f"[Turnos Interactive] Botón pulsado: button_id='{button_id}' por {phone}")
-    if button_id.startswith("CONFIRMAR_TURNO_"):
-        turno_id = button_id.replace("CONFIRMAR_TURNO_", "")
-        logger.info(f"[Turnos] Paciente {phone} confirmó turno id={turno_id}")
-        # Aquí se invoca actualización en CRM/Geclisa
-    elif button_id.startswith("CANCELAR_TURNO_"):
-        turno_id = button_id.replace("CANCELAR_TURNO_", "")
-        logger.info(f"[Turnos] Paciente {phone} canceló turno id={turno_id}")
-        # Aquí se invoca cancelación y liberación de agenda
+    """Alias de compatibilidad previa."""
+    return await handle_automated_interactive_action(
+        button_id=button_id,
+        text_content="",
+        paciente_id=paciente_id,
+        normalized_phone=phone,
+        crm_conv_id=None,
+        account_id=None
+    )
 
 
 async def record_outbound_audit_message(

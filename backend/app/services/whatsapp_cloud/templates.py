@@ -30,6 +30,7 @@ class TemplateButton(BaseModel):
     text: str = Field(..., max_length=25, description="Texto del botón")
     url: Optional[str] = None
     phone_number: Optional[str] = None
+    example: Optional[List[str]] = None
 
 
 class TemplateCreateRequest(BaseModel):
@@ -275,11 +276,14 @@ async def create_template(req: TemplateCreateRequest):
                     "text": b.text
                 })
             elif b.type == "URL" and b.url:
-                buttons_payload.append({
+                url_btn: Dict[str, Any] = {
                     "type": "URL",
                     "text": b.text,
                     "url": b.url
-                })
+                }
+                if "{{" in b.url:
+                    url_btn["example"] = b.example or ["ejemplo_presupuesto_123"]
+                buttons_payload.append(url_btn)
             elif b.type == "PHONE_NUMBER" and b.phone_number:
                 buttons_payload.append({
                     "type": "PHONE_NUMBER",

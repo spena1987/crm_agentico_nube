@@ -63,6 +63,13 @@ class InteractiveButtonRequest(BaseModel):
     footer_text: Optional[str] = "Clínica Médica"
 
 
+class DocumentSendRequest(BaseModel):
+    to_phone: str
+    document_url: str
+    filename: Optional[str] = None
+    caption: Optional[str] = None
+
+
 # ---------------------------------------------------------------------
 # 1. Webhook Handshake & Ingestion
 # ---------------------------------------------------------------------
@@ -230,3 +237,35 @@ async def send_interactive_buttons_message(req: InteractiveButtonRequest, backgr
     except Exception as e:
         logger.error(f"[Outbound Interactive Error] {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.post("/send-document")
+async def send_document_message(req: DocumentSendRequest, background_tasks: BackgroundTasks):
+    """
+    Envía un archivo PDF / Documento clínico directamente al paciente por WhatsApp.
+    """
+    client = get_client()
+    normalized_to = normalize_to_meta_e164(req.to_phone)
+    try:
+        result = await client.send_document(
+            to_phone=normalized_to,
+            document_url=req.document_url,
+            filename=req.filename,
+            caption=req.caption
+        )
+        wamid = result.get("wamid")
+        if wamid:
+            background_tasks.add_task(
+                record_outbound_audit_message,
+                to_phone=normalized_to,
+                wamid=wamid,
+                message_type="document",
+                content_text=f"[DOCUMENTO: {req.filename or 'archivo.pdf'}] {req.caption or ''}".strip(),
+                payload=req.model_dump(),
+                billing_category="service"
+            )
+        return {"status": "success", "wamid": wamid, "to": normalized_to}
+    except Exception as e:
+        logger.error(f"[Outbound Document Error] {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+

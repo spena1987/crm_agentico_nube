@@ -24,7 +24,10 @@ import {
   DollarSign,
   ShieldCheck,
   ChevronRight,
-  Search
+  Search,
+  Link as LinkIcon,
+  ExternalLink,
+  Zap
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import WhatsAppPhoneSimulator from './whatsapp/WhatsAppPhoneSimulator'
@@ -66,13 +69,13 @@ interface PremadeTemplate {
   body_text: string
   footer_text: string
   variable_mappings: Record<string, string>
-  buttons: Array<{ type: string; text: string }>
+  buttons: Array<{ type: string; text: string; url?: string }>
 }
 
-// Plantillas pre-diseñadas para carga rápida
+// Plantillas pre-diseñadas para carga rápida (con soporte de ambas opciones de botones)
 const PREMADE_TEMPLATES: PremadeTemplate[] = [
   {
-    title: 'Recordatorio de Turno Quirúrgico',
+    title: 'Recordatorio Turno Quirúrgico',
     name: 'recordatorio_turno_quirurgico',
     category: 'UTILITY' as const,
     header_content: 'Recordatorio de Turno Quirúrgico 🩺',
@@ -92,6 +95,42 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     ]
   },
   {
+    title: 'Presupuesto: Envío PDF en Chat (Opción 2)',
+    name: 'presupuesto_entrega_pdf',
+    category: 'UTILITY' as const,
+    header_content: 'Presupuesto Médico Disponible 📄',
+    body_text: 'Hola {{1}}, ya se encuentra listo el presupuesto para su procedimiento de {{2}}. El monto total estimado es {{3}}.\n\nPresione el botón inferior si desea recibir el archivo PDF oficial con el membrete directamente en este chat de WhatsApp.',
+    footer_text: 'MedCRM • Área Quirúrgica',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre',
+      '3': 'presupuesto_monto'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Recibir Presupuesto PDF' }
+    ]
+  },
+  {
+    title: 'Presupuesto: Enlace Web Directo (Opción 1)',
+    name: 'presupuesto_enlace_web',
+    category: 'UTILITY' as const,
+    header_content: 'Presupuesto Quirúrgico 📄',
+    body_text: 'Estimado/a {{1}}, le acercamos la cotización formal para su procedimiento de {{2}} con un total de {{3}}.\n\nPuede acceder al presupuesto detallado en línea y descargarlo pulsando el botón a continuación:',
+    footer_text: 'MedCRM • Centro Quirúrgico',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre',
+      '3': 'presupuesto_monto'
+    },
+    buttons: [
+      { 
+        type: 'URL', 
+        text: 'Ver Presupuesto Web', 
+        url: 'https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf' 
+      }
+    ]
+  },
+  {
     title: 'Confirmación de Consulta Médica',
     name: 'confirmacion_consulta_medica',
     category: 'UTILITY' as const,
@@ -106,22 +145,6 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     },
     buttons: [
       { type: 'QUICK_REPLY', text: 'Confirmar Asistencia' }
-    ]
-  },
-  {
-    title: 'Aviso de Presupuesto Disponible',
-    name: 'aviso_presupuesto_cirugia',
-    category: 'UTILITY' as const,
-    header_content: 'Presupuesto Médico Disponible 📄',
-    body_text: 'Hola {{1}}, ya se encuentra listo el presupuesto para su procedimiento de {{2}}. El monto total estimado es {{3}}.\n\nPuede consultar los detalles y planes de cobertura respondiendo a este mensaje.',
-    footer_text: 'MedCRM • Área de Presupuestos',
-    variable_mappings: {
-      '1': 'paciente_nombre',
-      '2': 'practica_nombre',
-      '3': 'presupuesto_monto'
-    },
-    buttons: [
-      { type: 'QUICK_REPLY', text: 'Ver Presupuesto' }
     ]
   }
 ]
@@ -147,7 +170,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const [headerContent, setHeaderContent] = useState('')
   const [bodyText, setBodyText] = useState('')
   const [footerText, setFooterText] = useState('MedCRM • Clínica Médica')
-  const [buttons, setButtons] = useState<Array<{ type: string; text: string }>>([
+  const [buttons, setButtons] = useState<Array<{ type: string; text: string; url?: string }>>([
     { type: 'QUICK_REPLY', text: 'Confirmar Turno' }
   ])
   const [variableMappings, setVariableMappings] = useState<Record<string, string>>({})
@@ -253,6 +276,14 @@ export default function WhatsAppTemplatesSettingsCard() {
     if (!bodyText.trim()) {
       setErrorFeedback('El texto del cuerpo es obligatorio.')
       return
+    }
+
+    // Validar que los botones de tipo URL tengan una dirección válida
+    for (const b of buttons) {
+      if (b.type === 'URL' && !b.url?.trim()) {
+        setErrorFeedback(`El botón de enlace '${b.text || 'Web'}' requiere que especifiques una URL válida (ej: https://...).`)
+        return
+      }
     }
 
     // Extraer variables presentes en el texto
@@ -551,10 +582,24 @@ export default function WhatsAppTemplatesSettingsCard() {
 
                 {/* Botones de acción rápida en la plantilla */}
                 {tpl.buttons && tpl.buttons.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mb-2">
+                  <div className="flex flex-wrap gap-1.5 mb-2">
                     {tpl.buttons.map((b, idx) => (
-                      <span key={idx} className="px-2 py-0.5 rounded text-[10.5px] bg-[#1a2738] text-[#00a884] font-medium border border-[#27394f]">
-                        🔘 {b.text}
+                      <span 
+                        key={idx} 
+                        className={`px-2 py-0.5 rounded text-[10.5px] font-medium border flex items-center gap-1 ${
+                          b.type === 'URL' 
+                            ? 'bg-sky-950/60 text-sky-300 border-sky-800/60' 
+                            : 'bg-[#1a2738] text-[#00a884] border-[#27394f]'
+                        }`}
+                        title={b.type === 'URL' ? `Enlace: ${b.url || 'URL dinámica'}` : 'Respuesta Rápida Interactiva'}
+                      >
+                        {b.type === 'URL' ? (
+                          <LinkIcon className="w-3 h-3 text-sky-400" />
+                        ) : (
+                          <Zap className="w-3 h-3 text-[#00a884]" />
+                        )}
+                        <span>{b.text}</span>
+                        {b.type === 'URL' && <span className="text-[9px] opacity-75 font-mono">(Web)</span>}
                       </span>
                     ))}
                   </div>
@@ -738,44 +783,134 @@ export default function WhatsAppTemplatesSettingsCard() {
                   />
                 </div>
 
-                {/* Botones de Acción Rápida (Quick Reply) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-300">
-                      Botones de Respuesta Rápida (Hasta 3)
-                    </label>
+                {/* Botones Interactivos de WhatsApp (Hasta 3) */}
+                <div className="bg-[#0e1722] p-3.5 rounded-xl border border-[#1e2d42] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" /> Botones Interactivos (Hasta 3)
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Soporta tanto <span className="text-emerald-300 font-medium">Respuesta Rápida</span> (entrega de PDF o confirmación en chat) como <span className="text-sky-300 font-medium">Enlace Web</span> (URL a PDF o Portal).
+                      </p>
+                    </div>
                     {buttons.length < 3 && (
-                      <button
-                        type="button"
-                        onClick={() => setButtons(prev => [...prev, { type: 'QUICK_REPLY', text: '' }])}
-                        className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1"
-                      >
-                        <Plus className="w-3 h-3" /> Agregar Botón
-                      </button>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {buttons.map((btn, idx) => (
-                      <div key={idx} className="flex items-center gap-2">
-                        <span className="text-xs text-slate-400 font-mono w-4">{idx + 1}.</span>
-                        <input
-                          type="text"
-                          value={btn.text}
-                          maxLength={25}
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setButtons(prev => prev.map((b, i) => i === idx ? { ...b, text: val } : b))
-                          }}
-                          placeholder={`ej: ${idx === 0 ? 'Confirmar Turno' : idx === 1 ? 'Reprogramar' : 'Cancelar'}`}
-                          className="flex-1 px-3 py-1.5 bg-[#162232] border border-[#233348] rounded-lg text-xs text-white focus:ring-2 focus:ring-emerald-500"
-                        />
+                      <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => setButtons(prev => prev.filter((_, i) => i !== idx))}
-                          className="text-slate-400 hover:text-red-400 p-1"
+                          onClick={() => setButtons(prev => [...prev, { type: 'QUICK_REPLY', text: '' }])}
+                          className="text-[11px] px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900/80 text-emerald-300 border border-emerald-800/50 rounded font-medium flex items-center gap-1 transition-colors"
+                          title="Agregar botón de respuesta interactiva en chat"
                         >
-                          <X className="w-4 h-4" />
+                          <Zap className="w-3 h-3" /> + Respuesta
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setButtons(prev => [...prev, { 
+                            type: 'URL', 
+                            text: 'Ver Presupuesto', 
+                            url: 'https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf' 
+                          }])}
+                          className="text-[11px] px-2 py-1 bg-sky-950/60 hover:bg-sky-900/80 text-sky-300 border border-sky-800/50 rounded font-medium flex items-center gap-1 transition-colors"
+                          title="Agregar botón de enlace web dinámico"
+                        >
+                          <LinkIcon className="w-3 h-3" /> + Enlace Web
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {buttons.length === 0 && (
+                    <div className="text-center py-2 text-xs text-slate-500 italic">
+                      Sin botones configurados. (Opcional)
+                    </div>
+                  )}
+
+                  <div className="space-y-2.5">
+                    {buttons.map((btn, idx) => (
+                      <div key={idx} className="bg-[#14202e] border border-[#22354c] rounded-lg p-2.5 space-y-2">
+                        {/* Cabecera del Botón */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono font-bold text-slate-400">#{idx + 1}</span>
+                            <select
+                              value={btn.type}
+                              onChange={(e) => {
+                                const newType = e.target.value
+                                setButtons(prev => prev.map((b, i) => {
+                                  if (i !== idx) return b
+                                  return {
+                                    ...b,
+                                    type: newType,
+                                    url: newType === 'URL' 
+                                      ? (b.url || 'https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf') 
+                                      : undefined
+                                  }
+                                }))
+                              }}
+                              className="text-xs px-2 py-1 bg-[#0b131d] border border-[#2a3f5a] rounded text-slate-200 font-medium focus:ring-1 focus:ring-emerald-500"
+                            >
+                              <option value="QUICK_REPLY">⚡ Respuesta Rápida (Recibir PDF / Confirmar)</option>
+                              <option value="URL">🔗 Enlace Web (URL a PDF o Portal)</option>
+                            </select>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setButtons(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-slate-400 hover:text-red-400 p-1 transition-colors"
+                            title="Quitar botón"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Texto del Botón */}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={btn.text}
+                            maxLength={25}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              setButtons(prev => prev.map((b, i) => i === idx ? { ...b, text: val } : b))
+                            }}
+                            placeholder={btn.type === 'URL' ? 'ej: Ver Presupuesto Web' : 'ej: Recibir Presupuesto PDF o Confirmar Turno'}
+                            className="flex-1 px-3 py-1.5 bg-[#0b131d] border border-[#233348] rounded text-xs text-white focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {btn.text.length}/25
+                          </span>
+                        </div>
+
+                        {/* Campo Adicional para Tipo URL */}
+                        {btn.type === 'URL' && (
+                          <div className="space-y-1">
+                            <label className="text-[10.5px] font-semibold text-sky-300 flex items-center gap-1">
+                              <ExternalLink className="w-3 h-3 text-sky-400" /> Dirección URL de Destino
+                            </label>
+                            <input
+                              type="text"
+                              value={btn.url || ''}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setButtons(prev => prev.map((b, i) => i === idx ? { ...b, url: val } : b))
+                              }}
+                              placeholder="https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf"
+                              className="w-full px-2.5 py-1.5 bg-[#0b131d] border border-[#233348] rounded text-xs text-sky-200 font-mono focus:ring-2 focus:ring-sky-500"
+                            />
+                            <p className="text-[10px] text-slate-400 leading-tight">
+                              💡 Si incluye <code className="text-sky-300 bg-black/40 px-1 rounded">{'{{1}}'}</code>, el CRM reemplazará automáticamente el ID del presupuesto o turno al enviarlo.
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Ayuda para QUICK_REPLY */}
+                        {btn.type === 'QUICK_REPLY' && (
+                          <p className="text-[10px] text-slate-400 leading-tight">
+                            ⚡ Al presionar este botón en WhatsApp, el CRM detecta la intención y responderá entregando el PDF o confirmando la cita al instante.
+                          </p>
+                        )}
                       </div>
                     ))}
                   </div>
