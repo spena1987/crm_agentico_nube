@@ -15,7 +15,8 @@ import {
   CheckCheck,
   Sparkles,
   Copy,
-  Loader2
+  Loader2,
+  AlertCircle
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -391,8 +392,16 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
   )
 }
 
-export function DeliveryStatusIcon({ status }: { status?: 'enviado' | 'entregado' | 'leido' | string }) {
+export function DeliveryStatusIcon({ status }: { status?: 'enviado' | 'entregado' | 'leido' | 'fallido' | string }) {
   const normStatus = (status || 'enviado').toLowerCase()
+
+  if (normStatus === 'fallido' || normStatus === 'failed' || normStatus === 'error') {
+    return (
+      <span title="Fallo en la entrega por WhatsApp (Verifica ventana de 24h o número)" className="inline-flex items-center">
+        <AlertCircle size={14} className="text-rose-500 font-bold shrink-0 ml-1 animate-pulse" />
+      </span>
+    )
+  }
 
   if (normStatus === 'leido' || normStatus === 'read' || normStatus === 'played') {
     return (

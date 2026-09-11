@@ -7,7 +7,7 @@ import httpx
 import asyncio
 import random
 import logging
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List, Union, Tuple
 from datetime import datetime, timezone
 
 logger = logging.getLogger("whatsapp_cloud_client")
@@ -321,31 +321,103 @@ class WhatsAppCloudClient:
             "raw_response": res
         }
 
-    async def send_document(
+    async def send_image(
         self,
         to_phone: str,
-        document_url: str,
-        caption: Optional[str] = None,
-        filename: Optional[str] = None
+        image_url: str,
+        caption: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Envía un documento PDF (ej: presupuesto quirúrgico o estudio médico) por URL prefirmada.
+        Envía una imagen (JPG/PNG) a través de URL pública o prefirmada.
         """
-        doc_data: Dict[str, Any] = {"link": document_url}
+        img_data: Dict[str, Any] = {"link": image_url}
         if caption:
-            doc_data["caption"] = caption
-        if filename:
-            doc_data["filename"] = filename
+            img_data["caption"] = caption
 
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": to_phone,
-            "type": "document",
-            "document": doc_data
+            "type": "image",
+            "image": img_data
         }
         res = await self._request_with_retry("POST", "messages", payload)
         return {
             "wamid": res.get("messages", [{}])[0].get("id"),
             "raw_response": res
         }
+
+    async def send_audio(
+        self,
+        to_phone: str,
+        audio_url: str
+    ) -> Dict[str, Any]:
+        """
+        Envía un archivo de audio (MP3/OGG) a través de URL pública.
+        """
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_phone,
+            "type": "audio",
+            "audio": {"link": audio_url}
+        }
+        res = await self._request_with_retry("POST", "messages", payload)
+        return {
+            "wamid": res.get("messages", [{}])[0].get("id"),
+            "raw_response": res
+        }
+
+    async def send_media(
+        self,
+        to_phone: str,
+        media_type: str,
+        media_url: str,
+        caption: Optional[str] = None,
+        filename: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Envía cualquier archivo multimedia (image, document, audio, video).
+        """
+        norm_type = media_type.lower()
+        if norm_type in ("image", "imagen", "foto"):
+            return await self.send_image(to_phone, media_url, caption)
+        elif norm_type in ("audio", "voice", "nota_voz"):
+            return await self.send_audio(to_phone, audio_url=media_url)
+        else:
+            return await self.send_document(to_phone, document_url=media_url, caption=caption, filename=filename)
+
+    async def download_media_bytes(self, media_id: str) -> Tuple[bytes, str]:
+        """
+        Descarga el binario multimedia desde Meta Graph API usando el media_id.
+        Paso 1: Obtener la URL temporal de descarga desde Graph API.
+        Paso 2: Descargar los bytes binarios con el Bearer token.
+        Retorna (bytes_data, mime_type).
+        """
+        client = await self.get_http_client()
+        url = f"{self.BASE_URL}/{self.graph_version}/{media_id}"
+        meta_res = await client.get(url, headers={"Authorization": f"Bearer {self.access_token}"})
+        if meta_res.status_code != 200:
+            raise RuntimeError(f"Error consultando media {media_id} en Meta: {meta_res.status_code} {meta_res.text}")
+
+        meta_info = meta_res.json()
+        download_url = meta_info.get("url")
+        mime_type = meta_info.get("mime_type", "application/octet-stream")
+
+        if not download_url:
+            raise ValueError(f"Meta no retornó URL de descarga para media {media_id}: {meta_info}")
+
+        # Descarga del binario
+        binary_res = await client.get(
+            download_url,
+            headers={
+                "Authorization": f"Bearer {self.access_token}",
+                "User-Agent": "Mozilla/5.0 (CRM-WhatsApp-Client)"
+            },
+            follow_redirects=True
+        )
+        if binary_res.status_code != 200:
+            raise RuntimeError(f"Error descargando binario de media {media_id}: {binary_res.status_code}")
+
+        return binary_res.content, mime_type
+

@@ -1373,7 +1373,7 @@ def send_message_api(payload: SendMessageRequest):
         quoted_message_id=payload.quoted_message_id,
         quoted_message_data=payload.quoted_message_data
     )
-    if "error" in result and not result.get("guardado_db"):
+    if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
 
     # Registrar marca de tiempo del operador para activar el período de gracia de 15 minutos en el Bot IA
@@ -1590,15 +1590,20 @@ async def send_media_api(
             except Exception as sup_err:
                 logger.warning(f"No se pudo subir a Supabase Storage, usando URL local: {sup_err}")
 
-        # Enviar vía WhatsApp Baileys
+        # Enviar vía WhatsApp Meta Cloud API (con fallback a Evolution)
         result = whatsapp_manager.enviar_multimedia(
             telefono=telefono,
             media_url=media_url_final,
             media_type=media_type_baileys,
             caption=caption or "",
-            filename=original_name
+            filename=original_name,
+            conversacion_id=conversacion_id
         )
-        
+        if "error" in result and not result.get("enviado_real", False):
+            raise HTTPException(status_code=400, detail=result["error"])
+
+        wamid = result.get("wamid") or result.get("message_id")
+
         # Guardar mensaje saliente del operador en Supabase
         if conversacion_id:
             try:
@@ -1606,7 +1611,9 @@ async def send_media_api(
                     conversacion_id=conversacion_id,
                     emisor="operador",
                     contenido=caption or original_name,
+                    whatsapp_message_id=wamid,
                     metadata_json={
+                        "wamid": wamid,
                         "tipo": tipo,
                         "media_url": media_url_final,
                         "relative_url": saved.get("relative_url"),
@@ -1614,7 +1621,8 @@ async def send_media_api(
                         "mime_type": mime_type,
                         "file_size_bytes": len(content),
                         "caption": caption or "",
-                        "delivery_status": "enviado"
+                        "delivery_status": "enviado",
+                        "provider": result.get("provider", "meta_cloud_api")
                     }
                 )
             except Exception as db_save_err:

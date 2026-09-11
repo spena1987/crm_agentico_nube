@@ -672,8 +672,55 @@ class WhatsAppManager:
         conversacion_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Evolution API v2.
+        Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Meta Cloud API
+        o Evolution API v2 como fallback.
         """
+        # Prioridad nativa: Si Meta WhatsApp Cloud API está configurada
+        from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient, ConversationWindowClosedError
+        from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+
+        meta_phone_id, meta_token = get_whatsapp_cloud_credentials()
+        if meta_phone_id and meta_token:
+            import asyncio
+            normalized_meta_phone = normalize_to_meta_e164(telefono)
+            wa_client = WhatsAppCloudClient(phone_number_id=meta_phone_id, access_token=meta_token)
+
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                res = loop.run_until_complete(
+                    wa_client.send_media(
+                        to_phone=normalized_meta_phone,
+                        media_type=media_type,
+                        media_url=media_url,
+                        caption=caption,
+                        filename=filename
+                    )
+                )
+                loop.close()
+
+                wamid = res.get("wamid")
+                self.add_log("INFO", f"Multimedia ({media_type}) despachado exitosamente vía Meta Cloud API a {normalized_meta_phone} (wamid: {wamid})")
+                return {
+                    "success": True,
+                    "enviado_real": True,
+                    "message_id": wamid,
+                    "wamid": wamid,
+                    "telefono": normalized_meta_phone,
+                    "conversacion_id": conversacion_id,
+                    "provider": "meta_cloud_api"
+                }
+            except ConversationWindowClosedError:
+                self.add_log("WARNING", f"Ventana de 24 horas cerrada para multimedia a {normalized_meta_phone}")
+                return {
+                    "error": "Ventana de 24 horas cerrada. El paciente debe responder primero o se debe enviar una plantilla pre-aprobada.",
+                    "code": "WINDOW_CLOSED",
+                    "enviado_real": False
+                }
+            except Exception as meta_err:
+                self.add_log("ERROR", f"Error enviando multimedia por Meta Cloud API: {meta_err}")
+                return {"error": f"Error de Meta WhatsApp Cloud API: {meta_err}", "enviado_real": False}
+
         clean_digits = clean_phone_digits(normalize_phone_number(telefono))
         target_number = clean_digits
         active_lid = get_active_jid_for_paciente_o_conversacion(conversacion_id=conversacion_id, telefono=telefono)

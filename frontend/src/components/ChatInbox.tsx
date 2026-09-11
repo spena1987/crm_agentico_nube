@@ -53,6 +53,7 @@ import ChatMessageContextMenu from './chat/ChatMessageContextMenu'
 import ChatContactContextMenu from './chat/ChatContactContextMenu'
 import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
+import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
 import { BACKEND_URL } from '@/lib/api'
 
 interface Paciente {
@@ -179,9 +180,37 @@ export default function ChatInbox() {
   const [replyingToMessage, setReplyingToMessage] = useState<Mensaje | null>(null)
   const [contextMenu, setContextMenu] = useState<{ message: Mensaje; position: { x: number; y: number } } | null>(null)
   const [contactContextMenu, setContactContextMenu] = useState<{ conversacion: Conversacion; position: { x: number; y: number } } | null>(null)
+  const [showTemplateModal, setShowTemplateModal] = useState<boolean>(false)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Cálculo en tiempo real de la Ventana de Atención de 24 Horas de Meta
+  const getMeta24hStatus = () => {
+    if (!selectedConvId) return { isOpen: true, hoursLeft: 24, minutesLeft: 0, isExpired: false, isUrgent: false }
+    const patientMsgs = mensajes.filter((m) => m.emisor === 'paciente')
+    if (patientMsgs.length === 0) {
+      return { isOpen: false, hoursLeft: 0, minutesLeft: 0, isExpired: true, isUrgent: false }
+    }
+    const lastPatientMsg = patientMsgs[patientMsgs.length - 1]
+    const lastTime = new Date(lastPatientMsg.created_at).getTime()
+    const now = Date.now()
+    const elapsedMs = now - lastTime
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000
+    const remainingMs = twentyFourHoursMs - elapsedMs
+
+    if (remainingMs <= 0) {
+      return { isOpen: false, hoursLeft: 0, minutesLeft: 0, isExpired: true, isUrgent: false }
+    }
+
+    const hoursLeft = Math.floor(remainingMs / (1000 * 60 * 60))
+    const minutesLeft = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60))
+    const isUrgent = hoursLeft < 2
+
+    return { isOpen: true, hoursLeft, minutesLeft, isExpired: false, isUrgent }
+  }
+
+  const metaWindow = getMeta24hStatus()
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastPresenceSentRef = useRef<number>(0)
 
@@ -348,7 +377,7 @@ export default function ChatInbox() {
   useEffect(() => {
     fetchConversaciones()
     fetchWAStatus()
-    const intervalStatus = setInterval(fetchWAStatus, 5000)
+    const intervalStatus = setInterval(fetchWAStatus, 30000)
     
     const intervalConvs = setInterval(async () => {
       try {
@@ -384,11 +413,18 @@ export default function ChatInbox() {
             setConversaciones(data as unknown as Conversacion[])
           }
         })
-    }, 4000)
+    }, 30000)
+
+    const onFocus = () => {
+      fetchConversaciones()
+      fetchWAStatus()
+    }
+    window.addEventListener('focus', onFocus)
 
     return () => {
       clearInterval(intervalStatus)
       clearInterval(intervalConvs)
+      window.removeEventListener('focus', onFocus)
     }
   }, [])
 
@@ -463,7 +499,7 @@ export default function ChatInbox() {
             })
           }
         })
-    }, 4000)
+    }, 25000)
 
     return () => clearInterval(intervalMsgs)
   }, [selectedConvId])
@@ -840,32 +876,43 @@ export default function ChatInbox() {
             quoted_message_data: quotedData
           })
         })
+
         if (response.ok) {
           dispatchedViaBackend = true
+          // Conmutar a atención humana automática al intervenir el operador
+          if (!esNotaInternaActual && selectedConv && !selectedConv.bot_disabled) {
+            setConversaciones((prev) =>
+              prev.map((c) => (c.id === selectedConvId ? { ...c, bot_disabled: true } : c))
+            )
+            fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/toggle-bot`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ bot_disabled: true })
+            }).catch(() => {})
+          }
+        } else {
+          // Despacho falló en backend: quitar mensaje optimista para no engañar al operador
+          const errData = await response.json().catch(() => ({}))
+          const errMsg = errData.detail || errData.error || 'Error al despachar por WhatsApp'
+          setMensajes((prev) => prev.filter((m) => m.id !== optimisticMsg.id))
+
+          if (errMsg.includes('Ventana de 24 horas') || errMsg.includes('WINDOW_CLOSED') || errMsg.includes('131026')) {
+            const reabrir = window.confirm(
+              '⚠️ La ventana de 24 horas de WhatsApp está cerrada para este paciente.\n\nMeta exige enviar una Plantilla Oficial para reanudar el contacto.\n\n¿Deseas abrir el selector de plantillas homologadas ahora?'
+            )
+            if (reabrir) {
+              setShowTemplateModal(true)
+            }
+          } else {
+            alert(`Error al enviar mensaje a WhatsApp: ${errMsg}`)
+          }
+          return
         }
-      } catch (backendErr) {
+      } catch (backendErr: any) {
         console.warn('Backend WhatsApp no disponible:', backendErr)
-      }
-
-      if (!dispatchedViaBackend) {
-        const dbMeta: any = esNotaInternaActual ? { is_internal_note: true, tipo: 'nota_interna' } : {}
-        if (quotedData) dbMeta.quoted_message = quotedData
-
-        await supabase
-          .from('mensajes')
-          .insert({
-            conversacion_id: selectedConvId,
-            emisor: 'operador',
-            contenido: mensajeAEnviar,
-            metadata_json: dbMeta
-          })
-
-        if (!esNotaInternaActual) {
-          await supabase
-            .from('conversaciones')
-            .update({ ultimo_mensaje: mensajeAEnviar })
-            .eq('id', selectedConvId)
-        }
+        setMensajes((prev) => prev.filter((m) => m.id !== optimisticMsg.id))
+        alert('No se pudo conectar con el servidor de mensajería.')
+        return
       }
 
       setTimeout(() => {
@@ -1510,9 +1557,39 @@ export default function ChatInbox() {
                       </button>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                    <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
-                  </p>
+                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                    <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                      <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
+                    </p>
+                    {/* Badge Ventana de 24 Horas de Meta */}
+                    {metaWindow.isExpired ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowTemplateModal(true)}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-700/80 hover:bg-rose-900 transition-all cursor-pointer shadow-xs"
+                        title="La ventana de 24h cerró. Haz clic para enviar una plantilla homologada de Meta."
+                      >
+                        <AlertCircle size={10} className="text-rose-400 shrink-0" />
+                        <span>Ventana 24h cerrada • Reabrir</span>
+                      </button>
+                    ) : metaWindow.isUrgent ? (
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/70"
+                        title="Menos de 2 horas restantes para el cierre de la ventana."
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                        <span>24h: {metaWindow.hoursLeft}h {metaWindow.minutesLeft}m restantes</span>
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/70"
+                        title="Ventana de 24 horas de Meta abierta. Puedes enviar texto libre y multimedia."
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        <span>24h activa ({metaWindow.hoursLeft}h {metaWindow.minutesLeft}m)</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1865,6 +1942,26 @@ export default function ChatInbox() {
                 </div>
               )}
 
+              {/* Banner de Ventana de 24 Horas Cerrada (Meta Policy) */}
+              {metaWindow.isExpired && !isInternalNote && (
+                <div className="flex items-center justify-between p-2.5 bg-rose-950/40 border border-rose-500/30 rounded-xl shadow-md text-xs text-rose-200 animate-in fade-in mb-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertCircle size={15} className="text-rose-400 shrink-0" />
+                    <span className="truncate">
+                      <strong>Ventana de 24h de WhatsApp vencida</strong>: Meta exige enviar una plantilla oficial para reanudar el chat.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateModal(true)}
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-[11px] shrink-0 transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer ml-2"
+                  >
+                    <Send size={11} />
+                    <span>Reabrir con Plantilla</span>
+                  </button>
+                </div>
+              )}
+
               {/* Formulario Principal de Envío */}
               <form onSubmit={handleSend} className="flex items-end gap-2 relative">
                 
@@ -1942,6 +2039,8 @@ export default function ChatInbox() {
                     placeholder={
                       isInternalNote
                         ? "🔒 Escribe una nota interna para el equipo (solo visible en el CRM)..."
+                        : metaWindow.isExpired
+                        ? "⚠️ Ventana de 24h vencida. Haz clic en 'Reabrir con Plantilla' arriba para contactar al paciente..."
                         : selectedConv.bot_disabled
                         ? "Escribe un mensaje (*negrita*, _cursiva_, /plantillas, o pega capturas Ctrl+V)..."
                         : "¡El bot responderá! Activa 'Atención Humana' para responder tú..."
@@ -2101,6 +2200,20 @@ export default function ChatInbox() {
           onCopyPhone={handleCopyPhoneContact}
           onOpenPatientFile={handleOpenPatientFileContact}
           onDelete={handleDeleteContact}
+        />
+      )}
+
+      {/* MODAL SELECTOR DE PLANTILLAS HOMOLOGADAS DE META (VENTANA 24H) */}
+      {showTemplateModal && currentPaciente && (
+        <ModalSelectorPlantillasMeta
+          isOpen={showTemplateModal}
+          onClose={() => setShowTemplateModal(false)}
+          pacienteNombre={currentPaciente.nombre}
+          pacienteTelefono={currentPaciente.telefono}
+          conversacionId={selectedConvId}
+          onEnviadoExitoso={() => {
+            if (selectedConvId) fetchMensajes(selectedConvId)
+          }}
         />
       )}
     </div>

@@ -94,7 +94,9 @@ async def process_meta_webhook_payload(payload_dict: Dict[str, Any]):
 
 async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Optional[str]):
     """
-    Actualiza el estado de entrega o lectura de un mensaje outbound en la base de datos.
+    Actualiza el estado de entrega o lectura de un mensaje outbound en:
+      1. whatsapp_messages (auditoría oficial de Meta)
+      2. public.mensajes (chat interactivo del CRM para mostrar tildes ✓, ✓✓ gris, ✓✓ azul o alerta de fallo)
     """
     wamid = status_dict.get("id")
     status_name = status_dict.get("status")  # sent, delivered, read, failed
@@ -121,11 +123,55 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
         update_fields["error_code"] = first_err.get("code")
         update_fields["error_message"] = first_err.get("message")
 
+    # 1. Actualizar whatsapp_messages
     try:
-        res = supabase.table("whatsapp_messages").update(update_fields).eq("wamid", wamid).execute()
-        logger.info(f"[Worker Status] Mensaje wamid={wamid} actualizado a status='{status_name}'")
+        supabase.table("whatsapp_messages").update(update_fields).eq("wamid", wamid).execute()
+        logger.info(f"[Worker Status] whatsapp_messages wamid={wamid} actualizado a status='{status_name}'")
     except Exception as e:
-        logger.error(f"[Worker Status] Error actualizando status para wamid={wamid}: {e}")
+        logger.error(f"[Worker Status] Error actualizando whatsapp_messages para wamid={wamid}: {e}")
+
+    # 2. Sincronizar en public.mensajes del CRM para actualización en tiempo real de tildes
+    status_crm_map = {
+        "sent": "enviado",
+        "delivered": "entregado",
+        "read": "leido",
+        "failed": "fallido"
+    }
+    crm_delivery_status = status_crm_map.get(status_name, status_name)
+
+    try:
+        # Buscar el mensaje en public.mensajes por whatsapp_message_id o por metadata_json->wamid
+        m_res = supabase.table("mensajes").select("id, metadata_json").eq("whatsapp_message_id", wamid).execute()
+        msg_id = None
+        current_meta = {}
+        if m_res.data and len(m_res.data) > 0:
+            msg_id = m_res.data[0]["id"]
+            current_meta = m_res.data[0].get("metadata_json") or {}
+        else:
+            # Fallback por filtro metadata_json
+            m_res2 = supabase.table("mensajes").select("id, metadata_json").filter("metadata_json->>wamid", "eq", wamid).execute()
+            if m_res2.data and len(m_res2.data) > 0:
+                msg_id = m_res2.data[0]["id"]
+                current_meta = m_res2.data[0].get("metadata_json") or {}
+
+        if msg_id:
+            current_meta["delivery_status"] = crm_delivery_status
+            if status_name == "delivered":
+                current_meta["delivered_at"] = dt_event
+            elif status_name == "read":
+                current_meta["read_at"] = dt_event
+            elif status_name == "failed":
+                errors = status_dict.get("errors", [{}])
+                first_err = errors[0] if errors else {}
+                current_meta["error_code"] = first_err.get("code")
+                current_meta["error_message"] = first_err.get("message")
+
+            supabase.table("mensajes").update({
+                "metadata_json": current_meta
+            }).eq("id", msg_id).execute()
+            logger.info(f"[Worker Status] public.mensajes id={msg_id} actualizado a delivery_status='{crm_delivery_status}'")
+    except Exception as sync_err:
+        logger.warning(f"[Worker Status] Error sincronizando tilde en public.mensajes: {sync_err}")
 
 
 async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Optional[str], contact_name: Optional[str]):
@@ -133,7 +179,8 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
     Maneja un mensaje de paciente entrante:
       - Normaliza el teléfono E.164
       - Renueva la ventana de 24 horas
-      - Persiste el mensaje y rutea respuestas interactivas de turnos
+      - Descarga y transcribe notas de voz o imágenes
+      - Persiste el mensaje y rutea al agente IA o respuestas interactivas de turnos
     """
     wamid = msg_dict.get("id")
     raw_sender = msg_dict.get("from")
@@ -143,6 +190,14 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
     # Extraer contenido de texto según el tipo
     text_content = ""
     interactive_id = None
+    media_url = None
+    transcripcion_audio = None
+    media_meta: Dict[str, Any] = {
+        "wamid": wamid,
+        "tipo": msg_type,
+        "provider": "meta_cloud_api"
+    }
+
     if msg_type == "text":
         text_content = msg_dict.get("text", {}).get("body", "")
     elif msg_type == "interactive":
@@ -150,9 +205,83 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         btn_reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
         interactive_id = btn_reply.get("id")
         text_content = btn_reply.get("title", "")
-    elif msg_type in ("image", "document", "audio"):
+    elif msg_type == "audio":
+        audio_info = msg_dict.get("audio", {})
+        media_id = audio_info.get("id")
+        text_content = "🎤 Nota de voz"
+        if media_id:
+            try:
+                from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
+                from app.agent import transcribir_audio_con_gemini
+                p_id, tkn = get_whatsapp_cloud_credentials()
+                if p_id and tkn:
+                    wa_client = WhatsAppCloudClient(phone_number_id=p_id, access_token=tkn)
+                    audio_bytes, mime_type = await wa_client.download_media_bytes(media_id)
+                    await wa_client.close()
+
+                    # Subir audio a Supabase Storage
+                    storage_path = f"audios/{int(datetime.now().timestamp())}_{media_id}.ogg"
+                    try:
+                        supabase.storage.from_("whatsapp-media").upload(
+                            file=audio_bytes,
+                            path=storage_path,
+                            file_options={"content-type": mime_type, "upsert": "true"}
+                        )
+                        pub = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
+                        if pub:
+                            media_url = pub
+                    except Exception as st_err:
+                        logger.warning(f"[Worker Audio] Supabase storage upload warning: {st_err}")
+
+                    # Transcribir audio automáticamente con Google Gemini
+                    try:
+                        transcripcion_audio = transcribir_audio_con_gemini(audio_bytes=audio_bytes, mime_type=mime_type)
+                        if transcripcion_audio:
+                            text_content = f"🎤 {transcripcion_audio}"
+                            logger.info(f"[Worker Audio] Nota de voz transcripta con éxito: {transcripcion_audio[:60]}...")
+                    except Exception as tr_err:
+                        logger.warning(f"[Worker Audio] Error en transcripción Gemini: {tr_err}")
+
+                media_meta["media_url"] = media_url
+                if transcripcion_audio:
+                    media_meta["transcripcion"] = transcripcion_audio
+            except Exception as dwn_err:
+                logger.error(f"[Worker Audio] Error descargando audio de Meta: {dwn_err}")
+
+    elif msg_type in ("image", "document"):
         media = msg_dict.get(msg_type, {})
-        text_content = f"[{msg_type.upper()}] {media.get('caption') or media.get('filename') or media.get('id')}"
+        media_id = media.get("id")
+        caption = media.get("caption") or media.get("filename") or ""
+        text_content = f"[{msg_type.upper()}] {caption}".strip()
+        if media_id:
+            try:
+                from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
+                p_id, tkn = get_whatsapp_cloud_credentials()
+                if p_id and tkn:
+                    wa_client = WhatsAppCloudClient(phone_number_id=p_id, access_token=tkn)
+                    media_bytes, mime_type = await wa_client.download_media_bytes(media_id)
+                    await wa_client.close()
+
+                    ext = "jpg" if "image" in mime_type else "pdf"
+                    storage_path = f"{msg_type}s/{int(datetime.now().timestamp())}_{media_id}.{ext}"
+                    try:
+                        supabase.storage.from_("whatsapp-media").upload(
+                            file=media_bytes,
+                            path=storage_path,
+                            file_options={"content-type": mime_type, "upsert": "true"}
+                        )
+                        pub = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
+                        if pub:
+                            media_url = pub
+                    except Exception as st_err:
+                        logger.warning(f"[Worker Media] Supabase storage upload warning: {st_err}")
+
+                media_meta["media_url"] = media_url
+                media_meta["caption"] = caption
+            except Exception as dwn_err:
+                logger.error(f"[Worker Media] Error descargando {msg_type} de Meta: {dwn_err}")
+    else:
+        text_content = f"[{msg_type.upper()}] Mensaje recibido"
 
     # 1. Obtener o crear paciente
     try:
@@ -216,13 +345,21 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
             # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes)
             try:
-                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled").eq("paciente_id", paciente_id).execute()
+                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json").eq("paciente_id", paciente_id).execute()
                 crm_conv_id = None
                 bot_disabled = False
 
                 if conv_crm_res.data and len(conv_crm_res.data) > 0:
                     crm_conv_id = conv_crm_res.data[0]["id"]
                     bot_disabled = conv_crm_res.data[0].get("bot_disabled", False)
+                    c_meta = conv_crm_res.data[0].get("metadata_json") or {}
+                    ultimo_humano = c_meta.get("ultimo_mensaje_humano_at", 0)
+                    # Período de gracia de 15 minutos (900s) si el operador humano estuvo respondiendo
+                    import time
+                    if time.time() - float(ultimo_humano or 0) < 900:
+                        bot_disabled = True
+                        logger.info(f"[Bot Handoff] Operador intervino recientemente. Bot pausado para conv {crm_conv_id}.")
+
                     supabase.table("conversaciones").update({
                         "ultimo_mensaje": text_content,
                         "updated_at": datetime.now(timezone.utc).isoformat()
@@ -236,24 +373,20 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     if new_crm_conv.data:
                         crm_conv_id = new_crm_conv.data[0]["id"]
 
-                # Guardar mensaje del paciente en la tabla que lee el CRM
+                # Guardar mensaje del paciente en public.mensajes
                 if crm_conv_id:
                     supabase.table("mensajes").insert({
                         "conversacion_id": crm_conv_id,
                         "emisor": "paciente",
                         "contenido": text_content,
-                        "metadata_json": {
-                            "wamid": wamid,
-                            "tipo": msg_type,
-                            "provider": "meta_cloud_api"
-                        }
+                        "metadata_json": media_meta
                     }).execute()
                     logger.info(f"[Worker Inbound] Mensaje sincronizado en public.mensajes para chat del CRM.")
 
                 # 4.2 Despachar el Agente IA (Gemini) si el bot no está deshabilitado
-                if not bot_disabled and text_content and msg_type in ("text", "interactive"):
+                if not bot_disabled and text_content and msg_type in ("text", "interactive", "audio"):
                     import asyncio
-                    from app.services.whatsapp_cloud.client import WhatsAppCloudClient
+                    from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 
                     async def responder_con_agente():
                         try:
@@ -261,8 +394,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                             logger.info(f"[Agente IA] Ejecutando Gemini para paciente {paciente_id}...")
                             respuesta_bot = await ejecutar_agente_para_paciente(paciente_id, text_content)
                             if respuesta_bot:
-                                phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
-                                token = os.getenv("META_WA_ACCESS_TOKEN")
+                                phone_id, token = get_whatsapp_cloud_credentials()
                                 if phone_id and token:
                                     wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
                                     send_res = await wa_client.send_free_text(normalized_phone, respuesta_bot)
@@ -278,6 +410,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                                             "metadata_json": {
                                                 "wamid": bot_wamid,
                                                 "tipo": "text",
+                                                "delivery_status": "enviado",
                                                 "provider": "meta_cloud_api"
                                             }
                                         }).execute()
