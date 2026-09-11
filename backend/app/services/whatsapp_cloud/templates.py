@@ -95,6 +95,23 @@ def clean_template_name(raw_name: str) -> str:
     return clean
 
 
+def clean_header_text(raw_header: Optional[str]) -> Optional[str]:
+    """
+    Sanitiza el encabezado para cumplir estrictamente con las reglas de Meta Graph API:
+    - No permite emojis, asteriscos, saltos de línea ni caracteres de formato markdown.
+    - Longitud máxima de 60 caracteres.
+    """
+    if not raw_header:
+        return None
+    # 1. Reemplazar saltos de línea por espacios
+    clean = re.sub(r"[\r\n]+", " ", str(raw_header))
+    # 2. Eliminar emojis y caracteres de formato (conservar letras, números, espacios y puntuación estándar)
+    clean = re.sub(r"[^\w\s\.,;:!?\(\)\/\-\–—]", "", clean)
+    # 3. Normalizar espacios repetidos y limitar a 60 caracteres
+    clean = re.sub(r"\s+", " ", clean).strip()
+    return clean[:60] if clean else None
+
+
 # ---------------------------------------------------------------------
 # Endpoints de Plantillas
 # ---------------------------------------------------------------------
@@ -228,12 +245,13 @@ async def create_template(req: TemplateCreateRequest):
 
     components: List[Dict[str, Any]] = []
 
-    # Cabecera
-    if req.header_type == "TEXT" and req.header_content:
+    # Cabecera (Sanitizada estrictamente según las políticas de Meta: sin emojis, saltos ni asteriscos)
+    clean_header = clean_header_text(req.header_content) if req.header_type == "TEXT" else None
+    if req.header_type == "TEXT" and clean_header:
         components.append({
             "type": "HEADER",
             "format": "TEXT",
-            "text": req.header_content
+            "text": clean_header
         })
 
     # Cuerpo
@@ -329,7 +347,7 @@ async def create_template(req: TemplateCreateRequest):
         "language": req.language,
         "status": meta_status,
         "header_type": req.header_type,
-        "header_content": req.header_content,
+        "header_content": clean_header,
         "body_text": req.body_text,
         "footer_text": req.footer_text,
         "buttons": [b.model_dump() for b in req.buttons] if req.buttons else [],

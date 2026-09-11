@@ -78,7 +78,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     title: 'Recordatorio Turno Quirúrgico',
     name: 'recordatorio_turno_quirurgico',
     category: 'UTILITY' as const,
-    header_content: 'Recordatorio de Turno Quirúrgico 🩺',
+    header_content: 'Recordatorio de Turno Quirúrgico',
     body_text: 'Hola {{1}}, le recordamos su turno quirúrgico programado para el día {{2}} a las {{3}} con el {{4}} para la práctica de {{5}} en {{6}}.\n\nPor favor confirme su asistencia respondiendo a este mensaje.',
     footer_text: 'MedCRM • Centro Quirúrgico',
     variable_mappings: {
@@ -98,7 +98,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     title: 'Presupuesto: Envío PDF en Chat (Opción 2)',
     name: 'presupuesto_entrega_pdf',
     category: 'UTILITY' as const,
-    header_content: 'Presupuesto Médico Disponible 📄',
+    header_content: 'Presupuesto Médico Disponible',
     body_text: 'Hola {{1}}, ya se encuentra listo el presupuesto para su procedimiento de {{2}}. El monto total estimado es {{3}}.\n\nPresione el botón inferior si desea recibir el archivo PDF oficial con el membrete directamente en este chat de WhatsApp.',
     footer_text: 'MedCRM • Área Quirúrgica',
     variable_mappings: {
@@ -114,7 +114,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     title: 'Presupuesto: Enlace Web Directo (Opción 1)',
     name: 'presupuesto_enlace_web',
     category: 'UTILITY' as const,
-    header_content: 'Presupuesto Quirúrgico 📄',
+    header_content: 'Presupuesto Quirúrgico',
     body_text: 'Estimado/a {{1}}, le acercamos la cotización formal para su procedimiento de {{2}} con un total de {{3}}.\n\nPuede acceder al presupuesto detallado en línea y descargarlo pulsando el botón a continuación:',
     footer_text: 'MedCRM • Centro Quirúrgico',
     variable_mappings: {
@@ -134,7 +134,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     title: 'Confirmación de Consulta Médica',
     name: 'confirmacion_consulta_medica',
     category: 'UTILITY' as const,
-    header_content: 'Confirmación de Consulta 📅',
+    header_content: 'Confirmación de Consulta',
     body_text: 'Estimado/a {{1}}, le confirmamos su turno para consulta médica el día {{2}} a las {{3}} hs con el {{4}}.\n\nRecuerde asistir con DNI y credencial de cobertura.',
     footer_text: 'MedCRM • Gestión de Turnos',
     variable_mappings: {
@@ -292,12 +292,17 @@ export default function WhatsAppTemplatesSettingsCard() {
 
     try {
       setCreating(true)
+      // Sanitizar encabezado conforme a las políticas de Meta (sin emojis, asteriscos ni saltos)
+      const sanitizedHeader = headerType === 'TEXT' && headerContent
+        ? headerContent.replace(/[\r\n]+/g, ' ').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ\s.,;:!?()/\-_]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60)
+        : null
+
       const payload = {
         name: name.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'),
         category,
         language,
         header_type: headerType,
-        header_content: headerType === 'TEXT' ? headerContent : null,
+        header_content: sanitizedHeader || null,
         body_text: bodyText,
         footer_text: footerText || null,
         buttons: buttons.filter(b => b.text.trim().length > 0),
@@ -711,16 +716,30 @@ export default function WhatsAppTemplatesSettingsCard() {
 
                 {/* Cabecera (Opcional) */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    Título de Cabecera (Opcional)
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-300">
+                      Título de Cabecera (Opcional)
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {headerContent.length}/60
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={headerContent}
-                    onChange={(e) => setHeaderContent(e.target.value)}
-                    placeholder="ej: Recordatorio de Turno Quirúrgico 🩺"
+                    maxLength={60}
+                    onChange={(e) => {
+                      // Filtrar en vivo cualquier emoji o carácter prohibido por Meta
+                      const cleanVal = e.target.value.replace(/[\r\n]+/g, ' ').replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ\s.,;:!?()/\-_]/g, '')
+                      setHeaderContent(cleanVal)
+                    }}
+                    placeholder="ej: Presupuesto Quirurgico"
                     className="w-full px-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm text-white focus:ring-2 focus:ring-emerald-500"
                   />
+                  <p className="text-[10.5px] text-amber-400/90 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3 shrink-0" />
+                    Meta prohíbe terminantemente emojis (📄, 🩺), asteriscos (*) y saltos de línea en el encabezado.
+                  </p>
                 </div>
 
                 {/* Cuerpo con Selector de Fichas Clínicas */}
