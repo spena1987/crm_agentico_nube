@@ -1761,8 +1761,19 @@ export default function ChatInbox() {
 
                     // 2. MENSAJE NORMAL DE WHATSAPP O STICKER
                     const isSticker = msg.metadata_json?.tipo === 'sticker'
-                    const hasText = Boolean(msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))))
-                    const hasMedia = Boolean(msg.metadata_json?.tipo && msg.metadata_json?.tipo !== 'texto')
+                    const isButton = msg.metadata_json?.tipo === 'button' || msg.contenido?.startsWith('🔘') || msg.contenido === '[BUTTON] Mensaje recibido'
+                    const hasText = Boolean(
+                      msg.contenido && (
+                        isButton ||
+                        !msg.metadata_json?.tipo ||
+                        (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))
+                      )
+                    )
+                    const hasMedia = Boolean(
+                      msg.metadata_json?.tipo &&
+                      msg.metadata_json?.tipo !== 'texto' &&
+                      msg.metadata_json?.tipo !== 'button'
+                    )
 
                     return (
                       <div
@@ -1887,7 +1898,14 @@ export default function ChatInbox() {
                             {/* Contenido textual con Hora y Tildes en el MISMO renglón (WhatsApp Web Nativo) */}
                             {hasText && (
                               <div className="text-[13px] leading-snug break-words">
-                                <WhatsAppFormattedText text={msg.contenido} className="inline" />
+                                {isButton ? (
+                                  <div className="inline-flex items-center gap-1.5 py-1 px-2.5 my-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-medium text-xs shadow-xs select-none">
+                                    <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">Botón Clickeado</span>
+                                    <span>{msg.contenido === '[BUTTON] Mensaje recibido' ? 'Recibir Presupuesto PDF' : msg.contenido.replace(/^🔘\s*/, '')}</span>
+                                  </div>
+                                ) : (
+                                  <WhatsAppFormattedText text={msg.contenido} className="inline" />
+                                )}
                                 <span className="inline-flex items-center gap-1 float-right ml-2.5 mt-0.5 select-none align-bottom text-[10px] opacity-85 leading-none">
                                   <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                   {isOperator || isBot ? (

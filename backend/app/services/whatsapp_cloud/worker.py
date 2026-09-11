@@ -234,6 +234,14 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         btn_reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
         interactive_id = btn_reply.get("id")
         text_content = btn_reply.get("title", "")
+    elif msg_type == "button":
+        button_info = msg_dict.get("button", {})
+        interactive_id = button_info.get("payload") or button_info.get("text", "")
+        btn_text = button_info.get("text") or button_info.get("payload") or "Botón presionado"
+        text_content = f"🔘 {btn_text}"
+        media_meta["tipo"] = "button"
+        media_meta["button_text"] = btn_text
+        media_meta["button_payload"] = button_info.get("payload")
     elif msg_type == "audio":
         audio_info = msg_dict.get("audio", {})
         media_id = audio_info.get("id")
@@ -456,7 +464,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                 # 4.2 Intercepción de Botones Interactivos Automatizados (Presupuesto PDF y Confirmación de Turnos)
                 interactive_handled = False
-                if msg_type == "interactive" or interactive_id:
+                if msg_type in ("interactive", "button") or interactive_id:
                     interactive_handled = await handle_automated_interactive_action(
                         button_id=interactive_id,
                         text_content=text_content,
@@ -575,6 +583,22 @@ async def handle_automated_interactive_action(
                     presupuesto = pres_resp.data[0]
             except Exception as pre:
                 logger.error(f"[Interactive Presupuesto] Error consultando presupuestos: {pre}")
+
+        if not presupuesto and normalized_phone:
+            try:
+                p_by_phone = supabase.table("pacientes").select("id").eq("telefono", normalized_phone).execute()
+                p_ids = [p["id"] for p in (p_by_phone.data or [])]
+                if p_ids:
+                    pres_resp = supabase.table("presupuestos") \
+                        .select("id, total, total_ars, total_usd, pdf_url, created_at") \
+                        .in_("paciente_id", p_ids) \
+                        .order("created_at", desc=True) \
+                        .limit(1) \
+                        .execute()
+                    if pres_resp.data:
+                        presupuesto = pres_resp.data[0]
+            except Exception as pe2:
+                logger.warning(f"[Interactive Presupuesto] Fallback por teléfono falló: {pe2}")
 
         phone_id, token = get_whatsapp_cloud_credentials()
         if not phone_id or not token:
