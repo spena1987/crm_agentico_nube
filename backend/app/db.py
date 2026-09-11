@@ -2896,9 +2896,9 @@ def enviar_presupuesto_por_whatsapp(
     if effective_mode == "template":
         from app.services.whatsapp_cloud.client import (
             WhatsAppCloudClient,
-            get_whatsapp_cloud_credentials,
-            normalize_to_meta_e164
+            get_whatsapp_cloud_credentials
         )
+        from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
         phone_id, token = get_whatsapp_cloud_credentials()
         if not phone_id or not token:
             raise ValueError("Credenciales de Meta WhatsApp Cloud API no configuradas en el servidor ni base de datos.")
@@ -3018,7 +3018,6 @@ def enviar_presupuesto_por_whatsapp(
         res_as = supabase.table("asesorias_quirurgicas") \
             .update({"estado": "en_analisis", "updated_at": "now()"}) \
             .eq("id", as_id) \
-            .select() \
             .execute()
         if res_as.data:
             asesoria_actualizada = res_as.data[0]
