@@ -21,6 +21,78 @@ if not GEMINI_API_KEY:
 
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
+def bind_tools_to_context(
+    raw_tools_map: Dict[str, Any], 
+    enabled_names: List[str], 
+    paciente_id: Optional[str], 
+    conversacion_id: Optional[str]
+) -> List[Any]:
+    """
+    Crea closures tipadas que pre-vinculan paciente_id y conversacion_id
+    para que Automatic Function Calling (AFC) de Gemini ejecute las herramientas
+    de forma nativa y sin errores de firmas de pensamiento ni parámetros ausentes.
+    """
+    bound_tools = []
+    for name in enabled_names:
+        if name not in raw_tools_map:
+            continue
+        base_func = raw_tools_map[name]
+        
+        if name == "vincular_paciente_geclisa":
+            def vincular_paciente_geclisa(dni: str) -> dict:
+                """
+                Consulta la API de Geclisa utilizando el DNI del paciente para verificar si ya posee
+                ficha médica registrada en la clínica, y en caso afirmativo, vincula e importa sus datos
+                directamente a la conversación del CRM. Si no existe, registra el DNI como nuevo paciente.
+                
+                Args:
+                    dni: El número de DNI / Documento del paciente (solo dígitos).
+                """
+                return base_func(dni=dni, conversacion_id=conversacion_id, paciente_id=paciente_id)
+            vincular_paciente_geclisa.__doc__ = base_func.__doc__
+            bound_tools.append(vincular_paciente_geclisa)
+            
+        elif name == "crear_borrador_presupuesto":
+            def crear_borrador_presupuesto(items_presupuesto: List[dict], observaciones: Optional[str] = None) -> dict:
+                """
+                Crea un borrador de presupuesto para el paciente con las prácticas y cantidades solicitadas.
+                """
+                return base_func(items_presupuesto=items_presupuesto, paciente_id=paciente_id, observaciones=observaciones)
+            crear_borrador_presupuesto.__doc__ = base_func.__doc__
+            bound_tools.append(crear_borrador_presupuesto)
+            
+        elif name == "aprobar_presupuesto":
+            def aprobar_presupuesto(presupuesto_id: Optional[str] = None, notas: Optional[str] = None) -> dict:
+                """
+                Aprueba y confirma formalmente un presupuesto emitido al paciente cuando manifiesta su conformidad.
+                """
+                return base_func(presupuesto_id=presupuesto_id, paciente_id=paciente_id, notas=notas)
+            aprobar_presupuesto.__doc__ = base_func.__doc__
+            bound_tools.append(aprobar_presupuesto)
+            
+        elif name == "consultar_presupuestos_paciente":
+            def consultar_presupuestos_paciente() -> dict:
+                """
+                Consulta los presupuestos médicos emitidos al paciente en el sistema.
+                """
+                return base_func(paciente_id=paciente_id)
+            consultar_presupuestos_paciente.__doc__ = base_func.__doc__
+            bound_tools.append(consultar_presupuestos_paciente)
+            
+        elif name == "escalar_a_operador_humano":
+            def escalar_a_operador_humano(motivo: str) -> dict:
+                """
+                Deriva la conversación a un operador humano de secretaría o equipo médico.
+                """
+                return base_func(conversacion_id=conversacion_id, motivo=motivo)
+            escalar_a_operador_humano.__doc__ = base_func.__doc__
+            bound_tools.append(escalar_a_operador_humano)
+            
+        else:
+            bound_tools.append(base_func)
+            
+    return bound_tools
+
 def procesar_mensaje_agente(
     conversacion_id: str, 
     mensaje_texto_o_paciente_id: str, 
@@ -73,9 +145,22 @@ def procesar_mensaje_agente(
         agent_code = active_agent.get("codigo", "GENERAL")
         agent_temp = float(active_agent.get("temperatura") or 0.2)
         system_instruction = orchestrator.compile_system_prompt(active_agent, paciente_info=paciente_info)
-        agent_tools = orchestrator.get_agent_tools(active_agent)
+        
+        habilitadas = active_agent.get("herramientas_habilitadas") or []
+        if isinstance(habilitadas, str):
+            try:
+                habilitadas = json.loads(habilitadas)
+            except Exception:
+                habilitadas = list(AVAILABLE_TOOLS_MAP.keys())
+                
+        bound_tools = bind_tools_to_context(
+            raw_tools_map=AVAILABLE_TOOLS_MAP,
+            enabled_names=habilitadas,
+            paciente_id=paciente_id,
+            conversacion_id=conversacion_id
+        )
 
-        logger.info(f"Procesando mensaje con Agente: '{active_agent.get('nombre')}' ({agent_code}) | Temp: {agent_temp}")
+        logger.info(f"Procesando mensaje con Agente: '{active_agent.get('nombre')}' ({agent_code}) | Temp: {agent_temp} | Tools: {len(bound_tools)}")
 
         # 3. Recuperar historial de mensajes recientes (últimos 10 mensajes)
         historial_data = []
@@ -98,8 +183,9 @@ def procesar_mensaje_agente(
             role = "user" if h.get("emisor") == "paciente" else "model"
             raw_turns.append({"role": role, "text": contenido})
         
-        # Agregar el nuevo mensaje del usuario
-        if final_texto and final_texto.strip():
+        # Agregar el nuevo mensaje del usuario solo si no fue ya el último mensaje del historial
+        ultimo_texto_historial = (historial_data[-1].get("contenido") or "").strip() if historial_data else ""
+        if final_texto and final_texto.strip() and ultimo_texto_historial != final_texto.strip():
             raw_turns.append({"role": "user", "text": final_texto.strip()})
 
         # Consolidar turnos consecutivos con el mismo rol (Gemini exige alternancia user/model)
@@ -131,16 +217,11 @@ def procesar_mensaje_agente(
                 )
             ]
 
-        # 5. Configurar generación con Directivas Dinámicas, Tools y AFC optimizado
-        afc_config = types.AutomaticFunctionCallingConfig(ignore_call_history=True) if hasattr(types, "AutomaticFunctionCallingConfig") else None
-        thinking_conf = types.ThinkingConfig(thinking_budget=0) if hasattr(types, "ThinkingConfig") else None
-        
+        # 5. Configurar generación con Directivas Dinámicas y Tools vinculadas
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            tools=agent_tools,
-            temperature=agent_temp,
-            thinking_config=thinking_conf,
-            automatic_function_calling=afc_config
+            tools=bound_tools if bound_tools else None,
+            temperature=agent_temp
         )
 
         # 6. Ejecutar consulta inicial (con fallback multicapa resiliente)
@@ -152,12 +233,12 @@ def procesar_mensaje_agente(
                 config=config
             )
         except Exception as api_err:
-            logger.warning(f"Error en inferencia primaria ({api_err}). Ejecutando fallback sin historial ni thinking_config...")
+            logger.warning(f"Error en inferencia primaria ({api_err}). Ejecutando fallback con modelo alternativo...")
             try:
-                # Reintento 1: Sin historial previo y sin thinking_config
+                # Reintento 1: Sin historial previo con tools vinculadas
                 fallback_config = types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    tools=agent_tools,
+                    tools=bound_tools if bound_tools else None,
                     temperature=agent_temp
                 )
                 contents_single = [
@@ -188,7 +269,7 @@ def procesar_mensaje_agente(
                     logger.critical(f"Falla crítica en todos los modelos de Gemini: {final_err}")
                     raise final_err
 
-        # 8. Loop de Function Calling
+        # 8. Loop de Function Calling de Respaldo (por si AFC no resuelve en 1 solo paso)
         intentos = 0
         max_intentos = 5
         funciones_ejecutadas = []
@@ -199,11 +280,10 @@ def procesar_mensaje_agente(
             
             for call in response.function_calls:
                 func_name = call.name
-                func_args = call.args
-                call_id = call.id
+                func_args = call.args or {}
                 funciones_ejecutadas.append(func_name)
                 
-                logger.info(f"[{agent_code}] Gemini solicita función: {func_name} con args: {func_args}")
+                logger.info(f"[{agent_code}] Fallback manual solicita función: {func_name} con args: {func_args}")
                 
                 if func_name in AVAILABLE_TOOLS_MAP:
                     try:
@@ -228,14 +308,18 @@ def procesar_mensaje_agente(
                     )
                 )
             
-            contents.append(response.candidates[0].content)
-            contents.append(types.Content(role="tool", parts=tool_responses))
-            
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config
-            )
+            try:
+                contents.append(response.candidates[0].content)
+                contents.append(types.Content(role="tool", parts=tool_responses))
+                
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config
+                )
+            except Exception as fc_err:
+                logger.warning(f"Falla en respuesta de function calling manual ({fc_err}). Retornando confirmación.")
+                break
 
         # 9. Obtener la respuesta final normalizada para WhatsApp
         raw_text = response.text or ""
