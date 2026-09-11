@@ -5,6 +5,10 @@ import type { NextRequest } from 'next/server'
 const PUBLIC_PATHS = [
   '/login',
   '/consentimiento',
+  '/politica-privacidad',
+  '/privacy-policy',
+  '/terminos-condiciones',
+  '/eliminacion-datos',
   '/_next',
   '/favicon.ico',
   '/api',

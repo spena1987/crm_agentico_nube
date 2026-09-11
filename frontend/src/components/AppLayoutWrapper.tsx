@@ -18,15 +18,21 @@ export default function AppLayoutWrapper({
 
   const isLoginPage = pathname === '/login'
   const isPublicConsentPage = pathname?.startsWith('/consentimiento')
+  const isLegalPage = 
+    pathname === '/politica-privacidad' || 
+    pathname === '/privacy-policy' || 
+    pathname === '/terminos-condiciones' || 
+    pathname === '/eliminacion-datos'
+  const isPublicOpenPage = isLoginPage || isPublicConsentPage || isLegalPage
 
   useEffect(() => {
-    if (!loading && !user && !isLoginPage && !isPublicConsentPage) {
+    if (!loading && !user && !isPublicOpenPage) {
       router.push('/login')
     }
-  }, [user, loading, isLoginPage, isPublicConsentPage, router])
+  }, [user, loading, isPublicOpenPage, router])
 
-  // Si estamos en la página de login o de consentimiento público para pacientes, renderizamos sin navegación de CRM
-  if (isLoginPage || isPublicConsentPage) {
+  // Si estamos en una página pública, renderizamos sin navegación de CRM
+  if (isPublicOpenPage) {
     return <>{children}</>
   }
 

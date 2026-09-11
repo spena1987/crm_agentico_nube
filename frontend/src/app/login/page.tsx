@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, Suspense } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import { Activity, Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Clock } from 'lucide-react'
@@ -177,11 +178,26 @@ function LoginForm() {
         </form>
 
         {/* Nota de acceso por invitación */}
-        <div className="mt-8 pt-6 border-t border-[var(--border)] text-center">
+        <div className="mt-8 pt-6 border-t border-[var(--border)] text-center space-y-3">
           <p className="text-xs text-[var(--secondary)] flex items-center justify-center gap-1.5">
             <Lock size={13} className="shrink-0" />
             Acceso restringido. Nuevas cuentas deben ser dadas de alta por la administración en Supabase.
           </p>
+
+          {/* Enlaces Legales Públicos requeridos por Meta WhatsApp API */}
+          <div className="flex items-center justify-center gap-3 text-[11px] text-slate-400 pt-1">
+            <Link href="/politica-privacidad" className="hover:text-blue-600 transition-colors">
+              Política de Privacidad
+            </Link>
+            <span>•</span>
+            <Link href="/terminos-condiciones" className="hover:text-blue-600 transition-colors">
+              Términos del Servicio
+            </Link>
+            <span>•</span>
+            <Link href="/eliminacion-datos" className="hover:text-blue-600 transition-colors">
+              Eliminación de Datos
+            </Link>
+          </div>
         </div>
       </div>
     </div>

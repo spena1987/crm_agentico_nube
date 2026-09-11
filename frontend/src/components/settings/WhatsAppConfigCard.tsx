@@ -61,6 +61,23 @@ export default function WhatsAppConfigCard() {
   const [enviandoTest, setEnviandoTest] = useState(false)
   const [testFeedback, setTestFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // URLs de Cumplimiento Meta Cloud API
+  const [copiedLegalKey, setCopiedLegalKey] = useState<string | null>(null)
+  const [appOrigin, setAppOrigin] = useState('')
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setAppOrigin(window.location.origin)
+    }
+  }, [])
+
+  const handleCopyLegalUrl = (path: string, key: string) => {
+    const fullUrl = `${appOrigin || ''}${path}`
+    navigator.clipboard.writeText(fullUrl)
+    setCopiedLegalKey(key)
+    setTimeout(() => setCopiedLegalKey(null), 3000)
+  }
+
   const fetchStatus = async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
@@ -660,6 +677,119 @@ export default function WhatsAppConfigCard() {
                 <span>{enviandoTest ? 'Despachando Mensaje...' : 'Despachar Mensaje de Prueba'}</span>
               </button>
             </form>
+          </div>
+
+          {/* Tarjeta de Requisitos de Publicación Meta for Developers */}
+          <div className="p-6 rounded-2xl border border-blue-200 dark:border-blue-900/50 bg-blue-50/40 dark:bg-blue-950/20 shadow-sm space-y-4">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="text-blue-600" size={20} />
+              <div>
+                <h3 className="font-bold text-sm text-slate-900 dark:text-slate-100">
+                  Requisitos de Publicación en Meta
+                </h3>
+                <p className="text-[11px] text-[var(--secondary)]">
+                  URLs públicas obligatorias para verificar la aplicación y pasar a Modo Live en Meta for Developers.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3 pt-1">
+              {/* 1. Política de Privacidad */}
+              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    1. URL de Política de Privacidad
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLegalUrl('/politica-privacidad', 'privacy')}
+                      className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-medium transition-colors"
+                      title="Copiar URL completa"
+                    >
+                      {copiedLegalKey === 'privacy' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedLegalKey === 'privacy' ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                    <a
+                      href="/politica-privacidad"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded-md text-slate-400 hover:text-blue-600 transition-colors"
+                      title="Abrir página pública"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                </div>
+                <p className="font-mono text-[11px] text-blue-600 dark:text-blue-400 break-all select-all">
+                  {appOrigin ? `${appOrigin}/politica-privacidad` : '/politica-privacidad'}
+                </p>
+              </div>
+
+              {/* 2. Eliminación de Datos */}
+              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    2. URL de Eliminación de Datos (User Data Deletion)
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLegalUrl('/eliminacion-datos', 'deletion')}
+                      className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-medium transition-colors"
+                      title="Copiar URL completa"
+                    >
+                      {copiedLegalKey === 'deletion' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedLegalKey === 'deletion' ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                    <a
+                      href="/eliminacion-datos"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded-md text-slate-400 hover:text-blue-600 transition-colors"
+                      title="Abrir página pública"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                </div>
+                <p className="font-mono text-[11px] text-blue-600 dark:text-blue-400 break-all select-all">
+                  {appOrigin ? `${appOrigin}/eliminacion-datos` : '/eliminacion-datos'}
+                </p>
+              </div>
+
+              {/* 3. Términos del Servicio */}
+              <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-xs space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-800 dark:text-slate-200">
+                    3. URL de Condiciones del Servicio
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLegalUrl('/terminos-condiciones', 'terms')}
+                      className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-medium transition-colors"
+                      title="Copiar URL completa"
+                    >
+                      {copiedLegalKey === 'terms' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedLegalKey === 'terms' ? 'Copiado' : 'Copiar'}</span>
+                    </button>
+                    <a
+                      href="/terminos-condiciones"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1 rounded-md text-slate-400 hover:text-blue-600 transition-colors"
+                      title="Abrir página pública"
+                    >
+                      <ExternalLink size={14} />
+                    </a>
+                  </div>
+                </div>
+                <p className="font-mono text-[11px] text-blue-600 dark:text-blue-400 break-all select-all">
+                  {appOrigin ? `${appOrigin}/terminos-condiciones` : '/terminos-condiciones'}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 
