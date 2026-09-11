@@ -26,7 +26,7 @@ import {
   ChevronRight,
   Search
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 import WhatsAppPhoneSimulator from './whatsapp/WhatsAppPhoneSimulator'
 
 interface TemplateItem {
@@ -160,7 +160,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const fetchTemplates = async () => {
     try {
       setLoading(true)
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/templates`)
+      const res = await apiFetch('/api/whatsapp/cloud/templates')
       if (res.ok) {
         const data = await res.json()
         setTemplates(data.data || [])
@@ -180,7 +180,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const handleSyncWithMeta = async () => {
     try {
       setSyncing(true)
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/templates/sync`, {
+      const res = await apiFetch('/api/whatsapp/cloud/templates/sync', {
         method: 'POST'
       })
       const data = await res.json()
@@ -274,9 +274,8 @@ export default function WhatsAppTemplatesSettingsCard() {
         sample_values: orderedSampleValues
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/templates`, {
+      const res = await apiFetch('/api/whatsapp/cloud/templates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
 
@@ -302,7 +301,7 @@ export default function WhatsAppTemplatesSettingsCard() {
     if (!confirm(`¿Estás seguro de eliminar la plantilla '${tplName}' de Meta y del CRM?`)) return
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/templates/${tplName}`, {
+      const res = await apiFetch(`/api/whatsapp/cloud/templates/${tplName}`, {
         method: 'DELETE'
       })
       if (res.ok) {
