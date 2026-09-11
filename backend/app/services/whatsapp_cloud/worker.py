@@ -201,7 +201,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                 if new_conv.data:
                     conversation_id = new_conv.data[0]["id"]
 
-            # 4. Registrar en whatsapp_messages
+            # 4. Registrar en whatsapp_messages (auditoría oficial de Meta)
             if conversation_id:
                 supabase.table("whatsapp_messages").insert({
                     "conversation_id": conversation_id,
@@ -213,6 +213,88 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     "payload_raw": msg_dict,
                     "status": "delivered"
                 }).execute()
+
+            # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes)
+            try:
+                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled").eq("paciente_id", paciente_id).execute()
+                crm_conv_id = None
+                bot_disabled = False
+
+                if conv_crm_res.data and len(conv_crm_res.data) > 0:
+                    crm_conv_id = conv_crm_res.data[0]["id"]
+                    bot_disabled = conv_crm_res.data[0].get("bot_disabled", False)
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": text_content,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", crm_conv_id).execute()
+                else:
+                    new_crm_conv = supabase.table("conversaciones").insert({
+                        "paciente_id": paciente_id,
+                        "bot_disabled": False,
+                        "ultimo_mensaje": text_content
+                    }).execute()
+                    if new_crm_conv.data:
+                        crm_conv_id = new_crm_conv.data[0]["id"]
+
+                # Guardar mensaje del paciente en la tabla que lee el CRM
+                if crm_conv_id:
+                    supabase.table("mensajes").insert({
+                        "conversacion_id": crm_conv_id,
+                        "emisor": "paciente",
+                        "contenido": text_content,
+                        "metadata_json": {
+                            "wamid": wamid,
+                            "tipo": msg_type,
+                            "provider": "meta_cloud_api"
+                        }
+                    }).execute()
+                    logger.info(f"[Worker Inbound] Mensaje sincronizado en public.mensajes para chat del CRM.")
+
+                # 4.2 Despachar el Agente IA (Gemini) si el bot no está deshabilitado
+                if not bot_disabled and text_content and msg_type in ("text", "interactive"):
+                    import asyncio
+                    from app.services.whatsapp_cloud.client import WhatsAppCloudClient
+
+                    async def responder_con_agente():
+                        try:
+                            from app.agent import ejecutar_agente_para_paciente
+                            logger.info(f"[Agente IA] Ejecutando Gemini para paciente {paciente_id}...")
+                            respuesta_bot = await ejecutar_agente_para_paciente(paciente_id, text_content)
+                            if respuesta_bot:
+                                phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
+                                token = os.getenv("META_WA_ACCESS_TOKEN")
+                                if phone_id and token:
+                                    wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+                                    send_res = await wa_client.send_free_text(normalized_phone, respuesta_bot)
+                                    bot_wamid = send_res.get("wamid")
+                                    await wa_client.close()
+
+                                    # Guardar respuesta del bot en public.mensajes del CRM
+                                    if crm_conv_id:
+                                        supabase.table("mensajes").insert({
+                                            "conversacion_id": crm_conv_id,
+                                            "emisor": "bot",
+                                            "contenido": respuesta_bot,
+                                            "metadata_json": {
+                                                "wamid": bot_wamid,
+                                                "tipo": "text",
+                                                "provider": "meta_cloud_api"
+                                            }
+                                        }).execute()
+
+                                        supabase.table("conversaciones").update({
+                                            "ultimo_mensaje": respuesta_bot,
+                                            "updated_at": datetime.now(timezone.utc).isoformat()
+                                        }).eq("id", crm_conv_id).execute()
+
+                                    logger.info(f"[Agente IA] Respuesta enviada por Meta Cloud API y registrada en CRM.")
+                        except Exception as err_bot:
+                            logger.error(f"[Agente IA Error] Error respondiendo con bot: {err_bot}", exc_info=True)
+
+                    asyncio.create_task(responder_con_agente())
+
+            except Exception as err_sync:
+                logger.error(f"[Worker Sync Error] Error sincronizando con chat del CRM: {err_sync}", exc_info=True)
 
         # 5. Manejar botones interactivos de turnos clínicos si corresponde
         if interactive_id:

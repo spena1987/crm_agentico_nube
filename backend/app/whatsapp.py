@@ -222,8 +222,30 @@ class WhatsAppManager:
 
     def get_status(self) -> Dict[str, Any]:
         """
-        Consulta el estado vivo de la instancia en Evolution API v2 de forma pasiva y eficiente.
+        Consulta el estado vivo de la pasarela. Prioriza Meta WhatsApp Cloud API si está configurada.
         """
+        meta_phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
+        meta_token = os.getenv("META_WA_ACCESS_TOKEN")
+        if meta_phone_id and meta_token:
+            self.status = "CONNECTED"
+            return {
+                "available": True,
+                "engine": "Meta WhatsApp Cloud API (Graph v21+)",
+                "status": "CONNECTED",
+                "is_logged_in": True,
+                "qr_ready": False,
+                "qr_data_uri": None,
+                "requires_qr": False,
+                "phone_number_id": meta_phone_id,
+                "device_info": {
+                    "phone": meta_phone_id,
+                    "push_name": "Meta Cloud API Oficial",
+                    "business_name": "Clínica Médica",
+                    "platform": "Meta WhatsApp Cloud API",
+                    "connected_at": "Permanente (Cloud)"
+                }
+            }
+
         try:
             r = httpx.get(f"{self.evo_url}/instance/connectionState/{self.evo_instance}", headers=self._headers, timeout=4.0)
             if r.status_code == 200:
@@ -419,6 +441,60 @@ class WhatsAppManager:
                         conversacion_id = conv.get("id")
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
+
+        # Prioridad nativa: Si Meta WhatsApp Cloud API está configurada en el entorno
+        meta_phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
+        meta_token = os.getenv("META_WA_ACCESS_TOKEN")
+        if meta_phone_id and meta_token:
+            import asyncio
+            from app.services.whatsapp_cloud.client import WhatsAppCloudClient, ConversationWindowClosedError
+            from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+
+            normalized_meta_phone = normalize_to_meta_e164(telefono)
+            wa_client = WhatsAppCloudClient(phone_number_id=meta_phone_id, access_token=meta_token)
+
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                res = loop.run_until_complete(wa_client.send_free_text(normalized_meta_phone, texto))
+                loop.close()
+
+                wamid = res.get("wamid")
+                if conversacion_id:
+                    try:
+                        guardar_mensaje(
+                            conversacion_id=conversacion_id,
+                            emisor=emisor,
+                            contenido=texto,
+                            whatsapp_message_id=wamid,
+                            metadata_json={
+                                "wamid": wamid,
+                                "delivery_status": "enviado",
+                                "provider": "meta_cloud_api"
+                            }
+                        )
+                    except Exception as db_err:
+                        self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
+
+                self.add_log("INFO", f"Mensaje despachado exitosamente vía Meta Cloud API a {normalized_meta_phone} (wamid: {wamid})")
+                return {
+                    "success": True,
+                    "enviado_real": True,
+                    "message_id": wamid,
+                    "telefono": normalized_meta_phone,
+                    "conversacion_id": conversacion_id,
+                    "provider": "meta_cloud_api"
+                }
+            except ConversationWindowClosedError:
+                self.add_log("WARNING", f"Ventana de 24 horas cerrada para {normalized_meta_phone}")
+                return {
+                    "error": "Ventana de 24 horas cerrada. El paciente debe responder primero o se debe enviar una plantilla pre-aprobada.",
+                    "code": "WINDOW_CLOSED",
+                    "enviado_real": False
+                }
+            except Exception as meta_err:
+                self.add_log("ERROR", f"Error enviando por Meta Cloud API: {meta_err}")
+                return {"error": f"Error de Meta WhatsApp Cloud API: {meta_err}", "enviado_real": False}
 
         # Resolución inteligente de destino (Prioridad absoluta a @lid si existe)
         target_number = clean_digits
