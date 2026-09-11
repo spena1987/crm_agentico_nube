@@ -342,19 +342,19 @@ export default function WhatsAppTemplatesSettingsCard() {
   return (
     <div className="space-y-6">
       {/* Encabezado y Barra de Acciones */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl p-6 border border-slate-200 dark:border-slate-700/60 shadow-xs">
+      <div className="bg-[#121c29] rounded-xl p-6 border border-[#1e2d42] shadow-xs">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <MessageSquareText className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <MessageSquareText className="w-6 h-6 text-emerald-400" />
                 Plantillas de WhatsApp (Meta Cloud API)
               </h2>
-              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300/50">
+              <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-500/30">
                 Oficial Meta v21+
               </span>
             </div>
-            <p className="text-sm text-slate-550 dark:text-slate-400 mt-1 max-w-2xl">
+            <p className="text-sm text-slate-400 mt-1 max-w-2xl">
               Diseña y sincroniza plantillas pre-aprobadas para iniciar conversaciones clínicas y enviar recordatorios de turnos fuera de la ventana de 24 horas sin costos adicionales.
             </p>
           </div>
@@ -363,10 +363,10 @@ export default function WhatsAppTemplatesSettingsCard() {
             <button
               onClick={handleSyncWithMeta}
               disabled={syncing}
-              className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-650 text-slate-700 dark:text-slate-200 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-3.5 py-2 bg-[#1a2738] hover:bg-[#23354c] text-slate-200 border border-[#2b3e58] rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
               title="Sincronizar plantillas con tu cuenta de Meta"
             >
-              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin text-emerald-600' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin text-emerald-400' : ''}`} />
               <span>{syncing ? 'Sincronizando...' : 'Sincronizar con Meta'}</span>
             </button>
 
@@ -375,7 +375,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                 resetForm()
                 setIsCreateModalOpen(true)
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium shadow-sm transition-colors"
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium shadow-sm transition-colors"
             >
               <Plus className="w-4 h-4" />
               <span>Nueva Plantilla</span>
@@ -385,41 +385,41 @@ export default function WhatsAppTemplatesSettingsCard() {
 
         {/* Feedback Alerts */}
         {successFeedback && (
-          <div className="mt-4 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-sm flex items-center gap-2 animate-fadeIn">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <div className="mt-4 p-3 rounded-lg bg-emerald-950/60 border border-emerald-800/80 text-emerald-200 text-sm flex items-center gap-2 animate-fadeIn">
+            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
             <span>{successFeedback}</span>
           </div>
         )}
         {errorFeedback && !isCreateModalOpen && (
-          <div className="mt-4 p-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-sm flex items-center gap-2 animate-fadeIn">
-            <AlertCircle className="w-4 h-4 shrink-0" />
+          <div className="mt-4 p-3 rounded-lg bg-red-950/60 border border-red-800/80 text-red-200 text-sm flex items-center gap-2 animate-fadeIn">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
             <span>{errorFeedback}</span>
           </div>
         )}
 
         {/* Estadísticas / KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-slate-100 dark:border-slate-700/60">
-          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-750/50 border border-slate-100 dark:border-slate-700/40">
-            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Total Plantillas</div>
-            <div className="text-xl font-bold text-slate-900 dark:text-white mt-0.5">{templates.length}</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-[#1e2d42]">
+          <div className="p-3 rounded-lg bg-[#162232] border border-[#233348]">
+            <div className="text-xs font-medium text-slate-400">Total Plantillas</div>
+            <div className="text-xl font-bold text-white mt-0.5">{templates.length}</div>
           </div>
-          <div className="p-3 rounded-lg bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/50">
-            <div className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+          <div className="p-3 rounded-lg bg-[#0b2923]/60 border border-[#134e48]">
+            <div className="text-xs font-medium text-emerald-400 flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5" /> Aprobadas
             </div>
-            <div className="text-xl font-bold text-emerald-800 dark:text-emerald-300 mt-0.5">{countApproved}</div>
+            <div className="text-xl font-bold text-emerald-300 mt-0.5">{countApproved}</div>
           </div>
-          <div className="p-3 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/50">
-            <div className="text-xs font-medium text-amber-700 dark:text-amber-400 flex items-center gap-1">
+          <div className="p-3 rounded-lg bg-[#2c2010]/60 border border-[#563c12]">
+            <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" /> En Revisión
             </div>
-            <div className="text-xl font-bold text-amber-800 dark:text-amber-300 mt-0.5">{countPending}</div>
+            <div className="text-xl font-bold text-amber-300 mt-0.5">{countPending}</div>
           </div>
-          <div className="p-3 rounded-lg bg-red-50/70 dark:bg-red-950/30 border border-red-100 dark:border-red-900/50">
-            <div className="text-xs font-medium text-red-700 dark:text-red-400 flex items-center gap-1">
+          <div className="p-3 rounded-lg bg-[#2a151b]/60 border border-[#581c25]">
+            <div className="text-xs font-medium text-red-400 flex items-center gap-1">
               <AlertCircle className="w-3.5 h-3.5" /> Rechazadas
             </div>
-            <div className="text-xl font-bold text-red-800 dark:text-red-300 mt-0.5">{countRejected}</div>
+            <div className="text-xl font-bold text-red-300 mt-0.5">{countRejected}</div>
           </div>
         </div>
       </div>
@@ -433,15 +433,15 @@ export default function WhatsAppTemplatesSettingsCard() {
             placeholder="Buscar plantilla por nombre o contenido..."
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 text-slate-900 dark:text-white"
+            className="w-full pl-9 pr-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 text-white placeholder:text-slate-500"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 self-start sm:self-auto bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700 text-xs">
+        <div className="flex items-center gap-1.5 self-start sm:self-auto bg-[#162232] p-1 rounded-lg border border-[#233348] text-xs">
           <button
             onClick={() => setCategoryFilter('ALL')}
             className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'ALL' ? 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white font-semibold' : 'text-slate-500 hover:text-slate-700'
+              categoryFilter === 'ALL' ? 'bg-[#23354c] text-white font-semibold' : 'text-slate-400 hover:text-white'
             }`}
           >
             Todas
@@ -449,7 +449,7 @@ export default function WhatsAppTemplatesSettingsCard() {
           <button
             onClick={() => setCategoryFilter('UTILITY')}
             className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'UTILITY' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-semibold' : 'text-slate-500 hover:text-slate-700'
+              categoryFilter === 'UTILITY' ? 'bg-emerald-950 text-emerald-300 font-semibold border border-emerald-800/50' : 'text-slate-400 hover:text-white'
             }`}
           >
             Utilidad (Turnos)
@@ -457,7 +457,7 @@ export default function WhatsAppTemplatesSettingsCard() {
           <button
             onClick={() => setCategoryFilter('MARKETING')}
             className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'MARKETING' ? 'bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-300 font-semibold' : 'text-slate-500 hover:text-slate-700'
+              categoryFilter === 'MARKETING' ? 'bg-indigo-950 text-indigo-300 font-semibold border border-indigo-800/50' : 'text-slate-400 hover:text-white'
             }`}
           >
             Marketing
@@ -495,17 +495,17 @@ export default function WhatsAppTemplatesSettingsCard() {
           {filteredTemplates.map((tpl) => (
             <div 
               key={tpl.id}
-              className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700/60 p-4.5 flex flex-col justify-between hover:shadow-md transition-shadow group"
+              className="bg-[#131e2c] rounded-xl border border-[#223247] p-4.5 flex flex-col justify-between hover:border-emerald-500/40 transition-all shadow-sm group"
             >
               <div>
                 {/* Cabecera de la tarjeta */}
                 <div className="flex items-start justify-between gap-2 mb-2.5">
                   <div className="min-w-0">
-                    <h3 className="font-semibold text-sm text-slate-900 dark:text-white truncate" title={tpl.name}>
+                    <h3 className="font-semibold text-sm text-white truncate" title={tpl.name}>
                       {tpl.name}
                     </h3>
                     <div className="flex items-center gap-1.5 mt-1">
-                      <span className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                      <span className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-[#1a2738] text-slate-300 border border-[#27394f]">
                         {tpl.category}
                       </span>
                       <span className="text-[11px] text-slate-400 font-mono">
@@ -517,29 +517,29 @@ export default function WhatsAppTemplatesSettingsCard() {
                   {/* Badge de Estado */}
                   <div className="shrink-0">
                     {tpl.status === 'APPROVED' ? (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 flex items-center gap-1 border border-emerald-300/50">
-                        <CheckCircle2 className="w-3 h-3" /> Aprobada
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/80 text-emerald-300 flex items-center gap-1 border border-emerald-500/40">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Aprobada
                       </span>
                     ) : tpl.status === 'PENDING' ? (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 flex items-center gap-1 border border-amber-300/50">
-                        <Clock className="w-3 h-3" /> En Revisión
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-950/80 text-amber-300 flex items-center gap-1 border border-amber-500/40">
+                        <Clock className="w-3 h-3 text-amber-400" /> En Revisión
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-100 dark:bg-red-950/80 text-red-800 dark:text-red-300 flex items-center gap-1 border border-red-300/50" title={tpl.rejection_reason || 'Rechazada por Meta'}>
-                        <AlertCircle className="w-3 h-3" /> Rechazada
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-950/80 text-red-300 flex items-center gap-1 border border-red-500/40" title={tpl.rejection_reason || 'Rechazada por Meta'}>
+                        <AlertCircle className="w-3 h-3 text-red-400" /> Rechazada
                       </span>
                     )}
                   </div>
                 </div>
 
                 {/* Previsualización del Contenido */}
-                <div className="bg-slate-50 dark:bg-slate-750/60 rounded-lg p-3 border border-slate-100 dark:border-slate-700/50 my-2.5">
+                <div className="bg-[#0b131d] rounded-lg p-3 border border-[#1e2d40] my-2.5">
                   {tpl.header_content && (
-                    <div className="text-[11.5px] font-bold text-slate-800 dark:text-slate-200 mb-1 line-clamp-1">
+                    <div className="text-[11.5px] font-bold text-white mb-1 line-clamp-1">
                       {tpl.header_content}
                     </div>
                   )}
-                  <p className="text-xs text-slate-650 dark:text-slate-300 line-clamp-4 leading-relaxed font-sans">
+                  <p className="text-xs text-slate-200 line-clamp-4 leading-relaxed font-sans">
                     {tpl.body_text}
                   </p>
                   {tpl.footer_text && (
@@ -553,7 +553,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                 {tpl.buttons && tpl.buttons.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-2">
                     {tpl.buttons.map((b, idx) => (
-                      <span key={idx} className="px-2 py-0.5 rounded text-[10.5px] bg-slate-100 dark:bg-slate-700/80 text-[#00a884] font-medium border border-slate-200/60 dark:border-slate-650">
+                      <span key={idx} className="px-2 py-0.5 rounded text-[10.5px] bg-[#1a2738] text-[#00a884] font-medium border border-[#27394f]">
                         🔘 {b.text}
                       </span>
                     ))}
@@ -562,17 +562,17 @@ export default function WhatsAppTemplatesSettingsCard() {
               </div>
 
               {/* Acciones de la Tarjeta */}
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-700/60 flex items-center justify-between mt-1">
+              <div className="pt-3 border-t border-[#1e2d42] flex items-center justify-between mt-1">
                 <button
                   onClick={() => setPreviewTemplate(tpl)}
-                  className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 font-medium transition-colors"
+                  className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
                 >
                   <Eye className="w-3.5 h-3.5" /> Ver en Simulador
                 </button>
 
                 <button
                   onClick={() => handleDeleteTemplate(tpl.name)}
-                  className="text-slate-400 hover:text-red-500 transition-colors p-1 rounded"
+                  className="text-slate-400 hover:text-red-400 transition-colors p-1 rounded"
                   title="Eliminar plantilla"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -587,22 +587,22 @@ export default function WhatsAppTemplatesSettingsCard() {
       {/* MODAL / DRAWER CREADOR DE PLANTILLAS CON SIMULADOR EN VIVO */}
       {/* ========================================================================= */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 dark:border-slate-700 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-[#121c29] rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl border border-[#1e2d42] animate-in fade-in zoom-in-95 duration-150">
             {/* Cabecera del Modal */}
-            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-[#1e2d42] flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-emerald-600" />
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-emerald-400" />
                   Diseñador de Plantilla WhatsApp (Meta Graph API v21+)
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                <p className="text-xs text-slate-400 mt-0.5">
                   Redacta el mensaje, inserta variables clínicas y previsualiza en tiempo real el teléfono de WhatsApp.
                 </p>
               </div>
               <button 
                 onClick={() => setIsCreateModalOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#1a2738] transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -613,8 +613,8 @@ export default function WhatsAppTemplatesSettingsCard() {
               {/* Columna Izquierda: Formulario (7 Cols) */}
               <form onSubmit={handleCreateTemplate} className="lg:col-span-7 space-y-4">
                 {/* Accesos Rápidos de Plantillas Pre-diseñadas */}
-                <div className="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl p-3">
-                  <div className="text-xs font-semibold text-emerald-800 dark:text-emerald-300 mb-1.5 flex items-center gap-1.5">
+                <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-xl p-3">
+                  <div className="text-xs font-semibold text-emerald-300 mb-1.5 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5" /> Plantillas Médicas Pre-armadas (1 Clic)
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -623,7 +623,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                         key={idx}
                         type="button"
                         onClick={() => handleLoadPremade(pm)}
-                        className="px-2.5 py-1 bg-white dark:bg-slate-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded-md text-xs font-medium border border-emerald-200/60 dark:border-emerald-800 shadow-2xs transition-colors"
+                        className="px-2.5 py-1 bg-[#1a2738] hover:bg-[#25374d] text-emerald-300 rounded-md text-xs font-medium border border-emerald-800/40 shadow-2xs transition-colors"
                       >
                         {pm.title}
                       </button>
@@ -634,7 +634,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                 {/* Nombre y Categoría */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
                       Nombre Técnico (Meta) *
                     </label>
                     <input
@@ -642,31 +642,31 @@ export default function WhatsAppTemplatesSettingsCard() {
                       value={name}
                       onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
                       placeholder="ej: recordatorio_turno_medico"
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                      className="w-full px-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
                       required
                     />
-                    <span className="text-[10px] text-slate-450 mt-0.5 block">Solo minúsculas, números y guiones bajos.</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">Solo minúsculas, números y guiones bajos.</span>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
                       Categoría en Meta *
                     </label>
                     <select
                       value={category}
                       onChange={(e) => setCategory(e.target.value as any)}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                      className="w-full px-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm text-white focus:ring-2 focus:ring-emerald-500"
                     >
                       <option value="UTILITY">UTILITY (Recomendada: Recordatorios y Confirmaciones)</option>
                       <option value="MARKETING">MARKETING (Promociones y Novedades)</option>
                     </select>
-                    <span className="text-[10px] text-slate-450 mt-0.5 block">UTILITY aprueba en minutos y tiene menor costo.</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">UTILITY aprueba en minutos y tiene menor costo.</span>
                   </div>
                 </div>
 
                 {/* Cabecera (Opcional) */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
                     Título de Cabecera (Opcional)
                   </label>
                   <input
@@ -674,14 +674,14 @@ export default function WhatsAppTemplatesSettingsCard() {
                     value={headerContent}
                     onChange={(e) => setHeaderContent(e.target.value)}
                     placeholder="ej: Recordatorio de Turno Quirúrgico 🩺"
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm text-white focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
                 {/* Cuerpo con Selector de Fichas Clínicas */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    <label className="text-xs font-semibold text-slate-300">
                       Cuerpo del Mensaje (Body) *
                     </label>
                     <span className="text-[11px] text-slate-400 font-mono">
@@ -690,8 +690,8 @@ export default function WhatsAppTemplatesSettingsCard() {
                   </div>
 
                   {/* Barra de Fichas de Variables Clínicas */}
-                  <div className="p-2.5 bg-slate-50 dark:bg-slate-750/70 rounded-t-lg border border-b-0 border-slate-200 dark:border-slate-700 flex flex-col gap-1.5">
-                    <div className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                  <div className="p-2.5 bg-[#162232] rounded-t-lg border border-b-0 border-[#233348] flex flex-col gap-1.5">
+                    <div className="text-[11px] font-medium text-slate-400">
                       Haz clic para insertar variables clínicas automáticas:
                     </div>
                     <div className="flex flex-wrap gap-1">
@@ -702,9 +702,9 @@ export default function WhatsAppTemplatesSettingsCard() {
                             key={v.id}
                             type="button"
                             onClick={() => handleInsertVariable(v)}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-white dark:bg-slate-700 hover:bg-emerald-50 dark:hover:bg-emerald-950 text-slate-700 dark:text-slate-200 hover:text-emerald-700 dark:hover:text-emerald-300 rounded text-xs font-medium border border-slate-200 dark:border-slate-600 transition-colors shadow-2xs"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#1a2738] hover:bg-[#25374d] text-slate-200 hover:text-emerald-300 rounded text-xs font-medium border border-[#2b3e58] transition-colors shadow-2xs"
                           >
-                            <Icon className="w-3 h-3 text-emerald-600" />
+                            <Icon className="w-3 h-3 text-emerald-400" />
                             <span>{v.label}</span>
                           </button>
                         )
@@ -718,14 +718,14 @@ export default function WhatsAppTemplatesSettingsCard() {
                     value={bodyText}
                     onChange={(e) => setBodyText(e.target.value)}
                     placeholder="Hola {{1}}, le recordamos su turno para el {{2}} a las {{3}} hs con el {{4}}..."
-                    className="w-full p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-b-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 font-sans leading-relaxed"
+                    className="w-full p-3 bg-[#0b131d] border border-[#1e2d40] rounded-b-lg text-sm text-white focus:ring-2 focus:ring-emerald-500 font-sans leading-relaxed"
                     required
                   />
                 </div>
 
                 {/* Pie de Página (Footer) */}
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
                     Pie de Página Institucional (Footer)
                   </label>
                   <input
@@ -734,21 +734,21 @@ export default function WhatsAppTemplatesSettingsCard() {
                     onChange={(e) => setFooterText(e.target.value)}
                     placeholder="ej: MedCRM • Clínica Médica"
                     maxLength={60}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm text-white focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
 
                 {/* Botones de Acción Rápida (Quick Reply) */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    <label className="text-xs font-semibold text-slate-300">
                       Botones de Respuesta Rápida (Hasta 3)
                     </label>
                     {buttons.length < 3 && (
                       <button
                         type="button"
                         onClick={() => setButtons(prev => [...prev, { type: 'QUICK_REPLY', text: '' }])}
-                        className="text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1"
+                        className="text-xs text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1"
                       >
                         <Plus className="w-3 h-3" /> Agregar Botón
                       </button>
@@ -767,12 +767,12 @@ export default function WhatsAppTemplatesSettingsCard() {
                             setButtons(prev => prev.map((b, i) => i === idx ? { ...b, text: val } : b))
                           }}
                           placeholder={`ej: ${idx === 0 ? 'Confirmar Turno' : idx === 1 ? 'Reprogramar' : 'Cancelar'}`}
-                          className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-750 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                          className="flex-1 px-3 py-1.5 bg-[#162232] border border-[#233348] rounded-lg text-xs text-white focus:ring-2 focus:ring-emerald-500"
                         />
                         <button
                           type="button"
                           onClick={() => setButtons(prev => prev.filter((_, i) => i !== idx))}
-                          className="text-slate-400 hover:text-red-500 p-1"
+                          className="text-slate-400 hover:text-red-400 p-1"
                         >
                           <X className="w-4 h-4" />
                         </button>
@@ -782,17 +782,17 @@ export default function WhatsAppTemplatesSettingsCard() {
                 </div>
 
                 {errorFeedback && (
-                  <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-200 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
+                  <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-200 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                     <span>{errorFeedback}</span>
                   </div>
                 )}
               </form>
 
               {/* Columna Derecha: Simulador en Vivo de WhatsApp (5 Cols) */}
-              <div className="lg:col-span-5 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-850 p-4 rounded-xl border border-slate-200 dark:border-slate-700/60">
-                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5" /> Vista Previa en Tiempo Real
+              <div className="lg:col-span-5 flex flex-col items-center justify-center bg-[#0b131d] p-4 rounded-xl border border-[#1e2d40]">
+                <div className="text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5 text-emerald-400" /> Vista Previa en Tiempo Real
                 </div>
 
                 <WhatsAppPhoneSimulator
@@ -808,9 +808,9 @@ export default function WhatsAppTemplatesSettingsCard() {
             </div>
 
             {/* Pie del Modal: Botones de Acción */}
-            <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-800/80 rounded-b-2xl">
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+            <div className="px-6 py-4 border-t border-[#1e2d42] flex items-center justify-between bg-[#121c29] rounded-b-2xl">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
                 <span>La plantilla se enviará automáticamente a Meta para revisión oficial.</span>
               </div>
 
@@ -818,7 +818,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 text-sm text-slate-650 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                  className="px-4 py-2 text-sm text-slate-300 hover:bg-[#1a2738] rounded-lg transition-colors"
                 >
                   Cancelar
                 </button>
@@ -826,7 +826,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                   type="button"
                   disabled={creating}
                   onClick={handleCreateTemplate}
-                  className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-md transition-colors disabled:opacity-50"
+                  className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-semibold shadow-md transition-colors disabled:opacity-50"
                 >
                   {creating ? (
                     <>
@@ -850,17 +850,17 @@ export default function WhatsAppTemplatesSettingsCard() {
       {/* MODAL DE PREVISUALIZACIÓN INDEPENDIENTE DESDE LA LISTA */}
       {/* ========================================================================= */}
       {previewTemplate && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-700 relative animate-in zoom-in-95">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#121c29] rounded-2xl max-w-md w-full p-6 shadow-2xl border border-[#1e2d42] relative animate-in zoom-in-95">
             <button
               onClick={() => setPreviewTemplate(null)}
-              className="absolute top-4 right-4 p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              className="absolute top-4 right-4 p-1 rounded-lg text-slate-400 hover:text-white"
             >
               <X className="w-5 h-5" />
             </button>
 
             <div className="text-center mb-3">
-              <h3 className="font-bold text-slate-900 dark:text-white text-base truncate">
+              <h3 className="font-bold text-white text-base truncate">
                 {previewTemplate.name}
               </h3>
               <div className="text-xs text-slate-400 mt-0.5">
