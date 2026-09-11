@@ -71,8 +71,28 @@ async def process_meta_webhook_payload(payload_dict: Dict[str, Any]):
     for entry in entries:
         changes = entry.get("changes", [])
         for change in changes:
+            field = change.get("field")
             value = change.get("value", {})
             phone_number_id = value.get("metadata", {}).get("phone_number_id")
+
+            # A. Actualización de estado de Plantilla (APPROVED, REJECTED, etc.)
+            if field == "message_template_status_update":
+                tpl_id = value.get("message_template_id")
+                tpl_name = value.get("message_template_name")
+                event = value.get("event", "APPROVED")
+                reason = value.get("reason")
+                try:
+                    upd = {"status": event, "updated_at": datetime.now(timezone.utc).isoformat()}
+                    if reason and reason != "NONE":
+                        upd["rejection_reason"] = reason
+                    if tpl_id:
+                        supabase.table("whatsapp_templates").update(upd).eq("meta_template_id", str(tpl_id)).execute()
+                    elif tpl_name:
+                        supabase.table("whatsapp_templates").update(upd).eq("name", str(tpl_name)).execute()
+                    logger.info(f"[Worker Template Status] Plantilla {tpl_name or tpl_id} actualizada a {event}")
+                except Exception as tpl_err:
+                    logger.warning(f"[Worker Template Status] Error actualizando estado de plantilla: {tpl_err}")
+                continue
 
             # 1. Procesar Actualizaciones de Estado (sent, delivered, read, failed)
             statuses = value.get("statuses", [])

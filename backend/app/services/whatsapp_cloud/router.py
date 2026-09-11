@@ -24,9 +24,12 @@ from app.services.whatsapp_cloud.client import (
 from app.services.whatsapp_cloud.worker import process_meta_webhook_payload, record_outbound_audit_message
 from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 
+from app.services.whatsapp_cloud.templates import templates_router
+
 logger = logging.getLogger("whatsapp_cloud_router")
 
 router = APIRouter(prefix="/api/whatsapp/cloud", tags=["WhatsApp Cloud API"])
+router.include_router(templates_router)
 
 # Configuraciones desde variables de entorno
 META_APP_SECRET = os.getenv("META_WA_APP_SECRET", "")
