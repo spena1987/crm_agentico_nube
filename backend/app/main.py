@@ -91,6 +91,7 @@ from app.db import (
     get_practica_resumen_operativo,
     render_consent_template,
     generar_mensaje_ameno_presupuesto,
+    check_patient_24h_window,
     enviar_presupuesto_por_whatsapp,
     get_configuracion_quirofano,
     actualizar_configuracion_quirofano,
@@ -3489,15 +3490,56 @@ def obtener_mensaje_sugerido_presupuesto_api(presupuesto_id: str):
             
         mensaje = generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
         
+        # 1. Obtener estado de la ventana de 24 horas del paciente
+        window_status = check_patient_24h_window(paciente.get("id"), paciente.get("telefono"))
+
+        # 2. URL pública absoluta al repositorio de PDFs
+        base_backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app").rstrip("/")
+        pdf_full_url = f"{base_backend_url}/static/presupuesto_{presupuesto_id}.pdf"
+
+        # 3. Formatear datos para la plantilla oficial de Meta 'presupuesto_entrega_pdf'
+        practica_principal = items[0]["nombre"] if items else "Tratamiento Médico"
+        if len(items) > 1:
+            practica_principal = f"{items[0]['nombre']} y otras"
+
+        tot_ars = float(presupuesto.get("total_ars") or 0.0)
+        tot_usd = float(presupuesto.get("total_usd") or 0.0)
+        if tot_ars > 0 and tot_usd > 0:
+            monto_formateado = f"${tot_ars:,.2f} ARS (USD {tot_usd:,.2f})"
+        elif tot_usd > 0:
+            monto_formateado = f"USD {tot_usd:,.2f}"
+        else:
+            monto_formateado = f"${tot_ars:,.2f} ARS"
+
+        paciente_nombre_limpio = (paciente.get("nombre") or "Estimado/a").strip().title()
+        template_info = {
+            "name": "presupuesto_entrega_pdf",
+            "status": "APPROVED",
+            "category": "UTILITY",
+            "header_content": "Presupuesto Médico Disponible",
+            "practica_nombre": practica_principal,
+            "monto_formateado": monto_formateado,
+            "button_text": "Recibir Presupuesto PDF",
+            "pdf_full_url": pdf_full_url,
+            "variable_1": paciente_nombre_limpio,
+            "variable_2": practica_principal,
+            "variable_3": f"{monto_formateado}\n🔗 Ver online: {pdf_full_url}"
+        }
+        
         return {
             "success": True,
             "presupuesto_id": presupuesto_id,
+            "paciente_id": paciente.get("id"),
             "paciente_nombre": paciente.get("nombre"),
             "telefono": paciente.get("telefono"),
-            "total_ars": float(presupuesto.get("total_ars") or 0.0),
-            "total_usd": float(presupuesto.get("total_usd") or 0.0),
+            "total_ars": tot_ars,
+            "total_usd": tot_usd,
             "pdf_url": presupuesto.get("pdf_url"),
-            "mensaje_sugerido": mensaje
+            "pdf_full_url": pdf_full_url,
+            "mensaje_sugerido": mensaje,
+            "is_window_open": window_status.get("is_open", False),
+            "window_status": window_status,
+            "template_info": template_info
         }
     except HTTPException:
         raise
@@ -3566,18 +3608,25 @@ def duplicar_presupuesto_api(presupuesto_id: str):
 @app.post("/api/presupuestos/{presupuesto_id}/enviar-whatsapp")
 def enviar_presupuesto_whatsapp_api(presupuesto_id: str, payload: Dict[str, Any] = Body(...)):
     """
-    Envía el PDF del presupuesto por WhatsApp junto con el mensaje personalizado o ameno al paciente.
+    Envía el presupuesto por WhatsApp. Admite modo texto libre ($0 si la ventana está abierta)
+    o plantilla oficial homologada de Meta (Utility) si la ventana está cerrada.
     """
     try:
         telefono_override = payload.get("telefono")
         mensaje_custom = payload.get("mensaje")
+        modo = payload.get("modo", "auto")
+        template_params = payload.get("template_params")
         
         res = enviar_presupuesto_por_whatsapp(
             presupuesto_id=presupuesto_id,
             telefono_override=telefono_override,
-            mensaje_custom=mensaje_custom
+            mensaje_custom=mensaje_custom,
+            modo=modo,
+            template_params=template_params
         )
         return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error al enviar presupuesto {presupuesto_id} por WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))

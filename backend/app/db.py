@@ -2736,16 +2736,81 @@ def obtener_datos_duplicar_presupuesto(presupuesto_id: str) -> dict:
         "items": items
     }
 
+def check_patient_24h_window(paciente_id: Optional[str], telefono: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Evalúa si la ventana de 24 horas de Meta WhatsApp Cloud API está abierta para un paciente.
+    """
+    try:
+        from datetime import datetime, timezone, timedelta
+        
+        conv_id = None
+        if paciente_id:
+            c_res = supabase.table("conversaciones").select("id").eq("paciente_id", paciente_id).limit(1).execute()
+            if c_res.data and len(c_res.data) > 0:
+                conv_id = c_res.data[0]["id"]
+                
+        if not conv_id and telefono:
+            from app.services.phone_normalizer import normalize_phone_number
+            clean_tel = normalize_phone_number(telefono)
+            if clean_tel:
+                p_res = supabase.table("pacientes").select("id").eq("telefono", clean_tel).limit(1).execute()
+                if p_res.data and len(p_res.data) > 0:
+                    c_res = supabase.table("conversaciones").select("id").eq("paciente_id", p_res.data[0]["id"]).limit(1).execute()
+                    if c_res.data and len(c_res.data) > 0:
+                        conv_id = c_res.data[0]["id"]
+
+        if not conv_id:
+            return {"is_open": False, "hours_left": 0, "minutes_left": 0, "status": "NO_CONVERSATION"}
+
+        m_res = supabase.table("mensajes")\
+            .select("created_at")\
+            .eq("conversacion_id", conv_id)\
+            .eq("emisor", "paciente")\
+            .order("created_at", desc=True)\
+            .limit(1)\
+            .execute()
+
+        if not m_res.data or len(m_res.data) == 0:
+            return {"is_open": False, "hours_left": 0, "minutes_left": 0, "status": "NO_PATIENT_MESSAGES"}
+
+        last_created_str = m_res.data[0]["created_at"]
+        last_dt = datetime.fromisoformat(last_created_str.replace("Z", "+00:00"))
+        now_dt = datetime.now(timezone.utc)
+        elapsed = now_dt - last_dt
+        twenty_four_hours = timedelta(hours=24)
+
+        if elapsed >= twenty_four_hours:
+            return {"is_open": False, "hours_left": 0, "minutes_left": 0, "status": "EXPIRED", "last_message_at": last_created_str}
+
+        remaining = twenty_four_hours - elapsed
+        hours_left = int(remaining.total_seconds() // 3600)
+        minutes_left = int((remaining.total_seconds() % 3600) // 60)
+        return {
+            "is_open": True,
+            "hours_left": hours_left,
+            "minutes_left": minutes_left,
+            "status": "OPEN",
+            "last_message_at": last_created_str
+        }
+    except Exception as e:
+        logger.warning(f"Error verificando ventana 24h para paciente {paciente_id}: {e}")
+        return {"is_open": False, "hours_left": 0, "minutes_left": 0, "status": "ERROR"}
+
 def enviar_presupuesto_por_whatsapp(
     presupuesto_id: str, 
     telefono_override: Optional[str] = None, 
-    mensaje_custom: Optional[str] = None
+    mensaje_custom: Optional[str] = None,
+    modo: str = "auto",
+    template_params: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
-    Envía el PDF de un presupuesto generado por WhatsApp junto con el mensaje protocolar ameno.
+    Envía el PDF de un presupuesto generado por WhatsApp junto con el mensaje protocolar ameno
+    o mediante plantilla oficial homologada de Meta (Utility) si la ventana de 24 horas está cerrada.
     Actualiza el estado del presupuesto a 'enviado' y sincroniza el pipeline quirúrgico.
     """
     import os
+    import asyncio
+    from datetime import datetime, timezone
     from app.whatsapp import whatsapp_manager
     from app.services.phone_normalizer import normalize_phone_number
     from app.services.pdf_service import PDF_DIR
@@ -2805,31 +2870,149 @@ def enviar_presupuesto_por_whatsapp(
         
     mensaje_final = mensaje_custom or generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
     
-    # 3. Localizar archivo PDF
+    # 3. Localizar o generar archivo PDF
     pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
     pdf_path = os.path.join(PDF_DIR, pdf_filename)
     if not os.path.exists(pdf_path):
-        # Generar si no existe en disco
         from app.services.pdf_service import generar_pdf_presupuesto
         generar_pdf_presupuesto(presupuesto, paciente, items)
         
     # 4. Obtener o crear conversación en Supabase
     conv = get_or_create_conversacion(paciente.get("id"))
     conv_id = conv.get("id") if conv else None
+
+    # 5. Evaluar estado de la ventana de 24 horas
+    window_info = check_patient_24h_window(paciente.get("id"), clean_phone)
+    is_window_open = window_info.get("is_open", False)
+
+    effective_mode = modo
+    if effective_mode == "auto":
+        effective_mode = "free_text" if is_window_open else "template"
+
+    w_res = None
+    wamid = None
+
+    # 6. Despacho según el modo seleccionado
+    if effective_mode == "template":
+        from app.services.whatsapp_cloud.client import (
+            WhatsAppCloudClient,
+            get_whatsapp_cloud_credentials,
+            normalize_to_meta_e164
+        )
+        phone_id, token = get_whatsapp_cloud_credentials()
+        if not phone_id or not token:
+            raise ValueError("Credenciales de Meta WhatsApp Cloud API no configuradas en el servidor ni base de datos.")
+
+        norm_meta_phone = normalize_to_meta_e164(clean_phone)
+        client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+
+        # Resolver los 3 parámetros de la plantilla oficial 'presupuesto_entrega_pdf'
+        param_1 = (template_params or {}).get("1") or (paciente.get("nombre") or "Estimado/a").strip().title()
+        
+        param_2 = (template_params or {}).get("2")
+        if not param_2:
+            practica_principal = items[0]["nombre"] if items else "Tratamiento Médico"
+            if len(items) > 1:
+                practica_principal = f"{items[0]['nombre']} y otras"
+            param_2 = practica_principal
+            
+        base_backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app").rstrip("/")
+        pdf_full_url = f"{base_backend_url}/static/presupuesto_{presupuesto_id}.pdf"
+        
+        param_3 = (template_params or {}).get("3")
+        if not param_3:
+            tot_ars = float(presupuesto.get("total_ars") or 0.0)
+            tot_usd = float(presupuesto.get("total_usd") or 0.0)
+            monto_str = f"${tot_ars:,.2f} ARS" if tot_ars > 0 else (f"USD {tot_usd:,.2f}" if tot_usd > 0 else "$0")
+            param_3 = f"{monto_str}. Link online: {pdf_full_url}"
+
+        components = [
+            {
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": str(param_1)[:60]},
+                    {"type": "text", "text": str(param_2)[:60]},
+                    {"type": "text", "text": str(param_3)[:200]}
+                ]
+            }
+        ]
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        tpl_res = loop.run_until_complete(
+            client.send_template(
+                to_phone=norm_meta_phone,
+                template_name="presupuesto_entrega_pdf",
+                language_code="es_AR",
+                components=components
+            )
+        )
+        wamid = tpl_res.get("wamid")
+        w_res = {
+            "success": True,
+            "wamid": wamid,
+            "provider": "meta_cloud_api",
+            "template_name": "presupuesto_entrega_pdf"
+        }
+
+        # Guardar en la conversación del CRM
+        if conv_id:
+            rendered_msg = (
+                f"📄 [PLANTILLA OFICIAL: Presupuesto Médico Disponible]\n\n"
+                f"Hola {param_1}, ya se encuentra listo el presupuesto para su procedimiento de {param_2}. "
+                f"El monto total estimado es {param_3}.\n\n"
+                f"Presione el botón inferior si desea recibir el archivo PDF oficial con el membrete directamente en este chat de WhatsApp.\n\n"
+                f"[Botón: Recibir Presupuesto PDF]"
+            )
+            try:
+                supabase.table("mensajes").insert({
+                    "conversacion_id": conv_id,
+                    "emisor": "operador",
+                    "contenido": rendered_msg,
+                    "metadata_json": {
+                        "tipo": "template",
+                        "template_name": "presupuesto_entrega_pdf",
+                        "wamid": wamid,
+                        "delivery_status": "enviado",
+                        "provider": "meta_cloud_api",
+                        "presupuesto_id": presupuesto_id
+                    }
+                }).execute()
+                supabase.table("conversaciones").update({
+                    "ultimo_mensaje": "📄 Presupuesto Médico Disponible (Plantilla)",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", conv_id).execute()
+            except Exception as msg_err:
+                logger.warning(f"Error guardando plantilla de presupuesto en mensajes: {msg_err}")
+    else:
+        # Modo texto libre + PDF adjunto
+        if not is_window_open and modo == "free_text":
+            raise ValueError("La ventana de 24 horas de WhatsApp está cerrada para este paciente. Meta prohíbe enviar mensajes de texto libre o archivos fuera de la ventana. Debes utilizar la Plantilla Oficial homologada.")
+
+        w_res = whatsapp_manager.enviar_documento(
+            telefono_o_jid=clean_phone,
+            filepath=pdf_path,
+            filename=pdf_filename,
+            caption=mensaje_final,
+            conversacion_id=conv_id
+        )
+        if w_res.get("code") == "WINDOW_CLOSED" or w_res.get("enviado_real") is False:
+            raise ValueError(w_res.get("error") or "Ventana de 24 horas cerrada. Meta exige enviar la plantilla oficial homologada de presupuesto.")
     
-    # 5. Enviar documento vía WhatsApp
-    w_res = whatsapp_manager.enviar_documento(
-        telefono_o_jid=clean_phone,
-        filepath=pdf_path,
-        filename=pdf_filename,
-        caption=mensaje_final,
-        conversacion_id=conv_id
-    )
+    # 7. Actualizar estado del presupuesto a 'enviado'
+    supabase.table("presupuestos").update({
+        "estado": "enviado",
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }).eq("id", presupuesto_id).execute()
     
-    # 6. Actualizar estado del presupuesto a 'enviado'
-    supabase.table("presupuestos").update({"estado": "enviado"}).eq("id", presupuesto_id).execute()
-    
-    # 7. Sincronizar asesoría quirúrgica si existe y registrar evolución
+    # 8. Sincronizar asesoría quirúrgica si existe y registrar evolución clínica
     asesoria_actualizada = None
     if presupuesto.get("asesoria_id"):
         as_id = presupuesto["asesoria_id"]
@@ -2842,22 +3025,24 @@ def enviar_presupuesto_por_whatsapp(
             asesoria_actualizada = res_as.data[0]
 
         try:
+            modo_desc = "Plantilla Oficial Meta (Utility)" if effective_mode == "template" else "Texto Libre y PDF adjunto"
             crear_evolucion_asesoria({
                 "asesoria_id": as_id,
                 "paciente_id": paciente.get("id"),
                 "usuario_nombre": "Asesoramiento Quirúrgico (Sistema)",
                 "tipo_contacto": "whatsapp",
-                "contenido": f"Presupuesto médico oficial #{presupuesto_id[:8]} enviado exitosamente por WhatsApp al número {clean_phone}. Caso quirúrgico avanza a etapa 'En Análisis'."
+                "contenido": f"Presupuesto médico oficial #{presupuesto_id[:8]} enviado exitosamente por WhatsApp al número {clean_phone} [{modo_desc}]. Caso quirúrgico avanza a etapa 'En Análisis'."
             })
         except Exception as err_ev:
             logger.warning(f"No se pudo registrar evolución automática al enviar presupuesto: {err_ev}")
             
     return {
         "success": True,
-        "mensaje": "Presupuesto y PDF enviados exitosamente por WhatsApp.",
+        "mensaje": "Presupuesto enviado exitosamente por WhatsApp.",
+        "modo_utilizado": effective_mode,
         "whatsapp_result": w_res,
         "telefono": clean_phone,
-        "caption": mensaje_final,
+        "caption": mensaje_final if effective_mode != "template" else None,
         "asesoria_id": presupuesto.get("asesoria_id"),
         "nuevo_estado": "en_analisis" if presupuesto.get("asesoria_id") else None,
         "asesoria": asesoria_actualizada
