@@ -390,9 +390,14 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                     async def responder_con_agente():
                         try:
-                            from app.agent import ejecutar_agente_para_paciente
+                            from app.agent import procesar_mensaje_agente
                             logger.info(f"[Agente IA] Ejecutando Gemini para paciente {paciente_id}...")
-                            respuesta_bot = await ejecutar_agente_para_paciente(paciente_id, text_content)
+                            respuesta_bot = procesar_mensaje_agente(
+                                conversacion_id=crm_conv_id,
+                                mensaje_texto_o_paciente_id=paciente_id,
+                                mensaje_texto=text_content,
+                                guardar_en_db=False
+                            )
                             if respuesta_bot:
                                 phone_id, token = get_whatsapp_cloud_credentials()
                                 if phone_id and token:

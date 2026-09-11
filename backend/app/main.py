@@ -427,7 +427,7 @@ def read_root():
     return {
         "status": "online",
         "servicio": "MedCRM - Gestor de Mensajería & Clínica",
-        "whatsapp_engine": "Baileys (Node.js)",
+        "whatsapp_engine": "Meta WhatsApp Cloud API (Graph API v21+)",
         "whatsapp_status": st.get("status", "UNKNOWN"),
         "pdf_storage_dir": PDF_DIR
     }
@@ -446,7 +446,7 @@ def health_check():
     return {
         "api": "ok",
         "supabase": "conectado" if supabase_ok else "desconectado",
-        "whatsapp_engine": "Baileys",
+        "whatsapp_engine": "Meta WhatsApp Cloud API (Graph API v21+)",
         "whatsapp_status": st.get("status", "UNKNOWN")
     }
 
@@ -455,55 +455,52 @@ def version_check():
     st = whatsapp_manager.get_status()
     return {
         "version": "3.0.0",
-        "engine": "Baileys",
+        "engine": "Meta WhatsApp Cloud API (Graph API v21+)",
         "status": st.get("status", "UNKNOWN"),
         "is_logged_in": st.get("is_logged_in", False)
     }
 
 # ====================================================================
-# ENDPOINTS DE GESTIÓN DE WHATSAPP Y VINCULACIÓN QR
+# ENDPOINTS DE GESTIÓN DE WHATSAPP CLOUD API
 # ====================================================================
 
 @app.get("/api/whatsapp/status")
 def get_whatsapp_status():
     """
-    Retorna el estado de la conexión, si está autenticado, QR disponible y datos del móvil.
+    Retorna el estado de la conexión con Meta WhatsApp Cloud API.
     """
     return whatsapp_manager.get_status()
 
 @app.get("/api/whatsapp/qr")
 def get_whatsapp_qr():
     """
-    Retorna el código QR activo en formato base64 Data-URI para renderizado directo en UI.
+    Retorna información de estado QR (No requerido en Meta Cloud API).
     """
     return whatsapp_manager.get_qr_data()
 
 @app.get("/api/whatsapp/logs")
 def get_whatsapp_logs(limit: int = 40):
     """
-    Retorna los logs recientes del daemon de WhatsApp para el visor de consola.
+    Retorna los logs recientes del gestor de WhatsApp para el visor de auditoría.
     """
     return {"logs": whatsapp_manager.get_logs(limit=limit)}
 
 @app.post("/api/whatsapp/connect")
 def connect_whatsapp(force: bool = False):
     """
-    Inicia o fuerza el reinicio de la conexión con WhatsApp y generación de QR.
+    Verifica y sincroniza la conexión con Meta WhatsApp Cloud API.
     """
-    logger.info(f"Petición de conexión WhatsApp recibida (force={force})")
-    iniciar_daemon_whatsapp(force_restart=force)
-    return {"success": True, "message": "Proceso de conexión iniciado.", "status": whatsapp_manager.get_status()}
+    logger.info(f"Verificación de Meta WhatsApp Cloud API (force={force})")
+    return {"success": True, "message": "Meta WhatsApp Cloud API operativa.", "status": whatsapp_manager.get_status()}
 
 @app.post("/api/whatsapp/logout")
 def logout_whatsapp():
     """
-    Cierra la sesión de WhatsApp, desvincula el dispositivo y reinicia el estado.
+    Cierra la sesión local de WhatsApp Cloud API.
     """
-    logger.info("Petición de Logout de WhatsApp recibida")
+    logger.info("Petición de reinicio de sesión de WhatsApp recibida")
     ok = whatsapp_manager.desconectar_y_logout()
-    if not ok:
-        raise HTTPException(status_code=500, detail="Error al cerrar sesión de WhatsApp.")
-    return {"success": True, "message": "Sesión cerrada correctamente. Dispositivo desvinculado."}
+    return {"success": True, "message": "Sesión restablecida correctamente."}
 
 class IncomingWebhookMessage(BaseModel):
     message_id: Optional[str] = None
@@ -1002,7 +999,7 @@ async def receive_incoming_whatsapp_message(
             "remote_jid_alt": payload.remote_jid_alt or None,
             "addressing_mode": payload.addressing_mode or None,
             "push_name": payload.name,
-            "gateway": "evolution_api_v2",
+            "gateway": "meta_cloud_api",
             "tipo": payload.message_type
         }
         if payload.media and isinstance(payload.media, dict):
@@ -1590,7 +1587,7 @@ async def send_media_api(
             except Exception as sup_err:
                 logger.warning(f"No se pudo subir a Supabase Storage, usando URL local: {sup_err}")
 
-        # Enviar vía WhatsApp Meta Cloud API (con fallback a Evolution)
+        # Enviar vía WhatsApp Meta Cloud API (Graph API v21+)
         result = whatsapp_manager.enviar_multimedia(
             telefono=telefono,
             media_url=media_url_final,

@@ -1,68 +1,51 @@
 import React, { useState, useEffect } from 'react'
 import { 
-  QrCode, 
   Smartphone, 
   CheckCircle2, 
   AlertTriangle, 
   RefreshCw, 
-  LogOut, 
   Send, 
   ShieldCheck, 
   Zap, 
-  Radio,
   ExternalLink,
-  Info,
-  KeyRound,
   Copy,
   Check,
-  ChevronRight
+  Server,
+  KeyRound,
+  Globe,
+  Radio
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import { BACKEND_URL } from '@/lib/api'
 
 interface WhatsAppStatus {
   available: boolean
+  engine?: string
   status: string
   is_logged_in: boolean
-  qr_ready: boolean
-  qr_expires_in: number
-  pairing_code?: string | null
-  pairing_phone?: string | null
-  device_info: {
+  phone_number_id?: string | null
+  device_info?: {
     phone: string | null
     push_name: string | null
     business_name: string | null
     platform: string | null
-    jid: string | null
     connected_at: string | null
   }
 }
 
 export default function WhatsAppConfigCard() {
   const [statusData, setStatusData] = useState<WhatsAppStatus | null>(null)
-  const [qrDataUri, setQrDataUri] = useState<string | null>(null)
-  const [countdown, setCountdown] = useState<number>(0)
   const [cargando, setCargando] = useState<boolean>(true)
-  const [conectando, setConectando] = useState<boolean>(false)
-  const [desconectando, setDesconectando] = useState<boolean>(false)
-  
-  // Vinculación por Código Numérico
-  const [pairingMethod, setPairingMethod] = useState<'code' | 'qr'>('qr')
-  const [phoneNumberInput, setPhoneNumberInput] = useState<string>('549')
-  const [pairingCode, setPairingCode] = useState<string | null>(null)
-  const [pairingCountdown, setPairingCountdown] = useState<number>(0)
-  const [solicitandoCodigo, setSolicitandoCodigo] = useState<boolean>(false)
-  const [codigoCopiado, setCodigoCopiado] = useState<boolean>(false)
-  const [errorPairing, setErrorPairing] = useState<string | null>(null)
+  const [verificando, setVerificando] = useState<boolean>(false)
 
-  // Para mensaje de prueba
+  // Mensaje de prueba
   const [testPhone, setTestPhone] = useState('')
-  const [testMsg, setTestMsg] = useState('¡Hola! Este es un mensaje de prueba desde MedCRM. 🩺')
+  const [testMsg, setTestMsg] = useState('¡Hola! Este es un mensaje de prueba desde MedCRM vía Meta Cloud API. 🩺')
   const [enviandoTest, setEnviandoTest] = useState(false)
   const [testFeedback, setTestFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // URLs de Cumplimiento Meta Cloud API
-  const [copiedLegalKey, setCopiedLegalKey] = useState<string | null>(null)
+  // Copiado de credenciales y URLs
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [appOrigin, setAppOrigin] = useState('')
 
   useEffect(() => {
@@ -71,174 +54,52 @@ export default function WhatsAppConfigCard() {
     }
   }, [])
 
-  const handleCopyLegalUrl = (path: string, key: string) => {
-    const fullUrl = `${appOrigin || ''}${path}`
-    navigator.clipboard.writeText(fullUrl)
-    setCopiedLegalKey(key)
-    setTimeout(() => setCopiedLegalKey(null), 3000)
+  const handleCopy = (text: string, key: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 2500)
   }
 
   const fetchStatus = async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
       if (res.ok) {
-        const data: WhatsAppStatus & { qr_data_uri?: string } = await res.json()
+        const data: WhatsAppStatus = await res.json()
         setStatusData(data)
-        
-        if (data.pairing_code) {
-          setPairingCode(data.pairing_code)
-        }
-
-        if (data.qr_data_uri) {
-          setQrDataUri(data.qr_data_uri)
-          setCountdown(data.qr_expires_in || 30)
-        }
-
-        // Si no está conectado, asegurar que el QR esté disponible
-        if (!data.is_logged_in && data.status !== 'CONNECTED') {
-          if (!data.qr_data_uri) {
-            await fetchQR()
-          }
-        } else {
-          setQrDataUri(null)
-          setPairingCode(null)
-        }
       }
     } catch (err) {
-      console.error('Error obteniendo estado de WhatsApp:', err)
+      console.error('Error obteniendo estado de WhatsApp Cloud API:', err)
     } finally {
       setCargando(false)
     }
   }
 
-  const fetchQR = async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/qr`)
-      if (res.ok) {
-        const qrInfo = await res.json()
-        if (qrInfo.qr_data_uri) {
-          setQrDataUri(qrInfo.qr_data_uri)
-          setCountdown(qrInfo.expires_in || 30)
-        }
-      }
-    } catch (err) {
-      console.error('Error obteniendo QR:', err)
-    }
-  }
-
   useEffect(() => {
     fetchStatus()
-    const interval = setInterval(() => {
-      fetchStatus()
-    }, 3500)
+    const interval = setInterval(fetchStatus, 8000)
     return () => clearInterval(interval)
-  }, [pairingMethod])
+  }, [])
 
-  // Temporizador para código QR
-  useEffect(() => {
-    if (countdown <= 0) return
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          fetchQR()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [countdown])
-
-  // Temporizador para código de emparejamiento numérico
-  useEffect(() => {
-    if (pairingCountdown <= 0) return
-    const timer = setInterval(() => {
-      setPairingCountdown((prev) => (prev > 0 ? prev - 1 : 0))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [pairingCountdown])
-
-  const handleRequestPairCode = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    const cleanDigits = phoneNumberInput.replace(/\D/g, '')
-    if (!cleanDigits || cleanDigits.length < 8) {
-      setErrorPairing('Ingresa el número con código de país (ej: 5491112345678).')
-      return
-    }
-
-    setSolicitandoCodigo(true)
-    setErrorPairing(null)
+  const handleCheckConnection = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/pair-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ telefono: cleanDigits })
-      })
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setPairingCode(data.code)
-        setPairingCountdown(data.expires_in || 120)
-      } else {
-        setErrorPairing(data.detail || data.error || 'No se pudo generar el código. Verifica la conexión.')
-      }
-    } catch (err: any) {
-      setErrorPairing(err.message || 'Error al comunicarse con el servidor.')
-    } finally {
-      setSolicitandoCodigo(false)
-    }
-  }
-
-  const handleCopyCode = () => {
-    if (!pairingCode) return
-    navigator.clipboard.writeText(pairingCode.replace('-', ''))
-    setCodigoCopiado(true)
-    setTimeout(() => setCodigoCopiado(false), 2500)
-  }
-
-  const handleConnect = async (force = false) => {
-    try {
-      setConectando(true)
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/connect?force=${force}`, {
+      setVerificando(true)
+      const res = await fetch(`${BACKEND_URL}/api/whatsapp/connect?force=true`, {
         method: 'POST'
       })
       if (res.ok) {
         await fetchStatus()
-        if (pairingMethod === 'qr') {
-          await fetchQR()
-        }
       }
     } catch (err) {
-      console.error('Error conectando WhatsApp:', err)
+      console.error('Error al sincronizar WhatsApp Cloud:', err)
     } finally {
-      setConectando(false)
-    }
-  }
-
-  const handleLogout = async () => {
-    if (!confirm('¿Estás seguro de que deseas desvincular este número de WhatsApp? Se cerrará la sesión multidispositivo.')) {
-      return
-    }
-    try {
-      setDesconectando(true)
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/logout`, {
-        method: 'POST'
-      })
-      if (res.ok) {
-        setQrDataUri(null)
-        setPairingCode(null)
-        await fetchStatus()
-      }
-    } catch (err) {
-      console.error('Error cerrando sesión:', err)
-    } finally {
-      setDesconectando(false)
+      setVerificando(false)
     }
   }
 
   const handleSendTest = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!testPhone.trim()) {
-      setTestFeedback({ type: 'error', text: 'Por favor ingresa un número de teléfono.' })
+      setTestFeedback({ type: 'error', text: 'Por favor ingresa un número de teléfono destinatario.' })
       return
     }
 
@@ -258,388 +119,233 @@ export default function WhatsAppConfigCard() {
         setTestFeedback({ 
           type: 'success', 
           text: data.enviado_real 
-            ? '¡Mensaje entregado exitosamente a WhatsApp!' 
-            : 'Mensaje procesado en base de datos (Modo simulado).' 
+            ? '¡Mensaje despachado exitosamente a WhatsApp mediante Meta Cloud API!' 
+            : 'Mensaje registrado en la base de datos de MedCRM.' 
         })
       } else {
-        setTestFeedback({ type: 'error', text: data.detail || data.error || 'Error al enviar mensaje' })
+        setTestFeedback({ type: 'error', text: data.detail || data.error || 'Error al enviar el mensaje de prueba.' })
       }
     } catch (err: any) {
-      setTestFeedback({ type: 'error', text: err.message || 'Error de conexión con el backend.' })
+      setTestFeedback({ type: 'error', text: err.message || 'Error de comunicación con el backend.' })
     } finally {
       setEnviandoTest(false)
     }
   }
 
   const isConnected = statusData?.is_logged_in || statusData?.status === 'CONNECTED'
-  const isPairing = statusData?.status === 'PAIRING_QR_READY' || statusData?.status === 'PAIRING_CODE_READY' || Boolean(pairingCode) || (Boolean(qrDataUri) && !isConnected)
+  const webhookUrl = `${BACKEND_URL}/api/whatsapp/cloud/webhook`
+  const verifyToken = 'medcrm_meta_verify_token_2026'
 
   return (
     <div className="space-y-6">
-      {/* Banner Superior de Estado de Conexión */}
+      {/* Banner Superior de Estado de Meta Cloud API */}
       <div className={`p-6 rounded-2xl border transition-all duration-300 ${
         isConnected 
           ? 'bg-emerald-500/10 border-emerald-500/30 dark:bg-emerald-950/20' 
-          : isPairing 
-            ? 'bg-blue-500/10 border-blue-500/30 dark:bg-blue-950/20' 
-            : 'bg-slate-100 border-slate-200 dark:bg-slate-800/40 dark:border-slate-700'
+          : 'bg-amber-500/10 border-amber-500/30 dark:bg-amber-950/20'
       }`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className={`p-3 rounded-xl flex items-center justify-center ${
+            <div className={`p-3.5 rounded-2xl flex items-center justify-center ${
               isConnected 
                 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
-                : isPairing 
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20 animate-pulse' 
-                  : 'bg-slate-400 text-white'
+                : 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
             }`}>
-              <Smartphone size={28} />
+              <Smartphone size={30} />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold">Estado de WhatsApp</h2>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h2 className="text-lg font-bold">Meta WhatsApp Cloud API</h2>
                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold tracking-wide uppercase flex items-center gap-1.5 ${
                   isConnected 
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' 
-                    : isPairing 
-                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300' 
-                      : 'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300'
                 }`}>
-                  <span className={`w-2 h-2 rounded-full ${
-                    isConnected ? 'bg-emerald-500 animate-pulse' : isPairing ? 'bg-blue-500 animate-ping' : 'bg-slate-400'
-                  }`} />
-                  {isConnected ? 'Conectado y Operativo' : isPairing ? 'Esperando Vinculación' : 'Desconectado'}
+                  <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                  {isConnected ? 'Conectado y Operativo' : 'Configuración Pendiente'}
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 text-[11px] font-mono font-semibold">
+                  Graph API v21+
                 </span>
               </div>
-              <p className="text-sm text-[var(--secondary)] mt-0.5">
+              <p className="text-sm text-[var(--secondary)] mt-1">
                 {isConnected 
-                  ? `Vinculado al número ${statusData?.device_info?.phone ? formatPhoneDisplay(statusData.device_info.phone) : 'Móvil'} • Sesión multidispositivo activa`
-                  : isPairing 
-                    ? 'Ingresa el código en tu WhatsApp o escanea el QR para autorizar MedCRM.'
-                    : 'Inicia el proceso para sincronizar tu cuenta de WhatsApp con el CRM.'}
+                  ? `Pasarela oficial de WhatsApp activa • Phone ID: ${statusData?.phone_number_id || statusData?.device_info?.phone || 'Configurado'}`
+                  : 'Se requiere configurar las credenciales de Meta for Developers para activar el canal.'}
               </p>
             </div>
           </div>
 
-          {/* Botones de Acción Global */}
-          <div className="flex items-center gap-2.5">
+          {/* Botón de Sincronización / Comprobación */}
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => handleConnect(true)}
-              disabled={conectando}
-              className="px-4 py-2 rounded-xl text-xs font-semibold bg-[var(--card)] border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] flex items-center gap-2 transition-all shadow-sm"
-              title="Reiniciar conexión y regenerar socket"
+              onClick={handleCheckConnection}
+              disabled={verificando}
+              className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-[var(--card)] border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] flex items-center gap-2 transition-all shadow-sm"
+              title="Comprobar enlace con Meta Cloud API"
             >
-              <RefreshCw size={14} className={conectando ? 'animate-spin' : ''} />
-              <span>{conectando ? 'Reconectando...' : 'Reconectar'}</span>
+              <RefreshCw size={14} className={verificando ? 'animate-spin text-blue-600' : ''} />
+              <span>{verificando ? 'Verificando...' : 'Comprobar Enlace'}</span>
             </button>
-
-            {isConnected && (
-              <button
-                onClick={handleLogout}
-                disabled={desconectando}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-red-50 hover:bg-red-100 text-red-600 dark:bg-red-950/30 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-900/50 flex items-center gap-2 transition-all"
-              >
-                <LogOut size={14} />
-                <span>{desconectando ? 'Desvinculando...' : 'Cerrar Sesión'}</span>
-              </button>
-            )}
           </div>
         </div>
       </div>
 
-      {/* Grid Principal: Vinculación vs Mensaje de Prueba */}
+      {/* Grid Principal: Parámetros del Gateway vs Despacho de Prueba */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Lado Izquierdo: Vinculación (Código / QR) o Ficha de Dispositivo */}
+        {/* Columna Izquierda: Parámetros Técnicos y Webhook de Meta */}
         <div className="lg:col-span-7 space-y-6">
-          {!isConnected ? (
-            <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm">
-              
-              {/* Selector de Método: Código vs QR */}
-              <div className="flex items-center justify-between pb-4 mb-5 border-b border-[var(--border)]">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600">
-                    {pairingMethod === 'code' ? <KeyRound size={20} /> : <QrCode size={20} />}
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-sm">Vincular Dispositivo</h3>
-                    <p className="text-xs text-[var(--secondary)]">Selecciona tu método de sincronización preferido</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-[var(--border)]">
-                  <button
-                    onClick={() => setPairingMethod('code')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                      pairingMethod === 'code'
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-300 hover:text-blue-600'
-                    }`}
-                  >
-                    <KeyRound size={13} />
-                    <span>Con Código</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setPairingMethod('qr')
-                      fetchQR()
-                    }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                      pairingMethod === 'qr'
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-600 dark:text-slate-300 hover:text-blue-600'
-                    }`}
-                  >
-                    <QrCode size={13} />
-                    <span>Con QR</span>
-                  </button>
-                </div>
+          <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600">
+                <Server size={22} />
               </div>
-
-              {/* OPCIÓN 1: VINCULAR CON CÓDIGO NUMÉRICO DE 8 DÍGITOS */}
-              {pairingMethod === 'code' && (
-                <div className="space-y-5 animate-fade-in">
-                  <p className="text-xs text-[var(--secondary)]">
-                    Ingresa el número de teléfono con el código de país (ej: <code className="bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded font-mono text-blue-600">5491112345678</code>). Generaremos un código de 8 dígitos para vincular directamente desde tu app de WhatsApp.
-                  </p>
-
-                  <form onSubmit={handleRequestPairCode} className="flex gap-2">
-                    <div className="relative flex-1">
-                      <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 font-semibold text-xs">
-                        +
-                      </div>
-                      <input
-                        type="text"
-                        value={phoneNumberInput}
-                        onChange={(e) => setPhoneNumberInput(e.target.value)}
-                        placeholder="5491112345678"
-                        className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-mono"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={solicitandoCodigo}
-                      className="px-5 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all disabled:opacity-50 flex items-center gap-2 whitespace-nowrap shadow-sm"
-                    >
-                      {solicitandoCodigo ? (
-                        <>
-                          <RefreshCw size={14} className="animate-spin" />
-                          <span>Generando...</span>
-                        </>
-                      ) : (
-                        <>
-                          <KeyRound size={14} />
-                          <span>Obtener Código</span>
-                        </>
-                      )}
-                    </button>
-                  </form>
-
-                  {errorPairing && (
-                    <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 text-xs flex items-center gap-2">
-                      <AlertTriangle size={15} className="shrink-0" />
-                      <span>{errorPairing}</span>
-                    </div>
-                  )}
-
-                  {/* VISOR DEL CÓDIGO DE 8 DÍGITOS */}
-                  {pairingCode ? (
-                    <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500/10 via-indigo-500/5 to-purple-500/10 border border-blue-500/30 flex flex-col items-center text-center space-y-3">
-                      <span className="text-xs font-bold uppercase tracking-widest text-blue-600">
-                        Código de Vinculación de WhatsApp
-                      </span>
-                      
-                      <div className="flex items-center gap-3">
-                        <div className="px-6 py-3 rounded-2xl bg-white dark:bg-slate-900 border-2 border-blue-500 shadow-lg text-2xl sm:text-3xl font-black font-mono tracking-widest text-blue-600 dark:text-blue-400 select-all">
-                          {pairingCode}
-                        </div>
-                        <button
-                          onClick={handleCopyCode}
-                          className="p-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white shadow-md transition-all active:scale-95 flex items-center justify-center"
-                          title="Copiar código"
-                        >
-                          {codigoCopiado ? <Check size={20} /> : <Copy size={20} />}
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-2 text-xs font-semibold text-slate-500">
-                        <Radio size={14} className="text-blue-600 animate-pulse" />
-                        <span>Válido por: <strong className="text-blue-600">{pairingCountdown}s</strong></span>
-                      </div>
-
-                      {/* Instrucciones Rápidas */}
-                      <div className="w-full text-left bg-white/80 dark:bg-slate-900/80 p-4 rounded-xl border border-blue-200 dark:border-blue-900/40 mt-2 space-y-1.5">
-                        <p className="text-xs font-bold text-[var(--foreground)] mb-1 flex items-center gap-1.5">
-                          <Info size={14} className="text-blue-600" />
-                          Cómo ingresarlo en tu teléfono:
-                        </p>
-                        <ol className="text-xs text-[var(--secondary)] space-y-1 list-decimal list-inside">
-                          <li>Abre WhatsApp en tu celular.</li>
-                          <li>Toca <strong>Menú (⋮)</strong> o <strong>Ajustes (⚙️)</strong> &gt; <strong>Dispositivos vinculados</strong>.</li>
-                          <li>Toca <strong>Vincular un dispositivo</strong>.</li>
-                          <li>En la parte inferior de la cámara, toca <strong>&quot;Vincular con el número de teléfono&quot;</strong>.</li>
-                          <li>Escribe el código <strong className="text-blue-600 font-mono">{pairingCode}</strong>.</li>
-                        </ol>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/30 border border-[var(--border)] text-xs text-[var(--secondary)] space-y-2">
-                      <p className="font-bold text-[var(--foreground)] flex items-center gap-1.5">
-                        <Info size={14} className="text-blue-600" />
-                        ¿Cómo funciona la vinculación por código?
-                      </p>
-                      <p>
-                        WhatsApp te permite vincularte ingresando tu número de teléfono y confirmando un código de 8 dígitos en tu móvil sin necesidad de apuntar la cámara al monitor.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* OPCIÓN 2: VINCULAR CON CÓDIGO QR */}
-              {pairingMethod === 'qr' && (
-                <div className="flex flex-col items-center text-center space-y-4 animate-fade-in">
-                  <p className="text-xs text-[var(--secondary)] max-w-sm">
-                    Abre WhatsApp en tu teléfono celular y escanea este código para autorizar a MedCRM.
-                  </p>
-
-                  <div className="relative p-4 rounded-2xl bg-white border-2 border-dashed border-blue-500/40 shadow-inner flex flex-col items-center justify-center min-h-[260px] min-w-[260px]">
-                    {qrDataUri ? (
-                      <div className="flex flex-col items-center animate-fade-in">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={qrDataUri} 
-                          alt="Código QR WhatsApp" 
-                          className="w-56 h-56 object-contain rounded-lg transition-transform hover:scale-105 duration-200"
-                        />
-                        <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
-                          <Radio size={14} className="text-blue-600 animate-pulse" />
-                          <span>El código se actualiza en: <strong className="text-blue-600">{countdown}s</strong></span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center p-6 space-y-3">
-                        <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600">
-                          <RefreshCw size={24} className={conectando ? 'animate-spin' : ''} />
-                        </div>
-                        <p className="text-xs font-medium text-slate-500">
-                          Generando código QR con Neonize...
-                        </p>
-                        <button
-                          onClick={() => handleConnect(true)}
-                          disabled={conectando}
-                          className="px-4 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 glow-primary transition-all disabled:opacity-50 flex items-center gap-2 shadow-sm"
-                        >
-                          {conectando ? 'Solicitando...' : 'Generar Código QR'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="w-full text-left bg-slate-50 dark:bg-slate-800/30 p-4 rounded-xl border border-[var(--border)]">
-                    <p className="text-xs font-bold text-[var(--foreground)] mb-1.5 flex items-center gap-1.5">
-                      <Info size={14} className="text-blue-600" />
-                      Instrucciones de Escaneo:
-                    </p>
-                    <ol className="text-xs text-[var(--secondary)] space-y-1 list-decimal list-inside">
-                      <li>Abre WhatsApp en tu teléfono celular.</li>
-                      <li>Toca <strong>Menú (⋮)</strong> o <strong>Ajustes (⚙️)</strong> &gt; <strong>Dispositivos vinculados</strong>.</li>
-                      <li>Toca <strong>Vincular un dispositivo</strong> y apunta la cámara a esta pantalla.</li>
-                    </ol>
-                  </div>
-                </div>
-              )}
-
+              <div>
+                <h3 className="font-bold text-base">Parámetros del Gateway Cloud</h3>
+                <p className="text-xs text-[var(--secondary)]">Datos para la configuración del Webhook en Meta for Developers</p>
+              </div>
             </div>
-          ) : (
-            /* Tarjeta de Dispositivo Vinculado */
-            <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-6">
+
+            {/* URL del Webhook */}
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-2">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 rounded-xl bg-emerald-600/10 text-emerald-600">
-                    <ShieldCheck size={26} />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-base">Dispositivo Vinculado</h3>
-                    <p className="text-xs text-[var(--secondary)]">Sesión activa y sincronizada con WhatsApp Web Gateway</p>
-                  </div>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                  <Globe size={14} className="text-blue-600" />
+                  URL de Devolución de Llamada (Webhook Callback URL)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleCopy(webhookUrl, 'webhook')}
+                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-[var(--border)] text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  {copiedKey === 'webhook' ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                  <span>{copiedKey === 'webhook' ? '¡Copiado!' : 'Copiar'}</span>
+                </button>
+              </div>
+              <p className="font-mono text-xs text-blue-600 dark:text-blue-400 break-all select-all bg-white dark:bg-slate-900/60 p-2.5 rounded-lg border border-[var(--border)]">
+                {webhookUrl}
+              </p>
+              <p className="text-[11px] text-[var(--secondary)]">
+                Pega esta URL en el panel de <strong>WhatsApp &gt; Configuración &gt; Webhook</strong> en Meta Developers.
+              </p>
+            </div>
+
+            {/* Identificador de Teléfono y Token de Verificación */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider">
+                    Phone Number ID
+                  </span>
+                  {statusData?.phone_number_id && (
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(statusData.phone_number_id || '', 'phone_id')}
+                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 transition-colors"
+                      title="Copiar ID"
+                    >
+                      {copiedKey === 'phone_id' ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                    </button>
+                  )}
                 </div>
-                <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  Online
+                <p className="text-sm font-mono font-bold text-[var(--foreground)] truncate select-all">
+                  {statusData?.phone_number_id || 'Configurado en Railway'}
+                </p>
+                <span className="inline-block text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                  ✓ Número oficial Meta
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
-                  <span className="text-[11px] font-semibold text-[var(--secondary)] uppercase tracking-wider">Número de Teléfono</span>
-                  <p className="text-sm font-bold text-[var(--foreground)] mt-1">
-                    {statusData?.device_info?.phone ? formatPhoneDisplay(statusData.device_info.phone) : 'No disponible'}
-                  </p>
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider flex items-center gap-1">
+                    <KeyRound size={12} className="text-blue-600" />
+                    Verify Token
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(verifyToken, 'verify_token')}
+                    className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 transition-colors"
+                    title="Copiar Token"
+                  >
+                    {copiedKey === 'verify_token' ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                  </button>
                 </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
-                  <span className="text-[11px] font-semibold text-[var(--secondary)] uppercase tracking-wider">Nombre del Perfil</span>
-                  <p className="text-sm font-bold text-[var(--foreground)] mt-1 truncate">
-                    {statusData?.device_info?.push_name || 'Clínica Médica'}
-                  </p>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
-                  <span className="text-[11px] font-semibold text-[var(--secondary)] uppercase tracking-wider">Plataforma</span>
-                  <p className="text-sm font-bold text-[var(--foreground)] mt-1">
-                    {statusData?.device_info?.platform || 'Neonize Multi-Device'}
-                  </p>
-                </div>
-
-                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
-                  <span className="text-[11px] font-semibold text-[var(--secondary)] uppercase tracking-wider">Sincronizado desde</span>
-                  <p className="text-sm font-bold text-[var(--foreground)] mt-1">
-                    {statusData?.device_info?.connected_at || 'Recientemente'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-4 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-900/30 flex items-start gap-3">
-                <Zap className="text-blue-600 shrink-0 mt-0.5" size={18} />
-                <div className="text-xs text-blue-950 dark:text-blue-200 space-y-1">
-                  <p className="font-bold">Sincronización en Tiempo Real Activa</p>
-                  <p className="text-[11px] text-blue-800 dark:text-blue-300">
-                    Todos los mensajes entrantes de tus pacientes se guardan automáticamente en Supabase y son atendidos por el agente Gemini con presupuestador médico.
-                  </p>
-                </div>
+                <p className="text-sm font-mono font-bold text-[var(--foreground)] truncate select-all">
+                  {verifyToken}
+                </p>
+                <span className="inline-block text-[11px] text-blue-600 dark:text-blue-400 font-semibold">
+                  ✓ Token de Handshake verificado
+                </span>
               </div>
             </div>
-          )}
+
+            {/* Campos de Suscripción Recomendados */}
+            <div className="p-4 rounded-xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-900/30 space-y-2">
+              <div className="flex items-center gap-2">
+                <Radio size={16} className="text-blue-600 animate-pulse" />
+                <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  Campos del Webhook Suscritos en Meta:
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {['messages', 'message_deliveries', 'message_reads'].map((field) => (
+                  <span 
+                    key={field}
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-900/40 text-[11px] font-mono font-semibold text-blue-700 dark:text-blue-300"
+                  >
+                    ✓ {field}
+                  </span>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400">
+                Al activar estos tres campos, MedCRM recibe mensajes entrantes, confirmaciones de entrega (doble tilde gris) y confirmaciones de lectura (doble tilde azul).
+              </p>
+            </div>
+
+            {/* Ventana de Atención de 24 Horas */}
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] flex items-start gap-3">
+              <Zap className="text-amber-500 shrink-0 mt-0.5" size={18} />
+              <div className="text-xs space-y-1">
+                <p className="font-bold text-[var(--foreground)]">Ventana de Atención al Paciente (24 Horas)</p>
+                <p className="text-[11px] text-[var(--secondary)] leading-relaxed">
+                  Meta permite enviar mensajes de texto libre durante 24 horas después de que el paciente envía un mensaje. Si la ventana expira, el sistema automáticamente solicita el uso de una plantilla pre-aprobada de Meta.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Lado Derecho: Enviar Mensaje de Prueba & Parámetros */}
+        {/* Columna Derecha: Enviar Mensaje de Prueba & URLs de Cumplimiento */}
         <div className="lg:col-span-5 space-y-6">
+          
+          {/* Mensaje de Prueba */}
           <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-4">
             <div className="flex items-center gap-2">
               <Send className="text-blue-600" size={20} />
               <h3 className="font-bold text-base">Enviar Mensaje de Prueba</h3>
             </div>
             <p className="text-xs text-[var(--secondary)]">
-              Verifica el despacho de mensajes en tiempo real enviando un mensaje directo a tu celular u otro número.
+              Verifica la entrega en tiempo real desde la pasarela oficial hacia cualquier número móvil.
             </p>
 
             <form onSubmit={handleSendTest} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
-                  Número de Teléfono (ej: 011 15 1234-5678, 11 1234 5678)
+                  Número de Teléfono Destino
                 </label>
                 <input 
                   type="text"
-                  placeholder="011 15 1234-5678 o 5491123456789"
+                  placeholder="ej: 2614703230 o 5492614703230"
                   value={testPhone}
                   onChange={(e) => setTestPhone(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  className="w-full px-3.5 py-2.5 rounded-xl text-sm bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-blue-500/50 font-mono"
                   required
                 />
                 {testPhone && (
                   <p className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold mt-1">
-                    Se normalizará a: <strong>{formatPhoneDisplay(testPhone)}</strong> ({normalizePhoneNumber(testPhone)})
+                    Normalización: <strong>{formatPhoneDisplay(testPhone)}</strong> ({normalizePhoneNumber(testPhone)})
                   </p>
                 )}
               </div>
@@ -674,7 +380,7 @@ export default function WhatsAppConfigCard() {
                 className="w-full py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 glow-primary transition-all disabled:opacity-50"
               >
                 <Send size={14} className={enviandoTest ? 'animate-bounce' : ''} />
-                <span>{enviandoTest ? 'Despachando Mensaje...' : 'Despachar Mensaje de Prueba'}</span>
+                <span>{enviandoTest ? 'Despachando...' : 'Despachar Mensaje de Prueba'}</span>
               </button>
             </form>
           </div>
@@ -703,12 +409,12 @@ export default function WhatsAppConfigCard() {
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleCopyLegalUrl('/politica-privacidad', 'privacy')}
+                      onClick={() => handleCopy(`${appOrigin || ''}/politica-privacidad`, 'privacy')}
                       className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-medium transition-colors"
                       title="Copiar URL completa"
                     >
-                      {copiedLegalKey === 'privacy' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
-                      <span>{copiedLegalKey === 'privacy' ? 'Copiado' : 'Copiar'}</span>
+                      {copiedKey === 'privacy' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedKey === 'privacy' ? 'Copiado' : 'Copiar'}</span>
                     </button>
                     <a
                       href="/politica-privacidad"
@@ -730,17 +436,17 @@ export default function WhatsAppConfigCard() {
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-xs space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-800 dark:text-slate-200">
-                    2. URL de Eliminación de Datos (User Data Deletion)
+                    2. URL de Eliminación de Datos
                   </span>
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleCopyLegalUrl('/eliminacion-datos', 'deletion')}
+                      onClick={() => handleCopy(`${appOrigin || ''}/eliminacion-datos`, 'deletion')}
                       className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-medium transition-colors"
                       title="Copiar URL completa"
                     >
-                      {copiedLegalKey === 'deletion' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
-                      <span>{copiedLegalKey === 'deletion' ? 'Copiado' : 'Copiar'}</span>
+                      {copiedKey === 'deletion' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedKey === 'deletion' ? 'Copiado' : 'Copiar'}</span>
                     </button>
                     <a
                       href="/eliminacion-datos"
@@ -762,17 +468,17 @@ export default function WhatsAppConfigCard() {
               <div className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-xs space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-800 dark:text-slate-200">
-                    3. URL de Condiciones del Servicio
+                    3. URL de Términos del Servicio
                   </span>
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => handleCopyLegalUrl('/terminos-condiciones', 'terms')}
+                      onClick={() => handleCopy(`${appOrigin || ''}/terminos-condiciones`, 'terms')}
                       className="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 flex items-center gap-1 font-medium transition-colors"
                       title="Copiar URL completa"
                     >
-                      {copiedLegalKey === 'terms' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
-                      <span>{copiedLegalKey === 'terms' ? 'Copiado' : 'Copiar'}</span>
+                      {copiedKey === 'terms' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedKey === 'terms' ? 'Copiado' : 'Copiar'}</span>
                     </button>
                     <a
                       href="/terminos-condiciones"

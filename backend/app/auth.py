@@ -16,7 +16,7 @@ raw_jwt_secret = (os.getenv("SUPABASE_JWT_SECRET") or "").strip().strip("'\"")
 SUPABASE_JWT_SECRET = raw_jwt_secret if (raw_jwt_secret and not raw_jwt_secret.startswith("eyJ")) else ""
 SUPABASE_SERVICE_ROLE_KEY = (os.getenv("SUPABASE_SERVICE_ROLE_KEY") or "").strip().strip("'\"")
 SUPABASE_ANON_KEY = (os.getenv("SUPABASE_ANON_KEY") or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY") or "").strip().strip("'\"")
-EVOLUTION_API_KEY = (os.getenv("EVOLUTION_API_KEY") or "medcrm_secret_token_2026").strip()
+WEBHOOK_SECRET = (os.getenv("WEBHOOK_SECRET") or os.getenv("META_WA_VERIFY_TOKEN") or os.getenv("EVOLUTION_API_KEY") or "medcrm_secret_token_2026").strip()
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -129,7 +129,7 @@ async def get_optional_user(
 async def verify_webhook_secret(request: Request) -> bool:
     """
     Valida que los eventos entrantes al webhook de WhatsApp provengan
-    genuinamente de la pasarela autorizada (Evolution API v2).
+    genuinamente de la pasarela autorizada.
     Verifica los encabezados 'apikey', 'x-api-key' o parámetro en query.
     """
     incoming_key = (
@@ -139,10 +139,10 @@ async def verify_webhook_secret(request: Request) -> bool:
         or ""
     ).strip()
 
-    if not EVOLUTION_API_KEY:
+    if not WEBHOOK_SECRET:
         return True
 
-    if incoming_key != EVOLUTION_API_KEY:
+    if incoming_key != WEBHOOK_SECRET:
         logger.warning(f"Intento de webhook no autorizado desde IP: {request.client.host if request.client else 'desconocida'}")
         raise HTTPException(status_code=403, detail="Clave de acceso al webhook inválida o ausente.")
 
