@@ -839,6 +839,17 @@ export default function ChatInbox() {
     e.preventDefault()
     if (!nuevoMensaje.trim() || !selectedConvId || !selectedConv) return
 
+    // Si la ventana de 24h está cerrada y no es nota interna, advertir y ofrecer abrir plantillas
+    if (metaWindow.isExpired && !isInternalNote) {
+      const abrirModal = window.confirm(
+        '⚠️ La ventana de 24 horas de WhatsApp está cerrada para este paciente.\n\nMeta no permite enviar mensajes de texto libre fuera de la ventana. Debes reabrir la conversación utilizando una Plantilla Oficial de Meta.\n\n¿Deseas abrir el selector de Plantillas Meta ahora?'
+      )
+      if (abrirModal) {
+        setShowTemplateModal(true)
+      }
+      return
+    }
+
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current)
       typingTimeoutRef.current = null
@@ -1979,19 +1990,47 @@ export default function ChatInbox() {
                     </button>
                   )}
 
-                  {/* 3. Botón Respuestas Rápidas */}
+                  {/* 3. Botón Respuestas Rápidas (Atajos locales $0 costo dentro de 24h) */}
                   <button
                     type="button"
-                    onClick={() => setQuickRepliesOpen(!quickRepliesOpen)}
+                    onClick={() => {
+                      if (metaWindow.isExpired && !isInternalNote) {
+                        alert('⚠️ La ventana de 24 horas está cerrada. Las respuestas rápidas son texto libre que Meta rechazará. Utiliza el botón "Plantillas Meta" para reabrir la conversación.')
+                        return
+                      }
+                      setQuickRepliesOpen(!quickRepliesOpen)
+                    }}
+                    disabled={metaWindow.isExpired && !isInternalNote}
                     className={`px-2 py-1 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 transition-all border ${
-                      quickRepliesOpen 
+                      metaWindow.isExpired && !isInternalNote
+                        ? 'opacity-40 cursor-not-allowed bg-[#101726] text-slate-500 border-slate-800'
+                        : quickRepliesOpen 
                         ? 'bg-amber-600/30 text-amber-300 border-amber-500/60' 
                         : 'bg-[#162345] hover:bg-[#1f315e] text-slate-300 border-slate-700/60'
                     }`}
-                    title="Abrir menú de plantillas rápidas (o escribe / en el chat)"
+                    title={
+                      metaWindow.isExpired && !isInternalNote
+                        ? "Respuestas rápidas deshabilitadas: La ventana de 24h de Meta está cerrada"
+                        : "Respuestas rápidas locales ($0 costo, o escribe / en el chat)"
+                    }
                   >
-                    <Zap size={11} className="text-amber-400" />
-                    <span>Plantillas (/)</span>
+                    <Zap size={11} className={metaWindow.isExpired && !isInternalNote ? "text-slate-500" : "text-amber-400"} />
+                    <span>Respuestas Rápidas (/)</span>
+                  </button>
+
+                  {/* 4. Botón Plantillas Oficiales Meta (Reapertura de 24h y HSM homologadas) */}
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateModal(true)}
+                    className={`px-2 py-1 rounded-lg text-[10.5px] font-semibold flex items-center gap-1 transition-all border cursor-pointer ${
+                      metaWindow.isExpired && !isInternalNote
+                        ? 'bg-blue-600/30 text-blue-300 border-blue-500/60 animate-pulse shadow-xs shadow-blue-500/20'
+                        : 'bg-[#162345] hover:bg-[#1f315e] text-blue-300 border-slate-700/60 hover:border-blue-500/40'
+                    }`}
+                    title="Plantillas homologadas de Meta WhatsApp Cloud API (Reapertura de ventana / HSM)"
+                  >
+                    <FileText size={11} className="text-blue-400" />
+                    <span>Plantillas Meta</span>
                   </button>
                 </div>
               </div>
@@ -2286,7 +2325,13 @@ export default function ChatInbox() {
           onClose={() => setShowTemplateModal(false)}
           pacienteNombre={currentPaciente.nombre}
           pacienteTelefono={currentPaciente.telefono}
+          pacienteId={currentPaciente.id}
           conversacionId={selectedConvId}
+          isWindowOpen={!metaWindow.isExpired}
+          onInsertText={(text) => {
+            setNuevoMensaje(text)
+            setTimeout(() => messageInputRef.current?.focus(), 50)
+          }}
           onEnviadoExitoso={() => {
             if (selectedConvId) fetchMensajes(selectedConvId)
           }}
