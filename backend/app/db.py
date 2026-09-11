@@ -504,7 +504,8 @@ def guardar_mensaje(
             "conversacion_id": conversacion_id,
             "emisor": final_emisor,
             "contenido": final_contenido,
-            "metadata_json": meta
+            "metadata_json": meta,
+            "whatsapp_message_id": whatsapp_message_id
         }
         if created_at:
             data["created_at"] = created_at

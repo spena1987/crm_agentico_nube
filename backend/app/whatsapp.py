@@ -144,9 +144,20 @@ class WhatsAppManager:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             res = loop.run_until_complete(wa_client.send_free_text(normalized_meta_phone, texto))
-            loop.close()
-
             wamid = res.get("wamid")
+            if wamid:
+                try:
+                    from app.services.whatsapp_cloud.worker import record_outbound_audit_message
+                    loop.run_until_complete(record_outbound_audit_message(
+                        wamid=wamid,
+                        to_phone=normalized_meta_phone,
+                        message_type="text",
+                        content_text=texto
+                    ))
+                except Exception as aud_err:
+                    self.add_log("WARNING", f"No se pudo auditar mensaje saliente en whatsapp_messages: {aud_err}")
+
+            loop.close()
             if conversacion_id:
                 try:
                     guardar_mensaje(

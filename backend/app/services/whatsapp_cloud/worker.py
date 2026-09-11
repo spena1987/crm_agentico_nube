@@ -140,7 +140,7 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
     crm_delivery_status = status_crm_map.get(status_name, status_name)
 
     try:
-        # Buscar el mensaje en public.mensajes por whatsapp_message_id o por metadata_json->wamid
+        # Buscar el mensaje en public.mensajes por whatsapp_message_id indexado
         m_res = supabase.table("mensajes").select("id, metadata_json").eq("whatsapp_message_id", wamid).execute()
         msg_id = None
         current_meta = {}
@@ -148,11 +148,16 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
             msg_id = m_res.data[0]["id"]
             current_meta = m_res.data[0].get("metadata_json") or {}
         else:
-            # Fallback por filtro metadata_json
+            # Fallback por filtro metadata_json wamid
             m_res2 = supabase.table("mensajes").select("id, metadata_json").filter("metadata_json->>wamid", "eq", wamid).execute()
             if m_res2.data and len(m_res2.data) > 0:
                 msg_id = m_res2.data[0]["id"]
                 current_meta = m_res2.data[0].get("metadata_json") or {}
+            else:
+                m_res3 = supabase.table("mensajes").select("id, metadata_json").filter("metadata_json->>whatsapp_message_id", "eq", wamid).execute()
+                if m_res3.data and len(m_res3.data) > 0:
+                    msg_id = m_res3.data[0]["id"]
+                    current_meta = m_res3.data[0].get("metadata_json") or {}
 
         if msg_id:
             current_meta["delivery_status"] = crm_delivery_status
@@ -167,7 +172,8 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
                 current_meta["error_message"] = first_err.get("message")
 
             supabase.table("mensajes").update({
-                "metadata_json": current_meta
+                "metadata_json": current_meta,
+                "whatsapp_message_id": wamid
             }).eq("id", msg_id).execute()
             logger.info(f"[Worker Status] public.mensajes id={msg_id} actualizado a delivery_status='{crm_delivery_status}'")
     except Exception as sync_err:
@@ -367,18 +373,21 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                 if new_conv.data:
                     conversation_id = new_conv.data[0]["id"]
 
-            # 4. Registrar en whatsapp_messages (auditoría oficial de Meta)
-            if conversation_id:
-                supabase.table("whatsapp_messages").insert({
-                    "conversation_id": conversation_id,
-                    "account_id": account_id,
-                    "wamid": wamid,
-                    "direction": "inbound",
-                    "message_type": msg_type,
-                    "content_text": text_content,
-                    "payload_raw": msg_dict,
-                    "status": "delivered"
-                }).execute()
+            # 4. Registrar en whatsapp_messages (auditoría oficial de Meta de forma protegida)
+            try:
+                if conversation_id:
+                    supabase.table("whatsapp_messages").insert({
+                        "conversation_id": conversation_id,
+                        "account_id": account_id,
+                        "wamid": wamid,
+                        "direction": "inbound",
+                        "message_type": msg_type,
+                        "content_text": text_content,
+                        "payload_raw": msg_dict,
+                        "status": "delivered"
+                    }).execute()
+            except Exception as wm_err:
+                logger.warning(f"[Worker Audit] Advertencia guardando auditoría en whatsapp_messages: {wm_err}")
 
             # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes)
             try:
@@ -413,15 +422,16 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     if new_crm_conv.data:
                         crm_conv_id = new_crm_conv.data[0]["id"]
 
-                # Guardar mensaje del paciente en public.mensajes
+                # Guardar mensaje del paciente en public.mensajes (con whatsapp_message_id poblado)
                 if crm_conv_id:
                     supabase.table("mensajes").insert({
                         "conversacion_id": crm_conv_id,
                         "emisor": "paciente",
                         "contenido": text_content,
-                        "metadata_json": media_meta
+                        "metadata_json": media_meta,
+                        "whatsapp_message_id": wamid
                     }).execute()
-                    logger.info(f"[Worker Inbound] Mensaje sincronizado en public.mensajes para chat del CRM.")
+                    logger.info(f"[Worker Inbound] Mensaje {wamid} ({msg_type}) sincronizado en public.mensajes para chat del CRM.")
 
                 # 4.2 Despachar el Agente IA (Gemini) si el bot no está deshabilitado
                 if not bot_disabled and text_content and msg_type in ("text", "interactive", "audio"):

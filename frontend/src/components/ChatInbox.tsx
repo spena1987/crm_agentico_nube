@@ -865,7 +865,7 @@ export default function ChatInbox() {
     const tempId = `temp_${Date.now()}`
     const metaOpt: any = esNotaInternaActual 
       ? { is_internal_note: true, tipo: 'nota_interna' } 
-      : { status: 'delivered' }
+      : { delivery_status: 'enviado', provider: 'meta_cloud_api' }
     if (quotedData) metaOpt.quoted_message = quotedData
 
     const optimisticMsg: Mensaje = {
@@ -1775,10 +1775,15 @@ export default function ChatInbox() {
                               mensajeId={msg.id}
                             />
 
-                            <div className="flex items-center justify-end gap-1 text-[10px] text-slate-400 mt-0.5 opacity-80 select-none">
+                            <div className="flex items-center justify-end gap-1 text-[10px] text-slate-300 mt-0.5 opacity-90 select-none">
                               <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              {(isOperator || isBot) && (
-                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                              {isOperator || isBot ? (
+                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                              ) : (
+                                <DeliveryStatusIcon 
+                                  status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                  isPatientMessage={true} 
+                                />
                               )}
                             </div>
                           </div>
@@ -1853,10 +1858,15 @@ export default function ChatInbox() {
                             />
                             
                             {/* Pie con Hora y Tildes */}
-                            <div className="flex items-center justify-end gap-1 text-[10px] mt-0.5 opacity-70 select-none float-right ml-2 -mb-0.5">
+                            <div className="flex items-center justify-end gap-1 text-[10px] mt-0.5 opacity-85 select-none float-right ml-2 -mb-0.5">
                               <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              {(isOperator || isBot) && (
-                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                              {isOperator || isBot ? (
+                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                              ) : (
+                                <DeliveryStatusIcon 
+                                  status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                  isPatientMessage={true} 
+                                />
                               )}
                             </div>
                           </div>

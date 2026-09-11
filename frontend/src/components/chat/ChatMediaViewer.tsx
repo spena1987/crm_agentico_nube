@@ -379,15 +379,22 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
       )}
 
       {/* 4. STICKER */}
-      {metadata.tipo === 'sticker' && mediaUrl && (
+      {metadata.tipo === 'sticker' && (
         <div className="max-w-[130px] p-0.5">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img 
-            src={mediaUrl} 
-            alt="Sticker WhatsApp" 
-            className="w-28 h-28 object-contain hover:scale-105 transition-transform drop-shadow-md"
-            loading="lazy"
-          />
+          {mediaUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img 
+              src={mediaUrl} 
+              alt="Sticker WhatsApp" 
+              className="w-28 h-28 object-contain hover:scale-105 transition-transform drop-shadow-md"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex items-center gap-1.5 text-xs text-amber-300 bg-slate-800/70 border border-slate-700/60 rounded-xl px-2.5 py-2 shadow-xs">
+              <Sparkles size={16} className="text-amber-400 animate-pulse" />
+              <span className="font-semibold">Sticker</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -423,36 +430,51 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
   )
 }
 
-export function DeliveryStatusIcon({ status }: { status?: 'enviado' | 'entregado' | 'leido' | 'fallido' | string }) {
-  const normStatus = (status || 'enviado').toLowerCase()
+export function DeliveryStatusIcon({ 
+  status, 
+  isPatientMessage = false 
+}: { 
+  status?: 'enviado' | 'entregado' | 'leido' | 'fallido' | string
+  isPatientMessage?: boolean 
+}) {
+  const normStatus = (status || (isPatientMessage ? 'leido' : 'enviado')).toLowerCase()
 
   if (normStatus === 'fallido' || normStatus === 'failed' || normStatus === 'error') {
     return (
-      <span title="Fallo en la entrega por WhatsApp (Verifica ventana de 24h o número)" className="inline-flex items-center">
-        <AlertCircle size={14} className="text-rose-500 font-bold shrink-0 ml-1 animate-pulse" />
+      <span title="Fallo en la entrega por WhatsApp" className="inline-flex items-center">
+        <AlertCircle size={14} className="text-rose-400 font-bold shrink-0 ml-1 animate-pulse" />
       </span>
     )
   }
 
   if (normStatus === 'leido' || normStatus === 'read' || normStatus === 'played') {
     return (
-      <span title="Leído por el paciente (doble tilde azul)" className="inline-flex items-center">
-        <CheckCheck size={14} className="text-cyan-400 font-bold shrink-0 ml-1 drop-shadow-[0_0_3px_rgba(34,211,238,0.5)]" />
+      <span 
+        title={isPatientMessage ? "Leído por el equipo médico del CRM" : "Leído por el paciente (doble tilde azul)"} 
+        className="inline-flex items-center"
+      >
+        <CheckCheck size={14} className="text-cyan-300 font-bold shrink-0 ml-1 drop-shadow-[0_0_4px_rgba(103,232,249,0.9)]" />
       </span>
     )
   }
 
   if (normStatus === 'entregado' || normStatus === 'delivered') {
     return (
-      <span title="Entregado al teléfono del paciente (doble tilde gris)" className="inline-flex items-center">
-        <CheckCheck size={14} className="text-slate-300 opacity-85 shrink-0 ml-1" />
+      <span 
+        title={isPatientMessage ? "Recibido en el CRM (pendiente de lectura)" : "Entregado al teléfono del paciente (doble tilde blanca)"} 
+        className="inline-flex items-center"
+      >
+        <CheckCheck size={14} className={isPatientMessage ? "text-slate-400 shrink-0 ml-1" : "text-white/90 shrink-0 ml-1 font-medium"} />
       </span>
     )
   }
 
   return (
-    <span title="Enviado a los servidores de WhatsApp (1 tilde gris)" className="inline-flex items-center">
-      <Check size={14} className="text-slate-300 opacity-80 shrink-0 ml-1" />
+    <span 
+      title={isPatientMessage ? "Recibido en el CRM" : "Enviado a los servidores de WhatsApp (1 tilde blanca)"} 
+      className="inline-flex items-center"
+    >
+      <Check size={14} className={isPatientMessage ? "text-slate-400 shrink-0 ml-1" : "text-white/80 shrink-0 ml-1"} />
     </span>
   )
 }
