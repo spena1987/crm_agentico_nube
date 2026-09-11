@@ -1683,7 +1683,7 @@ export default function ChatInbox() {
               <div 
                 ref={messagesContainerRef}
                 onScroll={handleScroll}
-                className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-[#090e1a] panel-scroll"
+                className="flex-1 overflow-y-auto p-4 space-y-1.5 bg-[#090e1a] panel-scroll"
               >
                 {cargandoMensajes ? (
                   <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
@@ -1748,92 +1748,119 @@ export default function ChatInbox() {
                       )
                     }
 
-                    // 2. MENSAJE NORMAL DE WHATSAPP
+                    // 2. MENSAJE NORMAL DE WHATSAPP O STICKER
+                    const isSticker = msg.metadata_json?.tipo === 'sticker'
+
                     return (
                       <div
                         key={msg.id}
                         onContextMenu={(e) => handleOpenContextMenu(e, msg)}
                         className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
                       >
-                        <div
-                          className={`max-w-[70%] rounded-2xl p-3.5 shadow-sm text-xs relative ${
-                            isOperator
-                              ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
-                              : isBot
-                              ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
-                              : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
-                          }`}
-                        >
-                          {/* Botón flotante Hover para Menú Contextual (Estilo WhatsApp Web) */}
-                          <button
-                            type="button"
-                            onClick={(e) => handleOpenContextMenu(e, msg)}
-                            className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-black/70 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
-                            title="Opciones del mensaje"
-                          >
-                            <ChevronDown size={14} />
-                          </button>
+                        {isSticker ? (
+                          <div className="relative group p-1 max-w-[140px]">
+                            {/* Botón flotante Hover para Menú Contextual */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenContextMenu(e, msg)}
+                              className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-black/80 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                              title="Opciones del sticker"
+                            >
+                              <ChevronDown size={14} />
+                            </button>
 
-                          {/* Renderizado de Mensaje Citado (Reply preview dentro de la burbuja) */}
-                          {msg.metadata_json?.quoted_message && (
-                            <div className="mb-2.5 p-2 rounded-xl bg-black/30 border-l-4 border-blue-400 text-[11px] select-none flex flex-col gap-0.5">
-                              <span className="font-bold text-blue-300 text-[9.5px]">
-                                {msg.metadata_json.quoted_message.nombre || (msg.metadata_json.quoted_message.emisor === 'paciente' ? 'Paciente' : 'Operador Humano')}
-                              </span>
-                              <span className="text-slate-200 line-clamp-2 italic opacity-90">
-                                {msg.metadata_json.quoted_message.contenido}
-                              </span>
+                            <ChatMediaViewer 
+                              metadata={msg.metadata_json} 
+                              isOperator={isOperator} 
+                              mensajeId={msg.id}
+                            />
+
+                            <div className="flex items-center justify-end gap-1 text-[10px] text-slate-400 mt-0.5 opacity-80 select-none">
+                              <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              {(isOperator || isBot) && (
+                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                              )}
                             </div>
-                          )}
+                          </div>
+                        ) : (
+                          <div
+                            className={`max-w-[80%] sm:max-w-[70%] rounded-xl px-3 py-1.5 shadow-sm text-[13px] leading-snug relative ${
+                              isOperator
+                                ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                                : isBot
+                                ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
+                                : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
+                            }`}
+                          >
+                            {/* Botón flotante Hover para Menú Contextual (Estilo WhatsApp Web) */}
+                            <button
+                              type="button"
+                              onClick={(e) => handleOpenContextMenu(e, msg)}
+                              className="absolute top-1 right-1.5 p-0.5 rounded-full bg-black/40 hover:bg-black/70 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                              title="Opciones del mensaje"
+                            >
+                              <ChevronDown size={13} />
+                            </button>
 
-                          {/* Badge del emisor */}
-                          <div className="flex items-center gap-1 text-[9px] font-bold opacity-85 mb-1.5 uppercase tracking-wider pr-6">
-                            {isOperator ? (
-                              <>
-                                <User size={10} className="text-blue-200" /> Operador Humano (CRM)
-                              </>
-                            ) : isBot ? (
-                              <>
-                                <Bot size={10} className="text-emerald-400" />
-                                <Sparkles size={8} className="text-emerald-300 animate-pulse" />
-                                Bot Gemini
-                              </>
-                            ) : (
-                              <>
-                                <User size={10} className="text-slate-300" /> Paciente
-                              </>
+                            {/* Renderizado de Mensaje Citado (Reply preview dentro de la burbuja) */}
+                            {msg.metadata_json?.quoted_message && (
+                              <div className="mb-1.5 p-1.5 rounded-lg bg-black/30 border-l-4 border-blue-400 text-[11px] select-none flex flex-col gap-0.5">
+                                <span className="font-bold text-blue-300 text-[9.5px]">
+                                  {msg.metadata_json.quoted_message.nombre || (msg.metadata_json.quoted_message.emisor === 'paciente' ? (currentPaciente?.nombre || 'Paciente') : 'Operador Humano')}
+                                </span>
+                                <span className="text-slate-200 line-clamp-2 italic opacity-90">
+                                  {msg.metadata_json.quoted_message.contenido}
+                                </span>
+                              </div>
                             )}
-                          </div>
-                          
-                          {/* Contenido textual con formato enriquecido */}
-                          {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
-                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
-                          )}
-                          
-                          {/* Visualizador Multimedia */}
-                          <ChatMediaViewer 
-                            metadata={msg.metadata_json} 
-                            isOperator={isOperator} 
-                            mensajeId={msg.id}
-                            onTranscribeSuccess={(mId, transcript) => {
-                              setMensajes((prev) =>
-                                prev.map((m) =>
-                                  m.id === mId
-                                    ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
-                                    : m
+
+                            {/* Badge del emisor: Nombre del paciente registrado o Tú (Operador) / Bot */}
+                            <div className="flex items-center gap-1 text-[11px] font-bold mb-0.5 tracking-tight pr-5">
+                              {isOperator ? (
+                                <span className="text-blue-200">Tú (Operador)</span>
+                              ) : isBot ? (
+                                <span className="text-teal-400 flex items-center gap-1 font-semibold">
+                                  <Bot size={11} /> Bot Gemini
+                                </span>
+                              ) : (
+                                <span className="text-emerald-400 font-bold">
+                                  {currentPaciente?.nombre || 'Paciente'}
+                                </span>
+                              )}
+                            </div>
+                            
+                            {/* Contenido textual con formato enriquecido */}
+                            {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
+                              <div className="inline">
+                                <WhatsAppFormattedText text={msg.contenido} className="inline leading-snug break-words" />
+                              </div>
+                            )}
+                            
+                            {/* Visualizador Multimedia */}
+                            <ChatMediaViewer 
+                              metadata={msg.metadata_json} 
+                              isOperator={isOperator} 
+                              mensajeId={msg.id}
+                              onTranscribeSuccess={(mId, transcript) => {
+                                setMensajes((prev) =>
+                                  prev.map((m) =>
+                                    m.id === mId
+                                      ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
+                                      : m
+                                  )
                                 )
-                              )
-                            }}
-                          />
-                          
-                          {/* Pie con Hora y Tildes */}
-                          <div className="flex items-center justify-end gap-1 text-[8px] mt-1.5 opacity-70">
-                            <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                            {(isOperator || isBot) && (
-                              <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
-                            )}
+                              }}
+                            />
+                            
+                            {/* Pie con Hora y Tildes */}
+                            <div className="flex items-center justify-end gap-1 text-[10px] mt-0.5 opacity-70 select-none float-right ml-2 -mb-0.5">
+                              <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              {(isOperator || isBot) && (
+                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status} />
+                              )}
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     )
                   })

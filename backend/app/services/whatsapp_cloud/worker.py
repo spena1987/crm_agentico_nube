@@ -250,11 +250,33 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
             except Exception as dwn_err:
                 logger.error(f"[Worker Audio] Error descargando audio de Meta: {dwn_err}")
 
-    elif msg_type in ("image", "document"):
+    elif msg_type in ("image", "document", "sticker", "video"):
         media = msg_dict.get(msg_type, {})
         media_id = media.get("id")
         caption = media.get("caption") or media.get("filename") or ""
-        text_content = f"[{msg_type.upper()}] {caption}".strip()
+
+        # Mapeo de etiqueta de texto y tipo normalizado para la interfaz del CRM
+        if msg_type == "image":
+            tipo_normalizado = "imagen"
+            text_content = caption or "📷 [Foto]"
+        elif msg_type == "sticker":
+            tipo_normalizado = "sticker"
+            text_content = "✨ [Sticker]"
+        elif msg_type == "video":
+            tipo_normalizado = "video"
+            text_content = caption or "🎥 [Video]"
+        elif msg_type == "document":
+            tipo_normalizado = "documento"
+            doc_name = media.get("filename") or "Documento"
+            text_content = caption or f"📄 [{doc_name}]"
+        else:
+            tipo_normalizado = msg_type
+            text_content = caption or f"[{msg_type.upper()}]"
+
+        media_meta["tipo"] = tipo_normalizado
+        if media.get("filename"):
+            media_meta["file_name"] = media.get("filename")
+
         if media_id:
             try:
                 from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
@@ -264,7 +286,18 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     media_bytes, mime_type = await wa_client.download_media_bytes(media_id)
                     await wa_client.close()
 
-                    ext = "jpg" if "image" in mime_type else "pdf"
+                    # Determinar extensión adecuada según MIME y tipo
+                    if "webp" in mime_type or msg_type == "sticker":
+                        ext = "webp"
+                    elif "video" in mime_type or msg_type == "video":
+                        ext = "mp4"
+                    elif "image" in mime_type or msg_type == "image":
+                        ext = "jpg" if "jpeg" in mime_type or "jpg" in mime_type else "png"
+                    elif "pdf" in mime_type:
+                        ext = "pdf"
+                    else:
+                        ext = "bin"
+
                     storage_path = f"{msg_type}s/{int(datetime.now().timestamp())}_{media_id}.{ext}"
                     try:
                         supabase.storage.from_("whatsapp-media").upload(
@@ -280,6 +313,8 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                 media_meta["media_url"] = media_url
                 media_meta["caption"] = caption
+                if msg_type == "video" and ("gif" in str(media.get("mime_type", "")).lower() or "gif" in str(media.get("caption", "")).lower()):
+                    media_meta["is_gif"] = True
             except Exception as dwn_err:
                 logger.error(f"[Worker Media] Error descargando {msg_type} de Meta: {dwn_err}")
     else:

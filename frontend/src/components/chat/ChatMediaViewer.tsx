@@ -348,14 +348,45 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
         </div>
       )}
 
+      {/* 3.5. VIDEO / GIF */}
+      {metadata.tipo === 'video' && (
+        isPurged ? (
+          <div className="p-2.5 rounded-xl border border-slate-700/60 bg-[#111a30] text-slate-300 text-xs flex items-center gap-2 max-w-xs">
+            <div className="p-1.5 rounded-lg bg-slate-800 text-slate-400">
+              <Play size={16} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-slate-200 truncate">{metadata.caption || metadata.file_name || 'Video / GIF'}</p>
+              <span className="text-[10px] text-slate-400">Archivo depurado por política de 30 días</span>
+            </div>
+          </div>
+        ) : mediaUrl ? (
+          <div className="rounded-xl overflow-hidden max-w-xs border border-slate-700/60 shadow-sm bg-black/50">
+            <video 
+              src={mediaUrl} 
+              controls={!metadata.is_gif} 
+              autoPlay={Boolean(metadata.is_gif)} 
+              loop={Boolean(metadata.is_gif)} 
+              muted={Boolean(metadata.is_gif)} 
+              playsInline 
+              className="w-full max-h-64 object-cover rounded-xl"
+            />
+            {metadata.caption && (
+              <p className="text-xs px-2.5 py-1.5 text-slate-200 bg-slate-900/80">{metadata.caption}</p>
+            )}
+          </div>
+        ) : null
+      )}
+
       {/* 4. STICKER */}
       {metadata.tipo === 'sticker' && mediaUrl && (
-        <div className="max-w-[120px]">
+        <div className="max-w-[130px] p-0.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img 
             src={mediaUrl} 
-            alt="Sticker" 
-            className="w-28 h-28 object-contain hover:scale-110 transition-transform"
+            alt="Sticker WhatsApp" 
+            className="w-28 h-28 object-contain hover:scale-105 transition-transform drop-shadow-md"
+            loading="lazy"
           />
         </div>
       )}
