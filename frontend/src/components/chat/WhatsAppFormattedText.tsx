@@ -23,6 +23,15 @@ export default function WhatsAppFormattedText({ text, className = '' }: WhatsApp
   // Dividir por líneas para procesar citas y listas
   const lines = text.split('\n')
 
+  // Si es una sola línea simple (la inmensa mayoría de los mensajes), renderizar completamente inline
+  if (lines.length === 1 && !lines[0].startsWith('> ') && lines[0] !== '>' && !/^[-*]\s+/.test(lines[0]) && !/^\d+\.\s+/.test(lines[0])) {
+    return (
+      <span className={`break-words ${className}`}>
+        {parseInlineFormatting(lines[0])}
+      </span>
+    )
+  }
+
   const renderLine = (line: string, lineIndex: number) => {
     // 1. Citas de WhatsApp (> texto)
     if (line.startsWith('> ') || line === '>') {
@@ -61,7 +70,15 @@ export default function WhatsAppFormattedText({ text, className = '' }: WhatsApp
       )
     }
 
-    // 4. Línea estándar
+    // 4. Línea estándar (si es la última línea, se mantiene inline para compartir renglón con la hora)
+    if (lineIndex === lines.length - 1) {
+      return (
+        <span key={lineIndex} className={line === '' ? 'inline-block h-3' : 'inline'}>
+          {parseInlineFormatting(line)}
+        </span>
+      )
+    }
+
     return (
       <div key={lineIndex} className={line === '' ? 'h-3' : 'min-h-[1.25em]'}>
         {parseInlineFormatting(line)}
@@ -70,9 +87,9 @@ export default function WhatsAppFormattedText({ text, className = '' }: WhatsApp
   }
 
   return (
-    <div className={`space-y-0.5 break-words ${className}`}>
+    <span className={`break-words ${className}`}>
       {lines.map((line, idx) => renderLine(line, idx))}
-    </div>
+    </span>
   )
 }
 

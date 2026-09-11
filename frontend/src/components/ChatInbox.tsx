@@ -1750,6 +1750,8 @@ export default function ChatInbox() {
 
                     // 2. MENSAJE NORMAL DE WHATSAPP O STICKER
                     const isSticker = msg.metadata_json?.tipo === 'sticker'
+                    const hasText = Boolean(msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))))
+                    const hasMedia = Boolean(msg.metadata_json?.tipo && msg.metadata_json?.tipo !== 'texto')
 
                     return (
                       <div
@@ -1769,22 +1771,25 @@ export default function ChatInbox() {
                               <ChevronDown size={14} />
                             </button>
 
-                            <ChatMediaViewer 
-                              metadata={msg.metadata_json} 
-                              isOperator={isOperator} 
-                              mensajeId={msg.id}
-                            />
+                            <div className="relative inline-block">
+                              <ChatMediaViewer 
+                                metadata={msg.metadata_json} 
+                                isOperator={isOperator} 
+                                mensajeId={msg.id}
+                              />
 
-                            <div className="flex items-center justify-end gap-1 text-[10px] text-slate-300 mt-0.5 opacity-90 select-none">
-                              <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              {isOperator || isBot ? (
-                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
-                              ) : (
-                                <DeliveryStatusIcon 
-                                  status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
-                                  isPatientMessage={true} 
-                                />
-                              )}
+                              {/* Micro-badge translúcido en la esquina inferior del sticker */}
+                              <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-white text-[9.5px] flex items-center gap-1 shadow-sm select-none">
+                                <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                {isOperator || isBot ? (
+                                  <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                                ) : (
+                                  <DeliveryStatusIcon 
+                                    status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                    isPatientMessage={true} 
+                                  />
+                                )}
+                              </div>
                             </div>
                           </div>
                         ) : (
@@ -1834,41 +1839,57 @@ export default function ChatInbox() {
                               )}
                             </div>
                             
-                            {/* Contenido textual con formato enriquecido */}
-                            {msg.contenido && (!msg.metadata_json?.tipo || (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))) && (
-                              <div className="inline">
-                                <WhatsAppFormattedText text={msg.contenido} className="inline leading-snug break-words" />
+                            {/* Visualizador Multimedia (si tiene imagen, video, documento, audio) */}
+                            {hasMedia && (
+                              <div className="relative mb-1">
+                                <ChatMediaViewer 
+                                  metadata={msg.metadata_json} 
+                                  isOperator={isOperator} 
+                                  mensajeId={msg.id}
+                                  onTranscribeSuccess={(mId, transcript) => {
+                                    setMensajes((prev) =>
+                                      prev.map((m) =>
+                                        m.id === mId
+                                          ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
+                                          : m
+                                      )
+                                    )
+                                  }}
+                                />
+                                {/* Si es media puro sin texto adicional, colocar badge flotante sobre la media */}
+                                {!hasText && (
+                                  <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-white text-[9.5px] flex items-center gap-1 shadow-sm select-none">
+                                    <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                    {isOperator || isBot ? (
+                                      <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                                    ) : (
+                                      <DeliveryStatusIcon 
+                                        status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                        isPatientMessage={true} 
+                                      />
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             )}
-                            
-                            {/* Visualizador Multimedia */}
-                            <ChatMediaViewer 
-                              metadata={msg.metadata_json} 
-                              isOperator={isOperator} 
-                              mensajeId={msg.id}
-                              onTranscribeSuccess={(mId, transcript) => {
-                                setMensajes((prev) =>
-                                  prev.map((m) =>
-                                    m.id === mId
-                                      ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
-                                      : m
-                                  )
-                                )
-                              }}
-                            />
-                            
-                            {/* Pie con Hora y Tildes */}
-                            <div className="flex items-center justify-end gap-1 text-[10px] mt-0.5 opacity-85 select-none float-right ml-2 -mb-0.5">
-                              <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                              {isOperator || isBot ? (
-                                <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
-                              ) : (
-                                <DeliveryStatusIcon 
-                                  status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
-                                  isPatientMessage={true} 
-                                />
-                              )}
-                            </div>
+
+                            {/* Contenido textual con Hora y Tildes en el MISMO renglón (WhatsApp Web Nativo) */}
+                            {hasText && (
+                              <div className="text-[13px] leading-snug break-words">
+                                <WhatsAppFormattedText text={msg.contenido} className="inline" />
+                                <span className="inline-flex items-center gap-1 float-right ml-2.5 mt-0.5 select-none align-bottom text-[10px] opacity-85 leading-none">
+                                  <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                  {isOperator || isBot ? (
+                                    <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                                  ) : (
+                                    <DeliveryStatusIcon 
+                                      status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                      isPatientMessage={true} 
+                                    />
+                                  )}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
