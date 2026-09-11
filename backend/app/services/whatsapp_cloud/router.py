@@ -116,12 +116,12 @@ async def receive_webhook_event(
 # ---------------------------------------------------------------------
 
 def get_client() -> WhatsAppCloudClient:
-    phone_id = os.getenv("META_WA_PHONE_NUMBER_ID", DEFAULT_PHONE_NUMBER_ID)
-    token = os.getenv("META_WA_ACCESS_TOKEN", DEFAULT_ACCESS_TOKEN)
+    from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials
+    phone_id, token = get_whatsapp_cloud_credentials()
     if not phone_id or not token:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Credenciales de Meta WhatsApp Cloud API no configuradas en el servidor"
+            detail="Credenciales de Meta WhatsApp Cloud API no configuradas en el servidor ni en base de datos"
         )
     return WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
 

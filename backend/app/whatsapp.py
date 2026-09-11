@@ -224,8 +224,8 @@ class WhatsAppManager:
         """
         Consulta el estado vivo de la pasarela. Prioriza Meta WhatsApp Cloud API si está configurada.
         """
-        meta_phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
-        meta_token = os.getenv("META_WA_ACCESS_TOKEN")
+        from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials
+        meta_phone_id, meta_token = get_whatsapp_cloud_credentials()
         if meta_phone_id and meta_token:
             self.status = "CONNECTED"
             return {
@@ -442,14 +442,13 @@ class WhatsAppManager:
             except Exception as e:
                 self.add_log("WARNING", f"No se pudo autovincular conversación para {telefono}: {e}")
 
-        # Prioridad nativa: Si Meta WhatsApp Cloud API está configurada en el entorno
-        meta_phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
-        meta_token = os.getenv("META_WA_ACCESS_TOKEN")
+        # Prioridad nativa: Si Meta WhatsApp Cloud API está configurada en la BD o en el entorno
+        from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient, ConversationWindowClosedError
+        from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+
+        meta_phone_id, meta_token = get_whatsapp_cloud_credentials()
         if meta_phone_id and meta_token:
             import asyncio
-            from app.services.whatsapp_cloud.client import WhatsAppCloudClient, ConversationWindowClosedError
-            from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
-
             normalized_meta_phone = normalize_to_meta_e164(telefono)
             wa_client = WhatsAppCloudClient(phone_number_id=meta_phone_id, access_token=meta_token)
 

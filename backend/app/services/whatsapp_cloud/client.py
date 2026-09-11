@@ -86,6 +86,30 @@ class SimpleCircuitBreaker:
         return True
 
 
+def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
+    """
+    Obtiene las credenciales activas de Meta WhatsApp Cloud API.
+    Prioriza la base de datos Supabase (tabla whatsapp_accounts) para permitir rotación
+    de tokens sin reiniciar contenedores ni depender de redeploys de Railway.
+    Si no están en la BD, recurre a las variables de entorno.
+    """
+    import os
+    try:
+        from app.db import supabase
+        acc_res = supabase.table("whatsapp_accounts").select("phone_number_id, system_user_token_encrypted").eq("is_active", True).limit(1).execute()
+        if acc_res.data and len(acc_res.data) > 0:
+            db_phone = acc_res.data[0].get("phone_number_id")
+            db_token = acc_res.data[0].get("system_user_token_encrypted")
+            if db_phone and db_token:
+                return db_phone, db_token
+    except Exception as e:
+        logger.debug(f"[Credentials] Error leyendo whatsapp_accounts de Supabase: {e}")
+
+    phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
+    token = os.getenv("META_WA_ACCESS_TOKEN")
+    return phone_id, token
+
+
 class WhatsAppCloudClient:
     """
     Cliente Enterprise para Meta WhatsApp Cloud API (Graph API v21+).
