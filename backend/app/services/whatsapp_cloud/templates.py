@@ -294,13 +294,26 @@ async def create_template(req: TemplateCreateRequest):
                     "text": b.text
                 })
             elif b.type == "URL" and b.url:
+                clean_url = b.url.strip()
+                # Meta exige estrictamente que {{1}} esté al final de la ruta (sin sufijos como .pdf)
+                if "/presupuesto_{{1}}.pdf" in clean_url:
+                    clean_url = clean_url.replace("/presupuesto_{{1}}.pdf", "/api/presupuestos/pdf/{{1}}")
+                elif "/static/presupuesto_{{1}}.pdf" in clean_url:
+                    clean_url = clean_url.replace("/static/presupuesto_{{1}}.pdf", "/api/presupuestos/pdf/{{1}}")
+
                 url_btn: Dict[str, Any] = {
                     "type": "URL",
-                    "text": b.text,
-                    "url": b.url
+                    "text": b.text.strip(),
+                    "url": clean_url
                 }
-                if "{{" in b.url:
-                    url_btn["example"] = b.example or ["ejemplo_presupuesto_123"]
+                # Meta exige obligatoriamente que el campo 'example' sea un array con una URL completa válida
+                if "{{" in clean_url:
+                    if b.example and len(b.example) > 0 and str(b.example[0]).startswith("http"):
+                        url_btn["example"] = b.example
+                    else:
+                        sample_url = clean_url.replace("{{1}}", "demo_presupuesto_123")
+                        sample_url = re.sub(r"\{\{\d+\}\}", "demo123", sample_url)
+                        url_btn["example"] = [sample_url]
                 buttons_payload.append(url_btn)
             elif b.type == "PHONE_NUMBER" and b.phone_number:
                 buttons_payload.append({

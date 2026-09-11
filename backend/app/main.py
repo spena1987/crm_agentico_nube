@@ -3583,9 +3583,12 @@ def enviar_presupuesto_whatsapp_api(presupuesto_id: str, payload: Dict[str, Any]
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/presupuestos/{presupuesto_id}/pdf")
+@app.get("/api/presupuestos/pdf/{presupuesto_id}")
+@app.get("/static/presupuesto/{presupuesto_id}")
 def obtener_pdf_presupuesto(presupuesto_id: str):
     """
     Sirve el archivo PDF membretado oficial de un presupuesto directamente como stream / descarga.
+    Compatible con los botones de URL dinámica {{1}} de Meta WhatsApp Cloud API.
     """
     return servir_archivo_estatico(f"presupuesto_{presupuesto_id}.pdf")
 

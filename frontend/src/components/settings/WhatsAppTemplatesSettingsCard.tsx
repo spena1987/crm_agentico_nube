@@ -126,7 +126,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
       { 
         type: 'URL', 
         text: 'Ver Presupuesto Web', 
-        url: 'https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf' 
+        url: 'https://crmagenticonube-production.up.railway.app/api/presupuestos/pdf/{{1}}' 
       }
     ]
   },
@@ -828,7 +828,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                           onClick={() => setButtons(prev => [...prev, { 
                             type: 'URL', 
                             text: 'Ver Presupuesto', 
-                            url: 'https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf' 
+                            url: 'https://crmagenticonube-production.up.railway.app/api/presupuestos/pdf/{{1}}' 
                           }])}
                           className="text-[11px] px-2 py-1 bg-sky-950/60 hover:bg-sky-900/80 text-sky-300 border border-sky-800/50 rounded font-medium flex items-center gap-1 transition-colors"
                           title="Agregar botón de enlace web dinámico"
@@ -862,7 +862,7 @@ export default function WhatsAppTemplatesSettingsCard() {
                                     ...b,
                                     type: newType,
                                     url: newType === 'URL' 
-                                      ? (b.url || 'https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf') 
+                                      ? (b.url || 'https://crmagenticonube-production.up.railway.app/api/presupuestos/pdf/{{1}}') 
                                       : undefined
                                   }
                                 }))
@@ -915,11 +915,11 @@ export default function WhatsAppTemplatesSettingsCard() {
                                 const val = e.target.value
                                 setButtons(prev => prev.map((b, i) => i === idx ? { ...b, url: val } : b))
                               }}
-                              placeholder="https://crmagenticonube-production.up.railway.app/static/presupuesto_{{1}}.pdf"
+                              placeholder="https://crmagenticonube-production.up.railway.app/api/presupuestos/pdf/{{1}}"
                               className="w-full px-2.5 py-1.5 bg-[#0b131d] border border-[#233348] rounded text-xs text-sky-200 font-mono focus:ring-2 focus:ring-sky-500"
                             />
                             <p className="text-[10px] text-slate-400 leading-tight">
-                              💡 Si incluye <code className="text-sky-300 bg-black/40 px-1 rounded">{'{{1}}'}</code>, el CRM reemplazará automáticamente el ID del presupuesto o turno al enviarlo.
+                              💡 Meta exige estrictamente que <code className="text-sky-300 bg-black/40 px-1 rounded">{'{{1}}'}</code> esté al final de la URL (ej: <code className="text-sky-300">.../pdf/{'{{1}}'}</code>). El CRM insertará el ID del presupuesto automáticamente.
                             </p>
                           </div>
                         )}
