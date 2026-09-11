@@ -108,7 +108,7 @@ export default function ModalEnviarPresupuestoWhatsApp({
         const tInfo = data.template_info || {}
         setVar1Nombre(tInfo.variable_1 || pacienteNombre || 'Estimado/a Paciente')
         setVar2Practica(tInfo.variable_2 || tInfo.practica_nombre || 'Tratamiento Médico')
-        setVar3MontoLink(tInfo.variable_3 || `${tInfo.monto_formateado || '$0'}\n🔗 Ver online: ${linkAbs}`)
+        setVar3MontoLink(tInfo.variable_3 || `${tInfo.monto_formateado || '$0'} • Ver online: ${linkAbs}`)
       } else {
         // Fallback básico
         const fallback = `¡Hola ${pacienteNombre || 'Estimado/a'}! 👋 Esperamos que estés muy bien.\n\nTe compartimos adjunto tu Presupuesto Médico Oficial.\n\nQuedamos a tu disposición para coordinar tu turno o responder cualquier consulta. 🩺✨`
@@ -120,7 +120,7 @@ export default function ModalEnviarPresupuestoWhatsApp({
         setVar2Practica('Tratamiento Quirúrgico')
         const fallbackLink = `${BACKEND_URL}/static/presupuesto_${presupuestoId}.pdf`
         setPdfFullUrl(fallbackLink)
-        setVar3MontoLink(`$ ${(totalArs || 0).toLocaleString('es-AR')} ARS\n🔗 Ver online: ${fallbackLink}`)
+        setVar3MontoLink(`$ ${(totalArs || 0).toLocaleString('es-AR')} ARS • Ver online: ${fallbackLink}`)
       }
     } catch (err) {
       console.error('Error cargando mensaje sugerido:', err)
@@ -168,10 +168,11 @@ export default function ModalEnviarPresupuestoWhatsApp({
       }
 
       if (payload.modo === 'template') {
+        const cleanMeta = (txt: string) => (txt || '').replace(/[\r\n\t]+/g, ' ').replace(/\s{4,}/g, '   ').trim()
         payload.template_params = {
-          '1': var1Nombre.trim() || pacienteNombre || 'Estimado/a',
-          '2': var2Practica.trim() || 'Tratamiento Médico',
-          '3': var3MontoLink.trim()
+          '1': cleanMeta(var1Nombre) || pacienteNombre || 'Estimado/a',
+          '2': cleanMeta(var2Practica) || 'Tratamiento Médico',
+          '3': cleanMeta(var3MontoLink)
         }
       }
 

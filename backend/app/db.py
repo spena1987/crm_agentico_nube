@@ -2926,13 +2926,24 @@ def enviar_presupuesto_por_whatsapp(
             monto_str = f"${tot_ars:,.2f} ARS" if tot_ars > 0 else (f"USD {tot_usd:,.2f}" if tot_usd > 0 else "$0")
             param_3 = f"{monto_str}. Link online: {pdf_full_url}"
 
+        # Sanitización estricta de parámetros para Meta (Error #132018: no permite \r, \n, \t ni >4 espacios)
+        def _clean_meta_param(val: Any, max_len: int = 200) -> str:
+            s = str(val or "").strip()
+            s = re.sub(r"[\r\n\t]+", " ", s)
+            s = re.sub(r" {4,}", "   ", s)
+            return s[:max_len].strip()
+
+        clean_p1 = _clean_meta_param(param_1, 60)
+        clean_p2 = _clean_meta_param(param_2, 60)
+        clean_p3 = _clean_meta_param(param_3, 200)
+
         components = [
             {
                 "type": "body",
                 "parameters": [
-                    {"type": "text", "text": str(param_1)[:60]},
-                    {"type": "text", "text": str(param_2)[:60]},
-                    {"type": "text", "text": str(param_3)[:200]}
+                    {"type": "text", "text": clean_p1},
+                    {"type": "text", "text": clean_p2},
+                    {"type": "text", "text": clean_p3}
                 ]
             }
         ]

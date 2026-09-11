@@ -3523,7 +3523,7 @@ def obtener_mensaje_sugerido_presupuesto_api(presupuesto_id: str):
             "pdf_full_url": pdf_full_url,
             "variable_1": paciente_nombre_limpio,
             "variable_2": practica_principal,
-            "variable_3": f"{monto_formateado}\n🔗 Ver online: {pdf_full_url}"
+            "variable_3": f"{monto_formateado} • Ver online: {pdf_full_url}"
         }
         
         return {
