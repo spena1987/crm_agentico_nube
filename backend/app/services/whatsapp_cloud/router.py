@@ -15,7 +15,12 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 from app.services.whatsapp_cloud.security import verify_meta_signature
-from app.services.whatsapp_cloud.client import WhatsAppCloudClient, ConversationWindowClosedError, RateLimitExceededError
+from app.services.whatsapp_cloud.client import (
+    WhatsAppCloudClient,
+    ConversationWindowClosedError,
+    RateLimitExceededError,
+    get_whatsapp_app_secret
+)
 from app.services.whatsapp_cloud.worker import process_meta_webhook_payload, record_outbound_audit_message
 from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 
@@ -90,9 +95,9 @@ async def receive_webhook_event(
     Valida firma HMAC-SHA256, encola para procesamiento asíncrono y responde 200 OK en < 100ms.
     """
     raw_body = await request.body()
-    app_secret = os.getenv("META_WA_APP_SECRET", META_APP_SECRET)
+    app_secret = get_whatsapp_app_secret()
 
-    # Validar firma sólo si app_secret está configurado en el entorno
+    # Validar firma sólo si app_secret está configurado en el entorno o BD
     if app_secret:
         if not verify_meta_signature(app_secret, raw_body, x_hub_signature_256):
             logger.warning("[Meta Security] Payload rechazado: firma HMAC-SHA256 inválida.")

@@ -110,6 +110,30 @@ def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
     return phone_id, token
 
 
+def get_whatsapp_app_secret() -> Optional[str]:
+    """
+    Obtiene el App Secret de Meta para validación de firma HMAC-SHA256.
+    Prioriza la variable de entorno META_WA_APP_SECRET y luego la tabla whatsapp_accounts de Supabase.
+    """
+    import os
+    env_secret = os.getenv("META_WA_APP_SECRET")
+    if env_secret and env_secret.strip():
+        return env_secret.strip()
+
+    try:
+        from app.db import supabase
+        acc_res = supabase.table("whatsapp_accounts").select("app_secret_encrypted").eq("is_active", True).limit(1).execute()
+        if acc_res.data and len(acc_res.data) > 0:
+            db_sec = acc_res.data[0].get("app_secret_encrypted")
+            if db_sec and str(db_sec).strip():
+                return str(db_sec).strip()
+    except Exception as e:
+        logger.debug(f"[Credentials] Error leyendo app_secret_encrypted de Supabase: {e}")
+
+    return None
+
+
+
 class WhatsAppCloudClient:
     """
     Cliente Enterprise para Meta WhatsApp Cloud API (Graph API v21+).
