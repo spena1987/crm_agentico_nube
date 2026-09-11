@@ -269,6 +269,10 @@ app.add_middleware(
 # Middleware de Seguridad: Exige Bearer Token Supabase en todas las rutas /api/*
 app.add_middleware(AuthSecurityMiddleware)
 
+# Integración Nativa Meta WhatsApp Cloud API (Graph API v21+)
+from app.services.whatsapp_cloud import whatsapp_cloud_router
+app.include_router(whatsapp_cloud_router)
+
 # ====================================================================
 # SERVIDOR INTELIGENTE DE ESTÁTICOS Y PDFs ON-DEMAND (CON AUTO-REGENERACIÓN)
 # ====================================================================

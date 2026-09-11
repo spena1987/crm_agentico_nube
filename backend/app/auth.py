@@ -170,6 +170,8 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
             "/static/",
             "/api/consentimiento-publico/",
             "/api/whatsapp/webhook/incoming",
+            "/api/whatsapp/cloud/webhook",
+            "/webhooks/whatsapp",
             "/docs",
             "/redoc",
             "/openapi.json"
