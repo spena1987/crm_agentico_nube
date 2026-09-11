@@ -182,6 +182,18 @@ export default function ChatInbox() {
   const [contactContextMenu, setContactContextMenu] = useState<{ conversacion: Conversacion; position: { x: number; y: number } } | null>(null)
   const [showTemplateModal, setShowTemplateModal] = useState<boolean>(false)
 
+  const messagesCacheRef = useRef<Record<string, Mensaje[]>>({})
+  const conversacionesRef = useRef<Conversacion[]>([])
+  const selectedConvIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    conversacionesRef.current = conversaciones
+  }, [conversaciones])
+
+  useEffect(() => {
+    selectedConvIdRef.current = selectedConvId
+  }, [selectedConvId])
+
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messageInputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -270,9 +282,11 @@ export default function ChatInbox() {
   const paramPacienteId = searchParams ? searchParams.get('pacienteId') : null
   const paramTelefono = searchParams ? searchParams.get('telefono') : null
 
-  const fetchConversaciones = async () => {
+  const fetchConversaciones = async (isBackground = false) => {
     try {
-      setCargandoConversaciones(true)
+      if (!isBackground && conversacionesRef.current.length === 0) {
+        setCargandoConversaciones(true)
+      }
       let convs: Conversacion[] = []
       
       try {
@@ -285,7 +299,7 @@ export default function ChatInbox() {
         }
       } catch (e) {}
 
-      if (convs.length === 0) {
+      if (convs.length === 0 && conversacionesRef.current.length === 0) {
         const { data, error } = await supabase
           .from('conversaciones')
           .select(`
@@ -296,6 +310,8 @@ export default function ChatInbox() {
             agente_asignado_codigo,
             ultimo_mensaje,
             updated_at,
+            unread_count,
+            metadata_json,
             pacientes (*)
           `)
           .order('updated_at', { ascending: false })
@@ -305,9 +321,12 @@ export default function ChatInbox() {
         }
       }
 
-      setConversaciones(convs)
+      if (convs.length > 0) {
+        const activeId = selectedConvIdRef.current
+        setConversaciones(convs.map((c) => (c.id === activeId ? { ...c, unread_count: 0 } : c)))
+      }
       
-      if (paramPacienteId && convs.length > 0) {
+      if (paramPacienteId && convs.length > 0 && !selectedConvIdRef.current) {
         const target = convs.find((c) => {
           const p = getPatient(c)
           return c.paciente_id === paramPacienteId || p?.id === paramPacienteId
@@ -317,7 +336,7 @@ export default function ChatInbox() {
           return
         }
       }
-      if (paramTelefono && convs.length > 0) {
+      if (paramTelefono && convs.length > 0 && !selectedConvIdRef.current) {
         const target = convs.find((c) => {
           const p = getPatient(c)
           return p?.telefono === paramTelefono
@@ -336,7 +355,14 @@ export default function ChatInbox() {
 
   const fetchMensajes = async (convId: string) => {
     try {
-      setCargandoMensajes(true)
+      const cached = messagesCacheRef.current[convId]
+      if (cached && cached.length > 0) {
+        setMensajes(cached)
+        setCargandoMensajes(false)
+      } else {
+        setCargandoMensajes(true)
+      }
+
       let msgs: Mensaje[] = []
 
       try {
@@ -349,7 +375,7 @@ export default function ChatInbox() {
         }
       } catch (e) {}
 
-      if (msgs.length === 0) {
+      if (msgs.length === 0 && (!cached || cached.length === 0)) {
         const { data, error } = await supabase
           .from('mensajes')
           .select('*')
@@ -361,16 +387,24 @@ export default function ChatInbox() {
         }
       }
 
-      const uniqueMap = new Map<string, Mensaje>()
-      for (const m of msgs) {
-        const dedupKey = m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id
-        uniqueMap.set(dedupKey, m)
+      if (msgs.length > 0) {
+        const uniqueMap = new Map<string, Mensaje>()
+        for (const m of msgs) {
+          const dedupKey = m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id}` : m.id
+          uniqueMap.set(dedupKey, m)
+        }
+        const finalMsgs = Array.from(uniqueMap.values())
+        messagesCacheRef.current[convId] = finalMsgs
+        if (selectedConvIdRef.current === convId) {
+          setMensajes(finalMsgs)
+        }
       }
-      setMensajes(Array.from(uniqueMap.values()))
     } catch (err) {
       console.error('Error cargando mensajes:', err)
     } finally {
-      setCargandoMensajes(false)
+      if (selectedConvIdRef.current === convId) {
+        setCargandoMensajes(false)
+      }
     }
   }
 
@@ -379,44 +413,12 @@ export default function ChatInbox() {
     fetchWAStatus()
     const intervalStatus = setInterval(fetchWAStatus, 30000)
     
-    const intervalConvs = setInterval(async () => {
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/conversaciones`, { cache: 'no-store' })
-        if (res.ok) {
-          const apiData = await res.json()
-          if (Array.isArray(apiData) && apiData.length > 0) {
-            setConversaciones(apiData)
-            return
-          }
-        }
-      } catch (e) {}
-
-      supabase
-        .from('conversaciones')
-        .select(`
-          id,
-          paciente_id,
-          bot_disabled,
-          archivada,
-          ultimo_mensaje,
-          updated_at,
-          pacientes (
-            id,
-            telefono,
-            nombre,
-            email
-          )
-        `)
-        .order('updated_at', { ascending: false })
-        .then(({ data }) => {
-          if (data) {
-            setConversaciones(data as unknown as Conversacion[])
-          }
-        })
+    const intervalConvs = setInterval(() => {
+      fetchConversaciones(true)
     }, 30000)
 
     const onFocus = () => {
-      fetchConversaciones()
+      fetchConversaciones(true)
       fetchWAStatus()
     }
     window.addEventListener('focus', onFocus)
@@ -465,8 +467,14 @@ export default function ChatInbox() {
     isInitialLoadRef.current = true
     setShowScrollBottom(false)
     setUnreadNewCount(0)
+
+    // Reset optimista instantáneo del unread_count en la conversación seleccionada
+    setConversaciones((prev) =>
+      prev.map((c) => (c.id === selectedConvId ? { ...c, unread_count: 0 } : c))
+    )
+
     fetchMensajes(selectedConvId)
-    // Notificar a WhatsApp y marcar mensajes como leídos (doble tilde azul en el celular del paciente)
+    // Notificar a WhatsApp y marcar mensajes como leídos en Supabase y Meta
     fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
 
     const intervalMsgs = setInterval(() => {
@@ -480,12 +488,12 @@ export default function ChatInbox() {
           if (data && data.length > 0) {
             const uniqueMap = new Map<string, Mensaje>()
             for (const m of (data as unknown as Mensaje[])) {
-              const dedupKey = m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id
+              const dedupKey = m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id}` : m.id
               uniqueMap.set(dedupKey, m)
             }
             const newArr = Array.from(uniqueMap.values())
+            messagesCacheRef.current[selectedConvId] = newArr
             setMensajes((prev) => {
-              // Si no hay cambios reales en mensajes o estados de entrega, no crear nueva referencia de array
               if (prev.length === newArr.length && prev.length > 0) {
                 const lastPrev = prev[prev.length - 1]
                 const lastNew = newArr[newArr.length - 1]
@@ -544,23 +552,28 @@ export default function ChatInbox() {
         { event: 'INSERT', schema: 'public', table: 'mensajes' },
         (payload) => {
           const newMsg = payload.new as Mensaje
-          if (newMsg.conversacion_id === selectedConvId) {
+          const currentActive = selectedConvIdRef.current
+          if (newMsg.conversacion_id === currentActive) {
             setMensajes((prev) => {
-              const newKey = newMsg.metadata_json?.whatsapp_message_id ? `wa_${newMsg.metadata_json.whatsapp_message_id}` : newMsg.id
-              if (prev.some((m) => (m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json.whatsapp_message_id}` : m.id) === newKey)) {
+              const newKey = newMsg.metadata_json?.wamid || newMsg.metadata_json?.whatsapp_message_id ? `wa_${newMsg.metadata_json?.wamid || newMsg.metadata_json?.whatsapp_message_id}` : newMsg.id
+              if (prev.some((m) => (m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id ? `wa_${m.metadata_json?.wamid || m.metadata_json?.whatsapp_message_id}` : m.id) === newKey)) {
                 return prev
               }
-              return [...prev.filter((m) => !m.id.startsWith('temp_')), newMsg]
+              const updated = [...prev.filter((m) => !m.id.startsWith('temp_')), newMsg]
+              if (currentActive) {
+                messagesCacheRef.current[currentActive] = updated
+              }
+              return updated
             })
             // Si llega un mensaje nuevo mientras tenemos el chat abierto, marcarlo leído
-            if (newMsg.emisor === 'paciente') {
-              fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
+            if (newMsg.emisor === 'paciente' && currentActive) {
+              fetch(`${BACKEND_URL}/api/conversaciones/${currentActive}/leer`, { method: 'POST' }).catch(() => {})
             }
           }
           setConversaciones((prevConvs) => 
             prevConvs.map((conv) => {
               if (conv.id === newMsg.conversacion_id) {
-                const isCurrentActive = conv.id === selectedConvId
+                const isCurrentActive = conv.id === selectedConvIdRef.current
                 const unreadDelta = (newMsg.emisor === 'paciente' && !isCurrentActive) ? 1 : 0
                 return {
                   ...conv,
@@ -579,10 +592,15 @@ export default function ChatInbox() {
         { event: 'UPDATE', schema: 'public', table: 'mensajes' },
         (payload) => {
           const updatedMsg = payload.new as Mensaje
-          if (updatedMsg.conversacion_id === selectedConvId) {
-            setMensajes((prev) =>
-              prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m))
-            )
+          const currentActive = selectedConvIdRef.current
+          if (updatedMsg.conversacion_id === currentActive) {
+            setMensajes((prev) => {
+              const updated = prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m))
+              if (currentActive) {
+                messagesCacheRef.current[currentActive] = updated
+              }
+              return updated
+            })
           }
         }
       )
@@ -594,12 +612,14 @@ export default function ChatInbox() {
           setConversaciones((prevConvs) => 
             prevConvs.map((conv) => {
               if (conv.id === updatedConv.id) {
+                const isCurrentActive = conv.id === selectedConvIdRef.current
                 return {
                   ...conv,
                   bot_disabled: updatedConv.bot_disabled,
                   archivada: updatedConv.archivada,
                   ultimo_mensaje: updatedConv.ultimo_mensaje,
-                  updated_at: updatedConv.updated_at
+                  updated_at: updatedConv.updated_at,
+                  unread_count: isCurrentActive ? 0 : (updatedConv.unread_count !== undefined ? updatedConv.unread_count : conv.unread_count)
                 }
               }
               return conv
@@ -612,7 +632,7 @@ export default function ChatInbox() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [selectedConvId])
+  }, [])
 
   const selectedConv = conversaciones.find((c) => c.id === selectedConvId)
 
@@ -1200,7 +1220,7 @@ export default function ChatInbox() {
               <Smartphone size={15} />
             </button>
             <button 
-              onClick={fetchConversaciones}
+              onClick={() => fetchConversaciones(false)}
               className="p-1.5 hover:bg-slate-800/60 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
               title="Refrescar chats"
             >
@@ -1410,11 +1430,9 @@ export default function ChatInbox() {
                   key={conv.id}
                   onContextMenu={(e) => handleOpenContactContextMenu(e, conv)}
                   onClick={() => {
-                    if (hasUnread) {
-                      setConversaciones((prev) =>
-                        prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c))
-                      )
-                    }
+                    setConversaciones((prev) =>
+                      prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c))
+                    )
                     setSelectedConvId(conv.id)
                   }}
                   className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 group ${

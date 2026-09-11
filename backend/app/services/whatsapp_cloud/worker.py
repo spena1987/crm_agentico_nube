@@ -194,8 +194,10 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
     transcripcion_audio = None
     media_meta: Dict[str, Any] = {
         "wamid": wamid,
+        "whatsapp_message_id": wamid,
         "tipo": msg_type,
-        "provider": "meta_cloud_api"
+        "provider": "meta_cloud_api",
+        "leido_por_operador": False
     }
 
     if msg_type == "text":
@@ -345,7 +347,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
             # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes)
             try:
-                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json").eq("paciente_id", paciente_id).execute()
+                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count").eq("paciente_id", paciente_id).execute()
                 crm_conv_id = None
                 bot_disabled = False
 
@@ -353,6 +355,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     crm_conv_id = conv_crm_res.data[0]["id"]
                     bot_disabled = conv_crm_res.data[0].get("bot_disabled", False)
                     c_meta = conv_crm_res.data[0].get("metadata_json") or {}
+                    current_unread = int(conv_crm_res.data[0].get("unread_count") or 0)
                     ultimo_humano = c_meta.get("ultimo_mensaje_humano_at", 0)
                     # Período de gracia de 15 minutos (900s) si el operador humano estuvo respondiendo
                     import time
@@ -362,13 +365,15 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                     supabase.table("conversaciones").update({
                         "ultimo_mensaje": text_content,
-                        "updated_at": datetime.now(timezone.utc).isoformat()
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "unread_count": current_unread + 1
                     }).eq("id", crm_conv_id).execute()
                 else:
                     new_crm_conv = supabase.table("conversaciones").insert({
                         "paciente_id": paciente_id,
                         "bot_disabled": False,
-                        "ultimo_mensaje": text_content
+                        "ultimo_mensaje": text_content,
+                        "unread_count": 1
                     }).execute()
                     if new_crm_conv.data:
                         crm_conv_id = new_crm_conv.data[0]["id"]

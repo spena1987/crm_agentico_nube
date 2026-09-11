@@ -321,6 +321,18 @@ class WhatsAppCloudClient:
             "raw_response": res
         }
 
+    async def mark_as_read(self, message_id: str) -> Dict[str, Any]:
+        """
+        Emite el recibo de lectura (doble tilde azul) hacia WhatsApp.
+        """
+        payload = {
+            "messaging_product": "whatsapp",
+            "status": "read",
+            "message_id": message_id
+        }
+        res = await self._request_with_retry("POST", "messages", payload)
+        return res
+
     async def send_image(
         self,
         to_phone: str,

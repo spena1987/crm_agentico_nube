@@ -581,36 +581,15 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
         return []
     try:
         query = supabase.table("conversaciones").select(
-            "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, updated_at, pacientes(*)"
+            "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, updated_at, unread_count, metadata_json, pacientes(*)"
         )
         if not incluir_archivadas:
             query = query.eq("archivada", False)
         response = query.order("updated_at", desc=True).execute()
         convs = response.data or []
 
-        # Calcular conteo de mensajes no leídos por conversación
-        try:
-            msg_res = supabase.table("mensajes").select("id, conversacion_id, emisor, metadata_json").eq("emisor", "paciente").execute()
-            unread_by_conv = {}
-            import json
-            for m in msg_res.data or []:
-                meta = m.get("metadata_json") or {}
-                if isinstance(meta, str):
-                    try:
-                        meta = json.loads(meta)
-                    except Exception:
-                        meta = {}
-                if not meta.get("leido_por_operador"):
-                    c_id = m.get("conversacion_id")
-                    if c_id:
-                        unread_by_conv[c_id] = unread_by_conv.get(c_id, 0) + 1
-            
-            for c in convs:
-                c["unread_count"] = unread_by_conv.get(c["id"], 0)
-        except Exception as unread_err:
-            logger.warning(f"No se pudo calcular unread_count en conversaciones: {unread_err}")
-            for c in convs:
-                c["unread_count"] = 0
+        for c in convs:
+            c["unread_count"] = int(c.get("unread_count") or 0)
 
         return convs
     except Exception as e:
@@ -630,35 +609,15 @@ def obtener_metricas_conversaciones():
     if not supabase:
         return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
     try:
-        res = supabase.table("conversaciones").select("id, bot_disabled, archivada").execute()
+        res = supabase.table("conversaciones").select("id, bot_disabled, archivada, unread_count").execute()
         convs = res.data or []
         derivados = sum(1 for c in convs if c.get("bot_disabled") and not c.get("archivada"))
         bot_activos = sum(1 for c in convs if not c.get("bot_disabled") and not c.get("archivada"))
         archivados = sum(1 for c in convs if c.get("archivada"))
         total_activas = len(convs) - archivados
 
-        # Conteo de no leídos
-        no_leidos_count = 0
-        total_mensajes_no_leidos = 0
-        try:
-            msg_res = supabase.table("mensajes").select("id, conversacion_id, emisor, metadata_json").eq("emisor", "paciente").execute()
-            unread_by_conv = set()
-            import json
-            for m in msg_res.data or []:
-                meta = m.get("metadata_json") or {}
-                if isinstance(meta, str):
-                    try:
-                        meta = json.loads(meta)
-                    except Exception:
-                        meta = {}
-                if not meta.get("leido_por_operador"):
-                    c_id = m.get("conversacion_id")
-                    if c_id:
-                        unread_by_conv.add(c_id)
-                        total_mensajes_no_leidos += 1
-            no_leidos_count = len(unread_by_conv)
-        except Exception as unread_err:
-            logger.warning(f"Error calculando no_leidos_count en métricas: {unread_err}")
+        no_leidos_count = sum(1 for c in convs if int(c.get("unread_count") or 0) > 0 and not c.get("archivada"))
+        total_mensajes_no_leidos = sum(int(c.get("unread_count") or 0) for c in convs if not c.get("archivada"))
 
         return {
             "total_activas": total_activas,
@@ -713,33 +672,51 @@ def obtener_mensajes_conversacion(conversacion_id: str):
 def marcar_mensajes_conversacion_leidos(conversacion_id: str):
     """
     Retorna la lista de whatsapp_message_ids y teléfono del paciente de los mensajes entrantes no leídos,
-    y actualiza sus metadatos con leido_por_operador = True.
+    resetea el unread_count de la conversación a 0 y actualiza los metadatos de los mensajes con leido_por_operador = True.
     """
     if not supabase:
         return {"whatsapp_message_ids": [], "telefono": None}
     try:
         import datetime
-        conv_res = supabase.table("conversaciones").select("id, paciente_id, pacientes(telefono)").eq("id", conversacion_id).execute()
+        import json
+
+        # 1. Obtener conversación y teléfono del paciente
+        conv_res = supabase.table("conversaciones").select("id, paciente_id, metadata_json, pacientes(telefono)").eq("id", conversacion_id).execute()
         if not conv_res.data:
             return {"whatsapp_message_ids": [], "telefono": None}
         
         conv = conv_res.data[0]
         telefono = conv.get("pacientes", {}).get("telefono") if isinstance(conv.get("pacientes"), dict) else None
 
+        # 2. Resetear unread_count a 0 en la conversación
+        c_meta = conv.get("metadata_json") or {}
+        if isinstance(c_meta, str):
+            try:
+                c_meta = json.loads(c_meta)
+            except Exception:
+                c_meta = {}
+        c_meta["manual_unread"] = False
+
+        supabase.table("conversaciones").update({
+            "unread_count": 0,
+            "metadata_json": c_meta
+        }).eq("id", conversacion_id).execute()
+
+        # 3. Marcar mensajes no leídos del paciente
         msg_res = supabase.table("mensajes").select("id, metadata_json").eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()
         whatsapp_ids = []
         for m in msg_res.data or []:
             meta = m.get("metadata_json") or {}
             if isinstance(meta, str):
-                import json
                 try:
                     meta = json.loads(meta)
                 except Exception:
                     meta = {}
             
-            w_id = meta.get("whatsapp_message_id")
-            if w_id and not meta.get("leido_por_operador"):
-                whatsapp_ids.append(w_id)
+            w_id = meta.get("wamid") or meta.get("whatsapp_message_id")
+            if not meta.get("leido_por_operador"):
+                if w_id and str(w_id).startswith("wamid."):
+                    whatsapp_ids.append(w_id)
                 meta["leido_por_operador"] = True
                 meta["leido_por_operador_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 supabase.table("mensajes").update({"metadata_json": meta}).eq("id", m["id"]).execute()

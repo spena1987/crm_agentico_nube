@@ -290,8 +290,36 @@ class WhatsAppManager:
         remote_jid: Optional[str] = None,
         conversacion_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Marca mensajes como leídos."""
-        return {"success": True, "read": True}
+        """
+        Marca mensajes como leídos (doble tilde azul) a través de Meta WhatsApp Cloud API.
+        """
+        if not message_ids:
+            return {"success": True, "read": True}
+
+        meta_phone_id, meta_token = get_whatsapp_cloud_credentials()
+        if not meta_phone_id or not meta_token:
+            return {"success": False, "error": "Credenciales de Meta Cloud API no configuradas"}
+
+        wa_client = WhatsAppCloudClient(phone_number_id=meta_phone_id, access_token=meta_token)
+
+        async def _do_mark():
+            for mid in message_ids:
+                try:
+                    await wa_client.mark_as_read(mid)
+                except Exception as e:
+                    logger.warning(f"No se pudo emitir read receipt para {mid}: {e}")
+            await wa_client.close()
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(_do_mark())
+            except RuntimeError:
+                asyncio.run(_do_mark())
+        except Exception as e:
+            logger.warning(f"Error despachando read receipts: {e}")
+
+        return {"success": True, "read": True, "message_ids": message_ids}
 
     def get_qr_data(self) -> Dict[str, Any]:
         """Meta Cloud API no requiere código QR."""
