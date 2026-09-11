@@ -19,9 +19,11 @@ import {
   ChevronRight,
   Sparkles,
   SlidersHorizontal,
-  X
+  X,
+  MessageSquareText
 } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
+import WhatsAppTemplatesSettingsCard from '@/components/settings/WhatsAppTemplatesSettingsCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
 import SystemLogsCard from '@/components/settings/SystemLogsCard'
@@ -35,6 +37,7 @@ import LioSettingsCard from '@/components/settings/LioSettingsCard'
 
 type TabType = 
   | 'whatsapp' 
+  | 'plantillas_whatsapp'
   | 'bot' 
   | 'quirurgicos_turnos' 
   | 'prestadores' 
@@ -67,7 +70,8 @@ const tabCategories: TabCategory[] = [
     label: 'Canales & Automatización',
     icon: Bot,
     items: [
-      { id: 'whatsapp', label: 'WhatsApp & Gateway', icon: QrCode, description: 'Sincronización QR y estado de sesión' },
+      { id: 'whatsapp', label: 'WhatsApp & Gateway', icon: QrCode, description: 'Sincronización y estado de sesión Meta' },
+      { id: 'plantillas_whatsapp', label: 'Plantillas WhatsApp (Meta)', icon: MessageSquareText, description: 'Diseñador, variables de turnos y sincronización con Meta', badge: 'v21+' },
       { id: 'bot', label: 'Agente IA Gemini', icon: Bot, description: 'Directivas, prompt y escalamiento', badge: 'v2.5' },
     ]
   },
@@ -295,6 +299,7 @@ function AjustesContent() {
           {/* Componente Activo Renderizado */}
           <div className="transition-all duration-300">
             {activeTab === 'whatsapp' && <WhatsAppConfigCard />}
+            {activeTab === 'plantillas_whatsapp' && <WhatsAppTemplatesSettingsCard />}
             {activeTab === 'bot' && <BotSettingsCard />}
             {activeTab === 'quirurgicos_turnos' && <QuirofanoSettingsCard initialSubSection={subParam} />}
             {activeTab === 'prestadores' && <PrestadoresSettingsCard />}
