@@ -517,7 +517,7 @@ async def record_outbound_audit_message(
     wamid: str,
     message_type: str,
     content_text: str,
-    payload: Dict[str, Any],
+    payload: Optional[Dict[str, Any]] = None,
     billing_category: Optional[str] = "utility"
 ):
     """
@@ -576,7 +576,7 @@ async def record_outbound_audit_message(
                     "direction": "outbound",
                     "message_type": message_type,
                     "content_text": content_text,
-                    "payload_raw": payload,
+                    "payload_raw": payload or {},
                     "status": "sent",
                     "sent_at": now_iso,
                     "billing_category": billing_category

@@ -152,7 +152,8 @@ class WhatsAppManager:
                         wamid=wamid,
                         to_phone=normalized_meta_phone,
                         message_type="text",
-                        content_text=texto
+                        content_text=texto,
+                        payload={"to": normalized_meta_phone, "text": texto, "wamid": wamid}
                     ))
                 except Exception as aud_err:
                     self.add_log("WARNING", f"No se pudo auditar mensaje saliente en whatsapp_messages: {aud_err}")
