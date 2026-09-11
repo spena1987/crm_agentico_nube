@@ -3008,8 +3008,7 @@ def enviar_presupuesto_por_whatsapp(
     
     # 7. Actualizar estado del presupuesto a 'enviado'
     supabase.table("presupuestos").update({
-        "estado": "enviado",
-        "updated_at": datetime.now(timezone.utc).isoformat()
+        "estado": "enviado"
     }).eq("id", presupuesto_id).execute()
     
     # 8. Sincronizar asesoría quirúrgica si existe y registrar evolución clínica
