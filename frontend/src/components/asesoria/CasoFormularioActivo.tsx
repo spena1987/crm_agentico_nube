@@ -212,6 +212,31 @@ export default function CasoFormularioActivo({
     return Array.isArray(list) ? list.filter((t: any) => t.estado !== 'cancelado') : []
   }, [caso.turnos_activos, (caso as any).turnos_quirofano])
 
+  // Detección automática y sincronización de fechas definitivas desde turnos en Quirófano si faltan
+  useEffect(() => {
+    if (turnosActivos.length > 0) {
+      if (ojo === 'AO') {
+        const segundoOjo = ordenOjos === 'OD_primero' ? 'OI' : 'OD'
+        const primerOjo = ordenOjos === 'OD_primero' ? 'OD' : 'OI'
+
+        const turno2 = turnosActivos.find((t: any) => (t.ojo || '').toUpperCase() === segundoOjo)
+        if (turno2?.fecha_cirugia && !fechaDefinitiva2doOjo) {
+          setFechaDefinitiva2doOjo(turno2.fecha_cirugia)
+        }
+
+        const turno1 = turnosActivos.find((t: any) => (t.ojo || '').toUpperCase() === primerOjo)
+        if (turno1?.fecha_cirugia && !fechaDefinitiva) {
+          setFechaDefinitiva(turno1.fecha_cirugia)
+        }
+      } else {
+        const turnoUnico = turnosActivos.find((t: any) => (t.ojo || '').toUpperCase() === ojo) || turnosActivos[0]
+        if (turnoUnico?.fecha_cirugia && !fechaDefinitiva) {
+          setFechaDefinitiva(turnoUnico.fecha_cirugia)
+        }
+      }
+    }
+  }, [turnosActivos, ojo, ordenOjos, fechaDefinitiva, fechaDefinitiva2doOjo])
+
   // Datos biométricos de LIO calculados
   const chkData = checklist || {}
   const lioOD = chkData._lio_calculo_OD
@@ -268,6 +293,11 @@ export default function CasoFormularioActivo({
       presupuestoId !== (caso.presupuesto_id || null) ||
       fechaProbable !== (caso.fecha_probable_cirugia || '') ||
       fechaDefinitiva !== (caso.fecha_definitiva_cirugia || '') ||
+      fechaProbable2doOjo !== (metaBilateralInicial.fecha_probable_2do_ojo || '') ||
+      fechaDefinitiva2doOjo !== (metaBilateralInicial.fecha_definitiva_2do_ojo || '') ||
+      ojo !== (caso.ojo || 'OD') ||
+      modalidadBilateral !== (metaBilateralInicial.modalidad || 'escalonada') ||
+      ordenOjos !== (metaBilateralInicial.orden || 'OD_primero') ||
       proximaAccionFecha !== (caso.proxima_accion_fecha || '') ||
       proximaAccionTexto !== (caso.proxima_accion_texto || '') ||
       situacionPaciente !== (caso.situacion_paciente || '') ||
@@ -288,6 +318,12 @@ export default function CasoFormularioActivo({
     presupuestoId,
     fechaProbable,
     fechaDefinitiva,
+    fechaProbable2doOjo,
+    fechaDefinitiva2doOjo,
+    ojo,
+    modalidadBilateral,
+    ordenOjos,
+    metaBilateralInicial,
     proximaAccionFecha,
     proximaAccionTexto,
     situacionPaciente,
@@ -566,16 +602,17 @@ export default function CasoFormularioActivo({
             Progreso del Embudo Quirúrgico
           </span>
           <span className="text-[10px] text-gray-400 font-mono">
-            Paso: <strong className="text-blue-400">{estado.toUpperCase()}</strong>
+            Paso: <strong className={estado === 'programado' ? 'text-cyan-400 font-bold' : estado === 'operado' ? 'text-teal-400 font-bold' : 'text-blue-400 font-bold'}>{estado.toUpperCase()}</strong>
           </span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5">
           {etapas
             .filter((e) => e.id !== 'cancelado')
             .map((e, idx) => {
               const isSelected = estado === e.id
               const isOperado = e.id === 'operado'
+              const isProgramado = e.id === 'programado'
               return (
                 <button
                   key={e.id}
@@ -586,13 +623,20 @@ export default function CasoFormularioActivo({
                     isSelected
                       ? isOperado
                         ? 'bg-teal-500/20 border-teal-500 text-teal-300 shadow-md ring-1 ring-teal-500/30'
+                        : isProgramado
+                        ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 shadow-md ring-1 ring-cyan-500/30'
                         : 'bg-blue-600/20 border-blue-500 text-white shadow-md ring-1 ring-blue-500/30'
                       : 'bg-neutral-950/60 border-[var(--border)] text-gray-400 hover:bg-neutral-800 hover:text-gray-200'
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold opacity-75">0{idx + 1}</span>
-                    {isSelected && <CheckCircle2 size={12} className={isOperado ? 'text-teal-400' : 'text-blue-400'} />}
+                    {isSelected && (
+                      <CheckCircle2
+                        size={12}
+                        className={isOperado ? 'text-teal-400' : isProgramado ? 'text-cyan-400' : 'text-blue-400'}
+                      />
+                    )}
                   </div>
                   <span className="text-xs font-black truncate mt-1">{e.label.replace(/^[0-9]+\.\s*/, '')}</span>
                 </button>
@@ -944,13 +988,20 @@ export default function CasoFormularioActivo({
                           </div>
 
                           <div>
-                            <label className="text-[10px] text-emerald-400 font-bold block mb-1">Fecha Definitiva 2° Ojo (Qx):</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[10px] text-emerald-400 font-bold">Fecha Definitiva 2° Ojo (Qx):</label>
+                              {fechaDefinitiva2doOjo && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                                  <CheckCircle2 size={9} /> Fijada en Qx
+                                </span>
+                              )}
+                            </div>
                             <input
                               type="date"
                               value={fechaDefinitiva2doOjo}
                               min={fechaDefinitiva || fechaProbable || undefined}
                               onChange={(e) => setFechaDefinitiva2doOjo(e.target.value)}
-                              className="w-full p-2 rounded-xl bg-neutral-900 border border-emerald-500/30 text-xs text-emerald-300 font-mono outline-none focus:border-emerald-400"
+                              className="w-full p-2 rounded-xl bg-neutral-900 border border-emerald-500/40 text-xs text-emerald-300 font-mono font-bold outline-none focus:border-emerald-400"
                             />
                           </div>
                         </div>

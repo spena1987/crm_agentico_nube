@@ -4201,26 +4201,39 @@ def evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id: str, turno_origen:
                 "total_ojos_operados": 2 if ambos_operados else (1 if (od_operado or oi_operado) else 0),
                 "total_ojos_requeridos": 2
             }
-            
+
+            orden = meta_bilateral.get("orden") or "OD_primero"
+            primer_ojo = "OI" if orden == "OI_primero" else "OD"
+            segundo_ojo = "OD" if primer_ojo == "OI" else "OI"
+
+            # Encontrar turnos de cada ojo para sincronizar sus fechas definitivas
+            turnos_primer_ojo = [t for t in turnos if (t.get("ojo") or "").upper() == primer_ojo or (t.get("ojo") or "").upper() == "AO"]
+            turnos_segundo_ojo = [t for t in turnos if (t.get("ojo") or "").upper() == segundo_ojo or (t.get("ojo") or "").upper() == "AO"]
+
+            if turnos_primer_ojo:
+                f1 = turnos_primer_ojo[0].get("fecha_cirugia")
+                if f1:
+                    payload_upd["fecha_definitiva_cirugia"] = f1
+
+            if turnos_segundo_ojo:
+                f2 = turnos_segundo_ojo[0].get("fecha_cirugia")
+                if f2:
+                    meta_bilateral["fecha_definitiva_2do_ojo"] = f2
+
             updated_checklist = {
                 **checklist,
-                "_progreso_bilateral": progreso_bilateral
+                "_progreso_bilateral": progreso_bilateral,
+                "_meta_bilateral": meta_bilateral
             }
             payload_upd["checklist_prequirurgico"] = updated_checklist
             
             if ambos_operados:
                 payload_upd["estado"] = "operado"
-                if turno_origen and turno_origen.get("fecha_cirugia"):
-                    payload_upd["fecha_definitiva_cirugia"] = turno_origen["fecha_cirugia"]
                 if turno_origen and turno_origen.get("parte_quirurgico_pdf_url"):
                     payload_upd["parte_quirurgico_pdf_url"] = turno_origen["parte_quirurgico_pdf_url"]
             else:
                 # Si no están ambos operados, el caso sigue ACTIVO en 'programado'
                 payload_upd["estado"] = "programado"
-                if od_operado and turno_origen and (turno_origen.get("ojo") or "").upper() == "OD":
-                    payload_upd["fecha_definitiva_cirugia"] = turno_origen.get("fecha_cirugia")
-                elif oi_operado and turno_origen and (turno_origen.get("ojo") or "").upper() == "OI":
-                    payload_upd["fecha_definitiva_2do_ojo"] = turno_origen.get("fecha_cirugia")
         
         supabase.table("asesorias_quirurgicas").update(payload_upd).eq("id", asesoria_id).execute()
         logger.info(f"Asesoría {asesoria_id} sincronizada integralmente: estado '{payload_upd.get('estado')}' (Bilateral: {es_bilateral}, Ambos operados: {od_operado and oi_operado})")
@@ -4233,14 +4246,48 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
     """
     Sincroniza atómicamente la ficha de asesoramiento quirúrgico (paciente)
     cuando el personal de quirófano programa o actualiza el turno.
+    Maneja fechas definitivas tanto de 1° ojo como de 2° ojo en cirugías bilaterales.
     Pasa el caso a estado 'programado' o evalúa bilateralidad si pasa a 'operado'.
     """
     if not supabase or not asesoria_id:
         return
     try:
+        # Obtener la asesoría para evaluar lateralidad
+        res_a = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+        if not res_a.data:
+            return
+        asesoria = res_a.data[0]
+        ojo_caso = (asesoria.get("ojo") or "OD").upper()
+        checklist = asesoria.get("checklist_prequirurgico") or {}
+        meta_bilateral = checklist.get("_meta_bilateral") or {}
+        es_bilateral = (ojo_caso == "AO") or bool(meta_bilateral) or (asesoria.get("modalidad_bilateral") in ["escalonada", "simultanea"])
+
+        orden = meta_bilateral.get("orden") or "OD_primero"
+        primer_ojo = "OI" if orden == "OI_primero" else "OD"
+        segundo_ojo = "OD" if primer_ojo == "OI" else "OI"
+
+        ojo_turno = (datos_turno.get("ojo") or "").upper()
+        fecha_turno = datos_turno.get("fecha_cirugia")
+
         payload_asesoria: Dict[str, Any] = {"updated_at": "now()"}
-        if "fecha_cirugia" in datos_turno and datos_turno["fecha_cirugia"]:
-            payload_asesoria["fecha_definitiva_cirugia"] = datos_turno["fecha_cirugia"]
+
+        if fecha_turno:
+            if es_bilateral:
+                if ojo_turno == segundo_ojo:
+                    # El turno corresponde al segundo ojo
+                    meta_bilateral["fecha_definitiva_2do_ojo"] = fecha_turno
+                    checklist["_meta_bilateral"] = meta_bilateral
+                    payload_asesoria["checklist_prequirurgico"] = checklist
+                else:
+                    # El turno corresponde al primer ojo o es bilateral simultáneo
+                    payload_asesoria["fecha_definitiva_cirugia"] = fecha_turno
+                    if meta_bilateral.get("modalidad") == "simultanea" or ojo_turno == "AO":
+                        meta_bilateral["fecha_definitiva_2do_ojo"] = fecha_turno
+                        checklist["_meta_bilateral"] = meta_bilateral
+                        payload_asesoria["checklist_prequirurgico"] = checklist
+            else:
+                payload_asesoria["fecha_definitiva_cirugia"] = fecha_turno
+
         if "cirujano_nombre" in datos_turno and datos_turno["cirujano_nombre"]:
             payload_asesoria["medico_cirujano_nombre"] = datos_turno["cirujano_nombre"]
         if "cirujano_id" in datos_turno and datos_turno["cirujano_id"]:
@@ -4257,7 +4304,7 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
         if payload_asesoria:
             supabase.table("asesorias_quirurgicas").update(payload_asesoria).eq("id", asesoria_id).execute()
         
-        # Evaluar estado de la asesoría con reglas de bilateralidad
+        # Evaluar estado de la asesoría con reglas de bilateralidad y asignación completa de fechas
         evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id, datos_turno, nuevo_estado)
     except Exception as e:
         logger.error(f"Error sincronizando asesoría {asesoria_id} desde quirófano: {e}")

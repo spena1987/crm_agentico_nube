@@ -63,7 +63,18 @@ export interface AsesoriaQuirurgica {
   orden_ojos_escalonada?: 'OD_primero' | 'OI_primero' | null
   fecha_probable_2do_ojo?: string | null
   fecha_definitiva_2do_ojo?: string | null
-  estado: 'derivado' | 'en_asesoramiento' | 'en_analisis' | 'presupuesto_enviado' | 'confirmado' | 'operado' | 'cancelado'
+  estado:
+    | 'derivado'
+    | 'en_asesoramiento'
+    | 'en_analisis'
+    | 'presupuesto_enviado'
+    | 'confirmado'
+    | 'programado'
+    | 'en_espera'
+    | 'pre_quirofano'
+    | 'en_operacion'
+    | 'operado'
+    | 'cancelado'
   situacion_paciente?: string | null
   motivo_cancelacion?: string | null
   checklist_prequirurgico?: Record<string, any> | null
@@ -131,11 +142,19 @@ const ETAPAS: {
     color: 'border-emerald-500 text-emerald-400 bg-emerald-500/10',
     headerBg: 'bg-gradient-to-r from-emerald-950/50 via-neutral-900 to-neutral-900',
     headerBorder: 'border-emerald-500/40 hover:border-emerald-500/60',
-    desc: 'Fecha definitiva fijada en quirófano'
+    desc: 'Cirugía confirmada por el paciente'
+  },
+  {
+    id: 'programado',
+    label: '5. Programado Qx',
+    color: 'border-cyan-500 text-cyan-300 bg-cyan-500/10',
+    headerBg: 'bg-gradient-to-r from-cyan-950/40 via-neutral-900 to-neutral-900',
+    headerBorder: 'border-cyan-500/40 hover:border-cyan-500/60',
+    desc: 'Fecha y sala de quirófano asignadas'
   },
   {
     id: 'operado',
-    label: '5. Operado',
+    label: '6. Operado',
     color: 'border-teal-500 text-teal-300 bg-teal-500/10',
     headerBg: 'bg-gradient-to-r from-teal-950/40 via-neutral-900 to-neutral-900',
     headerBorder: 'border-teal-500/40 hover:border-teal-500/60',
@@ -397,7 +416,39 @@ export default function ItemCasoQuirurgicoAcordeon({
   }
 
   const estadoNormalizado = caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado
-  const etapaActual = ETAPAS.find((e) => e.id === estadoNormalizado) || ETAPAS[0]
+  let etapaActual = ETAPAS.find((e) => e.id === estadoNormalizado)
+  if (!etapaActual) {
+    if (caso.estado === 'en_espera') {
+      etapaActual = {
+        id: 'en_espera',
+        label: 'En Sala de Espera',
+        color: 'border-amber-500 text-amber-300 bg-amber-500/10',
+        headerBg: 'bg-neutral-900',
+        headerBorder: 'border-amber-500/40',
+        desc: 'Paciente en sala de espera prequirúrgica'
+      }
+    } else if (caso.estado === 'pre_quirofano') {
+      etapaActual = {
+        id: 'pre_quirofano',
+        label: 'En Pre-Quirófano',
+        color: 'border-cyan-500 text-cyan-300 bg-cyan-500/10',
+        headerBg: 'bg-neutral-900',
+        headerBorder: 'border-cyan-500/40',
+        desc: 'Paciente en área limpia y dilatación'
+      }
+    } else if (caso.estado === 'en_operacion') {
+      etapaActual = {
+        id: 'en_operacion',
+        label: 'En Quirófano',
+        color: 'border-purple-500 text-purple-300 bg-purple-500/10',
+        headerBg: 'bg-neutral-900',
+        headerBorder: 'border-purple-500/40',
+        desc: 'Paciente en mesa de operaciones'
+      }
+    } else {
+      etapaActual = ETAPAS[0]
+    }
+  }
 
   return (
     <div
