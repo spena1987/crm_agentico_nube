@@ -27,7 +27,11 @@ import {
   Trash2,
   RefreshCw,
   AlertCircle,
-  FileHeart
+  FileHeart,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  PanelLeft
 } from 'lucide-react'
 import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
 import ModalEditarPaciente from '@/components/ModalEditarPaciente'
@@ -75,6 +79,12 @@ export default function PacientesPage() {
   const [search, setSearch] = useState('')
   const [filtroCategoria, setFiltroCategoria] = useState<'todos' | 'activos' | 'alertas' | 'proximas'>('todos')
   const [loading, setLoading] = useState(true)
+
+  // Drawer y Quick-Switcher
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [quickSearchOpen, setQuickSearchOpen] = useState(false)
+  const [quickSearchText, setQuickSearchText] = useState('')
+  const quickSearchRef = React.useRef<HTMLDivElement>(null)
 
   // Mensajes de acción
   const [mensajeGuardado, setMensajeGuardado] = useState<string | null>(null)
@@ -435,25 +445,209 @@ export default function PacientesPage() {
     }
   }, [pacientes])
 
+  // Atajos de teclado y detector de clics fuera de Quick-Switcher
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (quickSearchRef.current && !quickSearchRef.current.contains(event.target as Node)) {
+        setQuickSearchOpen(false)
+      }
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setQuickSearchOpen(false)
+        setDrawerOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [])
+
+  // Índice del paciente activo dentro del listado filtrado
+  const currentIndex = useMemo(() => {
+    return filteredPacientes.findIndex((p) => p.id === selectedPacienteId)
+  }, [filteredPacientes, selectedPacienteId])
+
+  const irAnterior = () => {
+    if (currentIndex > 0) {
+      setSelectedPacienteId(filteredPacientes[currentIndex - 1].id)
+    }
+  }
+
+  const irSiguiente = () => {
+    if (currentIndex >= 0 && currentIndex < filteredPacientes.length - 1) {
+      setSelectedPacienteId(filteredPacientes[currentIndex + 1].id)
+    }
+  }
+
+  // Resultados predictivos rápidos para la barra superior
+  const quickSearchResults = useMemo(() => {
+    if (!quickSearchText.trim()) return filteredPacientes.slice(0, 8)
+    const term = quickSearchText.toLowerCase().trim()
+    return pacientes
+      .filter((p) => {
+        return (
+          p.nombre.toLowerCase().includes(term) ||
+          (p.dni && p.dni.includes(term)) ||
+          (p.nro_hc && p.nro_hc.toLowerCase().includes(term)) ||
+          p.telefono.includes(term)
+        )
+      })
+      .slice(0, 8)
+  }, [pacientes, filteredPacientes, quickSearchText])
+
   return (
     <div className="flex flex-col flex-1 h-full min-h-0 w-full gap-3 p-3 sm:p-4 md:p-5 overflow-hidden min-w-0">
       
-      {/* Barra Superior de Acciones Globales */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-[var(--border)] shrink-0">
-        <div>
-          <h1 className="text-xl font-extrabold tracking-tight">Expedientes de Pacientes</h1>
-          <p className="text-xs text-[var(--secondary)]">
-            Gestión integral, consulta hospitalaria con Geclisa y canal de WhatsApp.
-          </p>
+      {/* Barra Superior de Acciones Globales y Quick-Switcher */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-1 border-b border-[var(--border)] shrink-0">
+        <div className="flex items-center gap-3">
+          {/* Botón para Abrir Drawer del Directorio de Pacientes */}
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="px-3 py-2 bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600/30 hover:to-indigo-600/30 text-blue-300 border border-blue-500/40 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-sm shrink-0"
+            title="Abrir directorio completo de pacientes"
+          >
+            <PanelLeft size={16} className="text-blue-400" />
+            <span className="hidden sm:inline">Directorio</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-600/40 text-blue-200 font-mono">
+              {metricasCategorias.todos}
+            </span>
+          </button>
+
+          <div>
+            <h1 className="text-lg sm:text-xl font-extrabold tracking-tight">Expedientes de Pacientes</h1>
+            <p className="text-[11px] text-[var(--secondary)] hidden sm:block">
+              Gestión integral, consulta hospitalaria con Geclisa y canal de WhatsApp.
+            </p>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Quick-Switcher de Pacientes (Navegación Secuencial y Búsqueda Rápida) */}
+          <div className="relative" ref={quickSearchRef}>
+            <div className="flex items-center bg-neutral-900 border border-[var(--border)] rounded-xl p-0.5 shadow-sm">
+              <button
+                type="button"
+                onClick={irAnterior}
+                disabled={currentIndex <= 0}
+                title="Paciente anterior"
+                className="p-1.5 hover:bg-neutral-800 disabled:opacity-25 disabled:hover:bg-transparent text-gray-300 hover:text-white rounded-lg transition-colors"
+              >
+                <ChevronLeft size={16} />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setQuickSearchOpen(!quickSearchOpen)}
+                className="px-2.5 py-1 text-xs font-semibold text-gray-200 hover:text-white flex items-center gap-2 max-w-[170px] sm:max-w-[230px] truncate"
+                title="Clic para buscar o cambiar de paciente rápidamente"
+              >
+                <span className="truncate">
+                  {pacienteSeleccionado ? pacienteSeleccionado.nombre : 'Seleccionar paciente...'}
+                </span>
+                {pacienteSeleccionado && (
+                  <span className="text-[10px] text-blue-400 font-mono hidden md:inline shrink-0">
+                    ({currentIndex + 1}/{filteredPacientes.length})
+                  </span>
+                )}
+                <ChevronDown size={13} className="text-gray-400 shrink-0" />
+              </button>
+
+              <button
+                type="button"
+                onClick={irSiguiente}
+                disabled={currentIndex < 0 || currentIndex >= filteredPacientes.length - 1}
+                title="Paciente siguiente"
+                className="p-1.5 hover:bg-neutral-800 disabled:opacity-25 disabled:hover:bg-transparent text-gray-300 hover:text-white rounded-lg transition-colors"
+              >
+                <ChevronRight size={16} />
+              </button>
+            </div>
+
+            {/* Dropdown Predictivo Flotante */}
+            {quickSearchOpen && (
+              <div className="absolute right-0 sm:left-0 mt-2 w-72 sm:w-88 bg-neutral-900 border border-[var(--border)] rounded-2xl shadow-2xl z-50 p-2 space-y-2 animate-in fade-in zoom-in-95">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por DNI, Nombre..."
+                    value={quickSearchText}
+                    onChange={(e) => setQuickSearchText(e.target.value)}
+                    className="w-full pl-9 pr-3 py-1.5 bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none font-mono"
+                    autoFocus
+                  />
+                  {quickSearchText && (
+                    <button
+                      type="button"
+                      onClick={() => setQuickSearchText('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-60 overflow-y-auto divide-y divide-[var(--border)]/40">
+                  {quickSearchResults.length === 0 ? (
+                    <div className="p-3 text-center text-xs text-gray-500">
+                      No se encontraron pacientes
+                    </div>
+                  ) : (
+                    quickSearchResults.map((p) => {
+                      const isSelected = p.id === selectedPacienteId
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedPacienteId(p.id)
+                            setQuickSearchOpen(false)
+                            setQuickSearchText('')
+                          }}
+                          className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between gap-2 transition-colors ${
+                            isSelected
+                              ? 'bg-blue-600/20 text-blue-300 font-bold'
+                              : 'hover:bg-neutral-800 text-gray-300'
+                          }`}
+                        >
+                          <span className="truncate">{p.nombre}</span>
+                          <span className="text-[10px] text-gray-500 font-mono shrink-0">
+                            {p.dni ? `DNI ${p.dni}` : p.nro_hc ? `HC ${p.nro_hc}` : ''}
+                          </span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+
+                <div className="pt-1 border-t border-[var(--border)] text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuickSearchOpen(false)
+                      setDrawerOpen(true)
+                    }}
+                    className="text-[11px] text-blue-400 hover:underline font-semibold"
+                  >
+                    Abrir directorio completo con filtros →
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => setMostrarModalGeclisa(true)}
             className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-xs transition-all shadow flex items-center gap-2"
           >
             <Database size={14} />
-            Buscar en Geclisa (DNI)
+            <span className="hidden sm:inline">Buscar en</span> Geclisa (DNI)
           </button>
 
           <button
@@ -461,177 +655,236 @@ export default function PacientesPage() {
             className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs transition-all flex items-center gap-1.5"
           >
             <Plus size={14} />
-            Crear Manual
+            <span className="hidden sm:inline">Crear</span> Manual
           </button>
         </div>
       </div>
 
-      {/* Estructura Split-View (Master-Detail) */}
-      <div className="flex-1 flex flex-col md:flex-row border border-[var(--border)] rounded-2xl overflow-hidden bg-[var(--card)] shadow-lg min-h-0">
-        
-        {/* ==================================================================== */}
-        {/* PANEL LATERAL IZQUIERDO: LISTA DE PACIENTES COMPACTA */}
-        {/* ==================================================================== */}
-        <div className="w-full md:w-80 lg:w-96 border-b md:border-b-0 md:border-r border-[var(--border)] flex flex-col bg-neutral-950/40 shrink-0 min-h-0">
-          
-          {/* Header del Panel Lateral & Buscador & Chips de Filtro */}
-          <div className="p-3 border-b border-[var(--border)] space-y-2 bg-[var(--card)] shrink-0">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <Users size={14} className="text-blue-500" />
-                Listado ({filteredPacientes.length})
-              </span>
+      {/* Backdrop para el Drawer Lateral */}
+      {drawerOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 transition-opacity animate-in fade-in"
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+
+      {/* Drawer Lateral Deslizable (Slide-over) */}
+      <aside className={`fixed inset-y-0 left-0 z-50 w-full max-w-sm sm:max-w-md bg-neutral-950/95 backdrop-blur-md border-r border-[var(--border)] shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out ${
+        drawerOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}>
+        {/* Header del Drawer */}
+        <div className="p-4 border-b border-[var(--border)] flex items-center justify-between bg-neutral-900/80">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+              <Users size={16} />
             </div>
-
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Buscar por DNI, Nombre, HC..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-neutral-900/80 border border-[var(--border)] focus:border-blue-500 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none transition-all font-mono"
-              />
-            </div>
-
-            {/* Chips de Filtro Inteligente */}
-            <div className="grid grid-cols-4 gap-1 pt-0.5">
-              <button
-                type="button"
-                onClick={() => setFiltroCategoria('todos')}
-                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
-                  filtroCategoria === 'todos'
-                    ? 'bg-neutral-800 text-white border border-gray-600 shadow-sm'
-                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
-                }`}
-              >
-                Todos ({metricasCategorias.todos})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFiltroCategoria('activos')}
-                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
-                  filtroCategoria === 'activos'
-                    ? 'bg-blue-600/20 text-blue-300 border border-blue-500/50 shadow-sm'
-                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
-                }`}
-                title="Pacientes con cirugías en gestión"
-              >
-                Activos ({metricasCategorias.activos})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFiltroCategoria('alertas')}
-                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
-                  filtroCategoria === 'alertas'
-                    ? 'bg-amber-600/20 text-amber-300 border border-amber-500/50 shadow-sm'
-                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
-                }`}
-                title="Pacientes con alertas SLA por inactividad"
-              >
-                Alertas ({metricasCategorias.alertas})
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setFiltroCategoria('proximas')}
-                className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
-                  filtroCategoria === 'proximas'
-                    ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/50 shadow-sm'
-                    : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
-                }`}
-                title="Cirugías para los próximos 7 días"
-              >
-                Próximas ({metricasCategorias.proximas})
-              </button>
+            <div>
+              <h3 className="text-sm font-bold text-white">Directorio de Pacientes</h3>
+              <p className="text-[11px] text-gray-400 font-mono">
+                {filteredPacientes.length} de {metricasCategorias.todos} expedientes
+              </p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(false)}
+            className="p-1.5 rounded-lg hover:bg-neutral-800 text-gray-400 hover:text-white transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
 
-          {/* Lista Scrolleable de Pacientes */}
-          <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)]/50">
-            {loading ? (
-              <div className="p-8 text-center text-xs text-gray-400 flex flex-col items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
-                Cargando expedientes...
-              </div>
-            ) : filteredPacientes.length === 0 ? (
-              <div className="p-8 text-center text-xs text-gray-500 space-y-2">
-                <p>No se encontraron pacientes.</p>
-                <button
-                  onClick={() => setMostrarModalGeclisa(true)}
-                  className="text-blue-400 hover:underline font-semibold text-[11px]"
-                >
-                  + Buscar en Geclisa
-                </button>
-              </div>
-            ) : (
-              filteredPacientes.map((paciente) => {
-                const isSelected = paciente.id === selectedPacienteId
-                return (
-                  <button
-                    key={paciente.id}
-                    onClick={() => setSelectedPacienteId(paciente.id)}
-                    className={`w-full text-left p-3.5 transition-all flex items-start gap-3 relative hover:bg-white/5 ${
-                      isSelected 
-                        ? 'bg-blue-600/10 border-l-4 border-l-blue-500 shadow-inner' 
-                        : 'border-l-4 border-l-transparent'
-                    }`}
-                  >
-                    {/* Avatar Circular */}
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 shadow-sm ${
-                      isSelected 
-                        ? 'bg-blue-600 text-white' 
-                        : 'bg-neutral-800 text-gray-300 border border-[var(--border)]'
-                    }`}>
-                      {(paciente.nombre?.[0] || 'P').toUpperCase()}
-                    </div>
-
-                    {/* Datos Básicos: Nombre, DNI, HC */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <h4 className={`text-xs font-bold truncate ${isSelected ? 'text-blue-300' : 'text-gray-200'}`}>
-                          {paciente.nombre}
-                        </h4>
-                        {paciente.geclisa_ficha_id && (
-                          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-800/40 shrink-0">
-                            #{paciente.geclisa_ficha_id}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-[11px] text-gray-400 font-mono">
-                        {paciente.dni ? (
-                          <span>DNI: {paciente.dni}</span>
-                        ) : (
-                          <span className="text-gray-500">S/ DNI</span>
-                        )}
-                        {paciente.nro_hc && (
-                          <span className="text-blue-400/80">• HC: {paciente.nro_hc}</span>
-                        )}
-                      </div>
-
-                      {paciente.obra_social && (
-                        <div className="text-[10px] text-gray-500 truncate mt-0.5 font-sans">
-                          {paciente.obra_social}
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                )
-              })
+        {/* Buscador & Chips de Filtro */}
+        <div className="p-3 border-b border-[var(--border)] space-y-2 bg-[var(--card)] shrink-0">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Buscar por DNI, Nombre, HC..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-8 py-1.5 bg-neutral-900/80 border border-[var(--border)] focus:border-blue-500 rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none transition-all font-mono"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              >
+                <X size={12} />
+              </button>
             )}
           </div>
 
+          {/* Chips de Filtro Inteligente */}
+          <div className="grid grid-cols-4 gap-1 pt-0.5">
+            <button
+              type="button"
+              onClick={() => setFiltroCategoria('todos')}
+              className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                filtroCategoria === 'todos'
+                  ? 'bg-neutral-800 text-white border border-gray-600 shadow-sm'
+                  : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+              }`}
+            >
+              Todos ({metricasCategorias.todos})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFiltroCategoria('activos')}
+              className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                filtroCategoria === 'activos'
+                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/50 shadow-sm'
+                  : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+              }`}
+              title="Pacientes con cirugías en gestión"
+            >
+              Activos ({metricasCategorias.activos})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFiltroCategoria('alertas')}
+              className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                filtroCategoria === 'alertas'
+                  ? 'bg-amber-600/20 text-amber-300 border border-amber-500/50 shadow-sm'
+                  : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+              }`}
+              title="Pacientes con alertas SLA por inactividad"
+            >
+              Alertas ({metricasCategorias.alertas})
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setFiltroCategoria('proximas')}
+              className={`py-1 px-1.5 rounded-lg text-[10px] font-bold text-center transition-all ${
+                filtroCategoria === 'proximas'
+                  ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/50 shadow-sm'
+                  : 'bg-neutral-950/60 text-gray-400 hover:text-gray-200 border border-[var(--border)]'
+              }`}
+              title="Cirugías para los próximos 7 días"
+            >
+              Próximas ({metricasCategorias.proximas})
+            </button>
+          </div>
         </div>
 
-        {/* ==================================================================== */}
-        {/* PANEL PRINCIPAL DERECHO: DETALLE COMPLETO DEL EXPEDIENTE */}
-        {/* ==================================================================== */}
+        {/* Lista Scrolleable de Pacientes */}
+        <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)]/50">
+          {loading ? (
+            <div className="p-8 text-center text-xs text-gray-400 flex flex-col items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+              Cargando expedientes...
+            </div>
+          ) : filteredPacientes.length === 0 ? (
+            <div className="p-8 text-center text-xs text-gray-500 space-y-2">
+              <p>No se encontraron pacientes.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawerOpen(false)
+                  setMostrarModalGeclisa(true)
+                }}
+                className="text-blue-400 hover:underline font-semibold text-[11px]"
+              >
+                + Buscar en Geclisa
+              </button>
+            </div>
+          ) : (
+            filteredPacientes.map((paciente) => {
+              const isSelected = paciente.id === selectedPacienteId
+              return (
+                <button
+                  key={paciente.id}
+                  onClick={() => {
+                    setSelectedPacienteId(paciente.id)
+                    setDrawerOpen(false)
+                  }}
+                  className={`w-full text-left p-3.5 transition-all flex items-start gap-3 relative hover:bg-white/5 ${
+                    isSelected 
+                      ? 'bg-blue-600/10 border-l-4 border-l-blue-500 shadow-inner' 
+                      : 'border-l-4 border-l-transparent'
+                  }`}
+                >
+                  {/* Avatar Circular */}
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 shadow-sm ${
+                    isSelected 
+                      ? 'bg-blue-600 text-white' 
+                      : 'bg-neutral-800 text-gray-300 border border-[var(--border)]'
+                  }`}>
+                    {(paciente.nombre?.[0] || 'P').toUpperCase()}
+                  </div>
+
+                  {/* Datos Básicos: Nombre, DNI, HC */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className={`text-xs font-bold truncate ${isSelected ? 'text-blue-300' : 'text-gray-200'}`}>
+                        {paciente.nombre}
+                      </h4>
+                      {paciente.geclisa_ficha_id && (
+                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-950/80 text-blue-400 border border-blue-800/40 shrink-0">
+                          #{paciente.geclisa_ficha_id}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-[11px] text-gray-400 font-mono">
+                      {paciente.dni ? (
+                        <span>DNI: {paciente.dni}</span>
+                      ) : (
+                        <span className="text-gray-500">S/ DNI</span>
+                      )}
+                      {paciente.nro_hc && (
+                        <span className="text-blue-400/80">• HC: {paciente.nro_hc}</span>
+                      )}
+                    </div>
+
+                    {paciente.obra_social && (
+                      <div className="text-[10px] text-gray-500 truncate mt-0.5 font-sans">
+                        {paciente.obra_social}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+
+        {/* Footer del Drawer */}
+        <div className="p-3 border-t border-[var(--border)] bg-neutral-900/80 flex items-center justify-between gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerOpen(false)
+              setMostrarModalGeclisa(true)
+            }}
+            className="flex-1 py-2 px-3 bg-blue-600/10 hover:bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5"
+          >
+            <Database size={13} />
+            Geclisa (DNI)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerOpen(false)
+              setMostrarModalManual(true)
+            }}
+            className="flex-1 py-2 px-3 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
+          >
+            <Plus size={13} />
+            Nuevo Manual
+          </button>
+        </div>
+      </aside>
+
+      {/* Contenedor Principal del Expediente (100% de Ancho) */}
+      <div className="flex-1 flex flex-col border border-[var(--border)] rounded-2xl overflow-hidden bg-[var(--card)] shadow-lg min-h-0">
         <div className="flex-1 flex flex-col min-h-0 bg-[var(--card)] overflow-y-auto">
           {pacienteSeleccionado ? (
-            <div className="p-6 space-y-6 flex-1">
+            <div className="p-4 sm:p-6 space-y-6 flex-1">
               
               {/* Header del Expediente y Acciones */}
               <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 p-5 rounded-2xl bg-neutral-900/60 border border-[var(--border)] shadow-sm">
@@ -882,18 +1135,29 @@ export default function PacientesPage() {
                 <User size={30} />
               </div>
               <div className="space-y-1">
-                <h3 className="text-base font-bold text-white">Selecciona un paciente del lateral izquierdo</h3>
+                <h3 className="text-base font-bold text-white">Ningún expediente seleccionado</h3>
                 <p className="text-xs text-[var(--secondary)] max-w-sm">
-                  Haz clic sobre cualquier expediente para ver su información médica, sincronizar con Geclisa, modificar o iniciar conversaciones por WhatsApp.
+                  Abre el directorio de pacientes para seleccionar un expediente o busca uno nuevo en Geclisa por DNI.
                 </p>
               </div>
-              <button
-                onClick={() => setMostrarModalGeclisa(true)}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs inline-flex items-center gap-2 transition-colors shadow"
-              >
-                <Database size={14} />
-                Buscar paciente en Geclisa por DNI
-              </button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDrawerOpen(true)}
+                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs inline-flex items-center gap-2 transition-colors shadow"
+                >
+                  <Users size={15} />
+                  Abrir Directorio de Pacientes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMostrarModalGeclisa(true)}
+                  className="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs inline-flex items-center gap-2 transition-colors"
+                >
+                  <Database size={14} />
+                  Buscar en Geclisa (DNI)
+                </button>
+              </div>
             </div>
           )}
         </div>
