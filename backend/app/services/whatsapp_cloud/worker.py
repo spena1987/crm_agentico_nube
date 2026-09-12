@@ -476,21 +476,26 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes) - INDEPENDIENTE DE account_id
         if paciente_id:
             try:
-                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count").eq("paciente_id", paciente_id).execute()
+                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count, estado_gestion, asignado_a_usuario_id").eq("paciente_id", paciente_id).execute()
                 crm_conv_id = None
                 bot_disabled = False
 
                 if conv_crm_res.data and len(conv_crm_res.data) > 0:
                     crm_conv_id = conv_crm_res.data[0]["id"]
-                    bot_disabled = conv_crm_res.data[0].get("bot_disabled", False)
+                    bot_disabled = bool(conv_crm_res.data[0].get("bot_disabled", False))
                     c_meta = conv_crm_res.data[0].get("metadata_json") or {}
                     current_unread = int(conv_crm_res.data[0].get("unread_count") or 0)
+                    conv_estado = conv_crm_res.data[0].get("estado_gestion") or "SIN_ASIGNAR"
+                    conv_asignado = conv_crm_res.data[0].get("asignado_a_usuario_id")
                     ultimo_humano = c_meta.get("ultimo_mensaje_humano_at", 0)
-                    # Período de gracia de 15 minutos (900s) si el operador humano estuvo respondiendo
+                    
+                    # Período de gracia de 15 minutos (900s) solo si el operador humano estuvo respondiendo,
+                    # la conversación no ha sido resuelta y sigue asignada activamente a un operador humano.
                     import time
-                    if time.time() - float(ultimo_humano or 0) < 900:
-                        bot_disabled = True
-                        logger.info(f"[Bot Handoff] Operador intervino recientemente. Bot pausado para conv {crm_conv_id}.")
+                    if not bot_disabled and conv_estado != "RESUELTO" and conv_asignado:
+                        if time.time() - float(ultimo_humano or 0) < 900:
+                            bot_disabled = True
+                            logger.info(f"[Bot Handoff] Operador intervino recientemente ({time.time() - float(ultimo_humano):.0f}s atrás). Bot pausado para conv {crm_conv_id}.")
 
                     supabase.table("conversaciones").update({
                         "ultimo_mensaje": text_content,

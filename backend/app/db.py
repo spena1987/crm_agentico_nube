@@ -570,7 +570,17 @@ def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
     if not supabase:
         return None
     try:
-        response = supabase.table("conversaciones").update({"bot_disabled": disabled}).eq("id", conversacion_id).execute()
+        update_data = {"bot_disabled": disabled}
+        if not disabled:
+            try:
+                cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+                c_meta = dict(cur_conv.data[0].get("metadata_json") or {}) if cur_conv.data else {}
+                c_meta["ultimo_mensaje_humano_at"] = 0
+                update_data["metadata_json"] = c_meta
+            except Exception as e_meta:
+                logger.warning(f"No se pudo resetear ultimo_mensaje_humano_at: {e_meta}")
+
+        response = supabase.table("conversaciones").update(update_data).eq("id", conversacion_id).execute()
         if response.data:
             return response.data[0]
         return None
@@ -888,11 +898,21 @@ def finalizar_conversacion(conversacion_id: str, usuario_nombre: Optional[str] =
     if not supabase:
         return None
     try:
+        c_meta = {}
+        try:
+            cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+            if cur_conv.data and cur_conv.data[0].get("metadata_json"):
+                c_meta = dict(cur_conv.data[0]["metadata_json"])
+        except Exception:
+            pass
+        c_meta["ultimo_mensaje_humano_at"] = 0
+
         payload = {
             "estado_gestion": "RESUELTO",
             "archivada": True,
             "asignado_a_usuario_id": None,
-            "bot_disabled": False
+            "bot_disabled": False,
+            "metadata_json": c_meta
         }
         res = supabase.table("conversaciones").update(payload).eq("id", conversacion_id).execute()
         conv = res.data[0] if res.data else None
