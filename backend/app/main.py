@@ -331,6 +331,7 @@ def servir_archivo_estatico(filename: str):
                     t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
                     if t_resp.data:
                         t_data = t_resp.data[0]
+                        pac = t_data.get("pacientes") or {}
                         # Resolver texto desde el Nomenclador
                         practica_cod = t_data.get("practica_codigo") or ""
                         practica_id = t_data.get("practica_id") or ""
@@ -381,6 +382,18 @@ def servir_archivo_estatico(filename: str):
                         )
             except Exception as e:
                 logger.error(f"Error regenerando PDF de consentimiento on-demand ({safe_filename}): {e}")
+        elif safe_filename.startswith("parte_quirurgico_") and safe_filename.endswith(".pdf"):
+            turno_id = safe_filename.replace("parte_quirurgico_", "").replace(".pdf", "")
+            try:
+                if supabase:
+                    t_resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("id", turno_id).limit(1).execute()
+                    if t_resp.data:
+                        turno_item = t_resp.data[0]
+                        paciente_data = turno_item.get("pacientes") or {}
+                        from app.services.pdf_service import generar_pdf_parte_quirurgico
+                        generar_pdf_parte_quirurgico(turno_item, paciente_data)
+            except Exception as e:
+                logger.error(f"Error regenerando PDF de parte quirurgico on-demand ({safe_filename}): {e}")
 
     # 3. Si aún no existe, devolver 404
     if not os.path.exists(file_path):
@@ -3914,6 +3927,14 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
     except Exception as e:
         logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
         return {"success": False, "error": str(e)}
+
+@app.get("/api/turnos-quirofano/{turno_id}/consentimiento-pdf")
+def descargar_consentimiento_pdf_endpoint(turno_id: str):
+    """
+    Endpoint directo para obtener/descargar el PDF de consentimiento informado del turno,
+    reconstruyéndolo on-demand de forma transparente si el contenedor fue reiniciado.
+    """
+    return servir_archivo_estatico(f"consentimiento_{turno_id}.pdf")
 
 @app.get("/api/turnos-quirofano/{turno_id}/parte-quirurgico")
 def obtener_o_generar_parte_quirurgico(turno_id: str):
