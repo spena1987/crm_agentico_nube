@@ -58,6 +58,12 @@ export default function TabProgramacionLio({
   const esConfirmado = Boolean(turno.lio_calculado)
   const stockReservado = Boolean(turno.lio_stock_reservado)
 
+  // Control semántico del estado quirúrgico del LIO
+  const estadoTurno = turno.estado || 'programado'
+  const esOperado = estadoTurno === 'operado'
+  const esEnOperacion = estadoTurno === 'en_operacion'
+  const esPreQxOAnterior = estadoTurno === 'programado' || estadoTurno === 'en_espera' || estadoTurno === 'pre_quirofano'
+
   const [reservandoStock, setReservandoStock] = useState<boolean>(false)
   const [stockLocal, setStockLocal] = useState<boolean>(stockReservado)
 
@@ -382,30 +388,42 @@ export default function TabProgramacionLio({
             {/* 2. CUADRÍCULA DE PLANES MULTILENTE CARGADOS POR EL CIRUJANO */}
             {tieneOpciones ? (
               <div className="space-y-2.5 pt-1">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                   <h5 className="text-xs font-extrabold text-[var(--foreground)] flex items-center gap-1.5">
                     <Layers size={14} className="text-cyan-500" />
                     <span>Planes Biométricos del Cirujano ({opcionesCalculadas.length}):</span>
                   </h5>
                   <span className="text-[11px] text-[var(--secondary)]">
-                    Haz clic en <b>[ ✓ Usar / Implantar ]</b> para registrar la opción colocada
+                    {esOperado
+                      ? 'Cirugía finalizada — Lente intraocular implantado y registrado en protocolo'
+                      : esEnOperacion
+                      ? 'Paciente en quirófano — Validar blíster físico antes del implante definitivo'
+                      : 'Seleccione el plan biométrico acordado para ingresar a quirófano'}
                   </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {opcionesCalculadas.map((op: any, idx: number) => {
-                    const esImplantado =
+                    const esPlanSeleccionado =
                       formData.lente_tipo === op.modelo &&
                       formData.lente_dioptria === op.dioptria &&
                       Boolean(formData.es_torico) === Boolean(op.es_torico)
+
+                    const estaImplantado = esPlanSeleccionado && esOperado
+                    const estaEnValidacionQx = esPlanSeleccionado && esEnOperacion
+                    const estaPlanificado = esPlanSeleccionado && !esOperado && !esEnOperacion
 
                     return (
                       <div
                         key={op.id || idx}
                         className={`p-3.5 rounded-2xl border transition-all relative flex flex-col justify-between gap-3 ${
-                          esImplantado
-                            ? 'bg-cyan-500/15 border-cyan-500 ring-2 ring-cyan-500/40 shadow-md'
-                            : 'bg-[var(--card)] border-[var(--border)] hover:border-cyan-400/50'
+                          estaImplantado
+                            ? 'bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-500/40 shadow-md'
+                            : estaEnValidacionQx
+                            ? 'bg-amber-500/15 border-amber-500 ring-2 ring-amber-500/40 shadow-md'
+                            : estaPlanificado
+                            ? 'bg-blue-500/15 border-blue-500 ring-2 ring-blue-500/40 shadow-md'
+                            : 'bg-[var(--card)] border-[var(--border)] hover:border-blue-400/50'
                         }`}
                       >
                         <div>
@@ -425,9 +443,19 @@ export default function TabProgramacionLio({
                               {op.etiqueta || `Opción ${idx + 1}`}
                             </span>
 
-                            {esImplantado && (
-                              <span className="px-2 py-0.5 rounded-full bg-cyan-500 text-black text-[9px] font-black tracking-wider flex items-center gap-1">
+                            {estaImplantado && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500 text-white text-[9px] font-black tracking-wider flex items-center gap-1 shadow-sm">
                                 <Check size={10} /> IMPLANTADO
+                              </span>
+                            )}
+                            {estaEnValidacionQx && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-amber-500 text-black text-[9px] font-black tracking-wider flex items-center gap-1 shadow-sm">
+                                <Loader2 size={10} className="animate-spin" /> EN VALIDACIÓN QX
+                              </span>
+                            )}
+                            {estaPlanificado && (
+                              <span className="px-2.5 py-0.5 rounded-full bg-blue-600 text-white text-[9px] font-black tracking-wider flex items-center gap-1 shadow-sm">
+                                <Check size={10} /> PLAN SELECCIONADO
                               </span>
                             )}
                           </div>
@@ -478,7 +506,7 @@ export default function TabProgramacionLio({
                           </div>
                         </div>
 
-                        {/* Botón de Selección del Plan Implantado */}
+                        {/* Botón de Selección del Plan */}
                         <button
                           type="button"
                           onClick={() => {
@@ -493,13 +521,25 @@ export default function TabProgramacionLio({
                             }))
                           }}
                           className={`w-full py-2 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition ${
-                            esImplantado
-                              ? 'bg-cyan-500 text-black shadow-sm font-black'
-                              : 'bg-slate-100 dark:bg-slate-800 hover:bg-cyan-500/20 text-[var(--foreground)] border border-[var(--border)]'
+                            estaImplantado
+                              ? 'bg-emerald-600 text-white shadow-sm font-black'
+                              : estaEnValidacionQx
+                              ? 'bg-amber-500 text-black shadow-sm font-black'
+                              : estaPlanificado
+                              ? 'bg-blue-600 text-white shadow-sm font-black'
+                              : 'bg-slate-100 dark:bg-slate-800 hover:bg-blue-500/20 text-[var(--foreground)] border border-[var(--border)]'
                           }`}
                         >
-                          {esImplantado ? <Check size={14} /> : <CheckCircle2 size={14} />}
-                          <span>{esImplantado ? 'Lente Seleccionado' : 'Usar este Lente'}</span>
+                          {esPlanSeleccionado ? <Check size={14} /> : <CheckCircle2 size={14} />}
+                          <span>
+                            {estaImplantado
+                              ? 'Lente Implantado'
+                              : estaEnValidacionQx
+                              ? 'Lente en Validación Qx'
+                              : estaPlanificado
+                              ? 'Plan Seleccionado'
+                              : 'Elegir este Plan'}
+                          </span>
                         </button>
                       </div>
                     )
@@ -510,13 +550,24 @@ export default function TabProgramacionLio({
 
             {/* 3. CAJA DE TRAZABILIDAD REAL DEL BLÍSTER (LOTE, SERIE Y VENCIMIENTO) */}
             <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-[var(--border)] space-y-3 pt-3">
-              <div className="flex items-center justify-between pb-2 border-b border-[var(--border)]">
-                <h5 className="text-xs font-extrabold text-[var(--foreground)] flex items-center gap-1.5">
-                  <PackageCheck size={15} className="text-blue-600" />
-                  <span>Trazabilidad del Blíster Físico Implantado</span>
-                </h5>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-[var(--border)] gap-2">
+                <div className="flex items-center gap-2">
+                  <PackageCheck size={16} className="text-blue-600 shrink-0" />
+                  <h5 className="text-xs font-extrabold text-[var(--foreground)]">
+                    Trazabilidad del Blíster Físico {esOperado ? 'Implantado' : 'Asignado'}
+                  </h5>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    esOperado
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                      : esEnOperacion
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                  }`}>
+                    {esOperado ? '✔ Sello en Protocolo' : esEnOperacion ? '🔍 En Verificación Qx' : '⏳ Previo a Quirófano'}
+                  </span>
+                </div>
                 <span className="text-[10px] text-[var(--secondary)]">
-                  Datos grabados en el Protocolo Quirúrgico PDF
+                  {esOperado ? 'Datos grabados en Protocolo Qx y Geclisa' : 'Verificación previa al ingreso'}
                 </span>
               </div>
 
