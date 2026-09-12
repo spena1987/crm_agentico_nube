@@ -476,7 +476,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes) - INDEPENDIENTE DE account_id
         if paciente_id:
             try:
-                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count, estado_gestion, asignado_a_usuario_id").eq("paciente_id", paciente_id).execute()
+                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count, estado_gestion, asignado_a_usuario_id, archivada").eq("paciente_id", paciente_id).execute()
                 crm_conv_id = None
                 bot_disabled = False
 
@@ -487,6 +487,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     current_unread = int(conv_crm_res.data[0].get("unread_count") or 0)
                     conv_estado = conv_crm_res.data[0].get("estado_gestion") or "SIN_ASIGNAR"
                     conv_asignado = conv_crm_res.data[0].get("asignado_a_usuario_id")
+                    conv_archivada = bool(conv_crm_res.data[0].get("archivada", False))
                     ultimo_humano = c_meta.get("ultimo_mensaje_humano_at", 0)
                     
                     # Período de gracia de 15 minutos (900s) solo si el operador humano estuvo respondiendo,
@@ -497,11 +498,19 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                             bot_disabled = True
                             logger.info(f"[Bot Handoff] Operador intervino recientemente ({time.time() - float(ultimo_humano):.0f}s atrás). Bot pausado para conv {crm_conv_id}.")
 
-                    supabase.table("conversaciones").update({
+                    upd_payload = {
                         "ultimo_mensaje": text_content,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                         "unread_count": current_unread + 1
-                    }).eq("id", crm_conv_id).execute()
+                    }
+                    # Si el bot estaba deshabilitado y entra un mensaje en caso cerrado/archivado,
+                    # reabrir automáticamente hacia la pestaña 'Espera' (SIN_ASIGNAR)
+                    if bot_disabled and (conv_estado == "RESUELTO" or conv_archivada):
+                        upd_payload["archivada"] = False
+                        upd_payload["estado_gestion"] = "SIN_ASIGNAR"
+                        logger.info(f"[Inbound Reopen] Chat {crm_conv_id} reabierto a 'SIN_ASIGNAR' al recibir mensaje con bot apagado.")
+
+                    supabase.table("conversaciones").update(upd_payload).eq("id", crm_conv_id).execute()
                 else:
                     new_crm_conv = supabase.table("conversaciones").insert({
                         "paciente_id": paciente_id,

@@ -592,7 +592,28 @@ def archivar_conversacion(conversacion_id: str, archivada: bool = True):
     if not supabase:
         return None
     try:
-        response = supabase.table("conversaciones").update({"archivada": archivada}).eq("id", conversacion_id).execute()
+        upd: Dict[str, Any] = {"archivada": archivada}
+        if not archivada:
+            try:
+                cur = supabase.table("conversaciones").select("asignado_a_usuario_id, estado_gestion").eq("id", conversacion_id).execute()
+                if cur.data:
+                    assigned = cur.data[0].get("asignado_a_usuario_id")
+                    upd["estado_gestion"] = "EN_GESTION" if assigned else "SIN_ASIGNAR"
+            except Exception:
+                upd["estado_gestion"] = "SIN_ASIGNAR"
+        else:
+            upd["estado_gestion"] = "RESUELTO"
+
+        response = supabase.table("conversaciones").update(upd).eq("id", conversacion_id).execute()
+
+        # Sincronizar en patient_conversations
+        try:
+            supabase.table("patient_conversations").update({
+                "session_status": "ARCHIVED" if archivada else "OPEN"
+            }).eq("id", conversacion_id).execute()
+        except Exception:
+            pass
+
         if response.data:
             return response.data[0]
         return None

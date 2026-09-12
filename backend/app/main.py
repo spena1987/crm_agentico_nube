@@ -1023,15 +1023,21 @@ def send_message_api(payload: SendMessageRequest):
         raise HTTPException(status_code=400, detail=result["error"])
 
     # Registrar marca de tiempo del operador para activar el período de gracia de 15 minutos en el Bot IA
+    # y asegurar que la conversación se desarchive automáticamente si el operador responde en un chat cerrado
     if conversacion_id and supabase:
         try:
-            c_res = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+            c_res = supabase.table("conversaciones").select("metadata_json, archivada, estado_gestion, asignado_a_usuario_id").eq("id", conversacion_id).execute()
             if c_res.data:
-                c_meta = c_res.data[0].get("metadata_json") or {}
+                conv_row = c_res.data[0]
+                c_meta = conv_row.get("metadata_json") or {}
                 c_meta["ultimo_mensaje_humano_at"] = time.time()
-                supabase.table("conversaciones").update({"metadata_json": c_meta}).eq("id", conversacion_id).execute()
+                upd_conv: Dict[str, Any] = {"metadata_json": c_meta}
+                if conv_row.get("archivada") or conv_row.get("estado_gestion") == "RESUELTO":
+                    upd_conv["archivada"] = False
+                    upd_conv["estado_gestion"] = "EN_GESTION" if conv_row.get("asignado_a_usuario_id") else "SIN_ASIGNAR"
+                supabase.table("conversaciones").update(upd_conv).eq("id", conversacion_id).execute()
         except Exception as grace_upd_err:
-            logger.warning(f"Error actualizando timestamp de último mensaje humano: {grace_upd_err}")
+            logger.warning(f"Error actualizando estado de conversación tras mensaje de operador: {grace_upd_err}")
 
     return result
 

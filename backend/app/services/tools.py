@@ -298,37 +298,58 @@ def escalar_a_operador_humano(conversacion_id: str, motivo: str, nivel_urgencia:
         }
 
     try:
-        res = actualizar_bot_disabled(conversacion_id, True)
-        if res:
-            # 1. Registrar NOTA INTERNA visible para el equipo médico en el CRM
-            guardar_mensaje(
-                conversacion_id=conversacion_id,
-                emisor="bot",
-                contenido=f"🚨 DERIVACIÓN A ATENCIÓN HUMANA\n\n📌 Motivo: {motivo}\n⚠️ Prioridad: {nivel_urgencia.upper()}",
-                metadata_json={
-                    "is_internal_note": True,
-                    "tipo": "nota_interna",
-                    "evento": "escalado_humano",
-                    "motivo": motivo,
-                    "urgencia": nivel_urgencia
-                }
-            )
-
-            # 2. Desmarcar como leído para encender el badge rojo en la bandeja de operadores humanos
-            if supabase:
-                try:
-                    supabase.table("mensajes").update({
-                        "metadata_json": {"leido_por_operador": False, "requiere_atencion_humana": True}
-                    }).eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()
-                except Exception:
-                    pass
-
-            return {
-                "success": True,
-                "mensaje": "La conversación ha sido transferida al equipo humano de la clínica. Informa amablemente al paciente que un asesor se pondrá en contacto a la brevedad.",
-                "conversacion_id": conversacion_id
+        # Reabrir formalmente la conversación para que ingrese a la pestaña 'Espera' del CRM
+        if supabase:
+            upd_data = {
+                "bot_disabled": True,
+                "archivada": False,
+                "estado_gestion": "SIN_ASIGNAR",
+                "asignado_a_usuario_id": None,
+                "unread_count": 1
             }
-        return {"error": "Conversación no encontrada o no se pudo actualizar."}
+            res_conv = supabase.table("conversaciones").update(upd_data).eq("id", conversacion_id).execute()
+            if not res_conv.data:
+                actualizar_bot_disabled(conversacion_id, True)
+
+            try:
+                supabase.table("patient_conversations").update({
+                    "assigned_agent_id": None,
+                    "bot_mode": "HUMAN_AGENT",
+                    "session_status": "OPEN"
+                }).eq("id", conversacion_id).execute()
+            except Exception:
+                pass
+        else:
+            actualizar_bot_disabled(conversacion_id, True)
+
+        # 1. Registrar NOTA INTERNA visible para el equipo médico en el CRM
+        guardar_mensaje(
+            conversacion_id=conversacion_id,
+            emisor="bot",
+            contenido=f"🚨 DERIVACIÓN A ATENCIÓN HUMANA\n\n📌 Motivo: {motivo}\n⚠️ Prioridad: {nivel_urgencia.upper()}",
+            metadata_json={
+                "is_internal_note": True,
+                "tipo": "nota_interna",
+                "evento": "escalado_humano",
+                "motivo": motivo,
+                "urgencia": nivel_urgencia
+            }
+        )
+
+        # 2. Desmarcar como leído para encender el badge rojo en la bandeja de operadores humanos
+        if supabase:
+            try:
+                supabase.table("mensajes").update({
+                    "metadata_json": {"leido_por_operador": False, "requiere_atencion_humana": True}
+                }).eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()
+            except Exception:
+                pass
+
+        return {
+            "success": True,
+            "mensaje": "La conversación ha sido transferida al equipo humano de la clínica. Informa amablemente al paciente que un asesor se pondrá en contacto a la brevedad.",
+            "conversacion_id": conversacion_id
+        }
     except Exception as e:
         logger.error(f"Error al escalar a humano: {e}")
         return {"error": f"Error al procesar escalado: {str(e)}"}
