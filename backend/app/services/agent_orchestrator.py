@@ -62,7 +62,10 @@ DEFAULT_GLOBAL_DIRECTIVES = {
     ),
     "politica_escalamiento": (
         "Si el paciente solicita hablar con un humano, persona o secretaria, o presenta dudas clínicas fuera de tu comprensión, "
-        "invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo detallado."
+        "invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo detallado. "
+        "REGLA CRÍTICA TRAS ESCALAR: Tras invocar 'escalar_a_operador_humano', NO vuelvas a llamar a ninguna otra herramienta ni repitas la llamada. "
+        "Tu única tarea a continuación es responder de inmediato al paciente con un mensaje cálido, empático y tranquilizador informándole que "
+        "has transferido su consulta a un asesor humano del equipo de la clínica y que se comunicará con él a la brevedad."
     ),
     "politica_cierre": (
         "Cuando el paciente haya resuelto su objetivo (turno agendado, presupuesto aceptado), se despida, agradezca o manifieste que no precisa nada más, "
@@ -283,6 +286,10 @@ class AgentOrchestrator:
             "=== GUARDRAILS Y REGLAS DE SEGURIDAD CLÍNICA (INVIOLABLES) ===",
             f"- {guardrails}",
             f"- Escalamiento a Operador Humano: {politica_esc}",
+            "",
+            "=== PROTOCOLO DE HERRAMIENTAS Y RESPUESTA AL PACIENTE ===",
+            "- Si invocas 'escalar_a_operador_humano': NUNCA llames a ninguna otra herramienta en el mismo turno. Redacta inmediatamente tu mensaje final de respuesta al paciente informándole con empatía que has transferido su consulta a un asesor humano que se comunicará pronto.",
+            "- Si invocas 'finalizar_y_cerrar_consulta': Despídete amablemente concluyendo la atención de forma cordial.",
             "",
             "=== DIRECTIVA PARTICULAR Y PAUTA DE COMPORTAMIENTO PARA ESTA SITUACIÓN ===",
             directiva_particular,

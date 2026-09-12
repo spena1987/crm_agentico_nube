@@ -1,7 +1,12 @@
 import re
+import time
 import logging
 from typing import Any, Optional, List, Dict
 from datetime import datetime, timedelta
+
+# Caché en memoria para evitar duplicación de notas / eventos repetidos en corto tiempo (Debounce)
+_LAST_ESCALATION_CACHE: Dict[str, float] = {}
+_LAST_CLOSE_CACHE: Dict[str, float] = {}
 from app.db import (
     supabase, 
     actualizar_bot_disabled, 
@@ -248,6 +253,18 @@ def finalizar_y_cerrar_consulta(conversacion_id: str, motivo: str) -> dict:
             "conversacion_id": conversacion_id
         }
 
+    now = time.time()
+    last_close = _LAST_CLOSE_CACHE.get(str(conversacion_id), 0.0)
+    if (now - last_close) < 15.0:
+        logger.info(f"Cierre duplicado prevenido para conversación {conversacion_id} (hace {now - last_close:.1f}s). Retornando confirmación sin duplicar.")
+        return {
+            "success": True,
+            "mensaje": "La consulta ya ha sido finalizada y archivada exitosamente en el CRM. Despídete cordialmente del paciente.",
+            "conversacion_id": conversacion_id,
+            "deduplicated": True
+        }
+    _LAST_CLOSE_CACHE[str(conversacion_id)] = now
+
     try:
         # 1. Marcar mensajes de la conversación como leídos
         marcar_mensajes_conversacion_leidos(conversacion_id)
@@ -296,6 +313,18 @@ def escalar_a_operador_humano(conversacion_id: str, motivo: str, nivel_urgencia:
             "mensaje": f"Transferencia a operador humano registrada: {motivo}",
             "conversacion_id": conversacion_id
         }
+
+    now = time.time()
+    last_escalation = _LAST_ESCALATION_CACHE.get(str(conversacion_id), 0.0)
+    if (now - last_escalation) < 25.0:
+        logger.info(f"Escalado duplicado prevenido para conversación {conversacion_id} (hace {now - last_escalation:.1f}s). Retornando confirmación sin duplicar nota.")
+        return {
+            "success": True,
+            "mensaje": "La conversación ya se encuentra transferida al equipo humano de la clínica. Informa amablemente al paciente que un asesor se pondrá en contacto a la brevedad.",
+            "conversacion_id": conversacion_id,
+            "deduplicated": True
+        }
+    _LAST_ESCALATION_CACHE[str(conversacion_id)] = now
 
     try:
         # Reabrir formalmente la conversación para que ingrese a la pestaña 'Espera' del CRM

@@ -24,15 +24,22 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 def bind_tools_to_context(
     raw_tools_map: Dict[str, Any], 
     enabled_names: List[str], 
-    paciente_id: Optional[str], 
-    conversacion_id: Optional[str]
+    paciente_id: Optional[str] = None, 
+    conversacion_id: Optional[str] = None,
+    tracker: Optional[List[str]] = None
 ) -> List[Any]:
     """
     Crea closures tipadas que pre-vinculan paciente_id y conversacion_id
     para que Automatic Function Calling (AFC) de Gemini ejecute las herramientas
     de forma nativa y sin errores de firmas de pensamiento ni parámetros ausentes.
+    Registra en tracker cualquier herramienta invocada por AFC en tiempo real.
     """
     bound_tools = []
+
+    def record_call(fn_name: str):
+        if tracker is not None and fn_name not in tracker:
+            tracker.append(fn_name)
+
     for name in enabled_names:
         if name not in raw_tools_map:
             continue
@@ -48,6 +55,7 @@ def bind_tools_to_context(
                 Args:
                     dni: El número de DNI / Documento del paciente (solo dígitos).
                 """
+                record_call("vincular_paciente_geclisa")
                 return base_func(dni=dni, conversacion_id=conversacion_id, paciente_id=paciente_id)
             vincular_paciente_geclisa.__doc__ = base_func.__doc__
             bound_tools.append(vincular_paciente_geclisa)
@@ -57,6 +65,7 @@ def bind_tools_to_context(
                 """
                 Crea un borrador de presupuesto para el paciente con las prácticas y cantidades solicitadas.
                 """
+                record_call("crear_borrador_presupuesto")
                 return base_func(items_presupuesto=items_presupuesto, paciente_id=paciente_id, observaciones=observaciones)
             crear_borrador_presupuesto.__doc__ = base_func.__doc__
             bound_tools.append(crear_borrador_presupuesto)
@@ -66,6 +75,7 @@ def bind_tools_to_context(
                 """
                 Aprueba y confirma formalmente un presupuesto emitido al paciente cuando manifiesta su conformidad.
                 """
+                record_call("aprobar_presupuesto")
                 return base_func(presupuesto_id=presupuesto_id, paciente_id=paciente_id, notas=notas)
             aprobar_presupuesto.__doc__ = base_func.__doc__
             bound_tools.append(aprobar_presupuesto)
@@ -75,6 +85,7 @@ def bind_tools_to_context(
                 """
                 Consulta los presupuestos médicos emitidos al paciente en el sistema.
                 """
+                record_call("consultar_presupuestos_paciente")
                 return base_func(paciente_id=paciente_id)
             consultar_presupuestos_paciente.__doc__ = base_func.__doc__
             bound_tools.append(consultar_presupuestos_paciente)
@@ -84,12 +95,30 @@ def bind_tools_to_context(
                 """
                 Deriva la conversación a un operador humano de secretaría o equipo médico.
                 """
+                record_call("escalar_a_operador_humano")
                 return base_func(conversacion_id=conversacion_id, motivo=motivo)
             escalar_a_operador_humano.__doc__ = base_func.__doc__
             bound_tools.append(escalar_a_operador_humano)
+
+        elif name == "finalizar_y_cerrar_consulta":
+            def finalizar_y_cerrar_consulta(motivo: str) -> dict:
+                """
+                Finaliza y archiva la conversación cuando el paciente cumplió su objetivo o se despide.
+                """
+                record_call("finalizar_y_cerrar_consulta")
+                return base_func(conversacion_id=conversacion_id, motivo=motivo)
+            finalizar_y_cerrar_consulta.__doc__ = base_func.__doc__
+            bound_tools.append(finalizar_y_cerrar_consulta)
             
         else:
-            bound_tools.append(base_func)
+            def make_generic_wrapper(fn_name: str, fn_callable: Any):
+                def generic_tool_wrapper(*args, **kwargs):
+                    record_call(fn_name)
+                    return fn_callable(*args, **kwargs)
+                generic_tool_wrapper.__doc__ = fn_callable.__doc__
+                generic_tool_wrapper.__name__ = getattr(fn_callable, "__name__", fn_name)
+                return generic_tool_wrapper
+            bound_tools.append(make_generic_wrapper(name, base_func))
             
     return bound_tools
 
@@ -114,34 +143,27 @@ def procesar_mensaje_agente(
     else:
         final_texto = mensaje_texto_o_paciente_id
         paciente_id = None
-        if supabase and conversacion_id:
-            try:
-                conv = supabase.table("conversaciones").select("paciente_id").eq("id", conversacion_id).execute()
-                if conv.data and len(conv.data) > 0:
-                    paciente_id = conv.data[0].get("paciente_id")
-            except Exception:
-                pass
 
     t_start = time.time()
     try:
-        # 1. Recuperar contexto del paciente si está disponible
+        # 1. Recuperar contexto integral del paciente
         paciente_info = None
         if paciente_id:
             try:
                 paciente_info = get_paciente_contexto_360(paciente_id)
             except Exception as pe:
                 logger.warning(f"No se pudo cargar ficha del paciente {paciente_id}: {pe}")
-
-        # 2. Determinar el Agente Situacional activo (o usar override)
+        
+        # 2. Seleccionar agente óptimo (Router Dinámico de Roles)
         if agente_override_codigo:
             active_agent = orchestrator.get_agent_by_code(agente_override_codigo)
         else:
             active_agent = orchestrator.determine_active_agent(
-                conversacion_id=conversacion_id, 
-                paciente_id=paciente_id, 
+                conversacion_id=conversacion_id,
+                paciente_id=paciente_id,
                 mensaje_texto=final_texto
             )
-
+        
         agent_code = active_agent.get("codigo", "GENERAL")
         agent_temp = float(active_agent.get("temperatura") or 0.2)
         system_instruction = orchestrator.compile_system_prompt(active_agent, paciente_info=paciente_info)
@@ -153,11 +175,13 @@ def procesar_mensaje_agente(
             except Exception:
                 habilitadas = list(AVAILABLE_TOOLS_MAP.keys())
                 
+        funciones_ejecutadas: List[str] = []
         bound_tools = bind_tools_to_context(
             raw_tools_map=AVAILABLE_TOOLS_MAP,
             enabled_names=habilitadas,
             paciente_id=paciente_id,
-            conversacion_id=conversacion_id
+            conversacion_id=conversacion_id,
+            tracker=funciones_ejecutadas
         )
 
         logger.info(f"Procesando mensaje con Agente: '{active_agent.get('nombre')}' ({agent_code}) | Temp: {agent_temp} | Tools: {len(bound_tools)}")
@@ -218,10 +242,12 @@ def procesar_mensaje_agente(
             ]
 
         # 5. Configurar generación con Directivas Dinámicas y Tools vinculadas
+        afc_config = types.AutomaticFunctionCallingConfig(maximum_remote_calls=3) if bound_tools else None
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=bound_tools if bound_tools else None,
-            temperature=agent_temp
+            temperature=agent_temp,
+            automatic_function_calling=afc_config
         )
 
         # 6. Ejecutar consulta inicial (con fallback multicapa resiliente)
@@ -239,7 +265,8 @@ def procesar_mensaje_agente(
                 fallback_config = types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     tools=bound_tools if bound_tools else None,
-                    temperature=agent_temp
+                    temperature=agent_temp,
+                    automatic_function_calling=afc_config
                 )
                 contents_single = [
                     types.Content(
@@ -269,10 +296,18 @@ def procesar_mensaje_agente(
                     logger.critical(f"Falla crítica en todos los modelos de Gemini: {final_err}")
                     raise final_err
 
-        # 8. Loop de Function Calling de Respaldo (por si AFC no resuelve en 1 solo paso)
+        # 7. Consolidar herramientas ejecutadas durante Automatic Function Calling (AFC)
+        if hasattr(response, "automatic_function_calling_history") and response.automatic_function_calling_history:
+            for item in response.automatic_function_calling_history:
+                for part in getattr(item, "parts", []):
+                    fn_call = getattr(part, "function_call", None)
+                    if fn_call and getattr(fn_call, "name", None):
+                        if fn_call.name not in funciones_ejecutadas:
+                            funciones_ejecutadas.append(fn_call.name)
+
+        # 8. Loop de Function Calling de Respaldo (por si AFC no resolvió en 1 solo paso)
         intentos = 0
-        max_intentos = 5
-        funciones_ejecutadas = []
+        max_intentos = 3
         
         while response.function_calls and intentos < max_intentos:
             intentos += 1
@@ -281,23 +316,29 @@ def procesar_mensaje_agente(
             for call in response.function_calls:
                 func_name = call.name
                 func_args = call.args or {}
-                funciones_ejecutadas.append(func_name)
                 
-                logger.info(f"[{agent_code}] Fallback manual solicita función: {func_name} con args: {func_args}")
-                
-                if func_name in AVAILABLE_TOOLS_MAP:
-                    try:
-                        if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa"] and paciente_id:
-                            func_args["paciente_id"] = paciente_id
-                        if func_name in ["escalar_a_operador_humano", "vincular_paciente_geclisa"] and conversacion_id:
-                            func_args["conversacion_id"] = conversacion_id
-                        
-                        resultado = AVAILABLE_TOOLS_MAP[func_name](**func_args)
-                    except Exception as err:
-                        logger.error(f"Error ejecutando función {func_name}: {err}")
-                        resultado = {"error": f"Falla de ejecución: {str(err)}"}
+                # Si es una función crítica que ya se ejecutó en este turno, no duplicar ejecución
+                if func_name in funciones_ejecutadas and func_name in ["escalar_a_operador_humano", "finalizar_y_cerrar_consulta"]:
+                    logger.info(f"[{agent_code}] Omitiendo re-ejecución en loop manual de {func_name} ya ejecutada.")
+                    resultado = {"success": True, "mensaje": f"{func_name} ya fue procesada previamente."}
                 else:
-                    resultado = {"error": f"Función '{func_name}' no autorizada para el perfil {agent_code}."}
+                    if func_name not in funciones_ejecutadas:
+                        funciones_ejecutadas.append(func_name)
+                    logger.info(f"[{agent_code}] Fallback manual solicita función: {func_name} con args: {func_args}")
+                    
+                    if func_name in AVAILABLE_TOOLS_MAP:
+                        try:
+                            if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa"] and paciente_id:
+                                func_args["paciente_id"] = paciente_id
+                            if func_name in ["escalar_a_operador_humano", "finalizar_y_cerrar_consulta", "vincular_paciente_geclisa"] and conversacion_id:
+                                func_args["conversacion_id"] = conversacion_id
+                            
+                            resultado = AVAILABLE_TOOLS_MAP[func_name](**func_args)
+                        except Exception as err:
+                            logger.error(f"Error ejecutando función {func_name}: {err}")
+                            resultado = {"error": f"Falla de ejecución: {str(err)}"}
+                    else:
+                        resultado = {"error": f"Función '{func_name}' no autorizada para el perfil {agent_code}."}
 
                 logger.info(f"Resultado de función {func_name}: {resultado}")
                 
@@ -329,10 +370,10 @@ def procesar_mensaje_agente(
         if "escalar_a_operador_humano" in funciones_ejecutadas:
             if not respuesta_final or "procesado tu consulta de manera interna" in respuesta_final.lower():
                 respuesta_final = "Entendido. He derivado tu consulta de manera prioritaria a nuestro equipo de atención humana. Un asesor de la clínica se comunicará contigo por este medio a la brevedad."
-            elif not any(k in respuesta_final.lower() for k in ["deriv", "asesor", "humano", "operador", "equipo"]):
-                respuesta_final = f"{respuesta_final}\n\nHe derivado tu mensaje a nuestro equipo de atención humana para que un asesor se comunique contigo a la brevedad."
+            elif not any(k in respuesta_final.lower() for k in ["deriv", "asesor", "humano", "operador", "equipo", "secretar"]):
+                respuesta_final = f"{respuesta_final}\n\nHe derivado tu consulta a nuestro equipo de atención humana para que un asesor te asista a la brevedad."
         elif not respuesta_final:
-            respuesta_final = "He procesado tu consulta de manera interna, ¿en qué más puedo ayudarte?"
+            respuesta_final = "He recibido tu consulta. ¿En qué puedo orientarte hoy?"
 
         if guardar_en_db and conversacion_id:
             guardar_mensaje(conversacion_id=conversacion_id, emisor="bot", contenido=respuesta_final)
