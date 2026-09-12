@@ -176,6 +176,7 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
         public_prefixes = (
             "/static/",
             "/api/consentimiento-publico/",
+            "/api/consentimiento/verificar/",
             "/api/whatsapp/webhook/incoming",
             "/api/whatsapp/cloud/webhook",
             "/webhooks/whatsapp",
