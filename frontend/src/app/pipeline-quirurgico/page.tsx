@@ -615,7 +615,7 @@ export default function PipelineQuirurgicoPage() {
   ])
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 space-y-6 min-w-0 pb-16 animate-fade-in">
+    <div className="w-full max-w-none px-4 md:px-6 py-3 space-y-3 min-w-0 pb-12 animate-fade-in">
       
       {/* Toast de Éxito */}
       {notificacionExito && (
@@ -626,257 +626,174 @@ export default function PipelineQuirurgicoPage() {
       )}
 
       {/* ==================================================================== */}
-      {/* 1. HEADER PRINCIPAL DEL PIPELINE */}
+      {/* 1. BARRA SUPERIOR UNIFICADA (ZERO-SCROLL: HEADER + TABS + METRICAS) */}
       {/* ==================================================================== */}
-      <div className="flex items-center justify-between flex-wrap gap-4 p-5 rounded-2xl bg-neutral-900 border border-blue-500/20 shadow-md">
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shadow-inner">
-            <TrendingUp className="w-6 h-6" />
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-2.5 p-3 rounded-2xl bg-neutral-900/90 border border-[var(--border)] shadow-sm">
+        
+        {/* Lado Izquierdo: Título y Selector de Vistas Segmented */}
+        <div className="flex items-center flex-wrap gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-blue-600/10 text-blue-400 border border-blue-500/20 flex items-center justify-center shadow-inner">
+              <TrendingUp size={16} />
+            </div>
+            <div>
+              <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5">
+                Pipeline Quirúrgico
+                <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full bg-blue-950 text-blue-300 border border-blue-800/40">
+                  En Vivo
+                </span>
+              </h1>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-black text-white tracking-tight flex items-center gap-2">
-              Pipeline de Conversión Quirúrgica (Lead-to-Surgery)
-              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-blue-950 text-blue-300 border border-blue-800/40">
-                En Vivo
+
+          {/* Selector segmented de vista */}
+          <div className="flex items-center bg-neutral-950 p-1 rounded-xl border border-[var(--border)]">
+            <button
+              type="button"
+              onClick={() => setVistaActual('activos')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                vistaActual === 'activos'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <Layers size={13} />
+              <span>Tablero Activo</span>
+              <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
+                vistaActual === 'activos' ? 'bg-blue-900 text-blue-100' : 'bg-neutral-800 text-gray-400'
+              }`}>
+                {metricas?.casos_activos ?? 0}
               </span>
-            </h1>
-            <p className="text-xs text-[var(--secondary)]">
-              Embudo comercial y clínico de pacientes en proceso de asesoramiento, cotización y quirófano.
-            </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setVistaActual('cerrados')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                vistaActual === 'cerrados'
+                  ? 'bg-neutral-800 text-white shadow-sm border border-[var(--border)]'
+                  : 'text-gray-400 hover:text-gray-200'
+              }`}
+            >
+              <Archive size={13} />
+              <span>Historial Cerrados</span>
+              <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
+                vistaActual === 'cerrados' ? 'bg-neutral-700 text-gray-200' : 'bg-neutral-800 text-gray-400'
+              }`}>
+                {(metricas?.casos_operados ?? 0) + (metricas?.casos_cancelados ?? 0)}
+              </span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        {/* Centro: Métricas Clave en Pastillas Compactas */}
+        {metricas && (
+          <div className="flex items-center flex-wrap gap-2 text-xs">
+            {vistaActual === 'activos' ? (
+              <>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-950 border border-[var(--border)] text-gray-300">
+                  <Stethoscope size={13} className="text-blue-400" />
+                  <span className="text-[11px] text-gray-400">Activos:</span>
+                  <strong className="text-white font-mono font-black">{metricas.casos_activos}</strong>
+                </div>
+
+                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] ${
+                  metricas.casos_en_alerta > 0
+                    ? 'bg-red-950/40 border-red-500/50 text-red-300'
+                    : 'bg-neutral-950 border-[var(--border)] text-gray-400'
+                }`}>
+                  <ShieldAlert size={13} className={metricas.casos_en_alerta > 0 ? 'text-red-400' : 'text-emerald-400'} />
+                  <span>Alertas SLA:</span>
+                  <strong className={`font-mono font-black ${metricas.casos_en_alerta > 0 ? 'text-red-300' : 'text-emerald-400'}`}>
+                    {metricas.casos_en_alerta}
+                  </strong>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 text-[11px]">
+                  <Activity size={13} className="text-emerald-400" />
+                  <span>Efectividad:</span>
+                  <strong className="font-mono font-black">{metricas.tasa_conversion ?? 0}%</strong>
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-950 border border-[var(--border)] text-gray-300 text-[11px]">
+                  <CheckCircle2 size={13} className="text-teal-400" />
+                  <span>Operados:</span>
+                  <strong className="font-mono font-black text-white">{metricas.casos_operados ?? 0}</strong>
+                </div>
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-950 border border-[var(--border)] text-gray-300 text-[11px]">
+                  <XCircle size={13} className="text-red-400" />
+                  <span>Cancelados:</span>
+                  <strong className="font-mono font-black text-white">{metricas.casos_cancelados ?? 0}</strong>
+                </div>
+                {(metricas.total_operado_ars || 0) > 0 && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-950 border border-amber-500/30 text-amber-300 text-[11px]">
+                    <DollarSign size={13} className="text-amber-400" />
+                    <span>Facturado:</span>
+                    <strong className="font-mono font-black">$ {(metricas.total_operado_ars ?? 0).toLocaleString('es-AR')}</strong>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Lado Derecho: Configuración SLA y Refrescar */}
+        <div className="flex items-center gap-2 self-end xl:self-auto">
           <Link
             href="/ajustes"
-            className="px-3.5 py-2 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-xs font-bold text-gray-300 transition-all flex items-center gap-1.5"
+            className="px-2.5 py-1 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-[11px] font-bold text-gray-300 transition-all flex items-center gap-1.5"
           >
-            <Stethoscope size={13} className="text-blue-400" />
-            Configurar SLA & Plantillas
+            <Stethoscope size={12} className="text-blue-400" />
+            <span>Configurar SLA</span>
           </Link>
 
           <button
             type="button"
             onClick={fetchPipeline}
             disabled={cargando}
-            className="p-2.5 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-gray-300 hover:text-white transition-all"
+            className="p-1.5 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-gray-300 hover:text-white transition-all"
             title="Refrescar datos"
           >
-            <RefreshCw size={14} className={cargando ? 'animate-spin text-blue-400' : ''} />
+            <RefreshCw size={13} className={cargando ? 'animate-spin text-blue-400' : ''} />
           </button>
         </div>
       </div>
 
       {/* ==================================================================== */}
-      {/* 2. SELECTOR DE VISTA: PIPELINE ACTIVO vs HISTORIAL CERRADOS */}
+      {/* 2. BARRA DE HERRAMIENTAS Y FILTROS COMPACTA (FILA ÚNICA) */}
       {/* ==================================================================== */}
-      <div className="flex items-center justify-between flex-wrap gap-3 border-b border-[var(--border)] pb-2">
-        <div className="flex items-center gap-2 bg-neutral-900/90 p-1 rounded-xl border border-[var(--border)]">
-          <button
-            type="button"
-            onClick={() => setVistaActual('activos')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-              vistaActual === 'activos'
-                ? 'bg-blue-600 text-white shadow-md'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Layers size={14} />
-            Tablero Activo
-            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
-              vistaActual === 'activos' ? 'bg-blue-900 text-blue-200' : 'bg-neutral-800 text-gray-400'
-            }`}>
-              {metricas?.casos_activos ?? 0}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setVistaActual('cerrados')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
-              vistaActual === 'cerrados'
-                ? 'bg-neutral-800 text-white shadow-md border border-[var(--border)]'
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Archive size={14} />
-            Historial de Cerrados
-            <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
-              vistaActual === 'cerrados' ? 'bg-neutral-700 text-gray-200' : 'bg-neutral-800 text-gray-400'
-            }`}>
-              {(metricas?.casos_operados ?? 0) + (metricas?.casos_cancelados ?? 0)}
-            </span>
-          </button>
-        </div>
-
-        {/* Indicador de conversión / resumen rápido */}
-        {metricas && (
-          <div className="flex items-center gap-3 text-xs text-gray-400">
-            <span className="flex items-center gap-1.5 font-medium">
-              <Activity size={13} className="text-emerald-400" />
-              Efectividad Histórica:
-              <strong className="text-emerald-300 font-mono font-bold">
-                {metricas.tasa_conversion ?? 0}%
-              </strong>
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* ==================================================================== */}
-      {/* 3. TARJETAS DE KPIS SUPERIORES SEGÚN VISTA */}
-      {/* ==================================================================== */}
-      {metricas && vistaActual === 'activos' && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* KPI 1: Ingresos en Seguimiento (ARS) */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 flex items-center gap-1.5">
-              <DollarSign size={13} className="text-emerald-400" />
-              Monto en Cotización (ARS)
-            </span>
-            <p className="text-lg font-black text-white font-mono">
-              $ {(metricas?.total_monto_ars || 0).toLocaleString('es-AR')}
-            </p>
-            <span className="text-[10px] text-gray-500 block">
-              En casos activos de asesoramiento
-            </span>
-          </div>
-
-          {/* KPI 2: Ingresos en Seguimiento (USD) */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 flex items-center gap-1.5">
-              <DollarSign size={13} className="text-blue-400" />
-              Monto en Cotización (USD)
-            </span>
-            <p className="text-lg font-black text-blue-300 font-mono">
-              USD {(metricas?.total_monto_usd || 0).toLocaleString('es-AR')}
-            </p>
-            <span className="text-[10px] text-gray-500 block">
-              En moneda extranjera
-            </span>
-          </div>
-
-          {/* KPI 3: Casos Quirúrgicos Activos */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-1">
-            <span className="text-[11px] font-bold text-gray-400 flex items-center gap-1.5">
-              <Stethoscope size={13} className="text-purple-400" />
-              Procedimientos Activos
-            </span>
-            <p className="text-lg font-black text-purple-300 font-mono">
-              {metricas.casos_activos} {metricas.casos_activos === 1 ? 'Caso' : 'Casos'}
-            </p>
-            <span className="text-[10px] text-gray-500 block">
-              De {metricas.total_casos} registrados históricamente
-            </span>
-          </div>
-
-          {/* KPI 4: Alertas de Tiempo SLA */}
-          <div className={`p-4 rounded-2xl border space-y-1 ${
-            metricas.casos_en_alerta > 0
-              ? 'bg-red-950/20 border-red-500/40 text-red-300'
-              : 'bg-neutral-900/80 border-[var(--border)] text-gray-300'
-          }`}>
-            <span className="text-[11px] font-bold flex items-center gap-1.5">
-              <ShieldAlert size={13} className={metricas.casos_en_alerta > 0 ? 'text-red-400' : 'text-emerald-400'} />
-              Alertas SLA de Seguimiento
-            </span>
-            <p className="text-lg font-black font-mono">
-              {metricas.casos_en_alerta} {metricas.casos_en_alerta === 1 ? 'Paciente' : 'Pacientes'}
-            </p>
-            <span className="text-[10px] opacity-80 block">
-              {metricas.casos_en_alerta > 0
-                ? `Sin contacto hace más de ${metricas.sla_dias_alerta} días`
-                : 'Todos los casos al día'}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {metricas && vistaActual === 'cerrados' && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* KPI Cerrados 1: Tasa de Conversión */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-emerald-500/30 space-y-1">
-            <span className="text-[11px] font-bold text-emerald-400 flex items-center gap-1.5">
-              <Activity size={13} />
-              Tasa de Éxito (Conversión)
-            </span>
-            <p className="text-xl font-black text-emerald-300 font-mono">
-              {metricas.tasa_conversion ?? 0}%
-            </p>
-            <span className="text-[10px] text-gray-400 block">
-              Cirugías operadas vs canceladas
-            </span>
-          </div>
-
-          {/* KPI Cerrados 2: Total Operados */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-1">
-            <span className="text-[11px] font-bold text-teal-400 flex items-center gap-1.5">
-              <CheckCircle2 size={13} />
-              Cirugías Realizadas
-            </span>
-            <p className="text-xl font-black text-white font-mono">
-              {metricas.casos_operados ?? 0}
-            </p>
-            <span className="text-[10px] text-gray-500 block">
-              Intervenciones concluidas con éxito
-            </span>
-          </div>
-
-          {/* KPI Cerrados 3: Total Cancelados */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-1">
-            <span className="text-[11px] font-bold text-red-400 flex items-center gap-1.5">
-              <XCircle size={13} />
-              Casos Desistidos / Cancelados
-            </span>
-            <p className="text-xl font-black text-red-300 font-mono">
-              {metricas.casos_cancelados ?? 0}
-            </p>
-            <span className="text-[10px] text-gray-500 block">
-              Desistimiento por costos o prepaga
-            </span>
-          </div>
-
-          {/* KPI Cerrados 4: Facturación en Operados */}
-          <div className="p-4 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-1">
-            <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
-              <DollarSign size={13} />
-              Monto Facturado (ARS)
-            </span>
-            <p className="text-lg font-black text-amber-300 font-mono">
-              $ {(metricas.total_operado_ars || 0).toLocaleString('es-AR')}
-            </p>
-            <span className="text-[10px] text-gray-500 block">
-              Total copagos y extras concretados
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* ==================================================================== */}
-      {/* 4. BARRA DE HERRAMIENTAS Y FILTROS AVANZADOS */}
-      {/* ==================================================================== */}
-      <div className="p-3.5 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2.5">
+      <div className="p-2.5 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-2">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           
           {/* Buscador de Texto */}
-          <div className="relative flex-1 min-w-[200px]">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <div className="relative flex-1 min-w-[220px]">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
               value={filtroTexto}
               onChange={(e) => setFiltroTexto(e.target.value)}
-              placeholder="Buscar por paciente, DNI, cirugía, cirujano o motivo..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+              placeholder="Buscar por paciente, DNI, cirugía, cirujano..."
+              className="w-full pl-8 pr-7 py-1 text-xs bg-neutral-950 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
             />
+            {filtroTexto && (
+              <button
+                type="button"
+                onClick={() => setFiltroTexto('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
 
           {/* Filtro por Práctica / Cirugía */}
-          <div className="flex items-center gap-1.5 min-w-[170px] max-w-[220px]">
-            <Stethoscope size={13} className="text-blue-400 shrink-0" />
+          <div className="flex items-center gap-1 min-w-[150px] max-w-[200px]">
+            <Stethoscope size={12} className="text-blue-400 shrink-0" />
             <select
               value={filtroPractica}
               onChange={(e) => setFiltroPractica(e.target.value)}
-              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
               title="Filtrar por tipo de práctica quirúrgica"
             >
               <option value="todas">Todas las Prácticas ({listaPracticas.reduce((a, b) => a + b.count, 0)})</option>
@@ -889,12 +806,12 @@ export default function PipelineQuirurgicoPage() {
           </div>
 
           {/* Filtro por Cirujano */}
-          <div className="flex items-center gap-1.5 min-w-[160px] max-w-[200px]">
-            <User size={13} className="text-emerald-400 shrink-0" />
+          <div className="flex items-center gap-1 min-w-[140px] max-w-[180px]">
+            <User size={12} className="text-emerald-400 shrink-0" />
             <select
               value={filtroCirujano}
               onChange={(e) => setFiltroCirujano(e.target.value)}
-              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
             >
               <option value="todos">Todos los Cirujanos</option>
               {listaCirujanos.map((cir) => (
@@ -906,12 +823,12 @@ export default function PipelineQuirurgicoPage() {
           </div>
 
           {/* Filtro por Obra Social */}
-          <div className="flex items-center gap-1.5 min-w-[160px] max-w-[200px]">
-            <Building2 size={13} className="text-purple-400 shrink-0" />
+          <div className="flex items-center gap-1 min-w-[140px] max-w-[180px]">
+            <Building2 size={12} className="text-purple-400 shrink-0" />
             <select
               value={filtroObraSocial}
               onChange={(e) => setFiltroObraSocial(e.target.value)}
-              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer truncate"
             >
               <option value="todos">Todas las Obras Sociales</option>
               {listaObrasSociales.map((os) => (
@@ -923,12 +840,12 @@ export default function PipelineQuirurgicoPage() {
           </div>
 
           {/* Filtro por Fecha de Cirugía (Presets) */}
-          <div className="flex items-center gap-1.5 min-w-[170px]">
-            <Calendar size={13} className="text-amber-400 shrink-0" />
+          <div className="flex items-center gap-1 min-w-[140px]">
+            <Calendar size={12} className="text-amber-400 shrink-0" />
             <select
               value={filtroFechaTipo}
               onChange={(e) => setFiltroFechaTipo(e.target.value as any)}
-              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-blue-500 cursor-pointer"
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer"
               title="Filtrar por fecha de cirugía"
             >
               <option value="todas">Todas las Fechas</option>
@@ -945,24 +862,24 @@ export default function PipelineQuirurgicoPage() {
             <button
               type="button"
               onClick={() => setSoloAlertas(!soloAlertas)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border shrink-0 ${
+              className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border shrink-0 ${
                 soloAlertas
                   ? 'bg-red-950 text-red-300 border-red-500/50 shadow-sm'
                   : 'bg-neutral-950 text-gray-400 border-[var(--border)] hover:text-white'
               }`}
             >
-              <Clock size={13} className={soloAlertas ? 'text-red-400' : 'text-gray-400'} />
-              Solo Alertas SLA
+              <Clock size={12} className={soloAlertas ? 'text-red-400' : 'text-gray-400'} />
+              <span>Solo Alertas SLA</span>
             </button>
           )}
 
           {/* En vista Cerrados: Sub-filtro Operado vs Cancelado */}
           {vistaActual === 'cerrados' && (
-            <div className="flex items-center gap-1 bg-neutral-950 p-1 rounded-xl border border-[var(--border)] text-xs">
+            <div className="flex items-center gap-1 bg-neutral-950 p-0.5 rounded-xl border border-[var(--border)] text-xs">
               <button
                 type="button"
                 onClick={() => setSubfiltroCerrados('todos')}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                className={`px-2 py-0.5 rounded-lg font-bold transition-all ${
                   subfiltroCerrados === 'todos' ? 'bg-neutral-800 text-white' : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
@@ -971,21 +888,21 @@ export default function PipelineQuirurgicoPage() {
               <button
                 type="button"
                 onClick={() => setSubfiltroCerrados('operado')}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
+                className={`px-2 py-0.5 rounded-lg font-bold transition-all flex items-center gap-1 ${
                   subfiltroCerrados === 'operado' ? 'bg-teal-950 text-teal-300 border border-teal-500/30' : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
-                <CheckCircle2 size={12} className="text-teal-400" />
+                <CheckCircle2 size={11} className="text-teal-400" />
                 Operados
               </button>
               <button
                 type="button"
                 onClick={() => setSubfiltroCerrados('cancelado')}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all flex items-center gap-1 ${
+                className={`px-2 py-0.5 rounded-lg font-bold transition-all flex items-center gap-1 ${
                   subfiltroCerrados === 'cancelado' ? 'bg-red-950 text-red-300 border border-red-500/30' : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
-                <XCircle size={12} className="text-red-400" />
+                <XCircle size={11} className="text-red-400" />
                 Cancelados
               </button>
             </div>
@@ -996,17 +913,17 @@ export default function PipelineQuirurgicoPage() {
             <button
               type="button"
               onClick={handleLimpiarFiltros}
-              className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0"
+              className="px-2 py-1 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1 transition-all shrink-0"
               title="Restablecer todos los filtros"
             >
-              <RotateCcw size={12} className="text-blue-400" />
-              Limpiar
+              <RotateCcw size={11} className="text-blue-400" />
+              <span>Limpiar</span>
             </button>
           )}
 
         </div>
 
-        {/* Fila 2: Selector de Rango de Fechas Personalizado */}
+        {/* Fila 2: Selector de Rango de Fechas Personalizado (si está activo) */}
         {filtroFechaTipo === 'personalizado' && (
           <div className="pt-2 border-t border-[var(--border)]/60 flex items-center flex-wrap gap-3 text-xs animate-in fade-in slide-in-from-top-1">
             <span className="font-bold text-gray-400 flex items-center gap-1.5">
@@ -1019,7 +936,7 @@ export default function PipelineQuirurgicoPage() {
                 type="date"
                 value={fechaDesde}
                 onChange={(e) => setFechaDesde(e.target.value)}
-                className="bg-neutral-950 border border-[var(--border)] rounded-lg px-2.5 py-1 text-white text-xs focus:outline-none focus:border-blue-500"
+                className="bg-neutral-950 border border-[var(--border)] rounded-lg px-2.5 py-0.5 text-white text-xs focus:outline-none focus:border-blue-500"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -1028,7 +945,7 @@ export default function PipelineQuirurgicoPage() {
                 type="date"
                 value={fechaHasta}
                 onChange={(e) => setFechaHasta(e.target.value)}
-                className="bg-neutral-950 border border-[var(--border)] rounded-lg px-2.5 py-1 text-white text-xs focus:outline-none focus:border-blue-500"
+                className="bg-neutral-950 border border-[var(--border)] rounded-lg px-2.5 py-0.5 text-white text-xs focus:outline-none focus:border-blue-500"
               />
             </div>
             {(fechaDesde || fechaHasta) && (
@@ -1049,338 +966,347 @@ export default function PipelineQuirurgicoPage() {
       </div>
 
       {/* ==================================================================== */}
-      {/* 5A. TABLERO KANBAN DE ETAPAS ABIERTAS / ACTIVAS (4 COLUMNAS) */}
+      {/* 5A. TABLERO KANBAN DE ETAPAS ABIERTAS / ACTIVAS (5 COLUMNAS FULL-WIDTH) */}
       {/* ==================================================================== */}
       {vistaActual === 'activos' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 items-start">
-          {ETAPAS_COLUMNAS_ACTIVAS.map((col) => {
-            const casosColumna = etapasActivasFiltradas[col.id] || []
-            const montoARSColumna = casosColumna
-              .filter((c) => c.moneda_extra !== 'USD')
-              .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
-            const montoUSDColumna = casosColumna
-              .filter((c) => c.moneda_extra === 'USD')
-              .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
+        <div className="w-full overflow-x-auto pb-4">
+          <div className="grid grid-cols-5 gap-3.5 min-w-[1300px] 2xl:min-w-0 items-start">
+            {ETAPAS_COLUMNAS_ACTIVAS.map((col) => {
+              const casosColumna = etapasActivasFiltradas[col.id] || []
+              const montoARSColumna = casosColumna
+                .filter((c) => c.moneda_extra !== 'USD')
+                .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
+              const montoUSDColumna = casosColumna
+                .filter((c) => c.moneda_extra === 'USD')
+                .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
 
-            return (
-              <div
-                key={col.id}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = 'move'
-                }}
-                onDragEnter={() => {
-                  if (draggedCaso && draggedCaso.estado !== col.id) {
-                    setDragOverColumnaId(col.id)
-                  }
-                }}
-                onDragLeave={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              return (
+                <div
+                  key={col.id}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDragEnter={() => {
+                    if (draggedCaso && draggedCaso.estado !== col.id) {
+                      setDragOverColumnaId(col.id)
+                    }
+                  }}
+                  onDragLeave={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+                      setDragOverColumnaId(null)
+                    }
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
                     setDragOverColumnaId(null)
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  setDragOverColumnaId(null)
-                  if (draggedCaso) {
-                    handleMoverEtapaDrop(draggedCaso, col.id)
-                  }
-                }}
-                className={`flex flex-col rounded-2xl p-3 min-h-[520px] space-y-3 transition-all duration-200 ${
-                  dragOverColumnaId === col.id
-                    ? 'ring-2 ring-blue-500/80 bg-blue-950/25 border-blue-500/60 shadow-lg shadow-blue-950/40'
-                    : 'bg-neutral-900/60 border border-[var(--border)]'
-                }`}
-              >
-                {/* Header de la Columna */}
-                <div className={`p-2.5 rounded-xl border ${col.colorHeader} space-y-1`}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`w-2 h-2 rounded-full ${col.colorDot}`} />
-                      <h3 className="text-xs font-bold">{col.titulo}</h3>
+                    if (draggedCaso) {
+                      handleMoverEtapaDrop(draggedCaso, col.id)
+                    }
+                  }}
+                  className={`flex flex-col rounded-2xl p-3 min-h-[520px] space-y-3 transition-all duration-200 ${
+                    dragOverColumnaId === col.id
+                      ? 'ring-2 ring-blue-500/80 bg-blue-950/25 border-blue-500/60 shadow-lg shadow-blue-950/40'
+                      : 'bg-neutral-900/60 border border-[var(--border)]'
+                  }`}
+                >
+                  {/* Header de la Columna */}
+                  <div className={`p-2.5 rounded-xl border ${col.colorHeader} space-y-1`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${col.colorDot}`} />
+                        <h3 className="text-xs font-bold">{col.titulo}</h3>
+                      </div>
+                      <span className="text-xs font-mono font-black px-2 py-0.5 rounded-full bg-black/40">
+                        {casosColumna.length}
+                      </span>
                     </div>
-                    <span className="text-xs font-mono font-black px-2 py-0.5 rounded-full bg-black/40">
-                      {casosColumna.length}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-[10px] opacity-80 pt-0.5">
-                    <span className="truncate">{col.subtitulo}</span>
-                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                      {montoARSColumna > 0 && (
-                        <span className="font-mono font-bold text-emerald-400">
-                          ${montoARSColumna.toLocaleString('es-AR')}
-                        </span>
-                      )}
-                      {montoUSDColumna > 0 && (
-                        <span className="font-mono font-bold text-amber-400">
-                          USD {montoUSDColumna.toLocaleString('es-AR')}
-                        </span>
-                      )}
+                    <div className="flex items-center justify-between text-[10px] opacity-80 pt-0.5">
+                      <span className="truncate">{col.subtitulo}</span>
+                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                        {montoARSColumna > 0 && (
+                          <span className="font-mono font-bold text-emerald-400">
+                            ${montoARSColumna.toLocaleString('es-AR')}
+                          </span>
+                        )}
+                        {montoUSDColumna > 0 && (
+                          <span className="font-mono font-bold text-amber-400">
+                            USD {montoUSDColumna.toLocaleString('es-AR')}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Lista de Tarjetas */}
-                <div className="space-y-2.5 flex-1 overflow-y-auto pr-0.5">
-                  {casosColumna.length === 0 ? (
-                    <div className={`p-6 text-center text-xs border border-dashed rounded-xl transition-all ${
-                      dragOverColumnaId === col.id
-                        ? 'border-blue-400/60 text-blue-300 bg-blue-950/30'
-                        : 'border-[var(--border)] text-gray-500'
-                    }`}>
-                      {dragOverColumnaId === col.id ? 'Soltar aquí para mover' : 'Sin cirugías en esta etapa'}
-                    </div>
-                  ) : (
-                    casosColumna.map((caso) => {
-                      const pac = caso.pacientes
-                      const isCritico = caso.es_critico
-                      const isAlerta = caso.es_alerta
-                      const os = caso.cobertura_obra_social || pac?.obra_social
+                  {/* Lista de Tarjetas */}
+                  <div className="space-y-2.5 flex-1 overflow-y-auto pr-0.5">
+                    {casosColumna.length === 0 ? (
+                      <div className={`p-6 text-center text-xs border border-dashed rounded-xl transition-all ${
+                        dragOverColumnaId === col.id
+                          ? 'border-blue-400/60 text-blue-300 bg-blue-950/30'
+                          : 'border-[var(--border)] text-gray-500'
+                      }`}>
+                        {dragOverColumnaId === col.id ? 'Soltar aquí para mover' : 'Sin cirugías en esta etapa'}
+                      </div>
+                    ) : (
+                      casosColumna.map((caso) => {
+                        const pac = caso.pacientes
+                        const isCritico = caso.es_critico
+                        const isAlerta = caso.es_alerta
+                        const os = caso.cobertura_obra_social || pac?.obra_social
 
-                      return (
-                        <div
-                          key={caso.id}
-                          draggable={true}
-                          onDragStart={(e) => {
-                            setDraggedCaso(caso)
-                            e.dataTransfer.setData('text/plain', caso.id)
-                            e.dataTransfer.effectAllowed = 'move'
-                          }}
-                          onDragEnd={() => {
-                            setDraggedCaso(null)
-                            setDragOverColumnaId(null)
-                          }}
-                          className={`p-3.5 rounded-xl border transition-all space-y-2.5 bg-neutral-950/80 hover:bg-neutral-950 group relative cursor-grab active:cursor-grabbing select-none ${
-                            draggedCaso?.id === caso.id
-                              ? 'opacity-40 scale-95 ring-2 ring-blue-500/80 border-blue-500'
-                              : isCritico
-                              ? 'border-red-500/50 shadow-sm shadow-red-950/20 hover:border-red-400'
-                              : isAlerta
-                              ? 'border-amber-500/40 hover:border-amber-400'
-                              : 'border-[var(--border)] hover:border-blue-500/50 hover:shadow-md'
-                          }`}
-                        >
-                          {/* Cabecera de la Tarjeta */}
-                          <div className="flex items-center justify-between gap-1 mb-1">
-                            <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-950/90 text-blue-300 border border-blue-500/40">
-                              {caso.codigo_caso || 'QX-26-0001'}
-                            </span>
-                            {caso.ojo && (
-                              <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 border border-[var(--border)]">
-                                {caso.ojo === 'AO' ? 'AO' : caso.ojo}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Chip de Progreso Bilateral si aplica */}
-                          {caso.checklist_prequirurgico?._progreso_bilateral?.es_bilateral && !caso.checklist_prequirurgico?._progreso_bilateral?.ambos_operados && (
-                            <div className="mb-1">
-                              {caso.checklist_prequirurgico._progreso_bilateral.od_operado && !caso.checklist_prequirurgico._progreso_bilateral.oi_operado && (
-                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center justify-center gap-1 w-full">
-                                  <span>👁️ OD Operado • OI Programado</span>
+                        return (
+                          <div
+                            key={caso.id}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              setDraggedCaso(caso)
+                              e.dataTransfer.setData('text/plain', caso.id)
+                              e.dataTransfer.effectAllowed = 'move'
+                            }}
+                            onDragEnd={() => {
+                              setDraggedCaso(null)
+                              setDragOverColumnaId(null)
+                            }}
+                            className={`p-3.5 rounded-xl border transition-all space-y-2 bg-neutral-950/80 hover:bg-neutral-950 group relative cursor-grab active:cursor-grabbing select-none ${
+                              draggedCaso?.id === caso.id
+                                ? 'opacity-40 scale-95 ring-2 ring-blue-500/80 border-blue-500'
+                                : isCritico
+                                ? 'border-red-500/50 shadow-sm shadow-red-950/20 hover:border-red-400'
+                                : isAlerta
+                                ? 'border-amber-500/40 hover:border-amber-400'
+                                : 'border-[var(--border)] hover:border-blue-500/50 hover:shadow-md'
+                            }`}
+                          >
+                            {/* Cabecera de la Tarjeta */}
+                            <div className="flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-950/90 text-blue-300 border border-blue-500/40">
+                                  {caso.codigo_caso || 'QX-26-0001'}
                                 </span>
-                              )}
-                              {!caso.checklist_prequirurgico._progreso_bilateral.od_operado && caso.checklist_prequirurgico._progreso_bilateral.oi_operado && (
-                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center justify-center gap-1 w-full">
-                                  <span>👁️ OI Operado • OD Programado</span>
+                                {caso.ojo && (
+                                  <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-neutral-800 text-gray-300 border border-[var(--border)]">
+                                    {caso.ojo === 'AO' ? 'AO (Bilateral)' : caso.ojo}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Chip SLA */}
+                              {caso.dias_sin_contacto !== undefined && (
+                                <span
+                                  className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 flex items-center gap-1 ${
+                                    isCritico
+                                      ? 'bg-red-950 text-red-300 border-red-500/60'
+                                      : isAlerta
+                                      ? 'bg-amber-950 text-amber-300 border-amber-500/50'
+                                      : 'bg-neutral-900 text-gray-400 border-[var(--border)]'
+                                  }`}
+                                  title={`Último contacto: hace ${caso.dias_sin_contacto} días`}
+                                >
+                                  <Clock size={10} />
+                                  {caso.dias_sin_contacto === 0 ? 'Hoy' : `${caso.dias_sin_contacto}d`}
                                 </span>
                               )}
                             </div>
-                          )}
 
-                          <div className="flex items-center justify-between gap-1.5">
-                            <Link
-                              href={`/pacientes?id=${caso.paciente_id}`}
-                              className="text-xs font-bold text-white group-hover:text-blue-400 transition-colors flex items-center gap-1 truncate"
-                              title="Ver expediente completo"
-                            >
-                              <span className="truncate">{pac?.nombre || 'Paciente'}</span>
-                              <ExternalLink size={11} className="opacity-0 group-hover:opacity-100 shrink-0 text-blue-400" />
-                            </Link>
+                            {/* Chip de Progreso Bilateral si aplica */}
+                            {caso.checklist_prequirurgico?._progreso_bilateral?.es_bilateral && !caso.checklist_prequirurgico?._progreso_bilateral?.ambos_operados && (
+                              <div className="pt-0.5">
+                                {caso.checklist_prequirurgico._progreso_bilateral.od_operado && !caso.checklist_prequirurgico._progreso_bilateral.oi_operado && (
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center justify-center gap-1 w-full">
+                                    <span>👁️ OD Operado • OI Programado</span>
+                                  </span>
+                                )}
+                                {!caso.checklist_prequirurgico._progreso_bilateral.od_operado && caso.checklist_prequirurgico._progreso_bilateral.oi_operado && (
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center justify-center gap-1 w-full">
+                                    <span>👁️ OI Operado • OD Programado</span>
+                                  </span>
+                                )}
+                              </div>
+                            )}
 
-                            {/* Chip SLA */}
-                            {caso.dias_sin_contacto !== undefined && (
-                              <span
-                                className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 flex items-center gap-1 ${
-                                  isCritico
-                                    ? 'bg-red-950 text-red-300 border-red-500/60'
-                                    : isAlerta
-                                    ? 'bg-amber-950 text-amber-300 border-amber-500/50'
-                                    : 'bg-neutral-900 text-gray-400 border-[var(--border)]'
-                                }`}
-                                title={`Último contacto: hace ${caso.dias_sin_contacto} días`}
+                            {/* Nombre del Paciente */}
+                            <div className="flex items-center justify-between gap-1.5 pt-0.5">
+                              <Link
+                                href={`/pacientes?id=${caso.paciente_id}`}
+                                className="text-xs font-bold text-white group-hover:text-blue-400 transition-colors flex items-center gap-1 truncate"
+                                title="Ver expediente completo"
                               >
-                                <Clock size={10} />
-                                {caso.dias_sin_contacto === 0
-                                  ? 'Hoy'
-                                  : `${caso.dias_sin_contacto} d`}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Detalle Quirúrgico y Médico */}
-                          <div className="text-[11px] space-y-1">
-                            <div className="flex items-center gap-1 text-gray-300 font-medium">
-                              <Stethoscope size={12} className="text-blue-400 shrink-0" />
-                              <span className="truncate">{caso.practica_nombre}</span>
-                            </div>
-
-                            {caso.medico_cirujano_nombre && (
-                              <div className="flex items-center gap-1 text-gray-400 text-[10px]">
-                                <User size={11} className="text-emerald-400 shrink-0" />
-                                <span className="truncate">Dr/a. {caso.medico_cirujano_nombre}</span>
-                              </div>
-                            )}
-
-                            {os && (
-                              <div className="flex items-center gap-1 text-gray-400 text-[10px]">
-                                <Building2 size={11} className="text-blue-400 shrink-0" />
-                                <span className="truncate">{os}</span>
-                              </div>
-                            )}
-
-                            {(caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia) && (
-                              <div className="flex items-center gap-1 text-gray-400 text-[10px] font-mono">
-                                <Calendar size={11} className="text-purple-400 shrink-0" />
-                                <span className="truncate">
-                                  {caso.fecha_definitiva_cirugia
-                                    ? `Definitiva: ${caso.fecha_definitiva_cirugia}`
-                                    : `Probable: ${caso.fecha_probable_cirugia}`}
+                                <span className="truncate">{pac?.nombre || 'Paciente'}</span>
+                                <ExternalLink size={11} className="opacity-0 group-hover:opacity-100 shrink-0 text-blue-400" />
+                              </Link>
+                              {pac?.telefono && (
+                                <span className="text-[10px] text-gray-500 font-mono shrink-0">
+                                  {pac.telefono}
                                 </span>
+                              )}
+                            </div>
+
+                            {/* Detalle Quirúrgico y Médico */}
+                            <div className="text-[11px] space-y-1">
+                              <div className="flex items-center gap-1 text-gray-300 font-medium">
+                                <Stethoscope size={12} className="text-blue-400 shrink-0" />
+                                <span className="truncate font-medium">{caso.practica_nombre}</span>
+                              </div>
+
+                              <div className="flex items-center justify-between gap-2 text-gray-400 text-[10px]">
+                                {caso.medico_cirujano_nombre ? (
+                                  <span className="truncate flex items-center gap-1">
+                                    <User size={11} className="text-emerald-400 shrink-0" />
+                                    Dr/a. {caso.medico_cirujano_nombre}
+                                  </span>
+                                ) : <span />}
+                                {os && (
+                                  <span className="truncate flex items-center gap-1 shrink-0 max-w-[130px]" title={os}>
+                                    <Building2 size={11} className="text-purple-400 shrink-0" />
+                                    {os}
+                                  </span>
+                                )}
+                              </div>
+
+                              {(caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia) && (
+                                <div className="flex items-center gap-1 text-gray-400 text-[10px] font-mono">
+                                  <Calendar size={11} className="text-amber-400 shrink-0" />
+                                  <span className="truncate">
+                                    {caso.fecha_definitiva_cirugia
+                                      ? `Definitiva: ${caso.fecha_definitiva_cirugia}`
+                                      : `Probable: ${caso.fecha_probable_cirugia}`}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Próxima Acción */}
+                            {caso.proxima_accion_texto && (
+                              <div className="p-1.5 rounded-lg bg-blue-950/30 border border-blue-500/20 text-[10px] text-blue-300 flex items-start gap-1">
+                                <Clock size={11} className="shrink-0 mt-0.5 text-blue-400" />
+                                <span className="truncate">{caso.proxima_accion_texto}</span>
                               </div>
                             )}
-                          </div>
 
-                          {/* Próxima Acción */}
-                          {caso.proxima_accion_texto && (
-                            <div className="p-1.5 rounded-lg bg-blue-950/30 border border-blue-500/20 text-[10px] text-blue-300 flex items-start gap-1">
-                              <Clock size={11} className="shrink-0 mt-0.5 text-blue-400" />
-                              <span className="truncate">{caso.proxima_accion_texto}</span>
-                            </div>
-                          )}
-
-                          {/* Botones de Acción Rápida (WhatsApp + Contacto Hoy) */}
-                          <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-1.5">
-                            
-                            {/* Monto de la Cirugía */}
-                            <span className="text-[11px] font-mono font-bold truncate">
-                              {Number(caso.monto_extra || 0) > 0 ? (
-                                caso.moneda_extra === 'USD' ? (
-                                  <span className="text-amber-400">USD {Number(caso.monto_extra).toLocaleString('es-AR')}</span>
+                            {/* Botones de Acción Rápida (WhatsApp + Contacto Hoy) */}
+                            <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-1.5">
+                              
+                              {/* Monto de la Cirugía */}
+                              <span className="text-[11px] font-mono font-bold truncate">
+                                {Number(caso.monto_extra || 0) > 0 ? (
+                                  caso.moneda_extra === 'USD' ? (
+                                    <span className="text-amber-400">USD {Number(caso.monto_extra).toLocaleString('es-AR')}</span>
+                                  ) : (
+                                    <span className="text-emerald-400">${Number(caso.monto_extra).toLocaleString('es-AR')} ARS</span>
+                                  )
                                 ) : (
-                                  <span className="text-emerald-400">${Number(caso.monto_extra).toLocaleString('es-AR')} ARS</span>
-                                )
-                              ) : (
-                                <span className="text-gray-500 font-normal">Sin cotizar</span>
-                              )}
-                            </span>
+                                  <span className="text-gray-500 font-normal">Sin cotizar</span>
+                                )}
+                              </span>
 
-                            <div className="flex items-center gap-1">
-                              {/* Botón Agendar en Quirófano si está Confirmado */}
-                              {caso.estado === 'confirmado' && (
-                                <Link
-                                  href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
-                                  className="px-2 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] flex items-center gap-1 shadow transition-colors"
-                                  title="Asignar fecha y sala en el Turnero de Quirófano"
+                              <div className="flex items-center gap-1 shrink-0">
+                                {/* Botón Agendar en Quirófano si está Confirmado */}
+                                {caso.estado === 'confirmado' && (
+                                  <Link
+                                    href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
+                                    className="px-2 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] flex items-center gap-1 shadow transition-colors"
+                                    title="Asignar fecha y sala en el Turnero de Quirófano"
+                                  >
+                                    <CalendarClock size={12} />
+                                    <span>Agendar</span>
+                                  </Link>
+                                )}
+
+                                {/* Badges de Estado Quirúrgico en Vivo */}
+                                {caso.estado === 'en_espera' && (
+                                  <Link
+                                    href="/quirofano-en-vivo"
+                                    className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-amber-500/30 transition-colors"
+                                    title="Paciente en sala de espera prequirúrgica. Clic para ver Pizarra en Vivo."
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                                    <span>En Espera</span>
+                                  </Link>
+                                )}
+
+                                {caso.estado === 'pre_quirofano' && (
+                                  <Link
+                                    href="/quirofano-en-vivo"
+                                    className="px-2 py-0.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-cyan-500/30 transition-colors"
+                                    title="Paciente en Pre-Quirófano (Área Limpia / Dilatación). Clic para ver Pizarra en Vivo."
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                                    <span>Pre-Qx</span>
+                                  </Link>
+                                )}
+
+                                {caso.estado === 'en_operacion' && (
+                                  <Link
+                                    href="/quirofano-en-vivo"
+                                    className="px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-purple-500/30 transition-colors"
+                                    title="Paciente en quirófano / mesa quirúrgica. Clic para ver Pizarra en Vivo."
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                                    <span>En Quirófano</span>
+                                  </Link>
+                                )}
+
+                                {caso.estado === 'programado' && (
+                                  <Link
+                                    href="/quirofano-en-vivo"
+                                    className="px-2 py-0.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-blue-500/30 transition-colors"
+                                    title="Turno agendado en Quirófano"
+                                  >
+                                    <span>Programado</span>
+                                  </Link>
+                                )}
+
+                                {/* Botón WhatsApp */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleAbrirWhatsApp(caso)}
+                                  className="p-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 transition-colors"
+                                  title="Enviar mensaje de WhatsApp con plantillas"
                                 >
-                                  <CalendarClock size={12} />
-                                  <span>Agendar</span>
-                                </Link>
-                              )}
+                                  <MessageSquare size={12} />
+                                </button>
 
-                              {/* Badges de Estado Quirúrgico en Vivo */}
-                              {caso.estado === 'en_espera' && (
-                                <Link
-                                  href="/quirofano-en-vivo"
-                                  className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-amber-500/30 transition-colors"
-                                  title="Paciente en sala de espera prequirúrgica. Clic para ver Pizarra en Vivo."
+                                {/* Botón Contactado Hoy */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarcarContactadoHoy(caso)}
+                                  disabled={actualizandoCasoId === caso.id}
+                                  className="p-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-[var(--border)] text-gray-400 hover:text-blue-400 transition-colors"
+                                  title="Registrar contacto hoy (reinicia SLA)"
                                 >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
-                                  <span>En Espera</span>
-                                </Link>
-                              )}
+                                  <Check size={12} />
+                                </button>
 
-                              {caso.estado === 'pre_quirofano' && (
-                                <Link
-                                  href="/quirofano-en-vivo"
-                                  className="px-2 py-0.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-cyan-500/30 transition-colors"
-                                  title="Paciente en Pre-Quirófano (Área Limpia / Dilatación). Clic para ver Pizarra en Vivo."
+                                {/* Selector para mover de etapa */}
+                                <select
+                                  value={caso.estado}
+                                  disabled={actualizandoCasoId === caso.id}
+                                  onChange={(e) => handleSeleccionarEtapa(caso, e.target.value)}
+                                  className="text-[10px] font-semibold bg-neutral-900 border border-[var(--border)] text-gray-300 rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer max-w-[105px]"
                                 >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                                  <span>Pre-Qx</span>
-                                </Link>
-                              )}
+                                  <option value="derivado">1. Derivado</option>
+                                  <option value="en_asesoramiento">2. Asesoramiento</option>
+                                  <option value="en_analisis">3. Análisis</option>
+                                  <option value="confirmado">4. Confirmado</option>
+                                  <option disabled>──────────</option>
+                                  <option value="operado">✔ Operado (Cerrar)</option>
+                                  <option value="cancelado">✖ Cancelar (Cerrar)</option>
+                                </select>
+                              </div>
 
-                              {caso.estado === 'en_operacion' && (
-                                <Link
-                                  href="/quirofano-en-vivo"
-                                  className="px-2 py-0.5 rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-purple-500/30 transition-colors"
-                                  title="Paciente en quirófano / mesa quirúrgica. Clic para ver Pizarra en Vivo."
-                                >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
-                                  <span>En Quirófano</span>
-                                </Link>
-                              )}
-
-                              {caso.estado === 'programado' && (
-                                <Link
-                                  href="/quirofano-en-vivo"
-                                  className="px-2 py-0.5 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-blue-500/30 transition-colors"
-                                  title="Turno agendado en Quirófano"
-                                >
-                                  <span>Programado</span>
-                                </Link>
-                              )}
-
-                              {/* Botón WhatsApp */}
-                              <button
-                                type="button"
-                                onClick={() => handleAbrirWhatsApp(caso)}
-                                className="p-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 transition-colors"
-                                title="Enviar mensaje de WhatsApp con plantillas"
-                              >
-                                <MessageSquare size={12} />
-                              </button>
-
-                              {/* Botón Contactado Hoy */}
-                              <button
-                                type="button"
-                                onClick={() => handleMarcarContactadoHoy(caso)}
-                                disabled={actualizandoCasoId === caso.id}
-                                className="p-1 rounded-lg bg-neutral-900 hover:bg-neutral-800 border border-[var(--border)] text-gray-400 hover:text-blue-400 transition-colors"
-                                title="Registrar contacto hoy (reinicia SLA)"
-                              >
-                                <Check size={12} />
-                              </button>
-
-                              {/* Selector para mover de etapa */}
-                              <select
-                                value={caso.estado}
-                                disabled={actualizandoCasoId === caso.id}
-                                onChange={(e) => handleSeleccionarEtapa(caso, e.target.value)}
-                                className="text-[10px] font-semibold bg-neutral-900 border border-[var(--border)] text-gray-300 rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer max-w-[105px]"
-                              >
-                                <option value="derivado">1. Derivado</option>
-                                <option value="en_asesoramiento">2. Asesoramiento</option>
-                                <option value="en_analisis">3. Análisis</option>
-                                <option value="confirmado">4. Confirmado</option>
-                                <option disabled>──────────</option>
-                                <option value="operado">✔ Operado (Cerrar)</option>
-                                <option value="cancelado">✖ Cancelar (Cerrar)</option>
-                              </select>
                             </div>
 
                           </div>
+                        )
+                      })
+                    )}
+                  </div>
 
-                        </div>
-                      )
-                    })
-                  )}
                 </div>
-
-              </div>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       )}
 
