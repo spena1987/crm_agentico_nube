@@ -47,7 +47,19 @@ export async function getAuthHeaders(customHeaders: HeadersInit = {}): Promise<R
   }
 
   try {
-    const { data: { session } } = await supabase.auth.getSession()
+    let session = (await supabase.auth.getSession()).data.session
+    // Proactivamente refrescar token si caduca en menos de 60 segundos
+    if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
+      try {
+        const { data: refreshed } = await supabase.auth.refreshSession()
+        if (refreshed?.session) {
+          session = refreshed.session
+        }
+      } catch (refErr) {
+        console.warn('Fallo al refrescar sesión proactivamente:', refErr)
+      }
+    }
+
     if (session?.access_token) {
       headers['Authorization'] = `Bearer ${session.access_token}`
     } else if (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
@@ -79,10 +91,28 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     delete authHeaders['Content-Type'] // Dejar que el navegador configure el boundary multipart
   }
 
-  return fetch(fullUrl, {
+  let res = await fetch(fullUrl, {
     ...options,
     headers: authHeaders,
   })
+
+  // Si retorna 401, reintentar una sola vez tras renovar sesión
+  if (res.status === 401) {
+    try {
+      const { data: refreshed } = await supabase.auth.refreshSession()
+      if (refreshed?.session?.access_token) {
+        const retryHeaders = { ...authHeaders, Authorization: `Bearer ${refreshed.session.access_token}` }
+        res = await fetch(fullUrl, {
+          ...options,
+          headers: retryHeaders,
+        })
+      }
+    } catch {
+      // Si falla renovación, retornar respuesta 401 original
+    }
+  }
+
+  return res
 }
 
 // Interceptor global en entorno de navegador para inyectar automáticamente Bearer token
@@ -103,7 +133,11 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
       try {
         let token: string | null = null
         try {
-          const { data: { session } } = await supabase.auth.getSession()
+          let session = (await supabase.auth.getSession()).data.session
+          if (session?.expires_at && session.expires_at * 1000 < Date.now() + 60000) {
+            const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }))
+            session = refreshed?.session || session
+          }
           token = session?.access_token || null
         } catch {
           // ignore
@@ -117,7 +151,24 @@ if (typeof window !== 'undefined' && !(window as any).__MEDCRM_FETCH_INTERCEPTOR
           if (!headers.has('Authorization') && !headers.has('authorization')) {
             headers.set('Authorization', `Bearer ${token}`)
           }
-          return originalFetch(input, { ...init, headers })
+          
+          let res = await originalFetch(input, { ...init, headers })
+
+          // Reintento resiliente ante 401 (token expirado durante la sesión)
+          if (res.status === 401) {
+            try {
+              const { data: refreshed } = await supabase.auth.refreshSession()
+              if (refreshed?.session?.access_token) {
+                const retryHeaders = new Headers(headers)
+                retryHeaders.set('Authorization', `Bearer ${refreshed.session.access_token}`)
+                res = await originalFetch(input, { ...init, headers: retryHeaders })
+              }
+            } catch {
+              // si falla refresco, devolver 401
+            }
+          }
+
+          return res
         }
       } catch (err) {
         // Si hay error recuperando sesión, continuar con llamada original

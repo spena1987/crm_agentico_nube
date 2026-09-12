@@ -1253,7 +1253,12 @@ export default function ChatInbox() {
         } else {
           // Despacho falló en backend: marcar mensaje como fallido para que el operador pueda reintentar o usar plantilla
           const errData = await response.json().catch(() => ({}))
-          const errMsg = errData.detail || errData.error || 'Error al despachar por WhatsApp'
+          let errMsg = errData.detail || errData.error || 'Error al despachar por WhatsApp'
+          if (response.status === 401) {
+            errMsg = 'Sesión expirada o no autorizada. Por favor vuelve a presionar Reintentar.'
+          } else if (errMsg.includes('131030') || errMsg.includes('allowed list')) {
+            errMsg = 'Número no registrado en la lista de prueba de Meta (Sandbox). Verifica el número en Meta Developers o usa un número de prueba autorizado.'
+          }
           const isWindowError = errMsg.includes('Ventana de 24 horas') || errMsg.includes('WINDOW_CLOSED') || errMsg.includes('131026') || errMsg.includes('requiere_plantilla')
 
           setMensajes((prev) =>
