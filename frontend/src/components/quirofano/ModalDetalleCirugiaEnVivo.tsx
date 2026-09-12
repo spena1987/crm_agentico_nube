@@ -19,7 +19,7 @@ import {
   Loader2,
   FileText
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ConsolaCabeceraIntraoperatoria from './modal/ConsolaCabeceraIntraoperatoria'
 import TabProgramacionLio from './modal/TabProgramacionLio'
 import TabHistoriaClinicaGeclisa from './modal/TabHistoriaClinicaGeclisa'
@@ -137,7 +137,7 @@ export default function ModalDetalleCirugiaEnVivo({
   useEffect(() => {
     const fetchLio = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/modelos-lio`)
+        const res = await apiFetch('/api/modelos-lio')
         const data = await res.json()
         if (data.success && data.modelos) {
           setModelosLio(data.modelos)
@@ -166,7 +166,7 @@ export default function ModalDetalleCirugiaEnVivo({
     try {
       setCargandoHC(true)
       setErrorHC(null)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(qId)}/historia-clinica`)
+      const res = await apiFetch(`/api/geclisa/pacientes/${encodeURIComponent(qId)}/historia-clinica`)
       const data = await res.json()
       if (res.ok) {
         setDatosHC(data)
@@ -191,7 +191,7 @@ export default function ModalDetalleCirugiaEnVivo({
     try {
       setCargandoInd(true)
       setErrorInd(null)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(qId)}/indicaciones`)
+      const res = await apiFetch(`/api/geclisa/pacientes/${encodeURIComponent(qId)}/indicaciones`)
       const data = await res.json()
       if (res.ok) {
         setDatosInd(data)
@@ -216,7 +216,7 @@ export default function ModalDetalleCirugiaEnVivo({
     try {
       setCargandoArchivos(true)
       setErrorArchivos(null)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/pacientes/${encodeURIComponent(qId)}/archivos`)
+      const res = await apiFetch(`/api/geclisa/pacientes/${encodeURIComponent(qId)}/archivos`)
       const data = await res.json()
       if (res.ok) {
         setDatosArchivos(data)
@@ -249,7 +249,7 @@ export default function ModalDetalleCirugiaEnVivo({
     }
     try {
       setEliminandoArchivoId(asId)
-      const res = await fetch(`${BACKEND_URL}/api/geclisa/archivos/${asId}`, {
+      const res = await apiFetch(`/api/geclisa/archivos/${asId}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -273,9 +273,8 @@ export default function ModalDetalleCirugiaEnVivo({
   const handleCambiarEstado = async (nuevoEstado: string) => {
     try {
       setProcesandoEstado(true)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoLocal.id}/cambiar-estado`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoLocal.id}/cambiar-estado`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ estado: nuevoEstado })
       })
       const data = await res.json()
@@ -304,9 +303,8 @@ export default function ModalDetalleCirugiaEnVivo({
     try {
       setGuardandoProg(true)
       setMensajeExitoProg(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoLocal.id}`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoLocal.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       })
       const data = await res.json()

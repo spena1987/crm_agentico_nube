@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import { X, Lock, Save, Loader2, AlertCircle } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 
 interface BloqueoModalProps {
   isOpen: boolean
@@ -35,9 +35,8 @@ export default function BloqueoModal({
     try {
       setGuardando(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/quirofano-bloqueos`, {
+      const res = await apiFetch('/api/quirofano-bloqueos', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           quirofano_id: quirofanoId || quirofanos[0]?.id,
           fecha,

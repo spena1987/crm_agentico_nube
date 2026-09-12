@@ -40,7 +40,7 @@ import {
   PackageCheck
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
@@ -93,7 +93,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     
     if (!turnoTarget) {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${tId}/datos-pulsera`)
+        const res = await apiFetch(`/api/turnos-quirofano/${tId}/datos-pulsera`)
         const data = await res.json()
         if (res.ok && data.success) {
           turnoTarget = {
@@ -256,7 +256,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   useEffect(() => {
     const loadQuirofanos = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`)
+        const res = await apiFetch('/api/quirofanos?solo_activos=true')
         const data = await res.json()
         if (data.success && data.quirofanos) {
           setQuirofanos(data.quirofanos)
@@ -272,11 +272,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const fetchTurnosDia = async () => {
     try {
       setCargando(true)
-      let url = `${BACKEND_URL}/api/turnos-quirofano-dia?fecha=${fecha}`
+      let url = `/api/turnos-quirofano-dia?fecha=${fecha}`
       if (quirofanoFiltro !== 'todos') {
         url += `&quirofano_id=${quirofanoFiltro}`
       }
-      const res = await fetch(url)
+      const res = await apiFetch(url)
       const data = await res.json()
       if (res.ok && data.success) {
         setTurnos(data.turnos || [])
@@ -316,9 +316,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const handleCambiarEstado = async (turnoId: string, nuevoEstado: string) => {
     try {
       setProcesandoId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ estado: nuevoEstado })
       })
       const data = await res.json()
@@ -341,7 +340,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     e.stopPropagation()
     try {
       setSubiendoGeclisaId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/subir-parte-quirurgico-geclisa`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/subir-parte-quirurgico-geclisa`, {
         method: 'POST'
       })
       const data = await res.json()
@@ -377,7 +376,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     }
     try {
       setDesvinculandoGeclisaId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/desvincular-documento-geclisa/parte_quirurgico`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/desvincular-documento-geclisa/parte_quirurgico`, {
         method: 'DELETE'
       })
       const data = await res.json()
@@ -410,7 +409,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     e.stopPropagation()
     try {
       setSubiendoConsentimientoId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/subir-consentimiento-geclisa`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/subir-consentimiento-geclisa`, {
         method: 'POST'
       })
       const data = await res.json()
@@ -446,7 +445,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     }
     try {
       setDesvinculandoGeclisaId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/desvincular-documento-geclisa/consentimiento`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/desvincular-documento-geclisa/consentimiento`, {
         method: 'DELETE'
       })
       const data = await res.json()
@@ -1220,7 +1219,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                           onClick={async (e) => {
                             e.stopPropagation()
                             try {
-                              const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${t.id}/parte-quirurgico`)
+                              const res = await apiFetch(`/api/turnos-quirofano/${t.id}/parte-quirurgico`)
                               const data = await res.json()
                               if (res.ok && data.pdf_url) {
                                 window.open(`${BACKEND_URL}${data.pdf_url}`, '_blank')

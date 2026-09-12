@@ -14,7 +14,7 @@ import {
   Info
 } from 'lucide-react'
 import QRCode from 'qrcode'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 
 interface ModalImprimirPulseraProps {
   isOpen: boolean
@@ -43,7 +43,7 @@ export default function ModalImprimirPulsera({
       try {
         setCargando(true)
         setError(null)
-        const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/datos-pulsera`)
+        const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/datos-pulsera`)
         const data = await res.json()
 
         if (!res.ok || !data.success) {
@@ -81,9 +81,8 @@ export default function ModalImprimirPulsera({
 
       // 1. Notificar al backend que se imprimió la pulsera
       try {
-        await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/marcar-pulsera-impresa`, {
+        await apiFetch(`/api/turnos-quirofano/${turnoId}/marcar-pulsera-impresa`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ usuario_crm: 'Operador Recepción' })
         })
       } catch (e) {

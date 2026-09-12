@@ -544,6 +544,7 @@ function ProgramacionQuirurgicaContent() {
           asesoriaIdInicial={paramAsesoriaId}
           pacienteIdInicial={paramPacienteId}
           casoConfirmadoInicial={casoConfirmadoSeleccionado}
+          casosConfirmadosIniciales={casosConfirmados}
           quirofanos={quirofanos}
           quirofanoDefectoId={slotClickData?.quirofanoId || quirofanoSeleccionadoId}
           fechaDefecto={slotClickData?.fecha || fechaSeleccionada}

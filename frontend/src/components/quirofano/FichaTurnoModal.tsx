@@ -35,7 +35,8 @@ import {
   Save,
   UploadCloud
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import { Printer } from 'lucide-react'
 
@@ -44,6 +45,7 @@ interface FichaTurnoModalProps {
   asesoriaIdInicial?: string
   pacienteIdInicial?: string
   casoConfirmadoInicial?: any
+  casosConfirmadosIniciales?: any[]
   quirofanos: any[]
   quirofanoDefectoId?: string
   fechaDefecto?: string
@@ -57,6 +59,7 @@ export default function FichaTurnoModal({
   asesoriaIdInicial,
   pacienteIdInicial,
   casoConfirmadoInicial,
+  casosConfirmadosIniciales,
   quirofanos,
   quirofanoDefectoId,
   fechaDefecto,
@@ -67,7 +70,13 @@ export default function FichaTurnoModal({
   const esEdicion = !!turno?.id
 
   // Casos confirmados desde Asesoramiento Quirúrgico
-  const [casosConfirmados, setCasosConfirmados] = useState<any[]>([])
+  const [casosConfirmados, setCasosConfirmados] = useState<any[]>(casosConfirmadosIniciales || [])
+
+  useEffect(() => {
+    if (casosConfirmadosIniciales && casosConfirmadosIniciales.length > 0) {
+      setCasosConfirmados(casosConfirmadosIniciales)
+    }
+  }, [casosConfirmadosIniciales])
   const [cargandoCasos, setCargandoCasos] = useState(false)
   const [casoSeleccionadoId, setCasoSeleccionadoId] = useState<string>(
     casoConfirmadoInicial
@@ -97,9 +106,8 @@ export default function FichaTurnoModal({
     }
     try {
       setGuardandoNuevoLio(true)
-      const res = await fetch(`${BACKEND_URL}/api/modelos-lio`, {
+      const res = await apiFetch('/api/modelos-lio', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...nuevoModeloLio, activo: true })
       })
       const data = await res.json()
@@ -255,18 +263,18 @@ export default function FichaTurnoModal({
         setCargandoCasos(true)
         
         const [resCasos, resPipe, resPrestadores, resLio, resConf] = await Promise.all([
-          fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`),
-          fetch(`${BACKEND_URL}/api/pipeline-quirurgico`),
-          fetch(`${BACKEND_URL}/api/prestadores?solo_activos=true`),
-          fetch(`${BACKEND_URL}/api/modelos-lio?solo_activos=true`),
-          fetch(`${BACKEND_URL}/api/configuracion-quirofano`)
+          apiFetch('/api/asesorias-quirurgicas/pendientes-quirofano').catch(() => null),
+          apiFetch('/api/pipeline-quirurgico').catch(() => null),
+          apiFetch('/api/prestadores?solo_activos=true').catch(() => null),
+          apiFetch('/api/modelos-lio?solo_activos=true').catch(() => null),
+          apiFetch('/api/configuracion-quirofano').catch(() => null)
         ])
 
-        const dataCasos = await resCasos.json()
-        const dataPipe = await resPipe.json()
-        const dataPrestadores = await resPrestadores.json()
-        const dataLio = await resLio.json()
-        const dataConf = await resConf.json()
+        const dataCasos = resCasos ? await resCasos.json().catch(() => ({})) : {}
+        const dataPipe = resPipe ? await resPipe.json().catch(() => ({})) : {}
+        const dataPrestadores = resPrestadores ? await resPrestadores.json().catch(() => ({})) : {}
+        const dataLio = resLio ? await resLio.json().catch(() => ({})) : {}
+        const dataConf = resConf ? await resConf.json().catch(() => ({})) : {}
 
         // Prestadores por rol
         if (dataLio.success && dataLio.modelos) {
@@ -283,6 +291,22 @@ export default function FichaTurnoModal({
           listaCasos = dataCasos.casos
         } else if (dataPipe.success && dataPipe.etapas?.confirmado) {
           listaCasos = dataPipe.etapas.confirmado
+        } else if (casosConfirmadosIniciales && casosConfirmadosIniciales.length > 0) {
+          listaCasos = casosConfirmadosIniciales
+        } else {
+          // Fallback directo resiliente con cliente Supabase
+          try {
+            const { data: directAs } = await supabase
+              .from('asesorias_quirurgicas')
+              .select('*, pacientes(*)')
+              .in('estado', ['confirmado', 'programado'])
+              .order('created_at', { ascending: false })
+            if (directAs && directAs.length > 0) {
+              listaCasos = directAs
+            }
+          } catch (e) {
+            console.warn('Fallback Supabase:', e)
+          }
         }
 
         setCasosConfirmados(listaCasos)
@@ -360,14 +384,13 @@ export default function FichaTurnoModal({
         lente_vencimiento: formData.lleva_lente && formData.lente_vencimiento ? formData.lente_vencimiento : null
       }
 
-      const url = esEdicion
-        ? `${BACKEND_URL}/api/turnos-quirofano/${turno.id}`
-        : `${BACKEND_URL}/api/turnos-quirofano`
+      const endpoint = esEdicion
+        ? `/api/turnos-quirofano/${turno.id}`
+        : '/api/turnos-quirofano'
       const method = esEdicion ? 'PUT' : 'POST'
 
-      const res = await fetch(url, {
+      const res = await apiFetch(endpoint, {
         method,
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
 
@@ -399,7 +422,7 @@ export default function FichaTurnoModal({
     try {
       setCancelando(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}`, {
         method: 'DELETE'
       })
       const data = await res.json()
@@ -421,7 +444,7 @@ export default function FichaTurnoModal({
     try {
       setEnviandoWA(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/enviar-consentimiento-wa`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/enviar-consentimiento-wa`, {
         method: 'POST'
       })
       const data = await res.json()
@@ -446,7 +469,7 @@ export default function FichaTurnoModal({
     try {
       setSubiendoConsentimientoGeclisa(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/subir-consentimiento-geclisa`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/subir-consentimiento-geclisa`, {
         method: 'POST'
       })
       const data = await res.json()
@@ -468,7 +491,7 @@ export default function FichaTurnoModal({
     try {
       setSubiendoParteGeclisa(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/subir-parte-quirurgico-geclisa`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/subir-parte-quirurgico-geclisa`, {
         method: 'POST'
       })
       const data = await res.json()
@@ -496,7 +519,7 @@ export default function FichaTurnoModal({
     try {
       setEliminandoConsentimientoGeclisa(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/consentimiento`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/consentimiento`, {
         method: 'DELETE'
       })
       const data = await res.json()
@@ -521,7 +544,7 @@ export default function FichaTurnoModal({
     try {
       setEliminandoParteGeclisa(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/parte_quirurgico`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/desvincular-documento-geclisa/parte_quirurgico`, {
         method: 'DELETE'
       })
       const data = await res.json()
