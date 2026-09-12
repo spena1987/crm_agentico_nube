@@ -1762,9 +1762,11 @@ export default function ChatInbox() {
                     // 2. MENSAJE NORMAL DE WHATSAPP O STICKER
                     const isSticker = msg.metadata_json?.tipo === 'sticker'
                     const isButton = msg.metadata_json?.tipo === 'button' || msg.contenido?.startsWith('🔘') || msg.contenido === '[BUTTON] Mensaje recibido'
+                    const isTemplate = msg.metadata_json?.tipo === 'template' || Boolean(msg.metadata_json?.template_name) || Boolean(msg.contenido?.includes('[PLANTILLA OFICIAL'))
                     const hasText = Boolean(
                       msg.contenido && (
                         isButton ||
+                        isTemplate ||
                         !msg.metadata_json?.tipo ||
                         (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))
                       )
@@ -1772,7 +1774,8 @@ export default function ChatInbox() {
                     const hasMedia = Boolean(
                       msg.metadata_json?.tipo &&
                       msg.metadata_json?.tipo !== 'texto' &&
-                      msg.metadata_json?.tipo !== 'button'
+                      msg.metadata_json?.tipo !== 'button' &&
+                      msg.metadata_json?.tipo !== 'template'
                     )
 
                     return (
@@ -1818,7 +1821,9 @@ export default function ChatInbox() {
                           <div
                             className={`max-w-[80%] sm:max-w-[70%] rounded-xl px-3 py-1.5 shadow-sm text-[13px] leading-snug relative ${
                               isOperator
-                                ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                                ? isTemplate
+                                  ? 'bg-[#182642] border border-blue-400/30 text-white rounded-tr-none shadow-blue-950/40'
+                                  : 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
                                 : isBot
                                 ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
                                 : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
@@ -1902,6 +1907,14 @@ export default function ChatInbox() {
                                   <div className="inline-flex items-center gap-1.5 py-1 px-2.5 my-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-medium text-xs shadow-xs select-none">
                                     <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">Botón Clickeado</span>
                                     <span>{msg.contenido === '[BUTTON] Mensaje recibido' ? 'Recibir Presupuesto PDF' : msg.contenido.replace(/^🔘\s*/, '')}</span>
+                                  </div>
+                                ) : isTemplate ? (
+                                  <div className="space-y-1.5 pt-0.5">
+                                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded w-fit select-none">
+                                      <FileText size={11} className="text-amber-400" />
+                                      <span>PLANTILLA OFICIAL META</span>
+                                    </div>
+                                    <WhatsAppFormattedText text={msg.contenido} className="block whitespace-pre-wrap leading-relaxed" />
                                   </div>
                                 ) : (
                                   <WhatsAppFormattedText text={msg.contenido} className="inline" />

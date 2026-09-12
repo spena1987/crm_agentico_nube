@@ -3016,6 +3016,34 @@ def enviar_presupuesto_por_whatsapp(
         )
         if w_res.get("code") == "WINDOW_CLOSED" or w_res.get("enviado_real") is False:
             raise ValueError(w_res.get("error") or "Ventana de 24 horas cerrada. Meta exige enviar la plantilla oficial homologada de presupuesto.")
+
+        # Guardar en la conversación del CRM para que el operador y el equipo médico vean el presupuesto enviado
+        if conv_id and w_res.get("success"):
+            try:
+                base_backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app").rstrip("/")
+                pdf_rel_or_full = f"{base_backend_url}/static/presupuesto_{presupuesto_id}.pdf"
+                supabase.table("mensajes").insert({
+                    "conversacion_id": conv_id,
+                    "emisor": "operador",
+                    "contenido": mensaje_final,
+                    "metadata_json": {
+                        "tipo": "documento",
+                        "media_url": pdf_rel_or_full,
+                        "file_name": pdf_filename,
+                        "caption": mensaje_final,
+                        "wamid": w_res.get("wamid"),
+                        "delivery_status": "enviado",
+                        "provider": "meta_cloud_api",
+                        "presupuesto_id": presupuesto_id
+                    },
+                    "whatsapp_message_id": w_res.get("wamid")
+                }).execute()
+                supabase.table("conversaciones").update({
+                    "ultimo_mensaje": f"📄 Presupuesto: {mensaje_final[:50]}...",
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }).eq("id", conv_id).execute()
+            except Exception as msg_err:
+                logger.warning(f"Error guardando presupuesto de texto libre en mensajes: {msg_err}")
     
     # 7. Actualizar estado del presupuesto a 'enviado'
     supabase.table("presupuestos").update({
