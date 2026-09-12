@@ -1029,13 +1029,22 @@ def generar_pdf_consentimiento_informado(
             hash_doc = (firma_metadata or {}).get("hash") or "SHA256-VERIFIED"
             token_val = (firma_metadata or {}).get("token") or turno.get("consentimiento_token") or turno_id
             
-            import qrcode
-            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or "https://crmagenticonube-production.up.railway.app"
-            verify_url = f"{base_app_url}/consentimiento/verificar/{token_val}"
-            qr_img = qrcode.make(verify_url)
-            temp_qr_path = os.path.join(PDF_DIR, f"temp_qr_verify_{turno_id}.png")
-            qr_img.save(temp_qr_path)
-            qr_element = RLImage(temp_qr_path, width=0.85*inch, height=0.85*inch)
+            # --- Generación Segura y Aislada del Código QR de Cotejo Pericial ---
+            qr_element = None
+            try:
+                import qrcode
+                base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or "https://crm-agentico-nube.vercel.app"
+                verify_url = f"{base_app_url}/consentimiento/verificar/{token_val}"
+                qr_img = qrcode.make(verify_url)
+                temp_qr_path = os.path.join(PDF_DIR, f"temp_qr_verify_{turno_id}.png")
+                qr_img.save(temp_qr_path)
+                qr_element = RLImage(temp_qr_path, width=0.85*inch, height=0.85*inch)
+            except Exception as qr_err:
+                logger.warning(f"No se pudo generar QR de verificación pericial ({qr_err}): usando indicador textual")
+                qr_element = Paragraph(
+                    f"<font size=7 color='#1E3A8A'><b>VERIFICACIÓN<br/>ONLINE</b></font><br/><font size=5.5 color='#64748B'>Token:<br/>{token_val[:10]}...</font>",
+                    ParagraphStyle('QRAlt', parent=style_normal, alignment=1)
+                )
 
             meta_text = (
                 f"<font size=7.5 color='#1E3A8A'><b>CERTIFICACIÓN DE FIRMA ELECTRÓNICA MÉDICO-LEGAL</b></font><br/>"

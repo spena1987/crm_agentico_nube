@@ -18,6 +18,7 @@ venv.bak/
 neonize.db*
 swagger_geclisa.json
 backend/app/static/*.pdf
+backend/app/static/temp_*
 backend/app/static/media/*
 !backend/app/static/.gitkeep
 

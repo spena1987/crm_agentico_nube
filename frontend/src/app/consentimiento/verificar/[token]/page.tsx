@@ -18,7 +18,7 @@ import {
   Loader2
 } from 'lucide-react'
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || ''
+import { BACKEND_URL } from '@/lib/api'
 
 export default function PaginaVerificarConsentimiento() {
   const params = useParams()
@@ -36,8 +36,22 @@ export default function PaginaVerificarConsentimiento() {
       try {
         setCargando(true)
         setError(null)
-        const res = await fetch(`${BACKEND_URL}/api/consentimiento/verificar/${token}`)
-        const data = await res.json()
+        const baseUrl = BACKEND_URL || 'https://crmagenticonube-production.up.railway.app'
+        const res = await fetch(`${baseUrl}/api/consentimiento/verificar/${token}`)
+        
+        let data: any = null
+        const contentType = res.headers.get('content-type') || ''
+        if (contentType.includes('application/json')) {
+          data = await res.json()
+        } else {
+          const rawText = await res.text()
+          try {
+            data = JSON.parse(rawText)
+          } catch {
+            throw new Error(`El servicio de verificación no devolvió un formato válido (HTTP ${res.status}).`)
+          }
+        }
+
         if (!res.ok || !data.success) {
           throw new Error(data.detail || 'No se pudo verificar el documento informado.')
         }
@@ -219,7 +233,7 @@ export default function PaginaVerificarConsentimiento() {
           {/* Botón de Descarga del PDF Oficial */}
           {pdf_url && (
             <a
-              href={`${BACKEND_URL}${pdf_url}`}
+              href={pdf_url.startsWith('http') ? pdf_url : `${BACKEND_URL || 'https://crmagenticonube-production.up.railway.app'}${pdf_url.startsWith('/') ? '' : '/'}${pdf_url}`}
               target="_blank"
               rel="noreferrer"
               className="flex items-center justify-center gap-2 w-full py-3.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-2xl shadow-xl transition-all"

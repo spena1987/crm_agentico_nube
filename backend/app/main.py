@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
-from fastapi.responses import Response, StreamingResponse, FileResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse, RedirectResponse
 import io
 import csv
 import openpyxl
@@ -304,8 +304,17 @@ def servir_archivo_estatico(filename: str):
         
     file_path = os.path.join(PDF_DIR, safe_filename)
     
-    # 2. Si no existe en disco, verificar si es un presupuesto y regenerar
-    if not os.path.exists(file_path):
+    # 2. Si no existe en disco (o si es un consentimiento previo degradado < 15KB), regenerar on-demand
+    necesita_regenerar = not os.path.exists(file_path)
+    if not necesita_regenerar and safe_filename.startswith("consentimiento_") and safe_filename.endswith(".pdf"):
+        try:
+            if os.path.getsize(file_path) < 15000:
+                logger.info(f"PDF de consentimiento en disco ({safe_filename}) tiene tamaño menor a 15KB ({os.path.getsize(file_path)} bytes), forzando regeneración.")
+                necesita_regenerar = True
+        except Exception:
+            pass
+
+    if necesita_regenerar:
         if safe_filename.startswith("presupuesto_") and safe_filename.endswith(".pdf"):
             presupuesto_id = safe_filename.replace("presupuesto_", "").replace(".pdf", "")
             try:
@@ -3902,6 +3911,13 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
     except Exception as e:
         logger.error(f"Error al firmar consentimiento: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/consentimiento/verificar/{token}")
+def redirect_verificacion_web(token: str):
+    """
+    Redirecciona la consulta web pericial hacia la aplicación frontend en Vercel.
+    """
+    return RedirectResponse(f"https://crm-agentico-nube.vercel.app/consentimiento/verificar/{token}", status_code=302)
 
 @app.get("/api/consentimiento/verificar/{token}")
 @app.get("/api/consentimiento-publico/{token}/verificar")
