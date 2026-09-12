@@ -28,7 +28,7 @@ import {
   Eye
 } from 'lucide-react'
 
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
 interface SubNavItem {
@@ -92,7 +92,7 @@ export default function Navigation() {
 
   const fetchUnreadMetrics = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/conversaciones/metricas`, { cache: 'no-store' })
+      const res = await apiFetch('/api/conversaciones/metricas', { cache: 'no-store' })
       if (res.ok) {
         const data = await res.json()
         setUnreadChatCount(data.no_leidos_count || 0)
@@ -116,9 +116,9 @@ export default function Navigation() {
     }
     window.addEventListener('resize', handleResize)
 
-    // Cargar métricas iniciales y configurar polling de respaldo
+    // Cargar métricas iniciales y configurar polling de respaldo (20s)
     fetchUnreadMetrics()
-    const intervalMetrics = setInterval(fetchUnreadMetrics, 5000)
+    const intervalMetrics = setInterval(fetchUnreadMetrics, 20000)
 
     // Suscripción Realtime a mensajes para actualizar badge en vivo
     const channel = supabase

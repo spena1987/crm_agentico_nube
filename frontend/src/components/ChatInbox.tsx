@@ -61,7 +61,7 @@ import ChatContactContextMenu from './chat/ChatContactContextMenu'
 import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
 import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 
 export interface OperadorAsignado {
   id: string
@@ -306,9 +306,8 @@ export default function ChatInbox() {
   const sendPresence = async (convId: string, presence: 'composing' | 'paused') => {
     if (!convId) return
     try {
-      await fetch(`${BACKEND_URL}/api/conversaciones/${convId}/presencia`, {
+      await apiFetch(`/api/conversaciones/${convId}/presencia`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ presence })
       })
     } catch (e) {
@@ -347,7 +346,7 @@ export default function ChatInbox() {
 
   const fetchWAStatus = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
+      const res = await apiFetch('/api/whatsapp/status')
       if (res.ok) {
         const data = await res.json()
         setWaStatus(data)
@@ -367,7 +366,7 @@ export default function ChatInbox() {
       let convs: Conversacion[] = []
       
       try {
-        const res = await fetch(`${BACKEND_URL}/api/conversaciones`, { cache: 'no-store' })
+        const res = await apiFetch('/api/conversaciones', { cache: 'no-store' })
         if (res.ok) {
           const apiData = await res.json()
           if (Array.isArray(apiData) && apiData.length > 0) {
@@ -443,7 +442,7 @@ export default function ChatInbox() {
       let msgs: Mensaje[] = []
 
       try {
-        const res = await fetch(`${BACKEND_URL}/api/conversaciones/${convId}/mensajes`, { cache: 'no-store' })
+        const res = await apiFetch(`/api/conversaciones/${convId}/mensajes`, { cache: 'no-store' })
         if (res.ok) {
           const apiMsgs = await res.json()
           if (Array.isArray(apiMsgs)) {
@@ -551,8 +550,7 @@ export default function ChatInbox() {
     )
 
     fetchMensajes(selectedConvId)
-    // Notificar a WhatsApp y marcar mensajes como leídos en Supabase y Meta
-    fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
+    apiFetch(`/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
 
     const intervalMsgs = setInterval(() => {
       if (!selectedConvId) return
@@ -644,7 +642,7 @@ export default function ChatInbox() {
             })
             // Si llega un mensaje nuevo mientras tenemos el chat abierto, marcarlo leído
             if (newMsg.emisor === 'paciente' && currentActive) {
-              fetch(`${BACKEND_URL}/api/conversaciones/${currentActive}/leer`, { method: 'POST' }).catch(() => {})
+              apiFetch(`/api/conversaciones/${currentActive}/leer`, { method: 'POST' }).catch(() => {})
             }
           }
           setConversaciones((prevConvs) => 
@@ -718,7 +716,7 @@ export default function ChatInbox() {
     const fetchOperadores = async () => {
       try {
         setCargandoOperadores(true)
-        const res = await fetch(`${BACKEND_URL}/api/conversaciones/operadores-activos`)
+        const res = await apiFetch('/api/conversaciones/operadores-activos')
         if (res.ok) {
           const data = await res.json()
           if (Array.isArray(data)) {
@@ -810,9 +808,8 @@ export default function ChatInbox() {
     setTomandoCaso(true)
     try {
       const userName = user.user_metadata?.nombre_completo || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Operador'
-      const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/tomar`, {
+      const res = await apiFetch(`/api/conversaciones/${selectedConvId}/tomar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           usuario_id: user.id,
           usuario_nombre: userName
@@ -867,9 +864,8 @@ export default function ChatInbox() {
       const destinoOp = operadores.find((o) => o.id === derivarUsuarioId)
       const destinoNombre = destinoOp?.nombre_completo || destinoOp?.email || 'Colega'
 
-      const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/derivar`, {
+      const res = await apiFetch(`/api/conversaciones/${selectedConvId}/derivar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           nuevo_usuario_id: derivarUsuarioId,
           nota_traspaso: derivarNota.trim(),
@@ -929,9 +925,8 @@ export default function ChatInbox() {
     setFinalizandoCaso(true)
     try {
       const userName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
-      const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/finalizar`, {
+      const res = await apiFetch(`/api/conversaciones/${selectedConvId}/finalizar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           usuario_nombre: userName
         })
@@ -1010,9 +1005,8 @@ export default function ChatInbox() {
         })
       )
 
-      await fetch(`${BACKEND_URL}/api/mensajes/${msg.id}/reaccionar`, {
+      await apiFetch(`/api/mensajes/${msg.id}/reaccionar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emoji })
       })
     } catch (err) {
@@ -1032,9 +1026,8 @@ export default function ChatInbox() {
       
       const notasActuales = (pac as any).historial_notas ? `${(pac as any).historial_notas}\n\n${nuevaNota}` : nuevaNota
 
-      await fetch(`${BACKEND_URL}/api/pacientes/${pac.id}`, {
+      await apiFetch(`/api/pacientes/${pac.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ historial_notas: notasActuales })
       })
 
@@ -1067,7 +1060,7 @@ export default function ChatInbox() {
     if (!confirm('¿Deseas eliminar este mensaje del chat?')) return
     try {
       setMensajes((prev) => prev.filter((m) => m.id !== msg.id))
-      await fetch(`${BACKEND_URL}/api/mensajes/${msg.id}`, { method: 'DELETE' })
+      await apiFetch(`/api/mensajes/${msg.id}`, { method: 'DELETE' })
     } catch (err) {
       console.error('Error eliminando mensaje:', err)
     }
@@ -1091,9 +1084,9 @@ export default function ChatInbox() {
     )
     try {
       if (currentlyUnread) {
-        await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/leer`, { method: 'POST' })
+        await apiFetch(`/api/conversaciones/${conv.id}/leer`, { method: 'POST' })
       } else {
-        await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/marcar-no-leido`, { method: 'POST' })
+        await apiFetch(`/api/conversaciones/${conv.id}/marcar-no-leido`, { method: 'POST' })
       }
     } catch (err) {
       console.error('Error alternando estado de no leído:', err)
@@ -1111,9 +1104,8 @@ export default function ChatInbox() {
       )
     )
     try {
-      await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/fijar`, {
+      await apiFetch(`/api/conversaciones/${conv.id}/fijar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fijada: newPinned })
       })
     } catch (err) {
@@ -1131,9 +1123,8 @@ export default function ChatInbox() {
       prev.map((c) => (c.id === conv.id ? { ...c, bot_disabled: newDisabled } : c))
     )
     try {
-      await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}/toggle-bot`, {
+      await apiFetch(`/api/conversaciones/${conv.id}/toggle-bot`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ bot_disabled: newDisabled })
       })
     } catch (err) {
@@ -1158,7 +1149,7 @@ export default function ChatInbox() {
     try {
       setConversaciones((prev) => prev.filter((c) => c.id !== conv.id))
       if (selectedConvId === conv.id) setSelectedConvId(null)
-      await fetch(`${BACKEND_URL}/api/conversaciones/${conv.id}`, { method: 'DELETE' })
+      await apiFetch(`/api/conversaciones/${conv.id}`, { method: 'DELETE' })
     } catch (err) {
       console.error('Error eliminando conversación:', err)
     }
@@ -1224,9 +1215,8 @@ export default function ChatInbox() {
       
       let dispatchedViaBackend = false
       try {
-        const response = await fetch(`${BACKEND_URL}/api/whatsapp/send-message`, {
+        const response = await apiFetch('/api/whatsapp/send-message', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             telefono: telefonoDestino,
             mensaje: mensajeAEnviar,
@@ -1234,7 +1224,9 @@ export default function ChatInbox() {
             is_internal_note: esNotaInternaActual,
             quoted_message_id: quotedId,
             quoted_message_data: quotedData
-          })
+          }),
+          timeoutMs: 15000,
+          retryOnNetworkError: true
         })
 
         if (response.ok) {
@@ -1244,9 +1236,8 @@ export default function ChatInbox() {
             setConversaciones((prev) =>
               prev.map((c) => (c.id === selectedConvId ? { ...c, bot_disabled: true } : c))
             )
-            fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/toggle-bot`, {
+            apiFetch(`/api/conversaciones/${selectedConvId}/toggle-bot`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ bot_disabled: true })
             }).catch(() => {})
           }
@@ -1283,21 +1274,46 @@ export default function ChatInbox() {
           return
         }
       } catch (backendErr: any) {
-        console.warn('Backend WhatsApp no disponible:', backendErr)
-        setMensajes((prev) =>
-          prev.map((m) =>
-            m.id === optimisticMsg.id
-              ? {
-                  ...m,
-                  metadata_json: {
-                    ...(m.metadata_json || {}),
-                    delivery_status: 'fallido',
-                    error_message: 'Servidor no disponible o error de red'
+        console.warn('Backend WhatsApp reporte de error o timeout:', backendErr)
+
+        // Margen de gracia visual (2.5s): verificar si el mensaje ingresó a Supabase
+        // a pesar de una desconexión o latencia en el retorno del cliente
+        await new Promise((r) => setTimeout(r, 2500))
+
+        let yaConfirmadoEnDb = false
+        try {
+          const checkRes = await supabase
+            .from('mensajes')
+            .select('id')
+            .eq('conversacion_id', selectedConvId)
+            .eq('contenido', mensajeAEnviar)
+            .order('created_at', { ascending: false })
+            .limit(1)
+          if (checkRes.data && checkRes.data.length > 0) {
+            yaConfirmadoEnDb = true
+            fetchMensajes(selectedConvId)
+            return
+          }
+        } catch {
+          // Si falla la verificación, continuar al marcado
+        }
+
+        if (!yaConfirmadoEnDb) {
+          setMensajes((prev) =>
+            prev.map((m) =>
+              m.id === optimisticMsg.id
+                ? {
+                    ...m,
+                    metadata_json: {
+                      ...(m.metadata_json || {}),
+                      delivery_status: 'fallido',
+                      error_message: 'Servidor no disponible o error de red'
+                    }
                   }
-                }
-              : m
+                : m
+            )
           )
-        )
+        }
         return
       }
 
@@ -1323,9 +1339,11 @@ export default function ChatInbox() {
       formData.append('conversacion_id', selectedConvId)
       formData.append('caption', file.name || 'Captura de pantalla')
 
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-media`, {
+      const res = await apiFetch('/api/whatsapp/send-media', {
         method: 'POST',
-        body: formData
+        body: formData,
+        timeoutMs: 30000,
+        retryOnNetworkError: true
       })
 
       if (!res.ok) throw new Error('Error al enviar archivo')
@@ -1375,9 +1393,8 @@ export default function ChatInbox() {
     setCopilotLoading('sugerir')
     try {
       const paciente = getPatient(selectedConv)
-      const res = await fetch(`${BACKEND_URL}/api/chat/copilot/sugerir`, {
+      const res = await apiFetch('/api/chat/copilot/sugerir', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversacion_id: selectedConvId,
           paciente_id: paciente?.id || selectedConv?.paciente_id,
@@ -1402,9 +1419,8 @@ export default function ChatInbox() {
     if (!nuevoMensaje.trim() || copilotLoading) return
     setCopilotLoading('mejorar')
     try {
-      const res = await fetch(`${BACKEND_URL}/api/chat/copilot/mejorar`, {
+      const res = await apiFetch('/api/chat/copilot/mejorar', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ texto: nuevoMensaje })
       })
       if (res.ok) {
@@ -1425,9 +1441,8 @@ export default function ChatInbox() {
     if (!selectedConvId || copilotLoading) return
     setCopilotLoading('resumir')
     try {
-      const res = await fetch(`${BACKEND_URL}/api/chat/copilot/resumir`, {
+      const res = await apiFetch('/api/chat/copilot/resumir', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversacion_id: selectedConvId,
           historial: mensajes.slice(-25)
@@ -1474,9 +1489,8 @@ export default function ChatInbox() {
       prev.map((c) => (c.id === convId ? { ...c, archivada: nextState } : c))
     )
     try {
-      await fetch(`${BACKEND_URL}/api/conversaciones/${convId}/archivar`, {
+      await apiFetch(`/api/conversaciones/${convId}/archivar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ archivada: nextState })
       })
     } catch (e) {
@@ -1490,9 +1504,8 @@ export default function ChatInbox() {
 
     setSimulando(true)
     try {
-      await fetch(`${BACKEND_URL}/api/simulate-message`, {
+      await apiFetch('/api/simulate-message', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ telefono: simTelefono, mensaje: simTexto })
       })
       setSimTexto('')

@@ -75,15 +75,23 @@ export async function getAuthHeaders(customHeaders: HeadersInit = {}): Promise<R
   return headers
 }
 
+export interface ApiFetchOptions extends RequestInit {
+  timeoutMs?: number
+  retryOnNetworkError?: boolean
+}
+
 /**
- * Wrapper de fetch que inyecta automáticamente la URL del backend y el token Bearer.
+ * Wrapper de fetch que inyecta automáticamente la URL del backend, token Bearer,
+ * timeout adaptativo configurable y reintento resiliente ante micro-cortes de red o 401.
  */
-export async function apiFetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
+export async function apiFetch(endpoint: string, options: ApiFetchOptions = {}): Promise<Response> {
   const fullUrl = endpoint.startsWith('http://') || endpoint.startsWith('https://')
     ? endpoint
     : `${BACKEND_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
 
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
+  const timeoutMs = options.timeoutMs ?? 15000
+  const retryOnNetworkError = options.retryOnNetworkError ?? true
 
   const baseHeaders: Record<string, string> = isFormData ? {} : { 'Content-Type': 'application/json' }
   const authHeaders = await getAuthHeaders(options.headers || baseHeaders)
@@ -91,10 +99,41 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
     delete authHeaders['Content-Type'] // Dejar que el navegador configure el boundary multipart
   }
 
-  let res = await fetch(fullUrl, {
-    ...options,
-    headers: authHeaders,
-  })
+  const executeFetch = async (headers: Record<string, string>) => {
+    let controller: AbortController | null = null
+    let signal = options.signal
+    if (!signal && typeof AbortController !== 'undefined') {
+      controller = new AbortController()
+      signal = controller.signal
+    }
+
+    const timeoutId = controller ? setTimeout(() => controller?.abort(), timeoutMs) : null
+
+    try {
+      return await fetch(fullUrl, {
+        ...options,
+        signal,
+        headers,
+      })
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }
+
+  let res: Response
+  try {
+    res = await executeFetch(authHeaders)
+  } catch (err: any) {
+    // Si falló por desconexión transitoria, reintentar una vez tras breve pausa
+    if (retryOnNetworkError) {
+      await new Promise(r => setTimeout(r, 800))
+      const freshHeaders = await getAuthHeaders(options.headers || baseHeaders)
+      if (isFormData) delete freshHeaders['Content-Type']
+      res = await executeFetch(freshHeaders)
+    } else {
+      throw err
+    }
+  }
 
   // Si retorna 401, reintentar una sola vez tras renovar sesión
   if (res.status === 401) {
@@ -102,10 +141,7 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}): Pro
       const { data: refreshed } = await supabase.auth.refreshSession()
       if (refreshed?.session?.access_token) {
         const retryHeaders = { ...authHeaders, Authorization: `Bearer ${refreshed.session.access_token}` }
-        res = await fetch(fullUrl, {
-          ...options,
-          headers: retryHeaders,
-        })
+        res = await executeFetch(retryHeaders)
       }
     } catch {
       // Si falla renovación, retornar respuesta 401 original
