@@ -4131,18 +4131,114 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
         logger.error(f"Error al listar asesorías confirmadas para quirófano: {e}")
         return []
 
+def evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id: str, turno_origen: Optional[Dict[str, Any]] = None, nuevo_estado_turno: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Evalúa integralmente el estado de una asesoría quirúrgica considerando su lateralidad (unilateral vs bilateral AO)
+    y el estado de todos los turnos quirúrgicos asociados.
+    
+    Reglas clínicas:
+    - Caso Unilateral (OD u OI): Al pasar su turno a 'operado', la asesoría pasa a 'operado' (caso cerrado).
+    - Caso Bilateral (AO):
+        * Si ambos ojos (OD y OI) tienen turnos en 'operado' -> La asesoría pasa a 'operado'.
+        * Si solo un ojo está en 'operado' y el otro está 'programado', 'en_espera', 'pre_quirofano' o pendiente ->
+          La asesoría PERMANECE en 'programado' (o estado activo en quirófano) y se registra el progreso bilateral.
+          No se traslada a Historial de Cerrados.
+    """
+    if not supabase or not asesoria_id:
+        return {}
+    try:
+        # 1. Obtener asesoría
+        res_a = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+        if not res_a.data:
+            return {}
+        asesoria = res_a.data[0]
+        
+        ojo_caso = (asesoria.get("ojo") or "OD").upper()
+        checklist = asesoria.get("checklist_prequirurgico") or {}
+        meta_bilateral = checklist.get("_meta_bilateral") or {}
+        es_bilateral = (ojo_caso == "AO") or bool(meta_bilateral) or (asesoria.get("modalidad_bilateral") in ["escalonada", "simultanea"])
+        
+        # 2. Obtener todos los turnos no cancelados de esta asesoría (y del paciente como fallback)
+        res_turnos = supabase.table("turnos_quirofano").select("*").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+        turnos = res_turnos.data or []
+        
+        if not turnos and asesoria.get("paciente_id"):
+            res_t_pac = supabase.table("turnos_quirofano").select("*").eq("paciente_id", asesoria["paciente_id"]).neq("estado", "cancelado").execute()
+            turnos = res_t_pac.data or []
+            
+        turnos_od = [t for t in turnos if (t.get("ojo") or "").upper() == "OD"]
+        turnos_oi = [t for t in turnos if (t.get("ojo") or "").upper() == "OI"]
+        turnos_ao = [t for t in turnos if (t.get("ojo") or "").upper() == "AO"]
+        
+        od_operado = any(t.get("estado") == "operado" for t in turnos_od)
+        oi_operado = any(t.get("estado") == "operado" for t in turnos_oi)
+        ao_operado = any(t.get("estado") == "operado" for t in turnos_ao)
+        
+        payload_upd: Dict[str, Any] = {"updated_at": "now()"}
+        
+        if not es_bilateral:
+            # Caso Unilateral
+            if nuevo_estado_turno == "operado" or any(t.get("estado") == "operado" for t in turnos):
+                payload_upd["estado"] = "operado"
+                if turno_origen and turno_origen.get("fecha_cirugia"):
+                    payload_upd["fecha_definitiva_cirugia"] = turno_origen["fecha_cirugia"]
+                if turno_origen and turno_origen.get("parte_quirurgico_pdf_url"):
+                    payload_upd["parte_quirurgico_pdf_url"] = turno_origen["parte_quirurgico_pdf_url"]
+            elif nuevo_estado_turno:
+                if nuevo_estado_turno in ["en_espera", "pre_quirofano", "en_operacion"]:
+                    payload_upd["estado"] = "programado"
+                elif nuevo_estado_turno in ["programado", "confirmado"]:
+                    payload_upd["estado"] = nuevo_estado_turno
+        else:
+            # Caso Bilateral (AO)
+            ambos_operados = (od_operado and oi_operado) or ao_operado
+            
+            progreso_bilateral = {
+                "es_bilateral": True,
+                "od_operado": od_operado,
+                "oi_operado": oi_operado,
+                "ambos_operados": ambos_operados,
+                "total_ojos_operados": 2 if ambos_operados else (1 if (od_operado or oi_operado) else 0),
+                "total_ojos_requeridos": 2
+            }
+            
+            updated_checklist = {
+                **checklist,
+                "_progreso_bilateral": progreso_bilateral
+            }
+            payload_upd["checklist_prequirurgico"] = updated_checklist
+            
+            if ambos_operados:
+                payload_upd["estado"] = "operado"
+                if turno_origen and turno_origen.get("fecha_cirugia"):
+                    payload_upd["fecha_definitiva_cirugia"] = turno_origen["fecha_cirugia"]
+                if turno_origen and turno_origen.get("parte_quirurgico_pdf_url"):
+                    payload_upd["parte_quirurgico_pdf_url"] = turno_origen["parte_quirurgico_pdf_url"]
+            else:
+                # Si no están ambos operados, el caso sigue ACTIVO en 'programado'
+                payload_upd["estado"] = "programado"
+                if od_operado and turno_origen and (turno_origen.get("ojo") or "").upper() == "OD":
+                    payload_upd["fecha_definitiva_cirugia"] = turno_origen.get("fecha_cirugia")
+                elif oi_operado and turno_origen and (turno_origen.get("ojo") or "").upper() == "OI":
+                    payload_upd["fecha_definitiva_2do_ojo"] = turno_origen.get("fecha_cirugia")
+        
+        supabase.table("asesorias_quirurgicas").update(payload_upd).eq("id", asesoria_id).execute()
+        logger.info(f"Asesoría {asesoria_id} sincronizada integralmente: estado '{payload_upd.get('estado')}' (Bilateral: {es_bilateral}, Ambos operados: {od_operado and oi_operado})")
+        return payload_upd
+    except Exception as e:
+        logger.error(f"Error en evaluar_y_sincronizar_estado_caso_quirurgico para asesoria {asesoria_id}: {e}")
+        return {}
+
 def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str, Any], nuevo_estado: Optional[str] = "programado"):
     """
     Sincroniza atómicamente la ficha de asesoramiento quirúrgico (paciente)
     cuando el personal de quirófano programa o actualiza el turno.
-    Pasa el caso a estado 'programado'.
+    Pasa el caso a estado 'programado' o evalúa bilateralidad si pasa a 'operado'.
     """
     if not supabase or not asesoria_id:
         return
     try:
         payload_asesoria: Dict[str, Any] = {"updated_at": "now()"}
-        if nuevo_estado:
-            payload_asesoria["estado"] = nuevo_estado
         if "fecha_cirugia" in datos_turno and datos_turno["fecha_cirugia"]:
             payload_asesoria["fecha_definitiva_cirugia"] = datos_turno["fecha_cirugia"]
         if "cirujano_nombre" in datos_turno and datos_turno["cirujano_nombre"]:
@@ -4160,7 +4256,9 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
 
         if payload_asesoria:
             supabase.table("asesorias_quirurgicas").update(payload_asesoria).eq("id", asesoria_id).execute()
-            logger.info(f"Sincronizada asesoría {asesoria_id} a estado '{nuevo_estado}' con éxito.")
+        
+        # Evaluar estado de la asesoría con reglas de bilateralidad
+        evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id, datos_turno, nuevo_estado)
     except Exception as e:
         logger.error(f"Error sincronizando asesoría {asesoria_id} desde quirófano: {e}")
 
@@ -4898,13 +4996,7 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
                 logger.error(f"Error generando Parte Quirúrgico PDF al operar turno {turno_id}: {e_pdf}")
 
         if asesoria_id:
-            asesoria_payload: Dict[str, Any] = {"estado": nuevo_estado, "updated_at": "now()"}
-            if nuevo_estado == "operado":
-                asesoria_payload["fecha_definitiva_cirugia"] = turno_actual.get("fecha_cirugia")
-                if turno_modificado.get("parte_quirurgico_pdf_url"):
-                    asesoria_payload["parte_quirurgico_pdf_url"] = turno_modificado["parte_quirurgico_pdf_url"]
-            supabase.table("asesorias_quirurgicas").update(asesoria_payload).eq("id", asesoria_id).execute()
-            logger.info(f"Asesoría {asesoria_id} sincronizada automáticamente al estado '{nuevo_estado}'.")
+            evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id, turno_modificado, nuevo_estado)
             
         return {"success": True, "turno": turno_modificado, "nuevo_estado": nuevo_estado}
     except Exception as e:
@@ -5695,12 +5787,12 @@ def procesar_escaneo_qr_turno(
         res_upd = supabase.table("turnos_quirofano").update(update_payload).eq("id", turno_id).execute()
         turno_actualizado = res_upd.data[0] if res_upd.data else {**turno, **update_payload}
         
-        # Si tiene asesoría vinculada, reflejar estado
+        # Si tiene asesoría vinculada, reflejar estado con evaluación bilateral
         if turno.get("asesoria_id"):
             try:
                 as_estado = "en_espera" if nuevo_estado in ["en_espera", "pre_quirofano"] else "en_operacion" if nuevo_estado == "en_operacion" else "operado" if nuevo_estado == "operado" else "programado" if nuevo_estado == "programado" else None
                 if as_estado:
-                    supabase.table("asesorias_quirurgicas").update({"estado": as_estado, "updated_at": "now()"}).eq("id", turno["asesoria_id"]).execute()
+                    evaluar_y_sincronizar_estado_caso_quirurgico(turno["asesoria_id"], turno_actualizado, as_estado)
             except Exception as e_as:
                 logger.warning(f"Aviso actualizando asesoria {turno.get('asesoria_id')} desde escaneo QR: {e_as}")
                 

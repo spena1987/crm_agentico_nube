@@ -73,6 +73,7 @@ interface AsesoriaCasoPipeline {
   dias_sin_contacto?: number
   es_alerta?: boolean
   es_critico?: boolean
+  checklist_prequirurgico?: any
   created_at: string
   updated_at?: string
 }
@@ -1170,6 +1171,22 @@ export default function PipelineQuirurgicoPage() {
                               </span>
                             )}
                           </div>
+
+                          {/* Chip de Progreso Bilateral si aplica */}
+                          {caso.checklist_prequirurgico?._progreso_bilateral?.es_bilateral && !caso.checklist_prequirurgico?._progreso_bilateral?.ambos_operados && (
+                            <div className="mb-1">
+                              {caso.checklist_prequirurgico._progreso_bilateral.od_operado && !caso.checklist_prequirurgico._progreso_bilateral.oi_operado && (
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center justify-center gap-1 w-full">
+                                  <span>👁️ OD Operado • OI Programado</span>
+                                </span>
+                              )}
+                              {!caso.checklist_prequirurgico._progreso_bilateral.od_operado && caso.checklist_prequirurgico._progreso_bilateral.oi_operado && (
+                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center justify-center gap-1 w-full">
+                                  <span>👁️ OI Operado • OD Programado</span>
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           <div className="flex items-center justify-between gap-1.5">
                             <Link

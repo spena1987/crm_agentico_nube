@@ -106,6 +106,14 @@ export default function CasoAcordeonHeader({
                 🏥 Quirófano Agendado
               </span>
             )}
+            {/* Badge de Progreso Bilateral */}
+            {((caso.checklist_prequirurgico as any)?._progreso_bilateral?.es_bilateral &&
+              !(caso.checklist_prequirurgico as any)?._progreso_bilateral?.ambos_operados &&
+              ((caso.checklist_prequirurgico as any)?._progreso_bilateral?.od_operado || (caso.checklist_prequirurgico as any)?._progreso_bilateral?.oi_operado)) && (
+              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                👁️ 1er Ojo Operado ({(caso.checklist_prequirurgico as any)?._progreso_bilateral?.od_operado ? 'OD' : 'OI'}) • 2do Ojo Pendiente
+              </span>
+            )}
             {esCasoCerrado && (
               <span
                 className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
