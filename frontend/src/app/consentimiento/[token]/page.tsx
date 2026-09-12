@@ -66,42 +66,104 @@ export default function ConsentimientoPublicoPage() {
     fetchDatos()
   }, [token])
 
+  // Prevenir gestos de scroll/zoom nativos sobre el canvas en iOS/Android
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const preventScroll = (e: TouchEvent) => {
+      if (e.cancelable) {
+        e.preventDefault()
+      }
+    }
+
+    canvas.addEventListener('touchstart', preventScroll, { passive: false })
+    canvas.addEventListener('touchmove', preventScroll, { passive: false })
+
+    return () => {
+      canvas.removeEventListener('touchstart', preventScroll)
+      canvas.removeEventListener('touchmove', preventScroll)
+    }
+  }, [cargando, firmadoExito])
+
+  // Función matemática de normalización y escalado de coordenadas
+  const getCoordinates = (e: any) => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+
+    let clientX = 0
+    let clientY = 0
+
+    if (e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX
+      clientY = e.touches[0].clientY
+    } else if (e.changedTouches && e.changedTouches.length > 0) {
+      clientX = e.changedTouches[0].clientX
+      clientY = e.changedTouches[0].clientY
+    } else if (typeof e.clientX === 'number') {
+      clientX = e.clientX
+      clientY = e.clientY
+    } else {
+      return null
+    }
+
+    // Escalar píxeles visuales CSS al tamaño del buffer del canvas
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    }
+  }
+
   // Canvas drawing handlers
   const startDrawing = (e: any) => {
+    const coords = getCoordinates(e)
+    if (!coords) return
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const rect = canvas.getBoundingClientRect()
-    const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left
-    const y = (e.clientY || e.touches?.[0]?.clientY) - rect.top
+    ctx.lineWidth = 3
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.strokeStyle = '#0F172A'
 
     ctx.beginPath()
-    ctx.moveTo(x, y)
+    ctx.moveTo(coords.x, coords.y)
     setIsDrawing(true)
   }
 
   const draw = (e: any) => {
     if (!isDrawing) return
+    const coords = getCoordinates(e)
+    if (!coords) return
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    const rect = canvas.getBoundingClientRect()
-    const x = (e.clientX || e.touches?.[0]?.clientX) - rect.left
-    const y = (e.clientY || e.touches?.[0]?.clientY) - rect.top
-
-    ctx.lineWidth = 2.5
+    ctx.lineWidth = 3
     ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
     ctx.strokeStyle = '#0F172A'
-    ctx.lineTo(x, y)
+
+    ctx.lineTo(coords.x, coords.y)
     ctx.stroke()
     setHasDrawn(true)
   }
 
   const stopDrawing = () => {
+    const canvas = canvasRef.current
+    if (canvas && isDrawing) {
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.closePath()
+      }
+    }
     setIsDrawing(false)
   }
 
@@ -397,18 +459,21 @@ export default function ConsentimientoPublicoPage() {
               </button>
             </div>
 
-            <div className="border-2 border-dashed border-slate-300 rounded-2xl overflow-hidden bg-white touch-none">
+            <div className="border-2 border-dashed border-slate-300 rounded-2xl overflow-hidden bg-white touch-none relative shadow-inner">
               <canvas
                 ref={canvasRef}
-                width={500}
-                height={160}
+                width={600}
+                height={200}
                 onMouseDown={startDrawing}
                 onMouseMove={draw}
                 onMouseUp={stopDrawing}
+                onMouseLeave={stopDrawing}
                 onTouchStart={startDrawing}
                 onTouchMove={draw}
                 onTouchEnd={stopDrawing}
-                className="w-full h-40 cursor-crosshair block"
+                onTouchCancel={stopDrawing}
+                style={{ touchAction: 'none' }}
+                className="w-full h-44 cursor-crosshair block touch-none"
               />
             </div>
             <p className="text-[10px] text-slate-500 text-center leading-normal">
