@@ -703,6 +703,20 @@ def generar_html_consentimiento(
     if sig_b64 and not sig_b64.startswith("data:"):
         sig_b64 = f"data:image/png;base64,{sig_b64}"
         
+    import io, base64, qrcode
+    token_val = (firma_metadata or {}).get("token") or turno.get("consentimiento_token") or turno.get("id") or "token"
+    base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or "https://crmagenticonube-production.up.railway.app"
+    verify_url = f"{base_app_url}/consentimiento/verificar/{token_val}"
+    
+    qr_b64 = ""
+    try:
+        qr_buf = io.BytesIO()
+        qr_img = qrcode.make(verify_url)
+        qr_img.save(qr_buf, format="PNG")
+        qr_b64 = "data:image/png;base64," + base64.b64encode(qr_buf.getvalue()).decode()
+    except Exception as qe:
+        logger.warning(f"No se pudo generar QR en HTML: {qe}")
+
     context = {
         "nombre_institucion": nombre_inst,
         "subtitulo_institucion": subtitulo_inst,
@@ -723,9 +737,13 @@ def generar_html_consentimiento(
         "quirofano_nombre": (turno.get("quirofanos") or {}).get("nombre") or turno.get("quirofano_nombre") or "Quirófano Central",
         "cuerpo_html": cuerpo_html,
         "firma_img_base64": sig_b64,
-        "firma_timestamp": (firma_metadata or {}).get("fecha_hora") or (firma_metadata or {}).get("timestamp") or "N/A",
-        "firma_ip": (firma_metadata or {}).get("ip_origen") or (firma_metadata or {}).get("ip") or "Web-Client",
+        "firma_timestamp_art": (firma_metadata or {}).get("timestamp_art") or (firma_metadata or {}).get("fecha_hora") or "N/A",
+        "firma_timestamp_utc": (firma_metadata or {}).get("timestamp_utc") or (firma_metadata or {}).get("timestamp") or "N/A",
+        "firma_ip": (firma_metadata or {}).get("ip") or (firma_metadata or {}).get("ip_origen") or "No registrada",
         "firma_hash": (firma_metadata or {}).get("hash") or "SHA256-VERIFIED",
+        "qr_base64": qr_b64,
+        "verify_url": verify_url,
+        "token": token_val
     }
     
     return template.render(**context)
@@ -988,50 +1006,87 @@ def generar_pdf_consentimiento_informado(
             clean_b64 = clean_b64.strip()
             
             sig_element = None
-            if len(clean_b64) > 200 and not clean_b64.endswith("..."):
+            if len(clean_b64) > 50 and not clean_b64.endswith("..."):
                 try:
                     img_data = base64.b64decode(clean_b64)
                     temp_sig_path = os.path.join(PDF_DIR, f"temp_sig_{turno_id}.png")
                     with open(temp_sig_path, "wb") as f_sig:
                         f_sig.write(img_data)
-                    sig_element = RLImage(temp_sig_path, width=2.0*inch, height=0.8*inch)
+                    sig_element = RLImage(temp_sig_path, width=2.4*inch, height=0.85*inch)
                 except Exception as img_err:
                     logger.warning(f"No se pudo renderizar PNG de firma ({img_err}), aplicando sello de verificación digital.")
                     sig_element = None
             
             if sig_element is None:
                 sig_element = Paragraph(
-                    f"<font color='#059669' size=9><b>✔ FIRMADO DIGITALMENTE</b></font><br/><font size=7 color='#64748B'>Validación de Consentimiento Confirmada<br/>{pac_nombre} (DNI: {pac_dni})</font>",
+                    f"<font color='#059669' size=9><b>✔ FIRMADO ELECTRÓNICAMENTE</b></font><br/><font size=7 color='#64748B'>Validación de Consentimiento Confirmada<br/>{pac_nombre} (DNI: {pac_dni})</font>",
                     ParagraphStyle('SigBox', parent=style_valor, alignment=1)
                 )
             
-            ts = (firma_metadata or {}).get("timestamp") or "N/A"
-            ip = (firma_metadata or {}).get("ip") or "N/A"
+            ts_art = (firma_metadata or {}).get("timestamp_art") or (firma_metadata or {}).get("fecha_hora") or "N/A"
+            ts_utc = (firma_metadata or {}).get("timestamp_utc") or (firma_metadata or {}).get("timestamp") or "N/A"
+            ip = (firma_metadata or {}).get("ip") or (firma_metadata or {}).get("ip_origen") or "No registrada"
             hash_doc = (firma_metadata or {}).get("hash") or "SHA256-VERIFIED"
-
-            meta_text = f"<font size=7 color='#64748B'><b>FIRMA DIGITAL REGISTRADA VÍA WHATSAPP / WEB</b><br/>Fecha/Hora: {ts} UTC<br/>IP de Origen: {ip}<br/>Trazabilidad: {hash_doc[:24]}...</font>"
+            token_val = (firma_metadata or {}).get("token") or turno.get("consentimiento_token") or turno_id
             
+            import qrcode
+            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or "https://crmagenticonube-production.up.railway.app"
+            verify_url = f"{base_app_url}/consentimiento/verificar/{token_val}"
+            qr_img = qrcode.make(verify_url)
+            temp_qr_path = os.path.join(PDF_DIR, f"temp_qr_verify_{turno_id}.png")
+            qr_img.save(temp_qr_path)
+            qr_element = RLImage(temp_qr_path, width=0.85*inch, height=0.85*inch)
+
+            meta_text = (
+                f"<font size=7.5 color='#1E3A8A'><b>CERTIFICACIÓN DE FIRMA ELECTRÓNICA MÉDICO-LEGAL</b></font><br/>"
+                f"<font size=6.5 color='#334155'>"
+                f"<b>Marco Normativo:</b> Ley 25.506 (Art. 5) • Ley 26.529 (Arts. 5-10) • CCCN Art. 288<br/>"
+                f"<b>Titular:</b> {pac_nombre} (DNI: {pac_dni})<br/>"
+                f"<b>Fecha y Hora Oficial:</b> {ts_art} (ART / UTC-3)<br/>"
+                f"<b>Sello UTC:</b> {ts_utc} UTC<br/>"
+                f"<b>IP de Origen:</b> {ip}<br/>"
+                f"<b>Hash de Integridad (SHA-256):</b><br/>"
+                f"<font face='Courier' size=5.5 color='#0F172A'><b>{hash_doc}</b></font><br/>"
+                f"<i>Documento con validez legal acreditada mediante auditoría criptográfica y pericial.</i>"
+                f"</font>"
+            )
+
+            qr_cell = [
+                qr_element,
+                Spacer(1, 2),
+                Paragraph("<font size=5 color='#64748B'>Escanear para cotejo pericial</font>", ParagraphStyle('QRTxt', parent=style_normal, alignment=1))
+            ]
+
+            sig_cell = [
+                sig_element,
+                Paragraph(f"<b>{pac_nombre}</b><br/><font size=7 color='#64748B'>DNI: {pac_dni}<br/>Firma del Paciente / Titular</font>", ParagraphStyle('FirmaLabelR', parent=style_valor, alignment=1))
+            ]
+
             t_firma = Table([
                 [
                     Paragraph(meta_text, style_valor),
-                    sig_element
-                ],
-                [
-                    Paragraph("<b>Certificación de Consentimiento Informado</b>", ParagraphStyle('FirmaLabel', parent=style_valor, alignment=0)),
-                    Paragraph(f"<b>{pac_nombre}</b><br/><font size=7 color='#64748B'>DNI: {pac_dni}</font>", ParagraphStyle('FirmaLabelR', parent=style_valor, alignment=1))
+                    qr_cell,
+                    sig_cell
                 ]
-            ], colWidths=[320, 220])
+            ], colWidths=[275, 65, 200])
             t_firma.setStyle(TableStyle([
                 ('ALIGN', (1,0), (1,0), 'CENTER'),
+                ('ALIGN', (2,0), (2,0), 'CENTER'),
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('LINEABOVE', (1,1), (1,1), 1, colors.HexColor('#0F172A')),
-                ('TOPPADDING', (0,0), (-1,-1), 4),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+                ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+                ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+                ('TOPPADDING', (0,0), (-1,-1), 6),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ('LEFTPADDING', (0,0), (-1,-1), 6),
+                ('RIGHTPADDING', (0,0), (-1,-1), 6),
             ]))
             firma_elements.append(t_firma)
+            firma_elements.append(Spacer(1, 6))
+            firma_elements.append(Paragraph("<font size=6 color='#94A3B8'>Documento generado electrónicamente por el Sistema de Gestión Quirúrgica de Clínica Médica Nube. La presente instrumentación con firma electrónica y evidencias digitales de auditoría resguarda los derechos del paciente y del equipo médico conforme al Código Civil y Comercial de la Nación y leyes sanitarias vigentes.</font>", ParagraphStyle('LegalFoot', parent=style_normal, alignment=1)))
         except Exception as e:
             logger.error(f"Error insertando bloque de firma: {e}")
-            firma_elements.append(Paragraph(f"<b>Firmado Digitalmente por el paciente {pac_nombre} (DNI: {pac_dni})</b>", style_valor))
+            firma_elements.append(Paragraph(f"<b>Firmado Electrónicamente por el paciente {pac_nombre} (DNI: {pac_dni})</b>", style_valor))
     else:
         # Espacio para firma manuscrita en papel
         t_firma = Table([

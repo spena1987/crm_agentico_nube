@@ -312,16 +312,29 @@
     <table class="signature-table">
       <tr>
         {% if firma_img_base64 %}
-          <td style="width: 62%;" class="sig-meta">
-            <strong style="color: #1e3a8a;">CERTIFICACIÓN DE FIRMA DIGITAL (LEY 25.506)</strong><br>
+          <td style="width: 55%;" class="sig-meta">
+            <strong style="color: #1e3a8a; font-size: 8pt;">CERTIFICACIÓN DE FIRMA ELECTRÓNICA MÉDICO-LEGAL</strong><br>
+            <span style="color: #64748b; font-size: 7pt;"><b>Marco Normativo:</b> Ley 25.506 (Art. 5) • Ley 26.529 (Arts. 5 a 10) • CCCN Art. 288</span><br>
             <strong>Titular:</strong> {{ paciente_nombre }} (DNI: {{ paciente_dni }})<br>
-            <strong>Fecha/Hora:</strong> {{ firma_timestamp }} UTC<br>
+            <strong>Fecha y Hora Oficial:</strong> {{ firma_timestamp_art }} (ART / UTC-3)<br>
+            <strong>Sello UTC:</strong> {{ firma_timestamp_utc }} UTC<br>
             <strong>IP de Origen:</strong> {{ firma_ip }}<br>
-            <strong>Trazabilidad SHA-256:</strong> <span style="font-family: monospace; font-size: 6.5pt;">{{ firma_hash }}</span>
+            <strong>Hash de Integridad (SHA-256):</strong><br>
+            <span style="font-family: monospace; font-size: 6pt; color: #0f172a; word-break: break-all;"><b>{{ firma_hash }}</b></span><br>
+            <em style="font-size: 6.5pt; color: #64748b;">Documento con validez legal acreditada mediante auditoría criptográfica y pericial.</em>
           </td>
-          <td style="width: 38%;" class="sig-img-container">
-            <img src="{{ firma_img_base64 }}" alt="Firma Digital">
-            <div class="sig-line">Firma del Paciente / Representante</div>
+          <td style="width: 15%; text-align: center;">
+            {% if qr_base64 %}
+              <img src="{{ qr_base64 }}" alt="QR Verificación" style="width: 60px; height: 60px; display: inline-block;">
+              <div style="font-size: 5pt; color: #64748b; margin-top: 2px;">Escanear para cotejo pericial</div>
+            {% endif %}
+          </td>
+          <td style="width: 30%;" class="sig-img-container">
+            <img src="{{ firma_img_base64 }}" alt="Firma del Paciente" style="max-height: 55px; max-width: 180px;">
+            <div class="sig-line">
+              {{ paciente_nombre }}<br>
+              <span style="font-size: 6.5pt; color: #64748b; font-weight: normal;">DNI: {{ paciente_dni }} • Firma del Paciente / Titular</span>
+            </div>
           </td>
         {% else %}
           <td style="width: 50%; text-align: center; padding: 25px 15px 5px 15px;">
@@ -338,7 +351,7 @@
       </tr>
     </table>
     <div class="disclaimer-foot">
-      Documento generado electrónicamente por el Sistema de Gestión Quirúrgica • {{ nombre_institucion }}. La firma registrada certifica la comprensión y aceptación de las cláusulas informadas.
+      Documento generado electrónicamente por el Sistema de Gestión Quirúrgica • {{ nombre_institucion }}. La presente instrumentación con firma electrónica y evidencias digitales de auditoría resguarda los derechos del paciente y del equipo médico conforme al Código Civil y Comercial de la Nación y leyes sanitarias vigentes.
     </div>
   </div>
 

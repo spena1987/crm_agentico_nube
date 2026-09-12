@@ -137,7 +137,6 @@ export default function ConsentimientoPublicoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           firma_base64: firmaB64,
-          ip_origen: 'Mobile-Client',
           user_agent: navigator.userAgent
         })
       })
@@ -277,17 +276,48 @@ export default function ConsentimientoPublicoPage() {
             </div>
           </div>
 
-          {firmadoExito.pdf_url && (
+          {/* Faja de Trazabilidad Forense */}
+          <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-left text-xs space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-slate-800">
+              <ShieldCheck size={14} className="text-emerald-600" />
+              <span>Firma Electrónica Médica Certificada (Ley 25.506 Art. 5)</span>
+            </div>
+            {firmadoExito.timestamp_art && (
+              <div className="text-slate-600">Fecha y Hora Oficial: <b>{firmadoExito.timestamp_art} (ART)</b></div>
+            )}
+            {firmadoExito.ip && (
+              <div className="text-slate-600">IP de Origen: <span className="font-mono text-[11px]">{firmadoExito.ip}</span></div>
+            )}
+            {firmadoExito.hash && (
+              <div className="text-slate-600">
+                Hash SHA-256: <span className="font-mono text-[10px] text-slate-700 break-all">{firmadoExito.hash}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            {firmadoExito.pdf_url && (
+              <a
+                href={`${BACKEND_URL}${firmadoExito.pdf_url}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center justify-center gap-2 w-full px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
+              >
+                <Download size={16} />
+                <span>Descargar Copia del Consentimiento (PDF)</span>
+              </a>
+            )}
+
             <a
-              href={`${BACKEND_URL}${firmadoExito.pdf_url}`}
+              href={`/consentimiento/verificar/${token}`}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 w-full px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
+              className="inline-flex items-center justify-center gap-2 w-full px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl border border-slate-300 transition-all"
             >
-              <Download size={16} />
-              <span>Descargar Copia del Consentimiento (PDF)</span>
+              <ShieldCheck size={15} className="text-emerald-600" />
+              <span>Ver Certificado Pericial en Línea</span>
             </a>
-          )}
+          </div>
         </div>
       </div>
     )
@@ -381,8 +411,8 @@ export default function ConsentimientoPublicoPage() {
                 className="w-full h-40 cursor-crosshair block"
               />
             </div>
-            <p className="text-[10px] text-slate-500 text-center">
-              Firme con su dedo o lápiz táctil dentro del recuadro blanco.
+            <p className="text-[10px] text-slate-500 text-center leading-normal">
+              Firme con su dedo o lápiz táctil dentro del recuadro blanco. Su firma ológrafa digitalizada y la evidencia pericial (timestamping, IP y hash de integridad) quedan vinculadas a este consentimiento conforme a la Ley Nacional 25.506 (Art. 5) y Ley 26.529 (Arts. 5-10).
             </p>
           </div>
 

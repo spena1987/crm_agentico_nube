@@ -4286,7 +4286,7 @@ def registrar_firma_consentimiento(
     Registra la firma del paciente, genera el PDF definitivo y actualiza el turno a 'firmado_digital'.
     """
     import hashlib
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
     from app.services.pdf_service import generar_pdf_consentimiento_informado
     
     turno = get_consentimiento_by_token(token)
@@ -4350,15 +4350,26 @@ def registrar_firma_consentimiento(
         }
     )
     
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    hash_payload = f"{token}:{paciente.get('dni')}:{now_utc}:{ip_origen}"
+    now_dt_utc = datetime.now(timezone.utc)
+    now_utc_str = now_dt_utc.strftime("%Y-%m-%d %H:%M:%S")
+    now_art_dt = now_dt_utc.astimezone(timezone(timedelta(hours=-3)))
+    now_art_str = now_art_dt.strftime("%d/%m/%Y %H:%M:%S")
+    
+    # Hash integral de trazabilidad (Ley 25.506 Art. 5)
+    sig_hash = hashlib.sha256(firma_base64.encode("utf-8")).hexdigest()
+    hash_payload = f"{turno['id']}:{paciente.get('dni')}:{now_utc_str}:{ip_origen}:{user_agent}:{sig_hash}"
     doc_hash = hashlib.sha256(hash_payload.encode()).hexdigest()
     
     metadata = {
-        "timestamp": now_utc,
+        "timestamp": now_utc_str,
+        "timestamp_utc": now_utc_str,
+        "timestamp_art": now_art_str,
+        "fecha_hora": now_art_str,
         "ip": ip_origen,
+        "ip_origen": ip_origen,
         "user_agent": user_agent,
-        "hash": doc_hash
+        "hash": doc_hash,
+        "token": token
     }
     
     try:
@@ -4374,9 +4385,9 @@ def registrar_firma_consentimiento(
         # Actualizar en Supabase
         update_payload = {
             "consentimiento_estado": "firmado_digital",
-            "consentimiento_firmado_at": "now()",
+            "consentimiento_firmado_at": now_dt_utc.isoformat(),
             "consentimiento_firma_ip": ip_origen,
-            "consentimiento_firma_img": firma_base64[:150] + "...", # truncado para auditoría ligera
+            "consentimiento_firma_img": firma_base64, # 100% completo para estampar en el PDF
             "consentimiento_pdf_url": pdf_url,
             "updated_at": "now()"
         }
@@ -4387,7 +4398,9 @@ def registrar_firma_consentimiento(
             "success": True,
             "pdf_url": pdf_url,
             "hash": doc_hash,
-            "timestamp": now_utc,
+            "timestamp": now_utc_str,
+            "timestamp_art": now_art_str,
+            "ip": ip_origen,
             "paciente_nombre": paciente.get("nombre"),
             "fecha_cirugia": turno.get("fecha_cirugia"),
             "hora_inicio": turno.get("hora_inicio"),
