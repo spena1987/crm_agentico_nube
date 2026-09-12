@@ -12,7 +12,7 @@ import {
   HelpCircle,
   ShieldAlert
 } from 'lucide-react'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 
@@ -90,9 +90,8 @@ export default function ModalCerrarCasoQuirurgico({
 
       let casoActualizado = null
       try {
-        const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${casoId}`, {
+        const res = await apiFetch(`/api/asesorias-quirurgicas/${casoId}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payloadCaso)
         })
         const data = await res.json()
@@ -134,9 +133,8 @@ export default function ModalCerrarCasoQuirurgico({
       }
 
       try {
-        await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${casoId}/evoluciones`, {
+        await apiFetch(`/api/asesorias-quirurgicas/${casoId}/evoluciones`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payloadEvolucion)
         })
       } catch (evErr) {

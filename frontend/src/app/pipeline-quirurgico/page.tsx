@@ -33,7 +33,7 @@ import {
   X
 } from 'lucide-react'
 import Link from 'next/link'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
@@ -169,18 +169,94 @@ export default function PipelineQuirurgicoPage() {
   const [modalCierreOpen, setModalCierreOpen] = useState(false)
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
 
-  // Cargar Pipeline
+  // Cargar Pipeline (con apiFetch autenticado y fallback resiliente a Supabase)
   const fetchPipeline = async () => {
     try {
       setCargando(true)
       setError(null)
-      const res = await fetch(`${BACKEND_URL}/api/pipeline-quirurgico`)
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setEtapas(data.etapas || {})
-        setMetricas(data.metricas || null)
-      } else {
-        throw new Error(data.detail || 'Error al obtener datos del pipeline.')
+
+      let datosCargados = false
+      try {
+        const res = await apiFetch('/api/pipeline-quirurgico')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.success && data.etapas) {
+            setEtapas(data.etapas || {})
+            setMetricas(data.metricas || null)
+            datosCargados = true
+          }
+        }
+      } catch (backendErr) {
+        console.warn('Backend API pipeline no disponible, usando fallback Supabase directo:', backendErr)
+      }
+
+      // Fallback transparente a Supabase directo si el backend no respondió
+      if (!datosCargados) {
+        const { data: casosData, error: sbErr } = await supabase
+          .from('asesorias_quirurgicas')
+          .select('*, pacientes(id, nombre, dni, telefono, obra_social, email)')
+          .order('created_at', { ascending: false })
+
+        if (sbErr) throw sbErr
+
+        const now = new Date()
+        const etapasMap: Record<string, AsesoriaCasoPipeline[]> = {
+          derivado: [],
+          en_asesoramiento: [],
+          en_analisis: [],
+          confirmado: [],
+          programado: [],
+          operado: [],
+          cancelado: []
+        }
+
+        let total_monto_ars = 0
+        let total_monto_usd = 0
+        let casos_activos_count = 0
+        let casos_en_alerta_count = 0
+
+        const listaCasos = (casosData || []) as AsesoriaCasoPipeline[]
+        listaCasos.forEach((c) => {
+          const est = c.estado || 'en_asesoramiento'
+          let dest_etapa = est
+          if (est === 'en_espera' || est === 'en_operacion') dest_etapa = 'programado'
+          else if (est === 'presupuesto_enviado') dest_etapa = 'en_analisis'
+
+          const ultimoC = c.ultimo_contacto_at || c.created_at
+          let dias = 0
+          if (ultimoC) {
+            dias = Math.max(0, Math.floor((now.getTime() - new Date(ultimoC).getTime()) / (1000 * 60 * 60 * 24)))
+          }
+          c.dias_sin_contacto = dias
+          c.es_critico = dias >= 6
+          c.es_alerta = dias >= 3 && !c.es_critico
+
+          const monto = Number(c.monto_extra || 0)
+          const moneda = (c.moneda_extra || 'ARS').toUpperCase()
+
+          if (['derivado', 'en_asesoramiento', 'en_analisis', 'confirmado', 'programado'].includes(dest_etapa)) {
+            casos_activos_count++
+            if (moneda === 'USD') total_monto_usd += monto
+            else total_monto_ars += monto
+            if (c.es_critico || c.es_alerta) casos_en_alerta_count++
+          }
+
+          if (!etapasMap[dest_etapa]) etapasMap[dest_etapa] = []
+          etapasMap[dest_etapa].push(c)
+        })
+
+        setEtapas(etapasMap)
+        setMetricas({
+          total_casos: listaCasos.length,
+          casos_activos: casos_activos_count,
+          casos_en_alerta: casos_en_alerta_count,
+          casos_operados: etapasMap['operado']?.length || 0,
+          casos_cancelados: etapasMap['cancelado']?.length || 0,
+          total_monto_ars,
+          total_monto_usd,
+          sla_dias_alerta: 3,
+          sla_dias_critico: 6
+        })
       }
     } catch (err: any) {
       console.error('Error cargando pipeline:', err)
@@ -250,12 +326,24 @@ export default function PipelineQuirurgicoPage() {
 
     try {
       setActualizandoCasoId(caso.id)
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: nuevaEtapa })
-      })
-      if (!res.ok) throw new Error('Error al mover de etapa.')
+      let ok = false
+      try {
+        const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ estado: nuevaEtapa })
+        })
+        if (res.ok) ok = true
+      } catch (backendErr) {
+        console.warn('Backend API no disponible al mover etapa, usando Supabase directo:', backendErr)
+      }
+
+      if (!ok) {
+        const { error: sbErr } = await supabase
+          .from('asesorias_quirurgicas')
+          .update({ estado: nuevaEtapa, updated_at: new Date().toISOString() })
+          .eq('id', caso.id)
+        if (sbErr) throw sbErr
+      }
       
       const colDestino = ETAPAS_COLUMNAS_ACTIVAS.find((c) => c.id === nuevaEtapa)
       mostrarToast(`Caso movido a ${colDestino ? colDestino.titulo : nuevaEtapa}.`)
@@ -331,16 +419,30 @@ export default function PipelineQuirurgicoPage() {
 
     try {
       setActualizandoCasoId(caso.id)
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estado: nuevaEtapa })
-      })
-      if (!res.ok) throw new Error('Error al mover de etapa.')
+      let ok = false
+      try {
+        const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ estado: nuevaEtapa })
+        })
+        if (res.ok) ok = true
+      } catch (backendErr) {
+        console.warn('Backend API no disponible al cambiar etapa, usando Supabase directo:', backendErr)
+      }
+
+      if (!ok) {
+        const { error: sbErr } = await supabase
+          .from('asesorias_quirurgicas')
+          .update({ estado: nuevaEtapa, updated_at: new Date().toISOString() })
+          .eq('id', caso.id)
+        if (sbErr) throw sbErr
+      }
+
       mostrarToast(`Etapa actualizada a ${nuevaEtapa.replace('_', ' ')}.`)
       await fetchPipeline()
     } catch (err) {
       console.error('Error al mover de etapa:', err)
+      setError('No se pudo actualizar la etapa.')
     } finally {
       setActualizandoCasoId(null)
     }
@@ -351,12 +453,25 @@ export default function PipelineQuirurgicoPage() {
     try {
       setActualizandoCasoId(caso.id)
       const nowIso = new Date().toISOString()
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ultimo_contacto_at: nowIso })
-      })
-      if (!res.ok) throw new Error('Error al actualizar contacto.')
+      let ok = false
+      try {
+        const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ultimo_contacto_at: nowIso })
+        })
+        if (res.ok) ok = true
+      } catch (backendErr) {
+        console.warn('Backend API no disponible al marcar contacto, usando Supabase directo:', backendErr)
+      }
+
+      if (!ok) {
+        const { error: sbErr } = await supabase
+          .from('asesorias_quirurgicas')
+          .update({ ultimo_contacto_at: nowIso, updated_at: nowIso })
+          .eq('id', caso.id)
+        if (sbErr) throw sbErr
+      }
+
       mostrarToast(`Contacto registrado hoy para ${caso.pacientes?.nombre || 'el paciente'}.`)
       await fetchPipeline()
     } catch (err) {

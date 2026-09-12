@@ -28,7 +28,7 @@ import {
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
 function ProgramacionQuirurgicaContent() {
@@ -95,11 +95,11 @@ function ProgramacionQuirurgicaContent() {
       const fHasta = modoVista === 'dia' ? fechaSeleccionada : fechaHastaSemana
 
       const [resQ, resT, resB, resBM, resCasos] = await Promise.all([
-        fetch(`${BACKEND_URL}/api/quirofanos?solo_activos=true`, { cache: 'no-store' }),
-        fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`, { cache: 'no-store' }),
-        fetch(`${BACKEND_URL}/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`, { cache: 'no-store' }),
-        fetch(`${BACKEND_URL}/api/quirofanos/bloques-medicos`, { cache: 'no-store' }),
-        fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/pendientes-quirofano`, { cache: 'no-store' })
+        apiFetch('/api/quirofanos?solo_activos=true'),
+        apiFetch(`/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
+        apiFetch(`/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
+        apiFetch('/api/quirofanos/bloques-medicos'),
+        apiFetch('/api/asesorias-quirurgicas/pendientes-quirofano')
       ])
 
       const dataQ = await resQ.json()
@@ -123,7 +123,7 @@ function ProgramacionQuirurgicaContent() {
       // Si por alguna razón está vacío, fallback de respaldo con pipeline
       if (listaConfirmados.length === 0) {
         try {
-          const resPipe = await fetch(`${BACKEND_URL}/api/pipeline-quirurgico`, { cache: 'no-store' })
+          const resPipe = await apiFetch('/api/pipeline-quirurgico')
           const dataPipe = await resPipe.json()
           if (dataPipe.success && dataPipe.etapas?.confirmado) {
             listaConfirmados = dataPipe.etapas.confirmado

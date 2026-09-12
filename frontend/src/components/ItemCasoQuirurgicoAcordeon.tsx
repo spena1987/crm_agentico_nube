@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
@@ -209,7 +209,7 @@ export default function ItemCasoQuirurgicoAcordeon({
   // Cargar Consentimiento Informado
   const fetchConsentimiento = async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}/consentimiento`)
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/consentimiento`)
       if (res.ok) {
         const data = await res.json()
         if (data.success && data.consentimiento) {
@@ -225,7 +225,7 @@ export default function ItemCasoQuirurgicoAcordeon({
   const fetchPresupuestos = async () => {
     try {
       setCargandoPresupuestos(true)
-      const res = await fetch(`${BACKEND_URL}/api/pacientes/${pacienteId}/presupuestos`)
+      const res = await apiFetch(`/api/pacientes/${pacienteId}/presupuestos`)
       if (res.ok) {
         const data = await res.json()
         if (data.success) {
@@ -260,9 +260,8 @@ export default function ItemCasoQuirurgicoAcordeon({
     setMensajeGuardado(null)
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(datosActualizados)
       })
 
@@ -326,7 +325,7 @@ export default function ItemCasoQuirurgicoAcordeon({
 
     setGuardando(true)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/${caso.id}`, {
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}`, {
         method: 'DELETE'
       })
       if (res.ok) {
@@ -479,9 +478,8 @@ export default function ItemCasoQuirurgicoAcordeon({
                 try {
                   setGuardando(true)
                   try {
-                    await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/vincular-asesoria`, {
+                    await apiFetch(`/api/presupuestos/${pres.id}/vincular-asesoria`, {
                       method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ asesoria_id: caso.id })
                     })
                   } catch (e) {

@@ -141,7 +141,38 @@ export default function PacientesPage() {
 
   useEffect(() => {
     fetchPacientes()
-  }, [])
+
+    // Suscripción Realtime a asesorias_quirurgicas para mantener sincronizados los casos y categorías
+    const channel = supabase
+      .channel('pacientes-asesorias-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+        (payload) => {
+          const updatedRow: any = payload.new
+          if (updatedRow && updatedRow.id) {
+            setPacientes((prev) =>
+              prev.map((p) => {
+                if (p.id !== updatedRow.paciente_id) return p
+                const asesoriasPrev = p.asesorias_quirurgicas || []
+                const existe = asesoriasPrev.some((a) => a.id === updatedRow.id)
+                const asesoriasActualizadas = existe
+                  ? asesoriasPrev.map((a) => (a.id === updatedRow.id ? { ...a, ...updatedRow } : a))
+                  : [updatedRow, ...asesoriasPrev]
+                return { ...p, asesorias_quirurgicas: asesoriasActualizadas }
+              })
+            )
+          } else {
+            fetchPacientes(selectedPacienteId || undefined)
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [selectedPacienteId])
 
   // Paciente actualmente seleccionado
   const pacienteSeleccionado = pacientes.find((p) => p.id === selectedPacienteId) || null

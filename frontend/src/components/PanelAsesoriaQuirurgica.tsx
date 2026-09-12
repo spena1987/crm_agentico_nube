@@ -13,7 +13,7 @@ import {
   Filter
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ItemCasoQuirurgicoAcordeon, { AsesoriaQuirurgica } from '@/components/ItemCasoQuirurgicoAcordeon'
 
 interface PanelAsesoriaQuirurgicaProps {
@@ -52,7 +52,7 @@ export default function PanelAsesoriaQuirurgica({
 
       // 1. Intentar por Backend si está disponible
       try {
-        const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/paciente/${pacienteId}`)
+        const res = await apiFetch(`/api/asesorias-quirurgicas/paciente/${pacienteId}`)
         if (res.ok) {
           const data = await res.json()
           if (data.success && data.asesorias) {
@@ -145,9 +145,8 @@ export default function PanelAsesoriaQuirurgica({
         monto_extra: 0
       }
 
-      const res = await fetch(`${BACKEND_URL}/api/asesorias-quirurgicas/`, {
+      const res = await apiFetch('/api/asesorias-quirurgicas/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
 
