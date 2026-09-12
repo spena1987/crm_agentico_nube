@@ -1320,10 +1320,18 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           isOpen={!!turnoParaPausaOms}
           onClose={() => setTurnoParaPausaOms(null)}
           turno={turnoParaPausaOms}
-          onConfirmarInicio={async () => {
+          onConfirmarInicio={async (turnoActualizado?: any) => {
             const tId = turnoParaPausaOms.id
             setTurnoParaPausaOms(null)
-            await handleCambiarEstado(tId, 'en_operacion')
+            if (turnoActualizado) {
+              setTurnos((prev) => prev.map((t) => (t.id === turnoActualizado.id ? { ...t, ...turnoActualizado } : t)))
+              if (turnoModalDetalle?.id === turnoActualizado.id) {
+                setTurnoModalDetalle(turnoActualizado)
+              }
+            } else {
+              await handleCambiarEstado(tId, 'en_operacion')
+            }
+            fetchTurnosDia()
           }}
           procesando={procesandoId === turnoParaPausaOms.id}
         />

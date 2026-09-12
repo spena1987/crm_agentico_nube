@@ -125,9 +125,13 @@ export default function ConsolaCabeceraIntraoperatoria({
     }
   }
 
-  const handleConfirmarInicioPausa = async () => {
+  const handleConfirmarInicioPausa = async (turnoActualizado?: any) => {
     setModalPausaAbierto(false)
-    await onCambiarEstado('en_operacion')
+    if (turnoActualizado && onTurnoActualizado) {
+      onTurnoActualizado(turnoActualizado)
+    } else {
+      await onCambiarEstado('en_operacion')
+    }
   }
 
   return (

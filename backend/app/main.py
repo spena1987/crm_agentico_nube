@@ -3967,6 +3967,159 @@ def registrar_checklist_seguridad(turno_id: str, payload: Dict[str, Any] = Body(
         raise
     except Exception as e:
         logger.error(f"Error guardando checklist para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ValidarLenteGs1Payload(BaseModel):
+    raw_code: str
+    gtin: Optional[str] = None
+    lote: Optional[str] = None
+    vencimiento: Optional[str] = None
+    serie: Optional[str] = None
+
+class ConfirmarPausaOmsPayload(BaseModel):
+    check_identidad: bool = True
+    check_consentimiento: bool = True
+    check_lio: bool = True
+    check_esterilidad: bool = True
+    lente_escaneado: Optional[Dict[str, Any]] = None
+    justificacion_cambio_lio: Optional[str] = None
+    autorizado_por_cirujano: bool = False
+
+@app.post("/api/turnos-quirofano/{turno_id}/validar-lente-gs1")
+def validar_lente_gs1_endpoint(turno_id: str, payload: ValidarLenteGs1Payload):
+    """
+    Efectúa la validación cruzada en tiempo real entre el código GS1 DataMatrix / QR del blíster
+    y el plan quirúrgico biométrico estipulado para el paciente en el turno.
+    """
+    try:
+        from app.services.gs1_lio_validator import parse_gs1_string, validar_lente_blister_contra_turno
+        
+        # 1. Obtener turno quirúrgico
+        t_resp = supabase.table("turnos_quirofano").select("*").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            raise HTTPException(status_code=404, detail="Turno quirúrgico no encontrado")
+        turno = t_resp.data[0]
+
+        # 2. Parsear código GS1
+        datos_gs1 = parse_gs1_string(payload.raw_code)
+        if payload.gtin:
+            datos_gs1["gtin"] = payload.gtin
+            digits = re.sub(r"\D", "", payload.gtin)
+            datos_gs1["gtin_14"] = digits.zfill(14)
+        if payload.lote:
+            datos_gs1["lote"] = payload.lote
+        if payload.vencimiento:
+            datos_gs1["vencimiento"] = payload.vencimiento
+        if payload.serie:
+            datos_gs1["serie"] = payload.serie
+
+        # 3. Validar contra el plan
+        res_validacion = validar_lente_blister_contra_turno(turno, datos_gs1)
+        return res_validacion
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al validar lente GS1 para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/turnos-quirofano/{turno_id}/confirmar-pausa-oms")
+def confirmar_pausa_oms_endpoint(turno_id: str, payload: ConfirmarPausaOmsPayload):
+    """
+    Confirma la Pausa Quirúrgica OMS (Time-Out pre-incisión), persiste la trazabilidad del LIO
+    (lote, serie, caducidad, GTIN y justificación si hubo cambio justificado de cirujano),
+    y pasa el turno a estado 'en_operacion'.
+    """
+    try:
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+
+        # 1. Obtener turno actual
+        t_resp = supabase.table("turnos_quirofano").select("*").eq("id", turno_id).limit(1).execute()
+        if not t_resp.data:
+            raise HTTPException(status_code=404, detail="Turno quirúrgico no encontrado")
+        turno_actual = t_resp.data[0]
+
+        # 2. Preparar payload de actualización
+        update_data: Dict[str, Any] = {
+            "estado": "en_operacion",
+            "updated_at": ahora_iso
+        }
+        if not turno_actual.get("inicio_cirugia_at"):
+            update_data["inicio_cirugia_at"] = ahora_iso
+        if not turno_actual.get("llegada_at"):
+            update_data["llegada_at"] = ahora_iso
+        if not turno_actual.get("ingreso_pre_quirofano_at"):
+            update_data["ingreso_pre_quirofano_at"] = ahora_iso
+
+        # 3. Actualizar datos del LIO físico
+        if payload.lente_escaneado:
+            lente_esc = payload.lente_escaneado
+            if lente_esc.get("lote") and lente_esc.get("lote") != "N/D":
+                update_data["lente_lote"] = lente_esc.get("lote")
+            if lente_esc.get("serie") and lente_esc.get("serie") != "N/D":
+                update_data["lente_serie"] = lente_esc.get("serie")
+            if lente_esc.get("vencimiento"):
+                update_data["lente_vencimiento"] = lente_esc.get("vencimiento")
+
+            # Opción A: Si el cirujano autorizó un cambio médico justificado del lente
+            if payload.justificacion_cambio_lio:
+                if lente_esc.get("modelo"):
+                    update_data["lente_tipo"] = lente_esc.get("modelo")
+                if lente_esc.get("dioptria") is not None:
+                    update_data["lente_dioptria"] = f"{float(lente_esc['dioptria']):+.2f}"
+                if lente_esc.get("es_torico") is not None:
+                    update_data["es_torico"] = bool(lente_esc.get("es_torico"))
+                if lente_esc.get("torico_valor"):
+                    val_tor = str(lente_esc.get("torico_valor")).upper().replace("T", "")
+                    if val_tor.isdigit():
+                        update_data["lente_torico_valor"] = int(val_tor)
+
+        # 4. Actualizar checklist de seguridad quirúrgica
+        prev_check = turno_actual.get("checklist_seguridad_quirurgica") or {}
+        new_check = {
+            **prev_check,
+            "pausa_oms_verificada": True,
+            "verificado_at": ahora_iso,
+            "checks": {
+                "identidad_lateralidad": payload.check_identidad,
+                "consentimiento": payload.check_consentimiento,
+                "lio_conforme": payload.check_lio,
+                "esterilidad_anestesia": payload.check_esterilidad
+            },
+            "trazabilidad_lio": {
+                "escaneado": payload.lente_escaneado,
+                "justificacion_cambio": payload.justificacion_cambio_lio,
+                "autorizado_por_cirujano": payload.autorizado_por_cirujano
+            }
+        }
+        update_data["checklist_seguridad_quirurgica"] = new_check
+
+        # 5. Guardar en BD
+        upd_res = supabase.table("turnos_quirofano").update(update_data).eq("id", turno_id).execute()
+        turno_actualizado = upd_res.data[0] if upd_res.data else {**turno_actual, **update_data}
+
+        # 6. Sincronizar estado en asesoria si existe
+        asesoria_id = turno_actual.get("asesoria_id")
+        if asesoria_id:
+            try:
+                supabase.table("asesorias_quirurgicas").update({
+                    "estado_cirugia": "en_operacion",
+                    "updated_at": ahora_iso
+                }).eq("id", asesoria_id).execute()
+            except Exception as e_ase:
+                logger.warning(f"Aviso actualizando asesoria {asesoria_id}: {e_ase}")
+
+        return {
+            "success": True,
+            "turno": turno_actualizado,
+            "mensaje": "Pausa Quirúrgica OMS verificada. Cirugía iniciada con trazabilidad completa."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al confirmar Pausa OMS para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/turnos-quirofano/{turno_id}/subir-consentimiento-geclisa")
 def subir_consentimiento_geclisa_endpoint(turno_id: str, payload: Optional[Dict[str, Any]] = None):
     """
