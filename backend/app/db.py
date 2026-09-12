@@ -34,10 +34,27 @@ SUPABASE_KEY = raw_key if raw_key and not "tu_anon" in raw_key and not "tu_servi
 
 from app.services.phone_normalizer import normalize_phone_number
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    logger.warning("Faltan variables de entorno válidas para Supabase. Asegúrate de configurar SUPABASE_URL (o NEXT_PUBLIC_SUPABASE_URL) y SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY.")
+import httpx
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+def init_supabase_client(url: Optional[str], key: Optional[str]) -> Optional[Client]:
+    if not url or not key:
+        return None
+    try:
+        client = create_client(url, key)
+        # Configurar transporte HTTP/1.1 con reintentos automáticos para evitar errores ConnectionTerminated
+        # producidos por timeouts de sockets inactivos (idle keep-alive) en HTTP/2 con Supabase/Cloudflare
+        try:
+            custom_transport = httpx.HTTPTransport(http1=True, http2=False, retries=3)
+            if hasattr(client, "postgrest") and hasattr(client.postgrest, "session"):
+                client.postgrest.session._transport = custom_transport
+        except Exception as t_err:
+            logger.warning(f"No se pudo personalizar el transport de Supabase: {t_err}")
+        return client
+    except Exception as e:
+        logger.error(f"Error inicializando cliente de Supabase: {e}")
+        return None
+
+supabase: Optional[Client] = init_supabase_client(SUPABASE_URL, SUPABASE_KEY)
 
 def is_lid_number(phone_str: str) -> bool:
     """
@@ -609,28 +626,33 @@ def obtener_metricas_conversaciones():
     """
     if not supabase:
         return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
-    try:
-        res = supabase.table("conversaciones").select("id, bot_disabled, archivada, unread_count").execute()
-        convs = res.data or []
-        derivados = sum(1 for c in convs if c.get("bot_disabled") and not c.get("archivada"))
-        bot_activos = sum(1 for c in convs if not c.get("bot_disabled") and not c.get("archivada"))
-        archivados = sum(1 for c in convs if c.get("archivada"))
-        total_activas = len(convs) - archivados
+    for attempt in range(2):
+        try:
+            res = supabase.table("conversaciones").select("id, bot_disabled, archivada, unread_count").execute()
+            convs = res.data or []
+            derivados = sum(1 for c in convs if c.get("bot_disabled") and not c.get("archivada"))
+            bot_activos = sum(1 for c in convs if not c.get("bot_disabled") and not c.get("archivada"))
+            archivados = sum(1 for c in convs if c.get("archivada"))
+            total_activas = len(convs) - archivados
 
-        no_leidos_count = sum(1 for c in convs if int(c.get("unread_count") or 0) > 0 and not c.get("archivada"))
-        total_mensajes_no_leidos = sum(int(c.get("unread_count") or 0) for c in convs if not c.get("archivada"))
+            no_leidos_count = sum(1 for c in convs if int(c.get("unread_count") or 0) > 0 and not c.get("archivada"))
+            total_mensajes_no_leidos = sum(int(c.get("unread_count") or 0) for c in convs if not c.get("archivada"))
 
-        return {
-            "total_activas": total_activas,
-            "no_leidos_count": no_leidos_count,
-            "total_mensajes_no_leidos": total_mensajes_no_leidos,
-            "derivados_humano": derivados,
-            "bot_activos": bot_activos,
-            "archivados": archivados
-        }
-    except Exception as e:
-        logger.error(f"Error al calcular métricas de conversaciones: {e}")
-        return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
+            return {
+                "total_activas": total_activas,
+                "no_leidos_count": no_leidos_count,
+                "total_mensajes_no_leidos": total_mensajes_no_leidos,
+                "derivados_humano": derivados,
+                "bot_activos": bot_activos,
+                "archivados": archivados
+            }
+        except Exception as e:
+            if attempt == 0:
+                logger.warning(f"Reintentando cálculo de métricas tras desconexión transitoria: {e}")
+                time.sleep(0.15)
+                continue
+            logger.error(f"Error al calcular métricas de conversaciones: {e}")
+            return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
 
 def guardar_transcripcion_mensaje(mensaje_id: str, transcripcion: str):
     """

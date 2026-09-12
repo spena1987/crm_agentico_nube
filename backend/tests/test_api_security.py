@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 # Configurar variables para pruebas
 os.environ["SUPABASE_JWT_SECRET"] = "super-secret-jwt-key-for-test-2026-audit"
-os.environ["EVOLUTION_API_KEY"] = "test_evolution_token_123"
+os.environ["WEBHOOK_SECRET"] = "test_webhook_token_123"
 
 # Recargar auth con las nuevas variables
 from app.auth import decode_supabase_jwt, SUPABASE_JWT_SECRET
@@ -60,7 +60,7 @@ def test_webhook_authorized_with_secret():
     response = client.post(
         "/api/whatsapp/webhook/incoming",
         json={"event": "TEST"},
-        headers={"apikey": "test_evolution_token_123"}
+        headers={"apikey": "test_webhook_token_123"}
     )
     # No debe ser 403
     assert response.status_code != 403

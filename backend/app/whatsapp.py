@@ -108,7 +108,7 @@ class WhatsAppManager:
         phone_id, token = get_whatsapp_cloud_credentials()
         return bool(phone_id and token)
 
-    def enviar_mensaje(
+    async def enviar_mensaje_async(
         self,
         telefono_o_jid: str,
         texto: str,
@@ -118,7 +118,7 @@ class WhatsAppManager:
         quoted_message_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Despacha un mensaje de texto libre hacia el teléfono del paciente a través de Meta Cloud API.
+        Despacha un mensaje de texto libre de forma asíncrona hacia el teléfono del paciente a través de Meta Cloud API.
         """
         telefono = normalize_phone_number(telefono_o_jid)
         normalized_meta_phone = normalize_to_meta_e164(telefono)
@@ -141,24 +141,21 @@ class WhatsAppManager:
         wa_client = WhatsAppCloudClient(phone_number_id=meta_phone_id, access_token=meta_token)
 
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            res = loop.run_until_complete(wa_client.send_free_text(normalized_meta_phone, texto))
+            res = await wa_client.send_free_text(normalized_meta_phone, texto)
             wamid = res.get("wamid")
             if wamid:
                 try:
                     from app.services.whatsapp_cloud.worker import record_outbound_audit_message
-                    loop.run_until_complete(record_outbound_audit_message(
+                    await record_outbound_audit_message(
                         wamid=wamid,
                         to_phone=normalized_meta_phone,
                         message_type="text",
                         content_text=texto,
                         payload={"to": normalized_meta_phone, "text": texto, "wamid": wamid}
-                    ))
+                    )
                 except Exception as aud_err:
                     self.add_log("WARNING", f"No se pudo auditar mensaje saliente en whatsapp_messages: {aud_err}")
 
-            loop.close()
             if conversacion_id:
                 try:
                     guardar_mensaje(
@@ -196,7 +193,30 @@ class WhatsAppManager:
             self.add_log("ERROR", f"Error enviando por Meta Cloud API: {meta_err}")
             return {"error": f"Error de Meta WhatsApp Cloud API: {meta_err}", "enviado_real": False}
 
-    def enviar_multimedia(
+    def enviar_mensaje(
+        self,
+        telefono_o_jid: str,
+        texto: str,
+        conversacion_id: Optional[str] = None,
+        emisor: str = "operador",
+        quoted_message_id: Optional[str] = None,
+        quoted_message_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Versión síncrona segura de envío de texto que previene el error 'Cannot run the event loop while another loop is running'.
+        """
+        return self._safe_run_async(
+            self.enviar_mensaje_async(
+                telefono_o_jid=telefono_o_jid,
+                texto=texto,
+                conversacion_id=conversacion_id,
+                emisor=emisor,
+                quoted_message_id=quoted_message_id,
+                quoted_message_data=quoted_message_data
+            )
+        )
+
+    async def enviar_multimedia_async(
         self,
         telefono: str,
         media_url: str,
@@ -206,7 +226,7 @@ class WhatsAppManager:
         conversacion_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Envía archivos multimedia (PDFs de presupuestos, imágenes, audios) a través de Meta Cloud API.
+        Envía archivos multimedia de forma asíncrona a través de Meta Cloud API.
         """
         normalized_meta_phone = normalize_to_meta_e164(telefono)
         meta_phone_id, meta_token = get_whatsapp_cloud_credentials()
@@ -216,18 +236,13 @@ class WhatsAppManager:
         wa_client = WhatsAppCloudClient(phone_number_id=meta_phone_id, access_token=meta_token)
 
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            res = loop.run_until_complete(
-                wa_client.send_media(
-                    to_phone=normalized_meta_phone,
-                    media_type=media_type,
-                    media_url=media_url,
-                    caption=caption,
-                    filename=filename
-                )
+            res = await wa_client.send_media(
+                to_phone=normalized_meta_phone,
+                media_type=media_type,
+                media_url=media_url,
+                caption=caption,
+                filename=filename
             )
-            loop.close()
 
             wamid = res.get("wamid")
             self.add_log("INFO", f"Multimedia ({media_type}) despachado exitosamente vía Meta Cloud API a {normalized_meta_phone} (wamid: {wamid})")
@@ -250,6 +265,49 @@ class WhatsAppManager:
         except Exception as meta_err:
             self.add_log("ERROR", f"Error enviando multimedia por Meta Cloud API: {meta_err}")
             return {"error": f"Error de Meta WhatsApp Cloud API: {meta_err}", "enviado_real": False}
+
+    def enviar_multimedia(
+        self,
+        telefono: str,
+        media_url: str,
+        media_type: str = "document",
+        caption: str = "",
+        filename: str = "",
+        conversacion_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Versión síncrona segura de envío multimedia que previene colisiones con el event loop de Uvicorn/FastAPI.
+        """
+        return self._safe_run_async(
+            self.enviar_multimedia_async(
+                telefono=telefono,
+                media_url=media_url,
+                media_type=media_type,
+                caption=caption,
+                filename=filename,
+                conversacion_id=conversacion_id
+            )
+        )
+
+    def _safe_run_async(self, coro):
+        """
+        Ejecuta una corrutina de forma síncrona y segura:
+        Si ya hay un event loop corriendo en el hilo actual, delega la ejecución a un ThreadPoolExecutor
+        para evitar 'RuntimeError: Cannot run the event loop while another loop is running'.
+        """
+        import concurrent.futures
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(asyncio.run, coro)
+                return fut.result()
+        else:
+            return asyncio.run(coro)
+
 
     def enviar_documento(
         self,
@@ -337,6 +395,7 @@ class WhatsAppManager:
         """Meta Cloud API no requiere código QR."""
         return {
             "available": False,
+            "requires_qr": False,
             "qr_data_uri": None,
             "expires_in": 0,
             "status": "NOT_REQUIRED",
@@ -345,11 +404,15 @@ class WhatsAppManager:
 
     def get_qr(self, force_refresh: bool = False) -> Dict[str, Any]:
         """Meta Cloud API no requiere código QR."""
-        return {"status": "NOT_REQUIRED", "message": "Meta Cloud API no requiere escaneo de código QR."}
+        return {"status": "NOT_REQUIRED", "requires_qr": False, "message": "Meta Cloud API no requiere escaneo de código QR."}
 
     def get_pairing_code(self, phone: str) -> Dict[str, Any]:
         """Meta Cloud API no requiere código de emparejamiento manual."""
-        return {"status": "NOT_REQUIRED", "message": "Meta Cloud API opera con autenticación por Token de Sistema."}
+        return {"status": "NOT_REQUIRED", "requires_qr": False, "message": "Meta Cloud API opera con autenticación por Token de Sistema."}
+
+    def solicitar_codigo_vinculacion(self, phone: str) -> Dict[str, Any]:
+        """Compatibilidad: Meta Cloud API opera por Token de Sistema de Meta."""
+        return {"success": False, "error": "Meta Cloud API no requiere código de vinculación telefónica manual."}
 
     def set_cached_qr(self, b64: str, pairing_code: Optional[str] = None):
         pass
