@@ -549,6 +549,9 @@ function ProgramacionQuirurgicaContent() {
           quirofanoDefectoId={slotClickData?.quirofanoId || quirofanoSeleccionadoId}
           fechaDefecto={slotClickData?.fecha || fechaSeleccionada}
           horaDefecto={slotClickData?.hora || '08:30'}
+          slotSeleccionado={slotClickData}
+          turnosExistentes={turnos}
+          bloqueosExistentes={bloqueos}
           onClose={() => {
             setModalAbierto(false)
             setTurnoSeleccionado(null)

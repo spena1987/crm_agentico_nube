@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   X,
   Download,
@@ -17,6 +17,7 @@ import {
   Loader2,
   Building2,
   AlertCircle,
+  AlertTriangle,
   Eye,
   CreditCard,
   ShieldCheck,
@@ -50,6 +51,9 @@ interface FichaTurnoModalProps {
   quirofanoDefectoId?: string
   fechaDefecto?: string
   horaDefecto?: string
+  slotSeleccionado?: { quirofanoId: string; hora: string; fecha?: string } | null
+  turnosExistentes?: any[]
+  bloqueosExistentes?: any[]
   onClose: () => void
   onSaved: () => void
 }
@@ -64,6 +68,9 @@ export default function FichaTurnoModal({
   quirofanoDefectoId,
   fechaDefecto,
   horaDefecto,
+  slotSeleccionado,
+  turnosExistentes = [],
+  bloqueosExistentes = [],
   onClose,
   onSaved
 }: FichaTurnoModalProps) {
@@ -141,7 +148,7 @@ export default function FichaTurnoModal({
     { id: 'lasik', nombre: 'Cirugía Refractiva LASIK / PRK', minutos: 15 }
   ])
 
-  // Formulario de Turno Quirúrgico inicializado directamente si viene un caso confirmado
+  // Formulario de Turno Quirúrgico inicializado directamente si viene un caso confirmado o slot seleccionado
   const pacInit = casoConfirmadoInicial?.pacientes || {}
   const [formData, setFormData] = useState({
     asesoria_id: turno?.asesoria_id || casoConfirmadoInicial?.id || asesoriaIdInicial || '',
@@ -149,9 +156,9 @@ export default function FichaTurnoModal({
     paciente_nombre: turno?.pacientes?.nombre || pacInit.nombre || '',
     paciente_dni: turno?.pacientes?.dni || pacInit.dni || '',
     paciente_telefono: turno?.pacientes?.telefono || pacInit.telefono || '',
-    quirofano_id: turno?.quirofano_id || quirofanoDefectoId || quirofanos[0]?.id || '',
-    fecha_cirugia: turno?.fecha_cirugia || casoConfirmadoInicial?.fecha_sugerida || casoConfirmadoInicial?.fecha_definitiva_cirugia || casoConfirmadoInicial?.fecha_probable_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
-    hora_inicio: (turno?.hora_inicio || horaDefecto || '08:30').slice(0, 5),
+    quirofano_id: turno?.quirofano_id || slotSeleccionado?.quirofanoId || quirofanoDefectoId || quirofanos[0]?.id || '',
+    fecha_cirugia: turno?.fecha_cirugia || slotSeleccionado?.fecha || (casoConfirmadoInicial ? (casoConfirmadoInicial.fecha_sugerida || casoConfirmadoInicial.fecha_definitiva_cirugia || casoConfirmadoInicial.fecha_probable_cirugia) : null) || fechaDefecto || new Date().toISOString().slice(0, 10),
+    hora_inicio: (turno?.hora_inicio || slotSeleccionado?.hora || horaDefecto || '08:30').slice(0, 5),
     duracion_minutos: turno?.duracion_minutos || 20,
     ojo: turno?.ojo || casoConfirmadoInicial?.sub_ojo || casoConfirmadoInicial?.ojo || 'OD',
     es_bilateral_escalonada: turno?.es_bilateral_escalonada || false,
@@ -191,6 +198,25 @@ export default function FichaTurnoModal({
     lio_target_refractivo: turno?.lio_target_refractivo || casoConfirmadoInicial?.lio_target_refractivo || ''
   })
 
+  // Sincronizar reactivamente formData si cambian las props de slot seleccionado o defecto
+  useEffect(() => {
+    if (slotSeleccionado) {
+      setFormData((prev) => ({
+        ...prev,
+        quirofano_id: slotSeleccionado.quirofanoId || prev.quirofano_id,
+        fecha_cirugia: slotSeleccionado.fecha || prev.fecha_cirugia,
+        hora_inicio: (slotSeleccionado.hora || prev.hora_inicio).slice(0, 5)
+      }))
+    } else if (quirofanoDefectoId || fechaDefecto || horaDefecto) {
+      setFormData((prev) => ({
+        ...prev,
+        quirofano_id: prev.quirofano_id || quirofanoDefectoId || '',
+        fecha_cirugia: prev.fecha_cirugia || fechaDefecto || '',
+        hora_inicio: prev.hora_inicio || (horaDefecto ? horaDefecto.slice(0, 5) : '08:30')
+      }))
+    }
+  }, [slotSeleccionado, quirofanoDefectoId, fechaDefecto, horaDefecto])
+
   const [guardando, setGuardando] = useState(false)
   const [cancelando, setCancelando] = useState(false)
   const [enviandoWA, setEnviandoWA] = useState(false)
@@ -217,7 +243,13 @@ export default function FichaTurnoModal({
 
     setFormData((prev) => {
       const ojoSugerido = caso.sub_ojo || caso.ojo || prev.ojo || 'OD'
-      const fechaSugerida = caso.fecha_sugerida || caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || prev.fecha_cirugia
+      // REGLA CLAVE DE PRIORIDAD:
+      // Si el turno proviene de un slot seleccionado en la grilla (slotSeleccionado),
+      // o si el usuario ya tiene una fecha y horario activos, SE PRESERVA la asignación de sala, fecha y hora.
+      // Solo si NO hay un slot fijado se toma la fecha sugerida de la asesoría.
+      const fechaAsignada = slotSeleccionado?.fecha || prev.fecha_cirugia || caso.fecha_sugerida || caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || new Date().toISOString().slice(0, 10)
+      const quirofanoAsignado = slotSeleccionado?.quirofanoId || prev.quirofano_id || quirofanoDefectoId || quirofanos[0]?.id || ''
+      const horaAsignada = (slotSeleccionado?.hora || prev.hora_inicio || horaDefecto || '08:30').slice(0, 5)
 
       return {
         ...prev,
@@ -236,7 +268,9 @@ export default function FichaTurnoModal({
         ojo: ojoSugerido,
         duracion_minutos: duracionSugerida,
         lleva_lente: llevaLio,
-        fecha_cirugia: fechaSugerida,
+        fecha_cirugia: fechaAsignada,
+        quirofano_id: quirofanoAsignado,
+        hora_inicio: horaAsignada,
         lente_tipo: caso.lente_tipo || prev.lente_tipo || 'AcrySof IQ SN60WF (Alcon)',
         lente_dioptria: caso.lente_dioptria !== undefined && caso.lente_dioptria !== null ? String(caso.lente_dioptria) : prev.lente_dioptria,
         es_torico: caso.es_torico !== undefined ? Boolean(caso.es_torico) : prev.es_torico,
@@ -362,6 +396,16 @@ export default function FichaTurnoModal({
     if (!esDiaOperativo(formData.fecha_cirugia, quirofanoActual)) {
       setError(`La sala seleccionada (${quirofanoActual?.nombre}) no se encuentra operativa los ${diaSeleccionadoNombre}s. Por favor elija un día habilitado.`)
       return
+    }
+
+    if (conflictoHorario && conflictoHorario.tipo === 'bloqueo') {
+      setError(conflictoHorario.mensaje)
+      return
+    }
+
+    if (conflictoHorario && conflictoHorario.tipo === 'turno') {
+      const continuar = confirm(`Advertencia de superposición de horario:\n\n${conflictoHorario.mensaje}\n\n¿Desea continuar y agendar este turno igualmente?`)
+      if (!continuar) return
     }
 
     try {
@@ -587,6 +631,99 @@ export default function FichaTurnoModal({
   }
 
   const slotsDisponibles = generarSlotsHorarios(quirofanoActual)
+
+  const horaAMinutos = (horaStr: string) => {
+    if (!horaStr) return 0
+    const [h, m] = horaStr.split(':').map(Number)
+    return (h || 0) * 60 + (m || 0)
+  }
+
+  const minutosAHora = (min: number) => {
+    const h = Math.floor(min / 60) % 24
+    const m = min % 60
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+  }
+
+  // Estado de cada slot disponible (Libre vs Ocupado vs Bloqueado)
+  const getSlotEstado = (slotHora: string) => {
+    const slotMin = horaAMinutos(slotHora)
+    const qId = formData.quirofano_id
+    const fecha = formData.fecha_cirugia
+
+    const turnoSolapado = (turnosExistentes || []).find((t: any) => {
+      if (turno?.id && t.id === turno.id) return false
+      if (t.quirofano_id !== qId || t.fecha_cirugia !== fecha) return false
+      const tIni = horaAMinutos(t.hora_inicio)
+      const dur = Number(t.duracion_minutos) || 20
+      const tFin = tIni + dur
+      return slotMin >= tIni && slotMin < tFin
+    })
+
+    if (turnoSolapado) {
+      const pacNombre = turnoSolapado.pacientes?.nombre || 'Turno agendado'
+      return { estado: 'ocupado', label: `🔴 Ocupado (${pacNombre})`, detalle: turnoSolapado }
+    }
+
+    const bloqueoSolapado = (bloqueosExistentes || []).find((b: any) => {
+      if (b.quirofano_id !== qId || b.fecha !== fecha) return false
+      const bIni = horaAMinutos(b.hora_desde)
+      const bFin = horaAMinutos(b.hora_hasta)
+      return slotMin >= bIni && slotMin < bFin
+    })
+
+    if (bloqueoSolapado) {
+      return { estado: 'bloqueado', label: `⛔ Bloqueado (${bloqueoSolapado.motivo || 'No disponible'})`, detalle: bloqueoSolapado }
+    }
+
+    return { estado: 'libre', label: '🟢 Disponible', detalle: null }
+  }
+
+  // Conflicto de superposición global para el turno y horario actual configurado
+  const conflictoHorario = useMemo(() => {
+    if (!formData.hora_inicio || !formData.fecha_cirugia || !formData.quirofano_id) return null
+    const horaIniMin = horaAMinutos(formData.hora_inicio)
+    const durMin = Number(formData.duracion_minutos) || 20
+    const horaFinMin = horaIniMin + durMin
+
+    // Comprobar con turnos existentes
+    const turnoChocando = (turnosExistentes || []).find((t: any) => {
+      if (turno?.id && t.id === turno.id) return false
+      if (t.quirofano_id !== formData.quirofano_id || t.fecha_cirugia !== formData.fecha_cirugia) return false
+      const tIni = horaAMinutos(t.hora_inicio)
+      const tDur = Number(t.duracion_minutos) || 20
+      const tFin = tIni + tDur
+      return horaIniMin < tFin && horaFinMin > tIni
+    })
+
+    if (turnoChocando) {
+      const pNombre = turnoChocando.pacientes?.nombre || 'Otro Paciente'
+      const tIni = (turnoChocando.hora_inicio || '').slice(0, 5)
+      const tFin = minutosAHora(horaAMinutos(tIni) + (Number(turnoChocando.duracion_minutos) || 20))
+      return {
+        tipo: 'turno',
+        mensaje: `Superposición de Horario: Se solapa con el turno de ${pNombre} (${tIni} a ${tFin} hs, ${turnoChocando.practica_nombre || 'Cirugía'}) en este mismo quirófano.`
+      }
+    }
+
+    // Comprobar con bloqueos existentes
+    const bloqueoChocando = (bloqueosExistentes || []).find((b: any) => {
+      if (b.quirofano_id !== formData.quirofano_id || b.fecha !== formData.fecha_cirugia) return false
+      const bIni = horaAMinutos(b.hora_desde)
+      const bFin = horaAMinutos(b.hora_hasta)
+      return horaIniMin < bFin && horaFinMin > bIni
+    })
+
+    if (bloqueoChocando) {
+      const bIni = (bloqueoChocando.hora_desde || '').slice(0, 5)
+      const bFin = (bloqueoChocando.hora_hasta || '').slice(0, 5)
+      return {
+        tipo: 'bloqueo',
+        mensaje: `Horario Bloqueado: Este quirófano se encuentra reservado/bloqueado de ${bIni} a ${bFin} hs (${bloqueoChocando.motivo || 'Mantenimiento / Asignación'}).`
+      }
+    }
+
+    return null
+  }, [formData.hora_inicio, formData.duracion_minutos, formData.fecha_cirugia, formData.quirofano_id, turnosExistentes, bloqueosExistentes, turno])
 
   // Nombres y validación de días operativos (1=Lun .. 7=Dom)
   const nombresDiasMap: Record<number, string> = {
@@ -1006,16 +1143,26 @@ export default function FichaTurnoModal({
             </div>
           )}
 
-          {/* BANNER DINÁMICO DE FRANJA HORARIA */}
+          {/* BANNER DINÁMICO DE ASIGNACIÓN QUIRÚRGICA */}
           <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border border-blue-500/20 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2">
-              <Clock size={16} className="text-blue-600 shrink-0" />
-              <span className="font-bold text-[var(--foreground)]">
-                Horario Quirúrgico Asignado:{' '}
-                <span className="font-mono text-blue-600 font-extrabold text-sm">
-                  {formData.hora_inicio} hs ➔ {calcularHoraFin()} hs
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-1.5 font-bold text-[var(--foreground)]">
+                <Building2 size={16} className="text-blue-600 shrink-0" />
+                <span>Sala: <span className="text-blue-600 font-extrabold">{quirofanoActual?.nombre || 'Sin sala'}</span></span>
+              </div>
+              <div className="flex items-center gap-1.5 font-bold text-[var(--foreground)]">
+                <Calendar size={15} className="text-indigo-600 shrink-0" />
+                <span>Fecha: <span className="text-indigo-600 font-extrabold">{diaSeleccionadoNombre}, {formData.fecha_cirugia || 'Sin fecha'}</span></span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Clock size={15} className="text-blue-600 shrink-0" />
+                <span className="font-bold text-[var(--foreground)]">
+                  Horario:{' '}
+                  <span className="font-mono text-blue-600 font-extrabold text-sm">
+                    {formData.hora_inicio} hs ➔ {calcularHoraFin()} hs
+                  </span>
                 </span>
-              </span>
+              </div>
             </div>
             <div className="flex items-center gap-2 font-semibold text-[var(--secondary)]">
               <Timer size={14} className="text-purple-500" />
@@ -1120,6 +1267,21 @@ export default function FichaTurnoModal({
               </div>
             </div>
 
+            {/* Tarjeta de Resumen Dinámico de Asignación */}
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/25 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+              <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200 font-semibold">
+                <CheckCircle2 size={16} className="text-blue-600 shrink-0" />
+                <span>
+                  Asignación activa: <b>{quirofanoActual?.nombre}</b> • <b>{diaSeleccionadoNombre} {formData.fecha_cirugia}</b> • <span className="font-mono text-blue-700 dark:text-blue-300 font-bold">{formData.hora_inicio} hs a {calcularHoraFin()} hs ({formData.duracion_minutos}m)</span>
+                </span>
+              </div>
+              {slotSeleccionado && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-sm flex items-center gap-1">
+                  ⚡ Fijado desde el Turnero
+                </span>
+              )}
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
               {/* 1. Quirófano / Sala */}
               <div>
@@ -1168,7 +1330,7 @@ export default function FichaTurnoModal({
                 />
               </div>
 
-              {/* 3. Hora de Inicio: Menú Desplegable con Slots Configurados */}
+              {/* 3. Hora de Inicio: Menú Desplegable con Slots Configurados y Estado de Disponibilidad */}
               <div>
                 <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
                   <span>Hora de Inicio *</span>
@@ -1182,11 +1344,14 @@ export default function FichaTurnoModal({
                   className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-mono font-bold outline-none focus:border-blue-500"
                   required
                 >
-                  {slotsDisponibles.map((slot) => (
-                    <option key={slot} value={slot}>
-                      {slot} hs
-                    </option>
-                  ))}
+                  {slotsDisponibles.map((slot) => {
+                    const info = getSlotEstado(slot)
+                    return (
+                      <option key={slot} value={slot}>
+                        {slot} hs — {info.label}
+                      </option>
+                    )
+                  })}
                   {/* Si el turno actual tiene un horario previo que no coincide con un slot, se mantiene como opción */}
                   {formData.hora_inicio && !slotsDisponibles.includes(formData.hora_inicio) && (
                     <option value={formData.hora_inicio}>
@@ -1210,6 +1375,14 @@ export default function FichaTurnoModal({
                 />
               </div>
             </div>
+
+            {/* Alerta de Conflicto o Solapamiento de Horario en tiempo real */}
+            {conflictoHorario && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2.5 animate-fade-in">
+                <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+                <span className="font-semibold">{conflictoHorario.mensaje}</span>
+              </div>
+            )}
 
             {/* Banner de Advertencia si se selecciona un día NO operativo */}
             {!fechaEsValida && (
