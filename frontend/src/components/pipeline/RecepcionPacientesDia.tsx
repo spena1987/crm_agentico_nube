@@ -27,7 +27,7 @@ import {
   ListFilter
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { BACKEND_URL } from '@/lib/api'
+import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
@@ -231,7 +231,7 @@ export default function RecepcionPacientesDia() {
   const fetchTurnosHoy = async () => {
     try {
       setCargando(true)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano?fecha_desde=${fecha}&fecha_hasta=${fecha}`, {
+      const res = await apiFetch(`/api/turnos-quirofano?fecha_desde=${fecha}&fecha_hasta=${fecha}`, {
         cache: 'no-store'
       })
 
@@ -288,7 +288,7 @@ export default function RecepcionPacientesDia() {
     try {
       setProcesandoId(turnoId)
       const ahoraIso = new Date().toISOString()
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ estado: 'en_espera' })
@@ -318,7 +318,7 @@ export default function RecepcionPacientesDia() {
   const handleReenviarConsentimientoWA = async (turnoId: string) => {
     try {
       setProcesandoId(turnoId)
-      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/${turnoId}/enviar-consentimiento-wa`, {
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/enviar-consentimiento-wa`, {
         method: 'POST'
       })
       const data = await res.json()
@@ -812,18 +812,32 @@ export default function RecepcionPacientesDia() {
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold">
-                        <CheckCircle2 size={14} />
-                        <span>Consentimiento Firmado Digitalmente</span>
-                        <a
-                          href={`${BACKEND_URL}${t.consentimiento_pdf_url || '/static/consentimiento_' + t.id + '.pdf'}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
-                        >
-                          <Download size={11} />
-                          <span>Ver PDF</span>
-                        </a>
+                      <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2 text-emerald-300 text-xs">
+                        <div className="flex items-center gap-2 font-bold text-emerald-400">
+                          <CheckCircle2 size={14} className="shrink-0 text-emerald-400" />
+                          <span>Consentimiento Firmado Digitalmente</span>
+                          <a
+                            href={`${BACKEND_URL}${t.consentimiento_pdf_url || '/static/consentimiento_' + t.id + '.pdf'}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2 py-0.5 rounded-md bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-[11px] flex items-center gap-1 transition ml-1"
+                          >
+                            <Download size={11} />
+                            <span>Ver PDF</span>
+                          </a>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPulseraTurnoId(t.id)}
+                            className="px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm transition"
+                            title="Imprimir pulsera identificatoria en TSC TDP-225"
+                          >
+                            <Printer size={12} />
+                            <span>Pulsera QR</span>
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
