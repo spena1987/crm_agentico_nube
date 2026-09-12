@@ -592,19 +592,42 @@ def archivar_conversacion(conversacion_id: str, archivada: bool = True):
 
 def obtener_conversaciones(incluir_archivadas: bool = True):
     """
-    Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados
+    Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados,
+    el operador asignado (usuarios_perfil), el estado de gestión del ciclo de vida
     y el conteo de mensajes no leídos (unread_count).
     """
     if not supabase:
         return []
     try:
-        query = supabase.table("conversaciones").select(
-            "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, updated_at, unread_count, metadata_json, pacientes(*)"
-        )
-        if not incluir_archivadas:
-            query = query.eq("archivada", False)
-        response = query.order("updated_at", desc=True).execute()
-        convs = response.data or []
+        try:
+            query = supabase.table("conversaciones").select(
+                "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, asignado_a_usuario_id, estado_gestion, ultimo_mensaje, updated_at, unread_count, metadata_json, pacientes(*)"
+            )
+            if not incluir_archivadas:
+                query = query.eq("archivada", False)
+            response = query.order("updated_at", desc=True).execute()
+            convs = response.data or []
+        except Exception as sel_err:
+            logger.warning(f"Fallback a campos base en conversaciones: {sel_err}")
+            query = supabase.table("conversaciones").select(
+                "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, updated_at, unread_count, metadata_json, pacientes(*)"
+            )
+            if not incluir_archivadas:
+                query = query.eq("archivada", False)
+            response = query.order("updated_at", desc=True).execute()
+            convs = response.data or []
+
+        # Enriquecer con datos del operador asignado desde usuarios_perfil
+        user_ids = list({str(c.get("asignado_a_usuario_id")) for c in convs if c.get("asignado_a_usuario_id")})
+        user_map = {}
+        if user_ids:
+            try:
+                u_res = supabase.table("usuarios_perfil").select("id, nombre_completo, email, avatar_url, rol_id").in_("id", user_ids).execute()
+                if u_res.data:
+                    for u in u_res.data:
+                        user_map[str(u["id"])] = u
+            except Exception as u_err:
+                logger.warning(f"Error consultando usuarios_perfil para conversaciones: {u_err}")
 
         # Enriquecer con estado oficial de la Ventana de 24h de Meta desde patient_conversations
         pc_map = {}
@@ -647,37 +670,93 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
                 "last_inbound_at": None
             })
             c.update(w_info)
+            op_id = str(c.get("asignado_a_usuario_id") or "")
+            c["asignado_a"] = user_map.get(op_id) if op_id else None
+
+            # Asegurar consistencia de estado_gestion
+            if not c.get("estado_gestion"):
+                if c.get("archivada"):
+                    c["estado_gestion"] = "RESUELTO"
+                elif op_id:
+                    c["estado_gestion"] = "EN_GESTION"
+                else:
+                    c["estado_gestion"] = "SIN_ASIGNAR"
 
         return convs
     except Exception as e:
         logger.error(f"Error al obtener conversaciones: {e}")
         return []
 
-def obtener_metricas_conversaciones():
+def obtener_metricas_conversaciones(usuario_id: Optional[str] = None):
     """
     Calcula en tiempo real los contadores para las pestañas de la bandeja de entrada:
-    - total_activas
-    - no_leidos_count (conversaciones con al menos un mensaje no leído)
-    - total_mensajes_no_leidos
-    - derivados_humano (bot_disabled == true and not archivada)
-    - bot_activos (bot_disabled == false and not archivada)
-    - archivados (archivada == true)
+    - mis_chats: Conversaciones asignadas al usuario activo no archivadas
+    - mis_no_leidos: Conversaciones con mensajes sin leer asignadas al usuario activo
+    - sin_asignar: En espera de atención humana sin operador asignado
+    - total_activas: Total de conversaciones abiertas
+    - no_leidos_count: Conversaciones con al menos un mensaje no leído
+    - total_mensajes_no_leidos: Total de mensajes sin leer
+    - derivados_humano: bot_disabled == true
+    - bot_activos: bot_disabled == false
+    - archivados: archivada == true o estado_gestion == RESUELTO
     """
+    default_metrics = {
+        "mis_chats": 0,
+        "mis_no_leidos": 0,
+        "sin_asignar": 0,
+        "total_activas": 0,
+        "no_leidos_count": 0,
+        "total_mensajes_no_leidos": 0,
+        "derivados_humano": 0,
+        "bot_activos": 0,
+        "archivados": 0
+    }
     if not supabase:
-        return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
+        return default_metrics
     for attempt in range(2):
         try:
-            res = supabase.table("conversaciones").select("id, bot_disabled, archivada, unread_count").execute()
+            try:
+                res = supabase.table("conversaciones").select(
+                    "id, bot_disabled, archivada, unread_count, asignado_a_usuario_id, estado_gestion"
+                ).execute()
+            except Exception:
+                res = supabase.table("conversaciones").select(
+                    "id, bot_disabled, archivada, unread_count"
+                ).execute()
             convs = res.data or []
+
+            u_id_str = str(usuario_id) if usuario_id else None
+            mis_chats = 0
+            mis_no_leidos = 0
+            sin_asignar = 0
+
+            for c in convs:
+                is_archived = bool(c.get("archivada") or c.get("estado_gestion") == "RESUELTO")
+                c_asig = str(c.get("asignado_a_usuario_id") or "")
+                c_unread = int(c.get("unread_count") or 0)
+                c_bot_disabled = bool(c.get("bot_disabled"))
+
+                if not is_archived:
+                    if u_id_str and c_asig == u_id_str:
+                        mis_chats += 1
+                        if c_unread > 0:
+                            mis_no_leidos += 1
+                    # Sin asignar: cuando bot_disabled o estado_gestion == 'SIN_ASIGNAR' y no tiene operador
+                    if not c_asig and (c_bot_disabled or c.get("estado_gestion") == "SIN_ASIGNAR"):
+                        sin_asignar += 1
+
             derivados = sum(1 for c in convs if c.get("bot_disabled") and not c.get("archivada"))
             bot_activos = sum(1 for c in convs if not c.get("bot_disabled") and not c.get("archivada"))
-            archivados = sum(1 for c in convs if c.get("archivada"))
+            archivados = sum(1 for c in convs if c.get("archivada") or c.get("estado_gestion") == "RESUELTO")
             total_activas = len(convs) - archivados
 
             no_leidos_count = sum(1 for c in convs if int(c.get("unread_count") or 0) > 0 and not c.get("archivada"))
             total_mensajes_no_leidos = sum(int(c.get("unread_count") or 0) for c in convs if not c.get("archivada"))
 
             return {
+                "mis_chats": mis_chats,
+                "mis_no_leidos": mis_no_leidos,
+                "sin_asignar": sin_asignar,
                 "total_activas": total_activas,
                 "no_leidos_count": no_leidos_count,
                 "total_mensajes_no_leidos": total_mensajes_no_leidos,
@@ -691,7 +770,178 @@ def obtener_metricas_conversaciones():
                 time.sleep(0.15)
                 continue
             logger.error(f"Error al calcular métricas de conversaciones: {e}")
-            return {"total_activas": 0, "no_leidos_count": 0, "total_mensajes_no_leidos": 0, "derivados_humano": 0, "bot_activos": 0, "archivados": 0}
+            return default_metrics
+
+def tomar_conversacion(conversacion_id: str, usuario_id: str, usuario_nombre: Optional[str] = None):
+    """
+    Autoasigna una conversación al operador actual, fija el estado a EN_GESTION
+    y desactiva el bot para que no interfiera en la conversación.
+    """
+    if not supabase:
+        return None
+    try:
+        payload = {
+            "asignado_a_usuario_id": usuario_id,
+            "estado_gestion": "EN_GESTION",
+            "bot_disabled": True,
+            "archivada": False
+        }
+        res = supabase.table("conversaciones").update(payload).eq("id", conversacion_id).execute()
+        conv = res.data[0] if res.data else None
+
+        # Sincronizar en patient_conversations si existe
+        try:
+            supabase.table("patient_conversations").update({
+                "assigned_agent_id": usuario_id,
+                "bot_mode": "HUMAN_OPERATOR"
+            }).eq("id", conversacion_id).execute()
+        except Exception:
+            pass
+
+        # Registrar nota interna de auditoría
+        nombre = usuario_nombre or "Operador CRM"
+        try:
+            supabase.table("mensajes").insert({
+                "conversacion_id": conversacion_id,
+                "emisor": "operador",
+                "contenido": f"🔒 Caso tomado por {nombre}. Atención humana personalizada en curso.",
+                "metadata_json": {
+                    "es_nota_interna": True,
+                    "tipo_evento": "ASIGNACION_TOMADA",
+                    "operador_id": usuario_id,
+                    "operador_nombre": nombre
+                }
+            }).execute()
+        except Exception as err_msg:
+            logger.warning(f"Error insertando nota de auditoría de asignación: {err_msg}")
+
+        return conv
+    except Exception as e:
+        logger.error(f"Error al tomar conversación {conversacion_id}: {e}")
+        return None
+
+def derivar_conversacion(
+    conversacion_id: str,
+    nuevo_usuario_id: str,
+    nota_traspaso: Optional[str] = None,
+    origen_nombre: Optional[str] = None,
+    destino_nombre: Optional[str] = None
+):
+    """
+    Reasigna la conversación a otro operador, preserva el estado EN_GESTION
+    e inserta una nota interna privada con el contexto clínico/administrativo de traspaso.
+    """
+    if not supabase:
+        return None
+    try:
+        payload = {
+            "asignado_a_usuario_id": nuevo_usuario_id,
+            "estado_gestion": "EN_GESTION",
+            "bot_disabled": True,
+            "archivada": False
+        }
+        res = supabase.table("conversaciones").update(payload).eq("id", conversacion_id).execute()
+        conv = res.data[0] if res.data else None
+
+        # Sincronizar en patient_conversations
+        try:
+            supabase.table("patient_conversations").update({
+                "assigned_agent_id": nuevo_usuario_id,
+                "bot_mode": "HUMAN_OPERATOR"
+            }).eq("id", conversacion_id).execute()
+        except Exception:
+            pass
+
+        # Registrar nota interna de traspaso
+        origen = origen_nombre or "Operador"
+        destino = destino_nombre or "Asesor / Colega"
+        detalle = f': "{nota_traspaso.strip()}"' if nota_traspaso and nota_traspaso.strip() else "."
+        contenido_nota = f"🔄 Traspaso de caso: {origen} derivó la atención a {destino}{detalle}"
+
+        try:
+            supabase.table("mensajes").insert({
+                "conversacion_id": conversacion_id,
+                "emisor": "operador",
+                "contenido": contenido_nota,
+                "metadata_json": {
+                    "es_nota_interna": True,
+                    "tipo_evento": "DERIVACION_INTERNA",
+                    "origen_nombre": origen,
+                    "destino_id": nuevo_usuario_id,
+                    "destino_nombre": destino,
+                    "nota_traspaso": nota_traspaso
+                }
+            }).execute()
+        except Exception as err_msg:
+            logger.warning(f"Error insertando nota de traspaso: {err_msg}")
+
+        return conv
+    except Exception as e:
+        logger.error(f"Error al derivar conversación {conversacion_id}: {e}")
+        return None
+
+def finalizar_conversacion(conversacion_id: str, usuario_nombre: Optional[str] = None):
+    """
+    Finaliza la atención del caso: fija estado_gestion a RESUELTO, archiva el chat,
+    libera la asignación y reactiva inmediatamente el Bot IA para futuras consultas.
+    """
+    if not supabase:
+        return None
+    try:
+        payload = {
+            "estado_gestion": "RESUELTO",
+            "archivada": True,
+            "asignado_a_usuario_id": None,
+            "bot_disabled": False
+        }
+        res = supabase.table("conversaciones").update(payload).eq("id", conversacion_id).execute()
+        conv = res.data[0] if res.data else None
+
+        # Sincronizar en patient_conversations
+        try:
+            supabase.table("patient_conversations").update({
+                "assigned_agent_id": None,
+                "bot_mode": "AI_AGENT"
+            }).eq("id", conversacion_id).execute()
+        except Exception:
+            pass
+
+        # Registrar nota de cierre
+        nombre = usuario_nombre or "Operador CRM"
+        try:
+            supabase.table("mensajes").insert({
+                "conversacion_id": conversacion_id,
+                "emisor": "operador",
+                "contenido": f"✅ Atención finalizada por {nombre}. El Asistente Virtual Gemini ha sido reactivado para futuras consultas.",
+                "metadata_json": {
+                    "es_nota_interna": True,
+                    "tipo_evento": "CASO_FINALIZADO",
+                    "operador_nombre": nombre
+                }
+            }).execute()
+        except Exception as err_msg:
+            logger.warning(f"Error insertando nota de finalización: {err_msg}")
+
+        return conv
+    except Exception as e:
+        logger.error(f"Error al finalizar conversación {conversacion_id}: {e}")
+        return None
+
+def obtener_operadores_activos():
+    """
+    Retorna la lista de usuarios activos de usuarios_perfil junto con su rol
+    para el selector del modal de derivación de casos.
+    """
+    if not supabase:
+        return []
+    try:
+        res = supabase.table("usuarios_perfil").select(
+            "id, email, nombre_completo, rol_id, avatar_url, roles(id, codigo, nombre)"
+        ).eq("activo", True).order("nombre_completo").execute()
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Error al obtener operadores activos: {e}")
+        return []
 
 def guardar_transcripcion_mensaje(mensaje_id: str, transcripcion: str):
     """

@@ -328,7 +328,9 @@ export type Database = {
         Row: {
           agente_asignado_codigo: string | null
           archivada: boolean
+          asignado_a_usuario_id: string | null
           bot_disabled: boolean
+          estado_gestion: 'SIN_ASIGNAR' | 'EN_GESTION' | 'RESUELTO' | null
           id: string
           paciente_id: string
           ultimo_mensaje: string | null
@@ -337,7 +339,9 @@ export type Database = {
         Insert: {
           agente_asignado_codigo?: string | null
           archivada?: boolean
+          asignado_a_usuario_id?: string | null
           bot_disabled?: boolean
+          estado_gestion?: 'SIN_ASIGNAR' | 'EN_GESTION' | 'RESUELTO' | null
           id?: string
           paciente_id: string
           ultimo_mensaje?: string | null
@@ -346,7 +350,9 @@ export type Database = {
         Update: {
           agente_asignado_codigo?: string | null
           archivada?: boolean
+          asignado_a_usuario_id?: string | null
           bot_disabled?: boolean
+          estado_gestion?: 'SIN_ASIGNAR' | 'EN_GESTION' | 'RESUELTO' | null
           id?: string
           paciente_id?: string
           ultimo_mensaje?: string | null

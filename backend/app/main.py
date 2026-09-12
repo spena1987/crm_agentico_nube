@@ -23,6 +23,10 @@ from app.db import (
     archivar_conversacion,
     obtener_metricas_conversaciones,
     obtener_conversaciones,
+    tomar_conversacion,
+    derivar_conversacion,
+    finalizar_conversacion,
+    obtener_operadores_activos,
     obtener_mensajes_conversacion,
     marcar_mensajes_conversacion_leidos,
     is_lid_number,
@@ -650,15 +654,71 @@ def get_conversaciones_api(incluir_archivadas: bool = True):
     return obtener_conversaciones(incluir_archivadas=incluir_archivadas)
 
 @app.get("/api/conversaciones/metricas")
-def get_conversaciones_metricas_api():
+def get_conversaciones_metricas_api(usuario_id: Optional[str] = Query(None)):
     """
     Retorna los contadores en tiempo real para las pestañas de la bandeja de entrada:
+    - Mis Chats y Mis No Leídos (si se proporciona usuario_id)
+    - Sin Asignar (pacientes en espera de atención humana)
     - Derivados a Humano
     - En Gestión por IA (Bot Activo)
     - Total Activos
     - Resueltos / Archivados
     """
-    return obtener_metricas_conversaciones()
+    return obtener_metricas_conversaciones(usuario_id=usuario_id)
+
+@app.get("/api/conversaciones/operadores-activos")
+def get_operadores_activos_api():
+    """
+    Retorna la nómina de operadores activos del CRM para poblar el modal de derivación.
+    """
+    return obtener_operadores_activos()
+
+@app.post("/api/conversaciones/{conversacion_id}/tomar")
+def tomar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Autoasigna la conversación al operador logueado y desactiva el bot.
+    """
+    usuario_id = payload.get("usuario_id")
+    if not usuario_id:
+        raise HTTPException(status_code=400, detail="usuario_id es requerido para tomar la conversación.")
+    usuario_nombre = payload.get("usuario_nombre") or payload.get("nombre_operador")
+    res = tomar_conversacion(conversacion_id, usuario_id, usuario_nombre)
+    if not res:
+        raise HTTPException(status_code=404, detail="No se pudo autoasignar la conversación.")
+    return {"success": True, "conversacion": res}
+
+@app.post("/api/conversaciones/{conversacion_id}/derivar")
+def derivar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Reasigna la conversación a otro operador con nota interna de traspaso.
+    """
+    nuevo_usuario_id = payload.get("nuevo_usuario_id")
+    if not nuevo_usuario_id:
+        raise HTTPException(status_code=400, detail="nuevo_usuario_id es requerido para derivar.")
+    nota_traspaso = payload.get("nota_traspaso")
+    origen_nombre = payload.get("origen_nombre")
+    destino_nombre = payload.get("destino_nombre")
+    res = derivar_conversacion(
+        conversacion_id=conversacion_id,
+        nuevo_usuario_id=nuevo_usuario_id,
+        nota_traspaso=nota_traspaso,
+        origen_nombre=origen_nombre,
+        destino_nombre=destino_nombre
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="No se pudo derivar la conversación.")
+    return {"success": True, "conversacion": res}
+
+@app.post("/api/conversaciones/{conversacion_id}/finalizar")
+def finalizar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(default={})):
+    """
+    Marca la conversación como resuelta, archiva el hilo y reactiva inmediatamente el Bot IA.
+    """
+    usuario_nombre = payload.get("usuario_nombre")
+    res = finalizar_conversacion(conversacion_id, usuario_nombre)
+    if not res:
+        raise HTTPException(status_code=404, detail="No se pudo finalizar la conversación.")
+    return {"success": True, "conversacion": res}
 
 @app.post("/api/conversaciones/{conversacion_id}/archivar")
 def archivar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):

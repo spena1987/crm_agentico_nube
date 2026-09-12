@@ -39,8 +39,15 @@ import {
   Pin,
   PinOff,
   Mail,
-  MailCheck
+  MailCheck,
+  UserCheck,
+  UserPlus,
+  Users,
+  Share2,
+  Eye,
+  ArrowRightLeft
 } from 'lucide-react'
+import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import ChatMediaViewer, { DeliveryStatusIcon } from './chat/ChatMediaViewer'
@@ -55,6 +62,19 @@ import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
 import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
 import { BACKEND_URL } from '@/lib/api'
+
+export interface OperadorAsignado {
+  id: string
+  nombre_completo: string
+  email: string
+  avatar_url?: string | null
+  rol_id?: string | null
+  roles?: {
+    id: string
+    codigo: string
+    nombre: string
+  } | null
+}
 
 interface Paciente {
   id: string
@@ -77,6 +97,9 @@ interface Conversacion {
   bot_disabled: boolean
   archivada?: boolean
   agente_asignado_codigo?: string
+  asignado_a_usuario_id?: string | null
+  estado_gestion?: 'SIN_ASIGNAR' | 'EN_GESTION' | 'RESUELTO' | string | null
+  asignado_a?: OperadorAsignado | null
   ultimo_mensaje: string | null
   updated_at: string
   unread_count?: number
@@ -147,6 +170,8 @@ const formatMessageSnippet = (content?: string | null): string => {
 }
 
 export default function ChatInbox() {
+  const { user } = useAuth()
+  const currentUserId = user?.id
   const [conversaciones, setConversaciones] = useState<Conversacion[]>([])
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null)
   const [mensajes, setMensajes] = useState<Mensaje[]>([])
@@ -155,10 +180,29 @@ export default function ChatInbox() {
   const [cargandoConversaciones, setCargandoConversaciones] = useState(true)
   const [waStatus, setWaStatus] = useState<WAStatus | null>(null)
   
-  // Filtros y Búsqueda (Soporte para pestaña No Leídos)
-  const [activeTab, setActiveTab] = useState<'no_leidos' | 'derivados' | 'bot' | 'todos' | 'archivados'>('todos')
+  // Triaging y Filtros Multi-Operador
+  const [activeTab, setActiveTab] = useState<'mis_chats' | 'sin_asignar' | 'todos' | 'bot' | 'archivados'>('mis_chats')
+  const [filtroOperadorId, setFiltroOperadorId] = useState<string>('todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [showSimulator, setShowSimulator] = useState(false)
+
+  // Operadores disponibles y gestión de traspasos
+  const [operadores, setOperadores] = useState<OperadorAsignado[]>([])
+  const [cargandoOperadores, setCargandoOperadores] = useState(false)
+  const [showDerivarModal, setShowDerivarModal] = useState(false)
+  const [derivarUsuarioId, setDerivarUsuarioId] = useState('')
+  const [derivarNota, setDerivarNota] = useState('')
+  const [derivando, setDerivando] = useState(false)
+  const [tomandoCaso, setTomandoCaso] = useState(false)
+  const [finalizandoCaso, setFinalizandoCaso] = useState(false)
+
+  // Presencia y Detección de Colisiones entre Operadores (Supabase Realtime Presence)
+  const [activeOperatorsInChat, setActiveOperatorsInChat] = useState<Array<{
+    user_id: string
+    user_name: string
+    avatar_url?: string
+  }>>([])
+  const presenceChannelRef = useRef<any>(null)
 
   // Opciones avanzadas de CRM
   const [showPatientSidebar, setShowPatientSidebar] = useState(true)
@@ -650,6 +694,8 @@ export default function ChatInbox() {
                   ...conv,
                   bot_disabled: updatedConv.bot_disabled,
                   archivada: updatedConv.archivada,
+                  asignado_a_usuario_id: updatedConv.asignado_a_usuario_id,
+                  estado_gestion: updatedConv.estado_gestion,
                   ultimo_mensaje: updatedConv.ultimo_mensaje,
                   updated_at: updatedConv.updated_at,
                   unread_count: isCurrentActive ? 0 : (updatedConv.unread_count !== undefined ? updatedConv.unread_count : conv.unread_count)
@@ -666,6 +712,256 @@ export default function ChatInbox() {
       supabase.removeChannel(channel)
     }
   }, [])
+
+  // Cargar lista de operadores activos para derivación y filtros
+  useEffect(() => {
+    const fetchOperadores = async () => {
+      try {
+        setCargandoOperadores(true)
+        const res = await fetch(`${BACKEND_URL}/api/conversaciones/operadores-activos`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data)) {
+            setOperadores(data)
+          }
+        }
+      } catch (e) {
+        console.error('Error al cargar operadores:', e)
+      } finally {
+        setCargandoOperadores(false)
+      }
+    }
+    fetchOperadores()
+  }, [])
+
+  // Presencia en tiempo real para Detección de Colisiones (Supabase Realtime Presence)
+  useEffect(() => {
+    if (!user) return
+
+    const channel = supabase.channel('crm-operators-presence', {
+      config: { presence: { key: user.id } }
+    })
+    presenceChannelRef.current = channel
+
+    const syncPresence = () => {
+      const state = channel.presenceState()
+      const currentActiveId = selectedConvIdRef.current
+      if (!currentActiveId) {
+        setActiveOperatorsInChat([])
+        return
+      }
+
+      const others: Array<{ user_id: string; user_name: string; avatar_url?: string }> = []
+      Object.keys(state).forEach((key) => {
+        const presences = state[key] as any[]
+        if (Array.isArray(presences)) {
+          presences.forEach((p) => {
+            if (p.user_id !== user.id && p.conversacion_id === currentActiveId) {
+              others.push({
+                user_id: p.user_id,
+                user_name: p.user_name || 'Colega',
+                avatar_url: p.avatar_url
+              })
+            }
+          })
+        }
+      })
+      setActiveOperatorsInChat(others)
+    }
+
+    channel
+      .on('presence', { event: 'sync' }, syncPresence)
+      .on('presence', { event: 'join' }, syncPresence)
+      .on('presence', { event: 'leave' }, syncPresence)
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          const userName = user.user_metadata?.nombre_completo || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Operador'
+          await channel.track({
+            user_id: user.id,
+            user_name: userName,
+            conversacion_id: selectedConvIdRef.current,
+            joined_at: new Date().toISOString()
+          })
+        }
+      })
+
+    return () => {
+      supabase.removeChannel(channel)
+      presenceChannelRef.current = null
+    }
+  }, [user])
+
+  // Actualizar el canal de presencia cada vez que cambia la conversación seleccionada
+  useEffect(() => {
+    if (presenceChannelRef.current && user) {
+      const userName = user.user_metadata?.nombre_completo || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Operador'
+      presenceChannelRef.current.track({
+        user_id: user.id,
+        user_name: userName,
+        conversacion_id: selectedConvId,
+        joined_at: new Date().toISOString()
+      }).catch(() => {})
+    }
+  }, [selectedConvId, user])
+
+  // Acciones Multi-Operador
+  const handleTomarConversacion = async () => {
+    if (!selectedConvId || !user) return
+    setTomandoCaso(true)
+    try {
+      const userName = user.user_metadata?.nombre_completo || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Operador'
+      const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/tomar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_id: user.id,
+          usuario_nombre: userName
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setConversaciones((prev) =>
+          prev.map((c) =>
+            c.id === selectedConvId
+              ? {
+                  ...c,
+                  asignado_a_usuario_id: user.id,
+                  estado_gestion: 'EN_GESTION',
+                  bot_disabled: true,
+                  asignado_a: {
+                    id: user.id,
+                    nombre_completo: userName,
+                    email: user.email || '',
+                    avatar_url: null
+                  }
+                }
+              : c
+          )
+        )
+        fetchMensajes(selectedConvId)
+      } else {
+        alert(data.detail || 'No se pudo tomar la conversación.')
+      }
+    } catch (err) {
+      console.error('Error al tomar caso:', err)
+    } finally {
+      setTomandoCaso(false)
+    }
+  }
+
+  const handleOpenDerivarModal = () => {
+    setDerivarUsuarioId('')
+    setDerivarNota('')
+    setShowDerivarModal(true)
+  }
+
+  const handleConfirmarDerivacion = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedConvId || !derivarUsuarioId) {
+      alert('Por favor selecciona un operador de destino.')
+      return
+    }
+    setDerivando(true)
+    try {
+      const origenNombre = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
+      const destinoOp = operadores.find((o) => o.id === derivarUsuarioId)
+      const destinoNombre = destinoOp?.nombre_completo || destinoOp?.email || 'Colega'
+
+      const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/derivar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nuevo_usuario_id: derivarUsuarioId,
+          nota_traspaso: derivarNota.trim(),
+          origen_nombre: origenNombre,
+          destino_nombre: destinoNombre
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setShowDerivarModal(false)
+        setDerivarNota('')
+        setDerivarUsuarioId('')
+        setConversaciones((prev) =>
+          prev.map((c) =>
+            c.id === selectedConvId
+              ? {
+                  ...c,
+                  asignado_a_usuario_id: derivarUsuarioId,
+                  estado_gestion: 'EN_GESTION',
+                  bot_disabled: true,
+                  asignado_a: destinoOp
+                    ? {
+                        id: destinoOp.id,
+                        nombre_completo: destinoOp.nombre_completo,
+                        email: destinoOp.email,
+                        avatar_url: destinoOp.avatar_url || null
+                      }
+                    : {
+                        id: derivarUsuarioId,
+                        nombre_completo: destinoNombre,
+                        email: '',
+                        avatar_url: null
+                      }
+                }
+              : c
+          )
+        )
+        fetchMensajes(selectedConvId)
+      } else {
+        alert(data.detail || 'No se pudo derivar la conversación.')
+      }
+    } catch (err) {
+      console.error('Error al derivar caso:', err)
+      alert('Error de red al derivar el caso.')
+    } finally {
+      setDerivando(false)
+    }
+  }
+
+  const handleFinalizarConversacion = async () => {
+    if (!selectedConvId) return
+    const confirmar = window.confirm(
+      '¿Deseas finalizar la atención de este caso?\n\nLa conversación se marcará como Resuelta y el Asistente Virtual Gemini quedará activo de forma inmediata para responder consultas futuras del paciente.'
+    )
+    if (!confirmar) return
+
+    setFinalizandoCaso(true)
+    try {
+      const userName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
+      const res = await fetch(`${BACKEND_URL}/api/conversaciones/${selectedConvId}/finalizar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usuario_nombre: userName
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setConversaciones((prev) =>
+          prev.map((c) =>
+            c.id === selectedConvId
+              ? {
+                  ...c,
+                  estado_gestion: 'RESUELTO',
+                  archivada: true,
+                  asignado_a_usuario_id: null,
+                  asignado_a: null,
+                  bot_disabled: false
+                }
+              : c
+          )
+        )
+        fetchMensajes(selectedConvId)
+      } else {
+        alert(data.detail || 'No se pudo finalizar la conversación.')
+      }
+    } catch (err) {
+      console.error('Error al finalizar caso:', err)
+    } finally {
+      setFinalizandoCaso(false)
+    }
+  }
 
   const selectedConv = conversaciones.find((c) => c.id === selectedConvId)
 
@@ -1202,37 +1498,76 @@ export default function ChatInbox() {
     }
   }
 
-  const noLeidosCount = conversaciones.filter((c) => (c.unread_count || 0) > 0 && !c.archivada).length
-  const derivadosCount = conversaciones.filter((c) => Boolean(c.bot_disabled) && !c.archivada).length
-  const botCount = conversaciones.filter((c) => !c.bot_disabled && !c.archivada).length
-  const todosCount = conversaciones.filter((c) => !c.archivada).length
-  const archivadosCount = conversaciones.filter((c) => Boolean(c.archivada)).length
+  // Métricas multi-operador
+  const misChats = conversaciones.filter(
+    (c) => !c.archivada && c.estado_gestion !== 'RESUELTO' && c.asignado_a_usuario_id === currentUserId
+  )
+  const misChatsCount = misChats.length
+  const misChatsNoLeidos = misChats.filter((c) => (c.unread_count || 0) > 0).length
+
+  const sinAsignar = conversaciones.filter(
+    (c) =>
+      !c.archivada &&
+      c.estado_gestion !== 'RESUELTO' &&
+      !c.asignado_a_usuario_id &&
+      (c.bot_disabled || c.estado_gestion === 'SIN_ASIGNAR')
+  )
+  const sinAsignarCount = sinAsignar.length
+
+  const todosCount = conversaciones.filter((c) => !c.archivada && c.estado_gestion !== 'RESUELTO').length
+  const botCount = conversaciones.filter((c) => !c.bot_disabled && !c.archivada && c.estado_gestion !== 'RESUELTO').length
+  const archivadosCount = conversaciones.filter((c) => Boolean(c.archivada) || c.estado_gestion === 'RESUELTO').length
+  const totalNoLeidosGlobal = conversaciones.filter((c) => (c.unread_count || 0) > 0 && !c.archivada).length
 
   // Actualización dinámica del título del navegador
   useEffect(() => {
-    if (noLeidosCount > 0) {
-      document.title = `(${noLeidosCount}) MedCRM - Chats`
+    if (misChatsNoLeidos > 0) {
+      document.title = `(${misChatsNoLeidos}) MedCRM - Mis Chats`
+    } else if (totalNoLeidosGlobal > 0) {
+      document.title = `(${totalNoLeidosGlobal}) MedCRM - Chats`
     } else {
       document.title = 'MedCRM - Clínica Nube'
     }
-  }, [noLeidosCount])
+  }, [misChatsNoLeidos, totalNoLeidosGlobal])
 
   const filteredConversaciones = conversaciones
     .filter((conv) => {
       const paciente = getPatient(conv)
       const nombre = (paciente?.nombre || '').toLowerCase()
       const telefono = (paciente?.telefono || '').toLowerCase()
+      const dni = (paciente?.dni || '').toLowerCase()
       const ultimoMsg = (conv.ultimo_mensaje || '').toLowerCase()
+      const opNombre = (conv.asignado_a?.nombre_completo || '').toLowerCase()
       const q = searchQuery.trim().toLowerCase()
 
-      const matchesSearch = !q || nombre.includes(q) || telefono.includes(q) || ultimoMsg.includes(q)
+      const matchesSearch = !q || nombre.includes(q) || telefono.includes(q) || dni.includes(q) || ultimoMsg.includes(q) || opNombre.includes(q)
       if (!matchesSearch) return false
 
-      if (activeTab === 'no_leidos') return (conv.unread_count || 0) > 0 && !conv.archivada
-      if (activeTab === 'derivados') return Boolean(conv.bot_disabled) && !conv.archivada
-      if (activeTab === 'bot') return !conv.bot_disabled && !conv.archivada
-      if (activeTab === 'archivados') return Boolean(conv.archivada)
-      return !conv.archivada
+      const isArchived = Boolean(conv.archivada) || conv.estado_gestion === 'RESUELTO'
+
+      if (activeTab === 'mis_chats') {
+        return !isArchived && conv.asignado_a_usuario_id === currentUserId
+      }
+      if (activeTab === 'sin_asignar') {
+        return !isArchived && !conv.asignado_a_usuario_id && (conv.bot_disabled || conv.estado_gestion === 'SIN_ASIGNAR')
+      }
+      if (activeTab === 'bot') {
+        return !isArchived && !conv.bot_disabled
+      }
+      if (activeTab === 'todos') {
+        if (isArchived) return false
+        if (filtroOperadorId !== 'todos') {
+          if (filtroOperadorId === 'sin_asignar') {
+            return !conv.asignado_a_usuario_id
+          }
+          return conv.asignado_a_usuario_id === filtroOperadorId
+        }
+        return true
+      }
+      if (activeTab === 'archivados') {
+        return isArchived
+      }
+      return !isArchived
     })
     .sort((a, b) => {
       const aPinned = Boolean(a.metadata_json?.is_pinned)
@@ -1317,72 +1652,56 @@ export default function ChatInbox() {
           </div>
         </div>
 
-        {/* Pestañas de Estado con Contadores Dinámicos (5 Pestañas Adaptadas) */}
+        {/* Pestañas de Estado con Contadores Dinámicos Multi-Operador */}
         <div className="p-1.5 grid grid-cols-5 gap-1 border-b border-slate-800 bg-[#0a101d] text-[10px] font-semibold">
           
-          {/* 1. NO LEÍDOS */}
+          {/* 1. MIS CHATS */}
           <button
-            onClick={() => setActiveTab('no_leidos')}
+            onClick={() => setActiveTab('mis_chats')}
             className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
-              activeTab === 'no_leidos'
+              activeTab === 'mis_chats'
                 ? 'bg-[#0f2e22] text-emerald-300 border-emerald-500/60 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
-            title="Pacientes con mensajes pendientes de lectura"
+            title="Conversaciones asignadas a mi usuario"
           >
             <span className="truncate flex items-center gap-0.5">
-              🔴 No Leídos
+              <UserCheck size={11} className="shrink-0" />
+              <span>Míos</span>
             </span>
             <span className={`text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold border ${
-              noLeidosCount > 0 
+              misChatsNoLeidos > 0 
                 ? 'bg-emerald-500/30 text-emerald-300 border-emerald-500/60 animate-pulse font-extrabold' 
                 : 'bg-slate-800/80 text-slate-400 border-slate-700/50'
             }`}>
-              {noLeidosCount}
+              {misChatsNoLeidos > 0 ? `${misChatsCount} (${misChatsNoLeidos})` : misChatsCount}
             </span>
           </button>
 
-          {/* 2. DERIVADOS / ATENCIÓN HUMANA */}
+          {/* 2. SIN ASIGNAR */}
           <button
-            onClick={() => setActiveTab('derivados')}
+            onClick={() => setActiveTab('sin_asignar')}
             className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
-              activeTab === 'derivados'
-                ? 'bg-[#2a1722] text-rose-300 border-rose-500/50 shadow-sm font-bold'
+              activeTab === 'sin_asignar'
+                ? 'bg-[#2a1b12] text-amber-300 border-amber-500/60 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
-            title="Conversaciones asignadas a operadores humanos"
+            title="Pacientes en espera de atención humana"
           >
             <span className="truncate flex items-center gap-0.5">
-              👤 Humano
+              <UserPlus size={11} className="shrink-0 text-amber-400" />
+              <span>Espera</span>
             </span>
             <span className={`text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold border ${
-              derivadosCount > 0 
-                ? 'bg-rose-500/30 text-rose-300 border-rose-500/50' 
+              sinAsignarCount > 0 
+                ? 'bg-amber-500/30 text-amber-300 border-amber-500/60 animate-pulse' 
                 : 'bg-slate-800/80 text-slate-400 border-slate-700/50'
             }`}>
-              {derivadosCount}
+              {sinAsignarCount}
             </span>
           </button>
 
-          {/* 3. BOT GEMINI ACTIVO */}
-          <button
-            onClick={() => setActiveTab('bot')}
-            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
-              activeTab === 'bot'
-                ? 'bg-[#122822] text-teal-300 border-teal-500/50 shadow-sm font-bold'
-                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
-            }`}
-            title="Conversaciones atendidas por el Bot Gemini"
-          >
-            <span className="truncate flex items-center gap-0.5">
-              🤖 Bot
-            </span>
-            <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/50">
-              {botCount}
-            </span>
-          </button>
-
-          {/* 4. TODOS LOS CHATS ACTIVOS */}
+          {/* 3. TODOS */}
           <button
             onClick={() => setActiveTab('todos')}
             className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
@@ -1390,17 +1709,37 @@ export default function ChatInbox() {
                 ? 'bg-[#162547] text-blue-300 border-blue-500/50 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
-            title="Todas las conversaciones activas"
+            title="Todas las conversaciones activas del equipo"
           >
-            <span className="truncate">
-              💬 Todos
+            <span className="truncate flex items-center gap-0.5">
+              <Users size={11} className="shrink-0" />
+              <span>Todos</span>
             </span>
             <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/60">
               {todosCount}
             </span>
           </button>
 
-          {/* 5. CERRADOS / ARCHIVADOS */}
+          {/* 4. BOT GEMINI */}
+          <button
+            onClick={() => setActiveTab('bot')}
+            className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
+              activeTab === 'bot'
+                ? 'bg-[#122822] text-teal-300 border-teal-500/50 shadow-sm font-bold'
+                : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
+            }`}
+            title="Conversaciones atendidas de forma autónoma por Gemini"
+          >
+            <span className="truncate flex items-center gap-0.5">
+              <Bot size={11} className="shrink-0" />
+              <span>Bot IA</span>
+            </span>
+            <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-300 border border-slate-700/50">
+              {botCount}
+            </span>
+          </button>
+
+          {/* 5. RESUELTOS */}
           <button
             onClick={() => setActiveTab('archivados')}
             className={`py-1.5 px-0.5 rounded-xl flex flex-col items-center justify-center transition-all border ${
@@ -1408,16 +1747,40 @@ export default function ChatInbox() {
                 ? 'bg-[#1e293b] text-slate-200 border-slate-600 shadow-sm font-bold'
                 : 'text-slate-400 hover:text-slate-200 border-transparent hover:bg-[#131e36]/60'
             }`}
-            title="Conversaciones archivadas o resueltas"
+            title="Conversaciones resueltas o archivadas"
           >
-            <span className="truncate">
-              ✅ Cerrados
+            <span className="truncate flex items-center gap-0.5">
+              <CheckCircle2 size={11} className="shrink-0" />
+              <span>Cerrados</span>
             </span>
             <span className="text-[9.5px] px-1.5 py-0.2 rounded-full mt-0.5 font-bold bg-slate-800 text-slate-400 border border-slate-700/60">
               {archivadosCount}
             </span>
           </button>
         </div>
+
+        {/* Sub-barra de filtro por Asesor cuando la pestaña 'Todos' está activa */}
+        {activeTab === 'todos' && operadores.length > 0 && (
+          <div className="px-3 py-1.5 bg-[#0b1324] border-b border-slate-800 flex items-center justify-between gap-2 text-xs">
+            <span className="text-[10.5px] text-slate-400 font-semibold flex items-center gap-1 shrink-0">
+              <Users size={12} className="text-blue-400" />
+              <span>Filtrar:</span>
+            </span>
+            <select
+              value={filtroOperadorId}
+              onChange={(e) => setFiltroOperadorId(e.target.value)}
+              className="w-full text-[11px] py-1 px-2 bg-[#142038] border border-slate-700/80 rounded-lg text-slate-200 focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+            >
+              <option value="todos">Todos los asesores</option>
+              <option value="sin_asignar">Sin Asignar (En espera)</option>
+              {operadores.map((op) => (
+                <option key={op.id} value={op.id}>
+                  {op.nombre_completo}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Simulador colapsable para testing */}
         {showSimulator && (
@@ -1562,20 +1925,33 @@ export default function ChatInbox() {
                         {paciente?.telefono ? formatPhoneDisplay(paciente.telefono) : 'Sin teléfono'}
                       </span>
 
-                      {/* Badge de Triage */}
-                      {isArchivada ? (
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/60">
-                          Resuelto
-                        </span>
-                      ) : isDerivado ? (
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-950/80 text-rose-300 border border-rose-800/60 flex items-center gap-0.5">
-                          <User size={9} /> Humano
-                        </span>
-                      ) : (
-                        <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 flex items-center gap-0.5">
-                          <Bot size={9} /> Gemini
-                        </span>
-                      )}
+                      {/* Badges de Triage y Operador */}
+                      <div className="flex items-center gap-1 shrink-0">
+                        {conv.asignado_a ? (
+                          <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-700/60 flex items-center gap-1 max-w-[95px] truncate" title={`Asignado a: ${conv.asignado_a.nombre_completo}`}>
+                            <UserCheck size={9} className="shrink-0 text-indigo-400" />
+                            <span className="truncate">{conv.asignado_a.nombre_completo.split(' ')[0]}</span>
+                          </span>
+                        ) : (isDerivado || conv.estado_gestion === 'SIN_ASIGNAR') && !isArchivada ? (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800/60 flex items-center gap-0.5" title="En espera de asignación">
+                            <UserPlus size={9} className="shrink-0 text-amber-400" /> Espera
+                          </span>
+                        ) : null}
+
+                        {isArchivada ? (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 border border-slate-700/60">
+                            Resuelto
+                          </span>
+                        ) : isDerivado ? (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-rose-950/80 text-rose-300 border border-rose-800/60 flex items-center gap-0.5">
+                            <User size={9} /> Humano
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 flex items-center gap-0.5">
+                            <Bot size={9} /> Gemini
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Último Mensaje Snippet con Badge de No Leídos y Botón Hover Desplegable */}
@@ -1672,6 +2048,19 @@ export default function ChatInbox() {
                         <span>24h activa ({metaWindow.hoursLeft}h {metaWindow.minutesLeft}m)</span>
                       </span>
                     )}
+
+                    {/* Badge de Operador Asignado */}
+                    {selectedConv.asignado_a ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-950/80 text-indigo-300 border border-indigo-700/60" title={`Asignado a: ${selectedConv.asignado_a.email}`}>
+                        <UserCheck size={10} className="text-indigo-400" />
+                        <span>Asignado: {selectedConv.asignado_a.nombre_completo}</span>
+                      </span>
+                    ) : !selectedConv.archivada ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60">
+                        <UserPlus size={10} className="text-amber-400" />
+                        <span>Sin Asignar</span>
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -1679,6 +2068,57 @@ export default function ChatInbox() {
               {/* Acciones Rápidas de la Cabecera */}
               <div className="flex items-center gap-1.5 sm:gap-2">
                 
+                {/* Botón Tomar Conversación */}
+                {(!selectedConv.asignado_a_usuario_id || selectedConv.asignado_a_usuario_id !== currentUserId) && !selectedConv.archivada && (
+                  <button
+                    type="button"
+                    onClick={handleTomarConversacion}
+                    disabled={tomandoCaso}
+                    className="px-2.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shadow-blue-600/30 disabled:opacity-50"
+                    title="Asignarme este paciente para atenderlo de forma exclusiva"
+                  >
+                    <UserCheck size={13} />
+                    <span className="hidden sm:inline">{tomandoCaso ? 'Tomando...' : 'Tomar Caso'}</span>
+                  </button>
+                )}
+
+                {/* Botón Derivar Conversación */}
+                {!selectedConv.archivada && (
+                  <button
+                    type="button"
+                    onClick={handleOpenDerivarModal}
+                    className="px-2.5 py-1.5 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-700/60 text-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs"
+                    title="Transferir este paciente a otro asesor o colega con nota interna"
+                  >
+                    <Share2 size={13} className="text-indigo-400" />
+                    <span className="hidden sm:inline">Derivar</span>
+                  </button>
+                )}
+
+                {/* Botón Finalizar Atención o Reabrir */}
+                {!selectedConv.archivada ? (
+                  <button
+                    type="button"
+                    onClick={handleFinalizarConversacion}
+                    disabled={finalizandoCaso}
+                    className="px-2.5 py-1.5 rounded-xl bg-emerald-950/60 text-emerald-300 border border-emerald-800/70 hover:bg-emerald-900/60 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
+                    title="Finalizar atención: archiva el caso y reactiva de inmediato al asistente virtual Gemini"
+                  >
+                    <CheckCircle2 size={13} className="text-emerald-400" />
+                    <span className="hidden md:inline">{finalizandoCaso ? 'Finalizando...' : 'Finalizar'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleToggleArchivar(selectedConv.id, true)}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                    title="Reabrir conversación"
+                  >
+                    <ArchiveRestore size={13} className="text-slate-400" />
+                    <span className="hidden md:inline">Reabrir</span>
+                  </button>
+                )}
+
                 {/* Botón Resumir Chat con IA */}
                 <button
                   onClick={handleCopilotResumir}
@@ -1692,29 +2132,6 @@ export default function ChatInbox() {
                     <Sparkles size={13} className="text-purple-300" />
                   )}
                   <span className="hidden sm:inline">Resumir Chat</span>
-                </button>
-
-                {/* Botón Archivar / Marcar como Resuelto */}
-                <button
-                  onClick={() => handleToggleArchivar(selectedConv.id, selectedConv.archivada)}
-                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
-                    selectedConv.archivada
-                      ? 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                      : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70 hover:bg-emerald-900/60'
-                  }`}
-                  title={selectedConv.archivada ? 'Reabrir conversación' : 'Marcar conversación como resuelta'}
-                >
-                  {selectedConv.archivada ? (
-                    <>
-                      <ArchiveRestore size={13} className="text-slate-400" />
-                      <span className="hidden md:inline">Reabrir</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={13} className="text-emerald-400" />
-                      <span className="hidden md:inline">Resolver</span>
-                    </>
-                  )}
                 </button>
 
                 {/* Switch de Atención Humano / Bot */}
@@ -2068,6 +2485,24 @@ export default function ChatInbox() {
                 </button>
               )}
             </div>
+
+            {/* Banner de Advertencia de Colisión entre Operadores (Supabase Realtime Presence) */}
+            {activeOperatorsInChat.length > 0 && (
+              <div className="px-4 py-2 bg-amber-500/15 border-t border-b border-amber-500/40 flex items-center justify-between text-xs text-amber-300 animate-fadeIn shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <span className="font-semibold">
+                    Atención en simultáneo: {activeOperatorsInChat.map(o => o.user_name).join(', ')} {activeOperatorsInChat.length === 1 ? 'está visualizando' : 'están visualizando'} esta conversación.
+                  </span>
+                </div>
+                <span className="text-[10px] text-amber-400/80 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-700/50">
+                  Prevención de colisión
+                </span>
+              </div>
+            )}
 
             {/* Caja de Entrada de Mensajes y Barra de Copiloto IA (Tema Oscuro) */}
             <div className="p-3 border-t border-slate-800 bg-[#101b33] flex flex-col gap-2 shrink-0">
@@ -2477,6 +2912,104 @@ export default function ChatInbox() {
             if (selectedConvId) fetchMensajes(selectedConvId)
           }}
         />
+      )}
+
+      {/* MODAL PARA DERIVAR CONVERSACIÓN A OTRO ASESOR/OPERADOR */}
+      {showDerivarModal && selectedConv && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[#111c35] border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 animate-scaleUp">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400">
+                  <Share2 size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Derivar Conversación</h3>
+                  <p className="text-xs text-slate-400">Transfiere la atención a otro miembro del equipo</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDerivarModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Seleccionar Asesor / Operador Destino
+                </label>
+                {cargandoOperadores ? (
+                  <div className="text-xs text-slate-400 py-2 flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" /> Cargando asesores disponibles...
+                  </div>
+                ) : (
+                  <select
+                    value={derivarUsuarioId}
+                    onChange={(e) => setDerivarUsuarioId(e.target.value)}
+                    className="w-full bg-[#0b1324] border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-hidden focus:border-indigo-500"
+                  >
+                    <option value="">-- Seleccionar operador --</option>
+                    {operadores
+                      .filter((op) => op.id !== currentUserId)
+                      .map((op) => (
+                        <option key={op.id} value={op.id}>
+                          {op.nombre_completo} ({op.roles?.nombre || op.email})
+                        </option>
+                      ))}
+                  </select>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Nota interna de traspaso (opcional)
+                </label>
+                <textarea
+                  value={derivarNota}
+                  onChange={(e) => setDerivarNota(e.target.value)}
+                  placeholder="Ej: Paciente consulta por implante molar. Solicita turno vespertino urgente con el Dr. Pérez..."
+                  className="w-full bg-[#0b1324] border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:outline-hidden focus:border-indigo-500 h-24 resize-none"
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Esta nota se registrará como nota interna visible en el CRM y no será enviada al paciente.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowDerivarModal(false)}
+                disabled={derivando}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmarDerivacion}
+                disabled={derivando || !derivarUsuarioId}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition flex items-center gap-1.5 shadow-sm shadow-indigo-600/30 disabled:opacity-50"
+              >
+                {derivando ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span>Derivando...</span>
+                  </>
+                ) : (
+                  <>
+                    <Share2 size={13} />
+                    <span>Confirmar Traspaso</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
