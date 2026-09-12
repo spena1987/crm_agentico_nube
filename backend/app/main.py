@@ -165,11 +165,19 @@ from app.services.logger_service import log_event, get_logs, get_logs_stats
 
 geclisa_client = GeclisaClient()
 
-# Configurar logging
+# Configurar logging con sanitización global de datos médicos sensibles (PHI/PII - Ley 25.326 y HIPAA)
+from app.services.whatsapp_cloud.security import PHIMaskingFilter
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
+root_logger = logging.getLogger()
+phi_filter = PHIMaskingFilter()
+root_logger.addFilter(phi_filter)
+for handler in root_logger.handlers:
+    handler.addFilter(phi_filter)
+
 logger = logging.getLogger(__name__)
 
 async def cron_limpieza_diaria_media():

@@ -140,6 +140,7 @@ async def verify_webhook_secret(request: Request) -> bool:
     ).strip()
 
     valid_secrets = {s for s in [
+        os.getenv("WEBHOOK_SECRET"),
         WEBHOOK_SECRET,
         os.getenv("META_WA_VERIFY_TOKEN"),
         "medcrm_meta_verify_token_2026"

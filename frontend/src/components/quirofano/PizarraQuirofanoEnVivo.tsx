@@ -62,6 +62,7 @@ const NOMBRES_ESTADOS: Record<string, string> = {
   pre_quirofano: 'Pre-Quirófano',
   en_operacion: 'En Quirófano',
   operado: 'Operados',
+  reprogramar: 'Reprogramar',
   todos: 'Todos'
 }
 
@@ -880,9 +881,12 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             const esPreQuirofano = t.estado === 'pre_quirofano'
             const esEnOperacion = t.estado === 'en_operacion'
             const esOperado = t.estado === 'operado'
+            const esReprogramar = t.estado === 'reprogramar'
 
             // Borde Lateral de Alto Contraste (5px) según Estado
-            const borderCls = esEnOperacion
+            const borderCls = esReprogramar
+              ? 'border-l-[5px] border-l-rose-500 border-y-rose-300/60 dark:border-y-rose-900/60 border-r-rose-300/60 dark:border-r-rose-900/60 bg-rose-50/30 dark:bg-rose-950/20 ring-2 ring-rose-500/30'
+              : esEnOperacion
               ? 'border-l-[5px] border-l-purple-600 border-y-purple-200 dark:border-y-purple-900 border-r-purple-200 dark:border-r-purple-900 bg-purple-50/25 dark:bg-purple-950/15 ring-2 ring-purple-500/20'
               : esPreQuirofano
               ? 'border-l-[5px] border-l-cyan-500 border-y-cyan-200 dark:border-y-cyan-900 border-r-cyan-200 dark:border-r-cyan-900 bg-cyan-50/20 dark:bg-cyan-950/10'
@@ -928,6 +932,14 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     {t.llegada_at && (
                       <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
                         Llegó: {formatearHoraDesdeIso(t.llegada_at)}
+                      </span>
+                    )}
+
+                    {/* Badge Dinámico de Alerta WhatsApp Reprogramación */}
+                    {esReprogramar && (
+                      <span className="px-2.5 py-0.5 rounded-lg text-xs font-extrabold flex items-center gap-1.5 bg-rose-500/20 text-rose-600 dark:text-rose-300 border border-rose-500/40 animate-pulse shadow-sm">
+                        <Phone size={12} className="text-rose-500 shrink-0" />
+                        <span>⚠️ Solicitó Reprogramar por WhatsApp</span>
                       </span>
                     )}
 

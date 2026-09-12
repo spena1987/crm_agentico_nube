@@ -606,8 +606,47 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
         response = query.order("updated_at", desc=True).execute()
         convs = response.data or []
 
+        # Enriquecer con estado oficial de la Ventana de 24h de Meta desde patient_conversations
+        pc_map = {}
+        try:
+            from datetime import datetime, timezone
+            pc_res = supabase.table("patient_conversations").select("paciente_id, window_expires_at, session_status, last_inbound_at").execute()
+            if pc_res.data:
+                now_utc = datetime.now(timezone.utc)
+                for pc in pc_res.data:
+                    p_id = pc.get("paciente_id")
+                    w_exp = pc.get("window_expires_at")
+                    dt_exp = None
+                    if w_exp:
+                        try:
+                            dt_exp = datetime.fromisoformat(str(w_exp).replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                    is_open = dt_exp is not None and dt_exp > now_utc
+                    rem_sec = int((dt_exp - now_utc).total_seconds()) if is_open else 0
+                    pc_map[p_id] = {
+                        "is_window_open": is_open,
+                        "window_expires_at": w_exp,
+                        "window_remaining_minutes": rem_sec // 60,
+                        "window_hours_left": rem_sec // 3600,
+                        "window_minutes_left": (rem_sec % 3600) // 60,
+                        "last_inbound_at": pc.get("last_inbound_at")
+                    }
+        except Exception as pc_e:
+            logger.warning(f"Error consultando patient_conversations para ventana 24h: {pc_e}")
+
         for c in convs:
             c["unread_count"] = int(c.get("unread_count") or 0)
+            p_id = c.get("paciente_id")
+            w_info = pc_map.get(p_id, {
+                "is_window_open": False,
+                "window_expires_at": None,
+                "window_remaining_minutes": 0,
+                "window_hours_left": 0,
+                "window_minutes_left": 0,
+                "last_inbound_at": None
+            })
+            c.update(w_info)
 
         return convs
     except Exception as e:

@@ -110,7 +110,21 @@ async def process_meta_webhook_payload(payload_dict: Dict[str, Any]):
                 if await EventDeduplicator.is_duplicate(wamid):
                     logger.info(f"[Worker] Mensaje wamid={wamid} duplicado. Omitiendo procesamiento.")
                     continue
-                await handle_inbound_message(msg, phone_number_id, contact_name)
+                try:
+                    await handle_inbound_message(msg, phone_number_id, contact_name)
+                except Exception as in_err:
+                    logger.error(f"[Worker] Error procesando mensaje wamid={wamid}: {in_err}", exc_info=True)
+                    try:
+                        from app.services.logger_service import log_event
+                        log_event(
+                            nivel="ERROR",
+                            modulo="WHATSAPP",
+                            accion="ERROR_PROCESAR_INBOUND",
+                            mensaje=f"Error al procesar mensaje entrante wamid={wamid}: {in_err}",
+                            detalles={"wamid": wamid, "error": str(in_err), "msg_type": msg.get("type")}
+                        )
+                    except Exception:
+                        pass
 
 
 async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Optional[str]):
@@ -248,7 +262,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         text_content = "🎤 Nota de voz"
         if media_id:
             try:
-                from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
+                from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient, MediaPayloadTooLargeError
                 from app.agent import transcribir_audio_con_gemini
                 p_id, tkn = get_whatsapp_cloud_credentials()
                 if p_id and tkn:
@@ -282,6 +296,22 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                 media_meta["media_url"] = media_url
                 if transcripcion_audio:
                     media_meta["transcripcion"] = transcripcion_audio
+            except MediaPayloadTooLargeError as sz_err:
+                logger.warning(f"[Worker Audio] Nota de voz {media_id} excede 20MB: {sz_err}")
+                text_content = "🎤 [Nota de voz excede límite de 20MB]"
+                media_meta["is_oversized"] = True
+                media_meta["download_error"] = f"Audio excede límite seguro de 20MB ({sz_err.file_size} bytes)"
+                try:
+                    from app.services.logger_service import log_event
+                    log_event(
+                        nivel="WARNING",
+                        modulo="WHATSAPP",
+                        accion="MEDIA_EXCEDE_LIMITE_20MB",
+                        mensaje=f"Audio {media_id} excede límite de 20MB",
+                        detalles={"media_id": media_id, "size": sz_err.file_size, "limit": sz_err.max_size, "sender": normalized_phone}
+                    )
+                except Exception:
+                    pass
             except Exception as dwn_err:
                 logger.error(f"[Worker Audio] Error descargando audio de Meta: {dwn_err}")
 
@@ -314,7 +344,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
         if media_id:
             try:
-                from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
+                from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient, MediaPayloadTooLargeError
                 p_id, tkn = get_whatsapp_cloud_credentials()
                 if p_id and tkn:
                     wa_client = WhatsAppCloudClient(phone_number_id=p_id, access_token=tkn)
@@ -350,18 +380,43 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                 media_meta["caption"] = caption
                 if msg_type == "video" and ("gif" in str(media.get("mime_type", "")).lower() or "gif" in str(media.get("caption", "")).lower()):
                     media_meta["is_gif"] = True
+            except MediaPayloadTooLargeError as sz_err:
+                logger.warning(f"[Worker Media] Archivo {media_id} ({msg_type}) excede 20MB: {sz_err}")
+                doc_name = media.get("filename") or ("Documento" if msg_type == "document" else msg_type.capitalize())
+                text_content = f"📄 [{doc_name} - Excede límite seguro de 20MB]"
+                media_meta["is_oversized"] = True
+                media_meta["download_error"] = f"Archivo excede límite seguro de 20MB ({sz_err.file_size} bytes)"
+                try:
+                    from app.services.logger_service import log_event
+                    log_event(
+                        nivel="WARNING",
+                        modulo="WHATSAPP",
+                        accion="MEDIA_EXCEDE_LIMITE_20MB",
+                        mensaje=f"Archivo {media_id} ({msg_type}) excede límite de 20MB",
+                        detalles={"media_id": media_id, "tipo": msg_type, "size": sz_err.file_size, "limit": sz_err.max_size, "sender": normalized_phone}
+                    )
+                except Exception:
+                    pass
             except Exception as dwn_err:
                 logger.error(f"[Worker Media] Error descargando {msg_type} de Meta: {dwn_err}")
+                media_meta["download_error"] = str(dwn_err)
     else:
         text_content = f"[{msg_type.upper()}] Mensaje recibido"
 
-    # 1. Obtener o crear paciente
+    # 1. Obtener o crear paciente (con búsqueda exacta y fallback por últimos 8 dígitos)
     try:
         paciente_res = supabase.table("pacientes").select("id, nombre").eq("telefono", normalized_phone).execute()
         paciente_id = None
         if paciente_res.data and len(paciente_res.data) > 0:
             paciente_id = paciente_res.data[0]["id"]
         else:
+            clean_digits = "".join(filter(str.isdigit, normalized_phone))
+            if len(clean_digits) >= 8:
+                pac_fb = supabase.table("pacientes").select("id, nombre").ilike("telefono", f"%{clean_digits[-8:]}%").limit(1).execute()
+                if pac_fb.data and len(pac_fb.data) > 0:
+                    paciente_id = pac_fb.data[0]["id"]
+
+        if not paciente_id:
             # Crear paciente inicial
             new_pac = supabase.table("pacientes").insert({
                 "telefono": normalized_phone,
@@ -376,49 +431,50 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
         # 3. Renovar o abrir sesión en patient_conversations (Ventana 24h)
         window_limit = datetime.now(timezone.utc) + timedelta(hours=24)
+        conversation_id = None
         if paciente_id and account_id:
-            conv_res = supabase.table("patient_conversations").select("id, bot_mode").eq("paciente_id", paciente_id).eq("account_id", account_id).execute()
-            conversation_id = None
-            bot_mode = "AI_AGENT"
-
-            if conv_res.data and len(conv_res.data) > 0:
-                conversation_id = conv_res.data[0]["id"]
-                bot_mode = conv_res.data[0].get("bot_mode", "AI_AGENT")
-                supabase.table("patient_conversations").update({
-                    "window_expires_at": window_limit.isoformat(),
-                    "session_status": "OPEN",
-                    "last_inbound_at": datetime.now(timezone.utc).isoformat()
-                }).eq("id", conversation_id).execute()
-            else:
-                new_conv = supabase.table("patient_conversations").insert({
-                    "paciente_id": paciente_id,
-                    "account_id": account_id,
-                    "wa_chat_id": normalized_phone,
-                    "window_expires_at": window_limit.isoformat(),
-                    "session_status": "OPEN",
-                    "bot_mode": "AI_AGENT",
-                    "last_inbound_at": datetime.now(timezone.utc).isoformat()
-                }).execute()
-                if new_conv.data:
-                    conversation_id = new_conv.data[0]["id"]
-
-            # 4. Registrar en whatsapp_messages (auditoría oficial de Meta de forma protegida)
             try:
-                if conversation_id:
-                    supabase.table("whatsapp_messages").insert({
-                        "conversation_id": conversation_id,
+                conv_res = supabase.table("patient_conversations").select("id, bot_mode").eq("paciente_id", paciente_id).eq("account_id", account_id).execute()
+                if conv_res.data and len(conv_res.data) > 0:
+                    conversation_id = conv_res.data[0]["id"]
+                    supabase.table("patient_conversations").update({
+                        "window_expires_at": window_limit.isoformat(),
+                        "session_status": "OPEN",
+                        "last_inbound_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", conversation_id).execute()
+                else:
+                    new_conv = supabase.table("patient_conversations").insert({
+                        "paciente_id": paciente_id,
                         "account_id": account_id,
-                        "wamid": wamid,
-                        "direction": "inbound",
-                        "message_type": msg_type,
-                        "content_text": text_content,
-                        "payload_raw": msg_dict,
-                        "status": "delivered"
+                        "wa_chat_id": normalized_phone,
+                        "window_expires_at": window_limit.isoformat(),
+                        "session_status": "OPEN",
+                        "bot_mode": "AI_AGENT",
+                        "last_inbound_at": datetime.now(timezone.utc).isoformat()
                     }).execute()
-            except Exception as wm_err:
-                logger.warning(f"[Worker Audit] Advertencia guardando auditoría en whatsapp_messages: {wm_err}")
+                    if new_conv.data:
+                        conversation_id = new_conv.data[0]["id"]
+            except Exception as pc_err:
+                logger.warning(f"[Worker PatientConv] Advertencia en patient_conversations: {pc_err}")
 
-            # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes)
+        # 4. Registrar en whatsapp_messages (auditoría oficial de Meta de forma protegida)
+        try:
+            if conversation_id and account_id:
+                supabase.table("whatsapp_messages").insert({
+                    "conversation_id": conversation_id,
+                    "account_id": account_id,
+                    "wamid": wamid,
+                    "direction": "inbound",
+                    "message_type": msg_type,
+                    "content_text": text_content,
+                    "payload_raw": msg_dict,
+                    "status": "delivered"
+                }).execute()
+        except Exception as wm_err:
+            logger.warning(f"[Worker Audit] Advertencia guardando auditoría en whatsapp_messages: {wm_err}")
+
+        # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes) - INDEPENDIENTE DE account_id
+        if paciente_id:
             try:
                 conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count").eq("paciente_id", paciente_id).execute()
                 crm_conv_id = None
@@ -461,6 +517,25 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                         "whatsapp_message_id": wamid
                     }).execute()
                     logger.info(f"[Worker Inbound] Mensaje {wamid} ({msg_type}) sincronizado en public.mensajes para chat del CRM.")
+
+                    try:
+                        from app.services.logger_service import log_event
+                        log_event(
+                            nivel="INFO",
+                            modulo="WHATSAPP",
+                            accion="MENSAJE_ENTRANTE_GUARDADO",
+                            mensaje=f"Mensaje entrante ({msg_type}) de {normalized_phone} registrado en CRM",
+                            detalles={
+                                "wamid": wamid,
+                                "paciente_id": paciente_id,
+                                "crm_conv_id": crm_conv_id,
+                                "tipo": msg_type,
+                                "texto": (text_content or "")[:100]
+                            },
+                            paciente_id=paciente_id
+                        )
+                    except Exception:
+                        pass
 
                 # 4.2 Intercepción de Botones Interactivos Automatizados (Presupuesto PDF y Confirmación de Turnos)
                 interactive_handled = False
@@ -574,13 +649,14 @@ async def handle_automated_interactive_action(
         if paciente_id:
             try:
                 pres_resp = supabase.table("presupuestos") \
-                    .select("id, total, total_ars, total_usd, pdf_url, created_at") \
+                    .select("id, total, total_ars, total_usd, pdf_url, created_at, estado") \
                     .eq("paciente_id", paciente_id) \
                     .order("created_at", desc=True) \
-                    .limit(1) \
+                    .limit(5) \
                     .execute()
                 if pres_resp.data and len(pres_resp.data) > 0:
-                    presupuesto = pres_resp.data[0]
+                    activos = [p for p in pres_resp.data if str(p.get("estado", "")).lower() != "cancelado"]
+                    presupuesto = activos[0] if activos else pres_resp.data[0]
             except Exception as pre:
                 logger.error(f"[Interactive Presupuesto] Error consultando presupuestos: {pre}")
 
@@ -590,13 +666,14 @@ async def handle_automated_interactive_action(
                 p_ids = [p["id"] for p in (p_by_phone.data or [])]
                 if p_ids:
                     pres_resp = supabase.table("presupuestos") \
-                        .select("id, total, total_ars, total_usd, pdf_url, created_at") \
+                        .select("id, total, total_ars, total_usd, pdf_url, created_at, estado") \
                         .in_("paciente_id", p_ids) \
                         .order("created_at", desc=True) \
-                        .limit(1) \
+                        .limit(5) \
                         .execute()
                     if pres_resp.data:
-                        presupuesto = pres_resp.data[0]
+                        activos = [p for p in pres_resp.data if str(p.get("estado", "")).lower() != "cancelado"]
+                        presupuesto = activos[0] if activos else pres_resp.data[0]
             except Exception as pe2:
                 logger.warning(f"[Interactive Presupuesto] Fallback por teléfono falló: {pe2}")
 
@@ -613,7 +690,29 @@ async def handle_automated_interactive_action(
                 pdf_full_url = f"{base_backend_url}/static/presupuesto_{pres_id}.pdf"
                 safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', paciente_nombre).strip('_')
                 filename = f"Presupuesto_{safe_name}.pdf"
-                caption = f"📄 Estimado/a {paciente_nombre}, le adjuntamos su presupuesto oficial en formato PDF. Si desea coordinar la fecha de cirugía o financiarlo, puede respondernos por este medio."
+
+                # Control de vigencia: mayor a 30 días
+                created_at_str = presupuesto.get("created_at")
+                es_vencido = False
+                dias_antiguedad = 0
+                if created_at_str:
+                    try:
+                        c_dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                        now_dt = datetime.now(timezone.utc)
+                        dias_antiguedad = (now_dt - c_dt).days
+                        if dias_antiguedad > 30:
+                            es_vencido = True
+                    except Exception as dt_err:
+                        logger.debug(f"[Interactive Presupuesto] Error calculando antigüedad: {dt_err}")
+
+                if es_vencido:
+                    caption = (
+                        f"📄 Estimado/a {paciente_nombre}, le adjuntamos su presupuesto emitido ({filename}). "
+                        f"⚠️ Recuerde que, al haber transcurrido {dias_antiguedad} días desde su emisión, "
+                        f"los valores y aranceles quirúrgicos requieren revalidación con el equipo médico."
+                    )
+                else:
+                    caption = f"📄 Estimado/a {paciente_nombre}, le adjuntamos su presupuesto oficial en formato PDF. Si desea coordinar la fecha de cirugía o financiarlo, puede respondernos por este medio."
 
                 doc_res = await wa_client.send_document(
                     to_phone=normalized_phone,
@@ -628,23 +727,31 @@ async def handle_automated_interactive_action(
                     to_phone=normalized_phone,
                     wamid=doc_wamid,
                     message_type="document",
-                    content_text=f"[DOCUMENTO PDF: {filename}]",
-                    payload={"document_url": pdf_full_url, "presupuesto_id": pres_id},
+                    content_text=f"[DOCUMENTO PDF: {filename}]" + (" (Valores a revalidar: >30 días)" if es_vencido else ""),
+                    payload={
+                        "document_url": pdf_full_url,
+                        "presupuesto_id": pres_id,
+                        "es_vencido": es_vencido,
+                        "dias_antiguedad": dias_antiguedad
+                    },
                     billing_category="service"
                 )
 
                 # Reflejar en la conversación activa de MedCRM
+                contenido_crm = f"📄 Presupuesto PDF enviado: {filename}" + (f" (Aviso: emitido hace {dias_antiguedad} días, requiere revalidación)" if es_vencido else "")
                 if crm_conv_id:
                     supabase.table("mensajes").insert({
                         "conversacion_id": crm_conv_id,
                         "emisor": "bot",
-                        "contenido": f"📄 Presupuesto PDF enviado: {filename}",
+                        "contenido": contenido_crm,
                         "metadata_json": {
                             "wamid": doc_wamid,
                             "tipo": "documento",
                             "media_url": pdf_full_url,
                             "file_name": filename,
                             "caption": caption,
+                            "es_vencido": es_vencido,
+                            "dias_antiguedad": dias_antiguedad,
                             "delivery_status": "enviado",
                             "provider": "meta_cloud_api"
                         }
@@ -691,18 +798,23 @@ async def handle_automated_interactive_action(
     if is_confirm:
         logger.info(f"[Interactive Auto] Confirmación de turno para paciente {paciente_id} ({normalized_phone})")
         turno_id = None
-        if btn_id.startswith("confirmar_turno_"):
-            turno_id = button_id.replace("CONFIRMAR_TURNO_", "").replace("confirmar_turno_", "")
+        if "confirmar_turno" in btn_id:
+            match_id = re.search(r"confirmar_turno[_\-:]([a-zA-Z0-9\-_]+)", button_id or "", re.IGNORECASE)
+            if match_id:
+                turno_id = match_id.group(1).strip()
+            elif btn_id.startswith("confirmar_turno_"):
+                turno_id = button_id.replace("CONFIRMAR_TURNO_", "").replace("confirmar_turno_", "").strip()
 
         turno_data = None
         if paciente_id:
             try:
                 today_str = datetime.now(timezone.utc).date().isoformat()
-                t_query = supabase.table("turnos_quirofano").select("id, fecha, hora_inicio, estado, quirofanos(nombre)")
+                t_query = supabase.table("turnos_quirofano").select("id, fecha, hora_inicio, estado, practica_o_cirugia, quirofanos(nombre)")
                 if turno_id:
                     t_query = t_query.eq("id", turno_id)
                 else:
-                    t_query = t_query.eq("paciente_id", paciente_id).gte("fecha", today_str).order("fecha", desc=False).limit(1)
+                    # Si no hay ID explícito, buscar el próximo turno pendiente o notificado
+                    t_query = t_query.eq("paciente_id", paciente_id).in_("estado", ["pendiente", "notificado", "agendado"]).gte("fecha", today_str).order("fecha", desc=False).limit(1)
                 t_res = t_query.execute()
                 if t_res.data and len(t_res.data) > 0:
                     turno_data = t_res.data[0]
@@ -719,7 +831,8 @@ async def handle_automated_interactive_action(
             f_val = turno_data.get("fecha") or ""
             h_val = str(turno_data.get("hora_inicio") or "")[:5]
             hora_str = f" a las {h_val} hs" if h_val else ""
-            reply_text = f"✅ ¡Excelente! Su turno programado para el día {f_val}{hora_str} ha sido confirmado con éxito. Lo esperamos puntualmente en el centro médico."
+            practica_str = f" para {turno_data.get('practica_o_cirugia')}" if turno_data.get('practica_o_cirugia') else ""
+            reply_text = f"✅ ¡Excelente! Su turno quirúrgico{practica_str} para el día {f_val}{hora_str} ha sido confirmado con éxito. Lo esperamos puntualmente en el centro médico."
         else:
             reply_text = "✅ ¡Muchas gracias! Su asistencia ha sido confirmada correctamente en nuestro sistema. ¡Lo esperamos!"
 
@@ -776,6 +889,16 @@ async def handle_automated_interactive_action(
                     "estado": "reprogramar",
                     "updated_at": datetime.now(timezone.utc).isoformat()
                 }).eq("paciente_id", paciente_id).gte("fecha", today_str).execute()
+
+                from app.services.logger_service import log_event
+                log_event(
+                    nivel="WARNING",
+                    modulo="WHATSAPP",
+                    accion="REPROGRAMACION_TURNO_SOLICITADA",
+                    mensaje=f"Paciente solicitó reprogramación de turno por WhatsApp ({normalized_phone})",
+                    detalles={"paciente_id": paciente_id, "telefono": normalized_phone, "texto": text_content, "boton": button_id},
+                    paciente_id=paciente_id
+                )
             except Exception as re_err:
                 logger.warning(f"[Interactive Turnos] Advertencia actualizando a reprogramar: {re_err}")
 

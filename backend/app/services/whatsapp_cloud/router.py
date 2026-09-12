@@ -122,6 +122,38 @@ async def receive_webhook_event(
     # Despachar al worker en segundo plano (asíncrono desacoplado)
     background_tasks.add_task(process_meta_webhook_payload, payload)
 
+    # Registro de auditoría inmediata en system_logs
+    try:
+        from app.services.logger_service import log_event
+        event_summary = []
+        sender_phone = None
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                val = change.get("value", {})
+                for m in val.get("messages", []):
+                    sender_phone = m.get("from")
+                    m_type = m.get("type", "unknown")
+                    m_id = m.get("id", "")
+                    event_summary.append(f"msg:{m_type}:{m_id[:16]}")
+                for st in val.get("statuses", []):
+                    event_summary.append(f"status:{st.get('status')}:{st.get('id', '')[:16]}")
+
+        if event_summary:
+            log_event(
+                nivel="INFO",
+                modulo="WHATSAPP",
+                accion="WEBHOOK_META_RECIBIDO",
+                mensaje=f"Webhook Meta recibido ({len(event_summary)} eventos): {', '.join(event_summary[:4])}",
+                detalles={
+                    "event_count": len(event_summary),
+                    "summary": event_summary[:10],
+                    "sender": sender_phone,
+                    "verified": bool(app_secret)
+                }
+            )
+    except Exception as log_err:
+        logger.warning(f"[Meta Webhook] Error registrando log_event: {log_err}")
+
     # Retorno inmediato a Meta
     return Response(content="EVENT_RECEIVED", status_code=status.HTTP_200_OK)
 

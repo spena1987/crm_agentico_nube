@@ -43,6 +43,14 @@ class AuthenticationError(MetaAPIError):
     pass
 
 
+class MediaPayloadTooLargeError(Exception):
+    """Lanzada cuando un archivo multimedia recibido excede el límite seguro (20 MB)."""
+    def __init__(self, file_size: int, max_size: int):
+        self.file_size = file_size
+        self.max_size = max_size
+        super().__init__(f"Media excede el límite seguro de tamaño: {file_size} > {max_size} bytes")
+
+
 class CircuitBreakerOpenException(Exception):
     """Lanzada cuando el Circuit Breaker está abierto para evitar saturar el servicio."""
     pass
@@ -86,14 +94,53 @@ class SimpleCircuitBreaker:
         return True
 
 
+# =========================================================================
+# CACHÉ EN MEMORIA CON TTL PARA CREDENCIALES WABA (Fase 2: Rendimiento & Estabilidad)
+# =========================================================================
+_CREDENTIALS_CACHE: Dict[str, Any] = {
+    "phone_id": None,
+    "token": None,
+    "expires_at": 0.0
+}
+
+_APP_SECRET_CACHE: Dict[str, Any] = {
+    "secret": None,
+    "expires_at": 0.0
+}
+
+CREDENTIALS_CACHE_TTL_SECONDS = 300.0  # 5 minutos
+
+
+def invalidate_whatsapp_credentials_cache():
+    """
+    Invalida inmediatamente la memoria caché de credenciales WABA.
+    Permite refrescar credenciales instantáneamente cuando se guardan cambios en Ajustes del CRM.
+    """
+    global _CREDENTIALS_CACHE, _APP_SECRET_CACHE
+    _CREDENTIALS_CACHE["expires_at"] = 0.0
+    _CREDENTIALS_CACHE["phone_id"] = None
+    _CREDENTIALS_CACHE["token"] = None
+    _APP_SECRET_CACHE["expires_at"] = 0.0
+    _APP_SECRET_CACHE["secret"] = None
+    logger.info("[Credentials Cache] Memoria caché de credenciales WABA invalidada.")
+
+
 def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
     """
-    Obtiene las credenciales activas de Meta WhatsApp Cloud API.
+    Obtiene las credenciales activas de Meta WhatsApp Cloud API con caché en memoria (TTL 5 min).
     Prioriza la base de datos Supabase (tabla whatsapp_accounts) para permitir rotación
     de tokens sin reiniciar contenedores ni depender de redeploys de Railway.
     Si no están en la BD, recurre a las variables de entorno.
     """
+    import time
     import os
+    global _CREDENTIALS_CACHE
+
+    now = time.time()
+    if _CREDENTIALS_CACHE["expires_at"] > now and _CREDENTIALS_CACHE["phone_id"] and _CREDENTIALS_CACHE["token"]:
+        return _CREDENTIALS_CACHE["phone_id"], _CREDENTIALS_CACHE["token"]
+
+    phone_id, token = None, None
     try:
         from app.db import supabase
         acc_res = supabase.table("whatsapp_accounts").select("phone_number_id, system_user_token_encrypted").eq("is_active", True).limit(1).execute()
@@ -101,24 +148,41 @@ def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
             db_phone = acc_res.data[0].get("phone_number_id")
             db_token = acc_res.data[0].get("system_user_token_encrypted")
             if db_phone and db_token:
-                return db_phone, db_token
+                phone_id, token = db_phone, db_token
     except Exception as e:
         logger.debug(f"[Credentials] Error leyendo whatsapp_accounts de Supabase: {e}")
 
-    phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
-    token = os.getenv("META_WA_ACCESS_TOKEN")
+    if not phone_id or not token:
+        phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
+        token = os.getenv("META_WA_ACCESS_TOKEN")
+
+    if phone_id and token:
+        _CREDENTIALS_CACHE["phone_id"] = phone_id
+        _CREDENTIALS_CACHE["token"] = token
+        _CREDENTIALS_CACHE["expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
+
     return phone_id, token
 
 
 def get_whatsapp_app_secret() -> Optional[str]:
     """
-    Obtiene el App Secret de Meta para validación de firma HMAC-SHA256.
+    Obtiene el App Secret de Meta para validación de firma HMAC-SHA256 con caché en memoria (TTL 5 min).
     Prioriza la variable de entorno META_WA_APP_SECRET y luego la tabla whatsapp_accounts de Supabase.
     """
+    import time
     import os
+    global _APP_SECRET_CACHE
+
+    now = time.time()
+    if _APP_SECRET_CACHE["expires_at"] > now and _APP_SECRET_CACHE["secret"]:
+        return _APP_SECRET_CACHE["secret"]
+
     env_secret = os.getenv("META_WA_APP_SECRET")
     if env_secret and env_secret.strip():
-        return env_secret.strip()
+        secret = env_secret.strip()
+        _APP_SECRET_CACHE["secret"] = secret
+        _APP_SECRET_CACHE["expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
+        return secret
 
     try:
         from app.db import supabase
@@ -126,7 +190,10 @@ def get_whatsapp_app_secret() -> Optional[str]:
         if acc_res.data and len(acc_res.data) > 0:
             db_sec = acc_res.data[0].get("app_secret_encrypted")
             if db_sec and str(db_sec).strip():
-                return str(db_sec).strip()
+                secret = str(db_sec).strip()
+                _APP_SECRET_CACHE["secret"] = secret
+                _APP_SECRET_CACHE["expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
+                return secret
     except Exception as e:
         logger.debug(f"[Credentials] Error leyendo app_secret_encrypted de Supabase: {e}")
 
@@ -452,11 +519,11 @@ class WhatsAppCloudClient:
         else:
             return await self.send_document(to_phone, document_url=media_url, caption=caption, filename=filename)
 
-    async def download_media_bytes(self, media_id: str) -> Tuple[bytes, str]:
+    async def download_media_bytes(self, media_id: str, max_size_bytes: int = 20 * 1024 * 1024) -> Tuple[bytes, str]:
         """
-        Descarga el binario multimedia desde Meta Graph API usando el media_id.
-        Paso 1: Obtener la URL temporal de descarga desde Graph API.
-        Paso 2: Descargar los bytes binarios con el Bearer token.
+        Descarga el binario multimedia desde Meta Graph API usando el media_id protegiendo contra OOM.
+        Paso 1: Obtener la URL temporal de descarga desde Graph API y validar file_size informado por Meta.
+        Paso 2: Descargar los bytes binarios con el Bearer token validando Content-Length y tamaño del buffer.
         Retorna (bytes_data, mime_type).
         """
         client = await self.get_http_client()
@@ -468,11 +535,22 @@ class WhatsAppCloudClient:
         meta_info = meta_res.json()
         download_url = meta_info.get("url")
         mime_type = meta_info.get("mime_type", "application/octet-stream")
+        reported_size = meta_info.get("file_size")
+
+        # 1. Validación previa del tamaño informado por Meta Graph API
+        if reported_size is not None:
+            try:
+                size_int = int(reported_size)
+                if size_int > max_size_bytes:
+                    logger.warning(f"[WhatsAppMedia] Archivo {media_id} excede límite seguro: {size_int} > {max_size_bytes} bytes.")
+                    raise MediaPayloadTooLargeError(file_size=size_int, max_size=max_size_bytes)
+            except ValueError:
+                pass
 
         if not download_url:
             raise ValueError(f"Meta no retornó URL de descarga para media {media_id}: {meta_info}")
 
-        # Descarga del binario
+        # 2. Descarga del binario con verificación de Content-Length
         binary_res = await client.get(
             download_url,
             headers={
@@ -484,5 +562,30 @@ class WhatsAppCloudClient:
         if binary_res.status_code != 200:
             raise RuntimeError(f"Error descargando binario de media {media_id}: {binary_res.status_code}")
 
-        return binary_res.content, mime_type
+        content_len_hdr = binary_res.headers.get("Content-Length")
+        if content_len_hdr and content_len_hdr.isdigit():
+            if int(content_len_hdr) > max_size_bytes:
+                raise MediaPayloadTooLargeError(file_size=int(content_len_hdr), max_size=max_size_bytes)
+
+        data_bytes = binary_res.content
+        if len(data_bytes) > max_size_bytes:
+            raise MediaPayloadTooLargeError(file_size=len(data_bytes), max_size=max_size_bytes)
+
+        return data_bytes, mime_type
+
+    async def get_phone_number_details(self) -> Dict[str, Any]:
+        """
+        Consulta en tiempo real la salud de la línea en Meta: verified_name, display_phone_number,
+        quality_rating (GREEN, YELLOW, RED), messaging_limit_tier (TIER_250, TIER_1K, etc.) y code_verification_status.
+        """
+        client = await self.get_http_client()
+        url = f"{self.BASE_URL}/{self.graph_version}/{self.phone_number_id}?fields=verified_name,display_phone_number,quality_rating,messaging_limit_tier,code_verification_status"
+        try:
+            res = await client.get(url)
+            if res.status_code == 200:
+                return res.json()
+            logger.debug(f"[WhatsAppClient] Error leyendo salud de línea {self.phone_number_id}: {res.status_code} {res.text}")
+        except Exception as e:
+            logger.debug(f"[WhatsAppClient] Excepción consultando salud de línea: {e}")
+        return {}
 

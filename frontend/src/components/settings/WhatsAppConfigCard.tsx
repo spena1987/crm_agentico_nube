@@ -13,7 +13,8 @@ import {
   Server,
   KeyRound,
   Globe,
-  Radio
+  Radio,
+  Activity
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import { BACKEND_URL } from '@/lib/api'
@@ -24,6 +25,13 @@ interface WhatsAppStatus {
   status: string
   is_logged_in: boolean
   phone_number_id?: string | null
+  quality_rating?: 'GREEN' | 'YELLOW' | 'RED' | string | null
+  messaging_limit_tier?: string | null
+  display_phone_number?: string | null
+  verified_name?: string | null
+  code_verification_status?: string | null
+  webhook_status?: string | null
+  phi_sanitization?: string | null
   device_info?: {
     phone: string | null
     push_name: string | null
@@ -188,6 +196,87 @@ export default function WhatsAppConfigCard() {
               <span>{verificando ? 'Verificando...' : 'Comprobar Enlace'}</span>
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Monitor de Salud y Observabilidad de la Línea Meta (Phase 4) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+        {/* Card 1: Calidad de la Línea */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex flex-col justify-between shadow-xs">
+          <div className="flex items-center justify-between text-xs text-[var(--secondary)] mb-1">
+            <span className="font-semibold uppercase tracking-wider text-[10px]">Calidad de Línea</span>
+            <Activity size={14} className={
+              statusData?.quality_rating === 'RED' ? 'text-rose-500' :
+              statusData?.quality_rating === 'YELLOW' ? 'text-amber-500' : 'text-emerald-500'
+            } />
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className={`w-2.5 h-2.5 rounded-full ${
+              statusData?.quality_rating === 'RED' ? 'bg-rose-500 animate-pulse' :
+              statusData?.quality_rating === 'YELLOW' ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'
+            }`} />
+            <span className="font-bold text-sm text-[var(--foreground)]">
+              {statusData?.quality_rating === 'GREEN' ? 'Óptima (GREEN)' :
+               statusData?.quality_rating === 'YELLOW' ? 'Media (YELLOW)' :
+               statusData?.quality_rating === 'RED' ? 'Riesgo (RED)' : 'Verificada'}
+            </span>
+          </div>
+          <p className="text-[10px] text-[var(--secondary)] mt-1.5 leading-tight">
+            Reputación oficial ante Meta contra bloqueos por spam.
+          </p>
+        </div>
+
+        {/* Card 2: Límite de Envío */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex flex-col justify-between shadow-xs">
+          <div className="flex items-center justify-between text-xs text-[var(--secondary)] mb-1">
+            <span className="font-semibold uppercase tracking-wider text-[10px]">Límite de Envío</span>
+            <Zap size={14} className="text-blue-500" />
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="font-bold text-sm text-[var(--foreground)]">
+              {statusData?.messaging_limit_tier === 'TIER_1K' ? '1.000 conv/día' :
+               statusData?.messaging_limit_tier === 'TIER_10K' ? '10.000 conv/día' :
+               statusData?.messaging_limit_tier === 'TIER_100K' ? '100.000 conv/día' :
+               statusData?.messaging_limit_tier === 'TIER_UNLIMITED' ? 'Ilimitado' :
+               (statusData?.messaging_limit_tier || '250 conv/día')}
+            </span>
+          </div>
+          <p className="text-[10px] text-[var(--secondary)] mt-1.5 leading-tight">
+            Volumen máximo de conversaciones iniciadas por 24h.
+          </p>
+        </div>
+
+        {/* Card 3: Suscripción Webhook */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex flex-col justify-between shadow-xs">
+          <div className="flex items-center justify-between text-xs text-[var(--secondary)] mb-1">
+            <span className="font-semibold uppercase tracking-wider text-[10px]">Eventos Webhook</span>
+            <Radio size={14} className="text-emerald-500" />
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <CheckCircle2 size={15} className="text-emerald-500" />
+            <span className="font-bold text-sm text-[var(--foreground)]">
+              {statusData?.webhook_status === 'ACTIVE' ? 'En Vivo (v21+)' : 'Sincronizando'}
+            </span>
+          </div>
+          <p className="text-[10px] text-[var(--secondary)] mt-1.5 leading-tight">
+            Recepción bidireccional y validación HMAC SHA-256.
+          </p>
+        </div>
+
+        {/* Card 4: Anonimización PHI */}
+        <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] flex flex-col justify-between shadow-xs">
+          <div className="flex items-center justify-between text-xs text-[var(--secondary)] mb-1">
+            <span className="font-semibold uppercase tracking-wider text-[10px]">Privacidad PHI</span>
+            <ShieldCheck size={14} className="text-emerald-500" />
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="font-bold text-sm text-emerald-600 dark:text-emerald-400">
+              Ley 25.326 / HIPAA
+            </span>
+          </div>
+          <p className="text-[10px] text-[var(--secondary)] mt-1.5 leading-tight">
+            Filtro de enmascaramiento activo para DNIs y teléfonos.
+          </p>
         </div>
       </div>
 

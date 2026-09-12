@@ -324,7 +324,14 @@ def procesar_mensaje_agente(
         # 9. Obtener la respuesta final normalizada para WhatsApp
         raw_text = response.text or ""
         respuesta_final = formatear_texto_whatsapp(raw_text)
-        if not respuesta_final:
+        
+        # Intercepción humanizada ante escalado médico / derivación humana
+        if "escalar_a_operador_humano" in funciones_ejecutadas:
+            if not respuesta_final or "procesado tu consulta de manera interna" in respuesta_final.lower():
+                respuesta_final = "Entendido. He derivado tu consulta de manera prioritaria a nuestro equipo de atención humana. Un asesor de la clínica se comunicará contigo por este medio a la brevedad."
+            elif not any(k in respuesta_final.lower() for k in ["deriv", "asesor", "humano", "operador", "equipo"]):
+                respuesta_final = f"{respuesta_final}\n\nHe derivado tu mensaje a nuestro equipo de atención humana para que un asesor se comunique contigo a la brevedad."
+        elif not respuesta_final:
             respuesta_final = "He procesado tu consulta de manera interna, ¿en qué más puedo ayudarte?"
 
         if guardar_en_db and conversacion_id:

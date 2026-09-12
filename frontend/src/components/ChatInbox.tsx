@@ -82,6 +82,12 @@ interface Conversacion {
   unread_count?: number
   metadata_json?: any
   pacientes: Paciente | Paciente[] | null
+  is_window_open?: boolean
+  window_expires_at?: string | null
+  window_remaining_minutes?: number
+  window_hours_left?: number
+  window_minutes_left?: number
+  last_inbound_at?: string | null
 }
 
 interface Mensaje {
@@ -200,6 +206,33 @@ export default function ChatInbox() {
   // Cálculo en tiempo real de la Ventana de Atención de 24 Horas de Meta
   const getMeta24hStatus = () => {
     if (!selectedConvId) return { isOpen: true, hoursLeft: 24, minutesLeft: 0, isExpired: false, isUrgent: false }
+
+    // 1. Prioridad: Estado oficial calculado por el servidor desde patient_conversations
+    const activeConv = conversaciones.find((c) => c.id === selectedConvId)
+    if (activeConv && typeof activeConv.is_window_open === 'boolean') {
+      if (activeConv.window_expires_at) {
+        const expTime = new Date(activeConv.window_expires_at).getTime()
+        const now = Date.now()
+        const remMs = expTime - now
+        if (remMs > 0) {
+          const hoursLeft = Math.floor(remMs / (1000 * 60 * 60))
+          const minutesLeft = Math.floor((remMs % (1000 * 60 * 60)) / (1000 * 60))
+          return { isOpen: true, hoursLeft, minutesLeft, isExpired: false, isUrgent: hoursLeft < 2 }
+        } else {
+          return { isOpen: false, hoursLeft: 0, minutesLeft: 0, isExpired: true, isUrgent: false }
+        }
+      } else {
+        return {
+          isOpen: activeConv.is_window_open,
+          hoursLeft: activeConv.window_hours_left ?? 0,
+          minutesLeft: activeConv.window_minutes_left ?? 0,
+          isExpired: !activeConv.is_window_open,
+          isUrgent: (activeConv.window_hours_left ?? 0) < 2
+        }
+      }
+    }
+
+    // 2. Fallback heurístico en base a mensajes en memoria
     const patientMsgs = mensajes.filter((m) => m.emisor === 'paciente')
     if (patientMsgs.length === 0) {
       return { isOpen: false, hoursLeft: 0, minutesLeft: 0, isExpired: true, isUrgent: false }
@@ -922,27 +955,48 @@ export default function ChatInbox() {
             }).catch(() => {})
           }
         } else {
-          // Despacho falló en backend: quitar mensaje optimista para no engañar al operador
+          // Despacho falló en backend: marcar mensaje como fallido para que el operador pueda reintentar o usar plantilla
           const errData = await response.json().catch(() => ({}))
           const errMsg = errData.detail || errData.error || 'Error al despachar por WhatsApp'
-          setMensajes((prev) => prev.filter((m) => m.id !== optimisticMsg.id))
+          const isWindowError = errMsg.includes('Ventana de 24 horas') || errMsg.includes('WINDOW_CLOSED') || errMsg.includes('131026') || errMsg.includes('requiere_plantilla')
 
-          if (errMsg.includes('Ventana de 24 horas') || errMsg.includes('WINDOW_CLOSED') || errMsg.includes('131026')) {
-            const reabrir = window.confirm(
-              '⚠️ La ventana de 24 horas de WhatsApp está cerrada para este paciente.\n\nMeta exige enviar una Plantilla Oficial para reanudar el contacto.\n\n¿Deseas abrir el selector de plantillas homologadas ahora?'
+          setMensajes((prev) =>
+            prev.map((m) =>
+              m.id === optimisticMsg.id
+                ? {
+                    ...m,
+                    metadata_json: {
+                      ...(m.metadata_json || {}),
+                      delivery_status: 'fallido',
+                      error_message: errMsg,
+                      is_window_closed_error: isWindowError
+                    }
+                  }
+                : m
             )
-            if (reabrir) {
-              setShowTemplateModal(true)
-            }
-          } else {
-            alert(`Error al enviar mensaje a WhatsApp: ${errMsg}`)
+          )
+
+          if (isWindowError) {
+            setShowTemplateModal(true)
           }
           return
         }
       } catch (backendErr: any) {
         console.warn('Backend WhatsApp no disponible:', backendErr)
-        setMensajes((prev) => prev.filter((m) => m.id !== optimisticMsg.id))
-        alert('No se pudo conectar con el servidor de mensajería.')
+        setMensajes((prev) =>
+          prev.map((m) =>
+            m.id === optimisticMsg.id
+              ? {
+                  ...m,
+                  metadata_json: {
+                    ...(m.metadata_json || {}),
+                    delivery_status: 'fallido',
+                    error_message: 'Servidor no disponible o error de red'
+                  }
+                }
+              : m
+          )
+        )
         return
       }
 
@@ -1726,34 +1780,42 @@ export default function ChatInbox() {
                       )
                     }
 
-                    // 1. NOTA INTERNA PRIVADA (ÁMBAR)
+                    // 1. NOTA INTERNA PRIVADA (ÁMBAR / DORADO / ALERTA DERIVACIÓN)
                     if (isInternal) {
+                      const isDerivacion = msg.metadata_json?.evento === 'escalado_humano' || msg.contenido?.includes('DERIVACIÓN A ATENCIÓN HUMANA')
+                      const urgencia = (msg.metadata_json?.urgencia || 'ALTA').toUpperCase()
+
                       return (
                         <div 
                           key={msg.id} 
                           onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                          className="flex justify-center my-2 group relative"
+                          className="flex justify-center my-2.5 group relative px-2"
                         >
-                          <div className="max-w-md w-full bg-[#241a06] border border-amber-500/50 text-amber-200 rounded-2xl p-3 shadow-md text-xs relative">
+                          <div className={`max-w-md w-full rounded-2xl p-3.5 shadow-md text-xs relative ${
+                            isDerivacion 
+                              ? 'bg-[#2a1306] border-2 border-rose-500/80 text-rose-100 ring-2 ring-rose-500/20' 
+                              : 'bg-[#241a06] border border-amber-500/60 text-amber-200'
+                          }`}>
                             {/* Botón flotante Hover para menú */}
                             <button
                               type="button"
                               onClick={(e) => handleOpenContextMenu(e, msg)}
-                              className="absolute top-2 right-2 p-1 rounded-full bg-amber-950/80 hover:bg-amber-900 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                              className="absolute top-2 right-2 p-1 rounded-full bg-black/60 hover:bg-black/90 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
                               title="Menú de nota interna"
                             >
                               <ChevronDown size={14} />
                             </button>
 
-                            <div className="flex items-center justify-between gap-1 text-[9.5px] font-bold text-amber-400 mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
-                              <span className="flex items-center gap-1">
-                                <Lock size={11} /> NOTA INTERNA (Privado del Equipo Médico)
+                            <div className="flex items-center justify-between gap-1 text-[10px] font-extrabold mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
+                              <span className={`flex items-center gap-1.5 ${isDerivacion ? 'text-rose-400 font-black' : 'text-amber-400'}`}>
+                                <Lock size={12} className={isDerivacion ? 'text-rose-400' : 'text-amber-400'} />
+                                {isDerivacion ? `🚨 DERIVACIÓN A ATENCIÓN HUMANA (${urgencia})` : '🔒 NOTA INTERNA (Privado del Equipo Médico)'}
                               </span>
-                              <span className="text-[8.5px] opacity-70">
+                              <span className="text-[9px] opacity-75 font-mono">
                                 {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
-                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed text-amber-100" />
+                            <WhatsAppFormattedText text={msg.contenido} className={`leading-relaxed ${isDerivacion ? 'text-rose-100 font-medium' : 'text-amber-100'}`} />
                           </div>
                         </div>
                       )
@@ -1763,6 +1825,11 @@ export default function ChatInbox() {
                     const isSticker = msg.metadata_json?.tipo === 'sticker'
                     const isButton = msg.metadata_json?.tipo === 'button' || msg.contenido?.startsWith('🔘') || msg.contenido === '[BUTTON] Mensaje recibido'
                     const isTemplate = msg.metadata_json?.tipo === 'template' || Boolean(msg.metadata_json?.template_name) || Boolean(msg.contenido?.includes('[PLANTILLA OFICIAL'))
+                    const isFailed = msg.metadata_json?.delivery_status === 'fallido' || 
+                                     msg.metadata_json?.delivery_status === 'failed' || 
+                                     Boolean(msg.metadata_json?.error_message)
+                    const isWindowClosedError = Boolean(msg.metadata_json?.is_window_closed_error)
+
                     const hasText = Boolean(
                       msg.contenido && (
                         isButton ||
@@ -1820,7 +1887,9 @@ export default function ChatInbox() {
                         ) : (
                           <div
                             className={`max-w-[80%] sm:max-w-[70%] rounded-xl px-3 py-1.5 shadow-sm text-[13px] leading-snug relative ${
-                              isOperator
+                              isFailed
+                                ? 'bg-rose-950/90 border-2 border-rose-500 text-rose-100 rounded-tr-none shadow-rose-950/50 ring-1 ring-rose-500/40'
+                                : isOperator
                                 ? isTemplate
                                   ? 'bg-[#182642] border border-blue-400/30 text-white rounded-tr-none shadow-blue-950/40'
                                   : 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
@@ -1930,6 +1999,47 @@ export default function ChatInbox() {
                                     />
                                   )}
                                 </span>
+                              </div>
+                            )}
+
+                            {/* Alerta interactiva ante fallo de entrega en WhatsApp */}
+                            {isFailed && (
+                              <div className="mt-2 pt-2 border-t border-rose-800/70 flex flex-col gap-1.5 text-xs select-none">
+                                <div className="flex items-center gap-1.5 text-rose-300 font-bold text-[11px]">
+                                  <AlertCircle size={13} className="text-rose-400 shrink-0" />
+                                  <span>No entregado: {msg.metadata_json?.error_message || 'Error de entrega en Meta'}</span>
+                                </div>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  {isWindowClosedError ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowTemplateModal(true)}
+                                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10.5px] font-black rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <FileText size={12} />
+                                      <span>Enviar Plantilla Oficial de Meta</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setNuevoMensaje(msg.contenido)
+                                        setMensajes((prev) => prev.filter((m) => m.id !== msg.id))
+                                      }}
+                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-bold rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <RefreshCw size={11} />
+                                      <span>Reintentar</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => setMensajes((prev) => prev.filter((m) => m.id !== msg.id))}
+                                    className="px-2 py-0.5 text-slate-400 hover:text-white text-[10.5px] transition cursor-pointer"
+                                  >
+                                    Descartar
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
