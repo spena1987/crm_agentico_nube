@@ -259,17 +259,18 @@ def generar_pdf_presupuesto(
     pdf_filename = f"presupuesto_{presupuesto['id']}.pdf"
     pdf_path = os.path.join(PDF_DIR, pdf_filename)
     
-    # Cargar configuración de plantilla
-    settings = load_settings()
+    # Cargar configuración de plantilla fresca desde Supabase/DB
+    settings = load_settings(force_refresh=True)
     plantilla = plantilla_override or settings.get("plantilla_presupuesto", {})
+    clinica = settings.get("clinica", {})
     
     # Parámetros institucionales
     titulo_doc = plantilla.get("titulo_documento") or "PRESUPUESTO MÉDICO"
-    nombre_inst = plantilla.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"
+    nombre_inst = plantilla.get("nombre_institucion") or clinica.get("nombre") or "CLÍNICA MÉDICA NUBE"
     subtitulo_inst = plantilla.get("subtitulo_institucion") or "Atención Médica Digital & Especialidades"
-    direccion_inst = plantilla.get("direccion") or ""
-    telefono_inst = plantilla.get("telefono") or ""
-    email_inst = plantilla.get("email") or ""
+    direccion_inst = plantilla.get("direccion") or clinica.get("direccion") or ""
+    telefono_inst = plantilla.get("telefono") or clinica.get("telefono_guardia") or ""
+    email_inst = plantilla.get("email") or clinica.get("email_contacto") or ""
     sitio_web = plantilla.get("sitio_web") or ""
     
     color_primario_hex = plantilla.get("color_primario") or "#1E3A8A"
@@ -281,7 +282,7 @@ def generar_pdf_presupuesto(
         "La confirmación de turnos quirúrgicos, prácticas y estudios de alta complejidad queda supeditada a disponibilidad de agenda y confirmación de pago.",
         "Formas de pago habilitadas: Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración."
     ]
-    pie_pagina = plantilla.get("pie_pagina") or "Documento emitido electrónicamente por el sistema CRM Médico Nube."
+    pie_pagina = plantilla.get("pie_pagina") or f"Documento emitido electrónicamente por {nombre_inst}."
     mostrar_firma = plantilla.get("mostrar_firma", True)
     texto_firma = plantilla.get("texto_firma") or "Firma y Sello Profesional / Autorización Médica"
     

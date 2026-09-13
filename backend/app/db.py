@@ -3133,7 +3133,7 @@ def generar_mensaje_ameno_presupuesto(
     Construye un mensaje de WhatsApp empático, cordial y estructurado con el resumen del presupuesto.
     """
     from app.services.config_service import load_settings
-    settings = load_settings()
+    settings = load_settings(force_refresh=True)
     plantilla = settings.get("plantilla_presupuesto", {})
     clinica = settings.get("clinica", {})
     
@@ -3201,7 +3201,7 @@ def generar_mensaje_seguimiento_presupuesto(
     - tipo == 'vencimiento': Recordatorio de próximo vencimiento / validez de aranceles.
     """
     from app.services.config_service import load_settings
-    settings = load_settings()
+    settings = load_settings(force_refresh=True)
     plantilla = settings.get("plantilla_presupuesto", {})
     clinica = settings.get("clinica", {})
     
@@ -3399,12 +3399,10 @@ def enviar_presupuesto_por_whatsapp(
         
     mensaje_final = mensaje_custom or generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
     
-    # 3. Localizar o generar archivo PDF
-    pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
+    # 3. Regenerar y asegurar archivo PDF con la plantilla institucional vigente
+    from app.services.pdf_service import generar_pdf_presupuesto, PDF_DIR
+    pdf_filename = generar_pdf_presupuesto(presupuesto, paciente, items)
     pdf_path = os.path.join(PDF_DIR, pdf_filename)
-    if not os.path.exists(pdf_path):
-        from app.services.pdf_service import generar_pdf_presupuesto
-        generar_pdf_presupuesto(presupuesto, paciente, items)
         
     # 4. Obtener o crear conversación en Supabase
     conv = get_or_create_conversacion(paciente.get("id"))

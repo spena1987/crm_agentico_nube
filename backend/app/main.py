@@ -1358,9 +1358,9 @@ async def send_media_api(
 @app.get("/api/settings")
 def get_system_settings():
     """
-    Obtiene la configuración actual del consultorio, bot de IA y reglas de escalamiento.
+    Obtiene la configuración actual del consultorio, bot de IA y reglas de escalamiento desde Supabase.
     """
-    return load_settings()
+    return load_settings(force_refresh=True)
 
 @app.post("/api/settings")
 def update_system_settings(payload: Dict[str, Any] = Body(...)):
@@ -1745,6 +1745,56 @@ def preview_plantilla_presupuesto():
         }
     except Exception as e:
         logger.error(f"Error al generar preview de plantilla: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/presupuestos/{presupuesto_id}/regenerar-pdf")
+def regenerar_pdf_presupuesto_endpoint(presupuesto_id: str):
+    """
+    Fuerza la regeneración del PDF de un presupuesto existente utilizando la plantilla institucional vigente de Supabase.
+    """
+    try:
+        from app.db import supabase
+        from app.services.pdf_service import generar_pdf_presupuesto
+        
+        p_resp = supabase.table("presupuestos")\
+            .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
+            .eq("id", presupuesto_id)\
+            .execute()
+            
+        if not p_resp.data:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+            
+        p = p_resp.data[0]
+        paciente = p.get("pacientes") or {}
+        items_raw = p.get("items_presupuesto") or []
+        
+        items = []
+        for it in items_raw:
+            srv = it.get("servicios_precios") or {}
+            items.append({
+                "codigo": srv.get("codigo") or it.get("codigo") or "",
+                "nombre": srv.get("nombre_prestacion") or it.get("nombre") or "Prestación Médica",
+                "precio_unitario": float(it.get("precio_unitario") or 0.0),
+                "cantidad": int(it.get("cantidad") or 1),
+                "subtotal": float(it.get("subtotal") or 0.0),
+                "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper()
+            })
+            
+        filename = generar_pdf_presupuesto(p, paciente, items)
+        pdf_rel_url = f"/static/{filename}"
+        
+        supabase.table("presupuestos").update({"pdf_url": pdf_rel_url}).eq("id", presupuesto_id).execute()
+        
+        return {
+            "success": True,
+            "mensaje": "PDF regenerado exitosamente con el membrete institucional vigente.",
+            "pdf_url": pdf_rel_url,
+            "filename": filename
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error regenerando PDF para presupuesto {presupuesto_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

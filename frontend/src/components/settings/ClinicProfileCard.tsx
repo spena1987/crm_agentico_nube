@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { Building2, MapPin, Phone, Mail, Clock, MessageSquare, Save, CheckCircle2 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
 export default function ClinicProfileCard() {
   const [loading, setLoading] = useState(true)
@@ -23,10 +24,30 @@ export default function ClinicProfileCard() {
   const fetchSettings = async () => {
     try {
       setLoading(true)
-      const res = await fetch(`${BACKEND_URL}/api/settings`)
-      if (res.ok) {
-        const data = await res.json()
-        const clinica = data.clinica || {}
+      let clinica: any = null
+
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/settings`)
+        if (res.ok) {
+          const data = await res.json()
+          clinica = data.clinica || null
+        }
+      } catch (apiErr) {
+        console.warn('API /api/settings no disponible, consultando Supabase:', apiErr)
+      }
+
+      if (!clinica) {
+        const { data: dbData } = await (supabase as any)
+          .from('configuracion_sistema')
+          .select('valor')
+          .eq('clave', 'ajustes_crm')
+          .maybeSingle()
+        if (dbData && dbData.valor) {
+          clinica = (dbData.valor as any).clinica || null
+        }
+      }
+
+      if (clinica) {
         setNombre(clinica.nombre || '')
         setDireccion(clinica.direccion || '')
         setTelefonoGuardia(clinica.telefono_guardia || '')
@@ -46,23 +67,51 @@ export default function ClinicProfileCard() {
     try {
       setSaving(true)
       setFeedback(null)
-      const payload = {
-        clinica: {
-          nombre,
-          direccion,
-          telefono_guardia: telefonoGuardia,
-          email_contacto: email,
-          horarios_atencion: horarios,
-          mensaje_bienvenida: mensajeBienvenida
-        }
+      const clinicaPayload = {
+        nombre,
+        direccion,
+        telefono_guardia: telefonoGuardia,
+        email_contacto: email,
+        horarios_atencion: horarios,
+        mensaje_bienvenida: mensajeBienvenida
       }
-      const res = await fetch(`${BACKEND_URL}/api/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-      if (res.ok) {
-        setFeedback('¡Datos de la clínica actualizados correctamente!')
+
+      let apiSaved = false
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clinica: clinicaPayload })
+        })
+        if (res.ok) apiSaved = true
+      } catch (apiErr) {
+        console.warn('API /api/settings no respondió, guardando en Supabase:', apiErr)
+      }
+
+      // Sincronización directa en Supabase
+      const { data: currentDb } = await (supabase as any)
+        .from('configuracion_sistema')
+        .select('valor')
+        .eq('clave', 'ajustes_crm')
+        .maybeSingle()
+
+      const currentVal = (currentDb && currentDb.valor) ? (currentDb.valor as any) : {}
+      const newVal = {
+        ...currentVal,
+        clinica: clinicaPayload
+      }
+
+      const { error: dbError } = await (supabase as any)
+        .from('configuracion_sistema')
+        .upsert({
+          clave: 'ajustes_crm',
+          valor: newVal,
+          updated_at: new Date().toISOString(),
+          actualizado_por: 'admin_crm'
+        })
+
+      if (apiSaved || !dbError) {
+        setFeedback('¡Datos de la clínica actualizados correctamente en la base de datos!')
         setTimeout(() => setFeedback(null), 4000)
       }
     } catch (err) {

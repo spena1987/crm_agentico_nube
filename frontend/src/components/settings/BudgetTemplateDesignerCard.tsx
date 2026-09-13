@@ -71,6 +71,7 @@ const PALETA_COLORES = [
   { nombre: 'Gris Corporativo', hex: '#334155' }
 ]
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
 export default function BudgetTemplateDesignerCard() {
   const [config, setConfig] = useState<PlantillaPresupuestoConfig>(DEFAULT_PLANTILLA)
@@ -86,16 +87,33 @@ export default function BudgetTemplateDesignerCard() {
   const loadTemplateSettings = async () => {
     try {
       setLoading(true)
-      const res = await fetch(`${API_BASE_URL}/api/settings`)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.plantilla_presupuesto) {
-          setConfig({
-            ...DEFAULT_PLANTILLA,
-            ...data.plantilla_presupuesto,
-            terminos_condiciones: data.plantilla_presupuesto.terminos_condiciones || DEFAULT_PLANTILLA.terminos_condiciones
-          })
+      let data: any = null
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/settings`)
+        if (res.ok) {
+          data = await res.json()
         }
+      } catch (apiErr) {
+        console.warn('API /api/settings no disponible, consultando Supabase:', apiErr)
+      }
+
+      if (!data) {
+        const { data: dbData } = await (supabase as any)
+          .from('configuracion_sistema')
+          .select('valor')
+          .eq('clave', 'ajustes_crm')
+          .maybeSingle()
+        if (dbData && dbData.valor) {
+          data = dbData.valor
+        }
+      }
+
+      if (data && data.plantilla_presupuesto) {
+        setConfig({
+          ...DEFAULT_PLANTILLA,
+          ...data.plantilla_presupuesto,
+          terminos_condiciones: data.plantilla_presupuesto.terminos_condiciones || DEFAULT_PLANTILLA.terminos_condiciones
+        })
       }
     } catch (err) {
       console.error('Error al cargar configuración de plantilla:', err)
@@ -110,16 +128,47 @@ export default function BudgetTemplateDesignerCard() {
       setSaving(true)
       setFeedback(null)
 
-      const res = await fetch(`${API_BASE_URL}/api/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          plantilla_presupuesto: config
+      let apiSaved = false
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            plantilla_presupuesto: config
+          })
         })
-      })
+        if (res.ok) apiSaved = true
+      } catch (apiErr) {
+        console.warn('API /api/settings no respondió, guardando en Supabase:', apiErr)
+      }
 
-      if (res.ok) {
-        setFeedback({ tipo: 'success', texto: '¡Diseño de plantilla de presupuesto guardado exitosamente!' })
+      // Sincronización directa y persistente en Supabase (PostgreSQL)
+      const { data: currentDb } = await (supabase as any)
+        .from('configuracion_sistema')
+        .select('valor')
+        .eq('clave', 'ajustes_crm')
+        .maybeSingle()
+
+      const currentVal = (currentDb && currentDb.valor) ? (currentDb.valor as any) : {}
+      const newVal = {
+        ...currentVal,
+        plantilla_presupuesto: {
+          ...(currentVal.plantilla_presupuesto || {}),
+          ...config
+        }
+      }
+
+      const { error: dbError } = await (supabase as any)
+        .from('configuracion_sistema')
+        .upsert({
+          clave: 'ajustes_crm',
+          valor: newVal,
+          updated_at: new Date().toISOString(),
+          actualizado_por: 'admin_crm'
+        })
+
+      if (apiSaved || !dbError) {
+        setFeedback({ tipo: 'success', texto: '¡Diseño de plantilla guardado exitosamente en la base de datos!' })
       } else {
         setFeedback({ tipo: 'error', texto: 'Error al guardar la plantilla.' })
       }

@@ -1,7 +1,8 @@
 import os
 import json
+import time
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -49,44 +50,153 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     }
 }
 
-def load_settings() -> Dict[str, Any]:
-    """
-    Carga las configuraciones del sistema desde archivo JSON o valores por defecto.
-    """
+# In-memory cache
+_cached_settings: Optional[Dict[str, Any]] = None
+_cache_timestamp: float = 0.0
+CACHE_TTL_SECONDS: float = 30.0
+
+
+def _get_supabase_client():
     try:
-        if os.path.exists(CONFIG_FILE_PATH):
-            with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
-                saved = json.load(f)
-                # Fusionar con defaults en caso de campos nuevos
-                merged = {**DEFAULT_SETTINGS}
-                for k, v in saved.items():
-                    if isinstance(v, dict) and k in merged:
-                        merged[k] = {**merged[k], **v}
-                    else:
-                        merged[k] = v
-                return merged
+        from app.db import supabase
+        return supabase
     except Exception as e:
-        logger.error(f"Error al leer archivo de configuración {CONFIG_FILE_PATH}: {e}")
-    
-    return DEFAULT_SETTINGS.copy()
+        logger.debug(f"No se pudo obtener cliente Supabase en config_service: {e}")
+        return None
+
+
+def apply_inheritance(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Garantiza consistencia entre Perfil de la Clínica y Diseñador de Presupuestos.
+    Si la plantilla tiene valores por defecto o vacíos pero el perfil institucional
+    de la clínica fue personalizado, hereda los valores automáticamente.
+    """
+    clinica = settings.get("clinica") or {}
+    plantilla = settings.get("plantilla_presupuesto") or {}
+
+    nombre_c = (clinica.get("nombre") or "").strip()
+    nombre_p = (plantilla.get("nombre_institucion") or "").strip()
+    if nombre_c and (not nombre_p or nombre_p == "CLÍNICA MÉDICA NUBE"):
+        plantilla["nombre_institucion"] = nombre_c
+
+    dir_c = (clinica.get("direccion") or "").strip()
+    dir_p = (plantilla.get("direccion") or "").strip()
+    if dir_c and (not dir_p or dir_p == "Av. Corrientes 1234, CABA, Argentina"):
+        plantilla["direccion"] = dir_c
+
+    tel_c = (clinica.get("telefono_guardia") or "").strip()
+    tel_p = (plantilla.get("telefono") or "").strip()
+    if tel_c and (not tel_p or tel_p == "+54 9 11 5555-0199"):
+        plantilla["telefono"] = tel_c
+
+    email_c = (clinica.get("email_contacto") or "").strip()
+    email_p = (plantilla.get("email") or "").strip()
+    if email_c and (not email_p or email_p == "contacto@centromediconube.com"):
+        plantilla["email"] = email_c
+
+    settings["plantilla_presupuesto"] = plantilla
+    return settings
+
+
+def load_settings(force_refresh: bool = False) -> Dict[str, Any]:
+    """
+    Carga las configuraciones del sistema con persistencia prioritaria en Supabase
+    y fallback transparente a archivo local y defaults.
+    """
+    global _cached_settings, _cache_timestamp
+
+    now = time.time()
+    if not force_refresh and _cached_settings is not None and (now - _cache_timestamp) < CACHE_TTL_SECONDS:
+        return apply_inheritance(json.loads(json.dumps(_cached_settings)))
+
+    saved_data: Optional[Dict[str, Any]] = None
+
+    # 1. Intentar cargar desde Supabase (PostgreSQL - Máxima Prioridad)
+    supabase = _get_supabase_client()
+    if supabase:
+        try:
+            resp = supabase.table("configuracion_sistema").select("valor").eq("clave", "ajustes_crm").limit(1).execute()
+            if resp.data and len(resp.data) > 0 and resp.data[0].get("valor"):
+                saved_data = resp.data[0]["valor"]
+                logger.debug("Configuraciones del CRM cargadas exitosamente desde Supabase.")
+        except Exception as e:
+            logger.warning(f"No se pudo consultar configuracion_sistema en Supabase (usando fallback): {e}")
+
+    # 2. Fallback a archivo local si Supabase no tiene el registro o no respondió
+    if not saved_data and os.path.exists(CONFIG_FILE_PATH):
+        try:
+            with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
+                saved_data = json.load(f)
+                logger.debug(f"Configuraciones cargadas desde archivo local {CONFIG_FILE_PATH}")
+        except Exception as e:
+            logger.error(f"Error al leer archivo local {CONFIG_FILE_PATH}: {e}")
+
+    # 3. Fusionar con DEFAULT_SETTINGS para campos faltantes
+    merged = json.loads(json.dumps(DEFAULT_SETTINGS))
+    if saved_data and isinstance(saved_data, dict):
+        for k, v in saved_data.items():
+            if isinstance(v, dict) and k in merged:
+                merged[k] = {**merged[k], **v}
+            else:
+                merged[k] = v
+
+    # 4. Aplicar herencia inteligente de datos
+    merged = apply_inheritance(merged)
+
+    # 5. Guardar en memoria caché
+    _cached_settings = json.loads(json.dumps(merged))
+    _cache_timestamp = now
+
+    return merged
+
 
 def save_settings(new_settings: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Guarda las nuevas configuraciones en archivo JSON.
+    Guarda las configuraciones atómicamente en Supabase (PostgreSQL) y
+    respalda en archivo JSON local, actualizando la memoria caché.
     """
+    global _cached_settings, _cache_timestamp
+
     try:
-        current = load_settings()
+        # Cargar configuración actual sin caché
+        current = load_settings(force_refresh=True)
+
         for k, v in new_settings.items():
             if isinstance(v, dict) and k in current:
                 current[k] = {**current[k], **v}
             else:
                 current[k] = v
-                
-        with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
-            json.dump(current, f, indent=2, ensure_ascii=False)
-            
-        logger.info(f"Configuraciones guardadas correctamente en {CONFIG_FILE_PATH}")
+
+        current = apply_inheritance(current)
+
+        # 1. Persistir en Supabase (PostgreSQL)
+        supabase = _get_supabase_client()
+        if supabase:
+            try:
+                payload_db = {
+                    "clave": "ajustes_crm",
+                    "valor": current,
+                    "updated_at": "now()",
+                    "actualizado_por": "sistema_crm"
+                }
+                supabase.table("configuracion_sistema").upsert(payload_db).execute()
+                logger.info("Configuraciones del CRM guardadas exitosamente en Supabase (configuracion_sistema).")
+            except Exception as e_db:
+                logger.error(f"Error guardando configuracion_sistema en Supabase: {e_db}")
+
+        # 2. Respaldo en archivo local
+        try:
+            with open(CONFIG_FILE_PATH, "w", encoding="utf-8") as f:
+                json.dump(current, f, indent=2, ensure_ascii=False)
+            logger.info(f"Configuraciones respaldadas en archivo local {CONFIG_FILE_PATH}")
+        except Exception as e_file:
+            logger.warning(f"No se pudo escribir archivo local {CONFIG_FILE_PATH}: {e_file}")
+
+        # 3. Actualizar caché
+        _cached_settings = json.loads(json.dumps(current))
+        _cache_timestamp = time.time()
+
         return current
     except Exception as e:
-        logger.error(f"Error al guardar configuraciones: {e}")
+        logger.error(f"Error general al guardar configuraciones: {e}")
         raise e
