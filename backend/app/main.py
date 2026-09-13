@@ -77,6 +77,7 @@ from app.db import (
     guardar_practica_crm_con_arancel,
     guardar_practica_crm_integral,
     listar_catalogo_completo_crm,
+    buscar_practicas_presupuesto,
     eliminar_practica_crm,
     get_plantillas_preparaciones,
     get_plantilla_preparacion_by_id,
@@ -2358,6 +2359,28 @@ def get_practicas_configuradas_crm(
         logger.error(f"Error al listar prácticas configuradas: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/nomenclador/buscar-presupuesto")
+def buscar_presupuesto_api(
+    q: Optional[str] = None,
+    fecha: Optional[str] = None,
+    moneda: Optional[str] = None
+):
+    """
+    Endpoint consumido por Presupuestos (BudgetGenerator, ModalCrearPresupuestoPaciente)
+    y Asesoría Quirúrgica para autocompletar prácticas con arancel y moneda vigente resueltos.
+    """
+    try:
+        resultados = buscar_practicas_presupuesto(query=q, fecha_consulta=fecha, filtro_moneda=moneda)
+        return {
+            "success": True,
+            "total": len(resultados),
+            "resultados": resultados,
+            "prestaciones": resultados
+        }
+    except Exception as e:
+        logger.error(f"Error en buscar_presupuesto_api: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/nomenclador/practicas-configuradas/{practica_id}")
 def eliminar_practica_crm_api(practica_id: str):
     """
@@ -3722,6 +3745,104 @@ async def enviar_consentimiento_whatsapp(turno_id: str):
         }
     except Exception as e:
         logger.error(f"Error al enviar consentimiento por WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Disparo de Preparación Prequirúrgica por WhatsApp
+@app.post("/api/turnos-quirofano/{turno_id}/enviar-preparacion-wa")
+async def enviar_preparacion_whatsapp(turno_id: str):
+    """
+    Envía por WhatsApp las indicaciones de preparación prequirúrgica y horas de ayuno
+    resueltas dinámicamente desde el Nomenclador Multidimensional.
+    """
+    try:
+        turno = get_turno_quirofano_by_id(turno_id)
+        if not turno:
+            raise HTTPException(status_code=404, detail="Turno no encontrado")
+            
+        paciente = turno.get("pacientes") or {}
+        telefono = paciente.get("telefono")
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El paciente no tiene teléfono registrado")
+            
+        practica_cod = turno.get("practica_codigo") or ""
+        practica_id = turno.get("practica_id") or ""
+        practica_nombre = turno.get("practica_nombre") or ""
+        
+        # Resolver preparación desde el Nomenclador
+        resumen = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+        
+        ayuno_horas = 8
+        texto_prep = None
+        if resumen and resumen.get("habilitar_preparacion"):
+            ayuno_horas = resumen.get("ayuno_horas") or 8
+            texto_prep = resumen.get("texto_preparacion")
+            
+        ojo = turno.get("ojo") or "OD"
+        ojo_desc = "Ojo Derecho" if ojo == "OD" else "Ojo Izquierdo" if ojo == "OI" else "Ambos Ojos"
+        pac_nombre = paciente.get("nombre") or "Paciente"
+        cirujano = turno.get("cirujano_nombre") or "Médico Cirujano"
+        fecha_qx = str(turno.get("fecha_cirugia") or "")
+        hora_qx = str(turno.get("hora_inicio") or "")[:5]
+        
+        # Plantilla por defecto si la práctica no tiene texto custom
+        if not texto_prep:
+            texto_prep = (
+                f"- Ayuno estricto de {ayuno_horas} horas de sólidos y líquidos previo a la hora de ingreso.\n"
+                "- Concurrir con ropa cómoda (camisa o remera con botones al frente).\n"
+                "- No usar maquillaje, esmalte de uñas, joyas ni perfumes.\n"
+                "- Venir acompañado/a por un adulto responsable.\n"
+                "- Traer DNI, carnet de obra social y estudios prequirúrgicos solicitados."
+            )
+            
+        # Reemplazar variables dinámicas en el texto de preparación
+        indicaciones_personalizadas = render_consent_template(
+            texto_prep,
+            {
+                "paciente": pac_nombre,
+                "dni": paciente.get("dni") or "-",
+                "cirujano": cirujano,
+                "medico": cirujano,
+                "practica": practica_nombre or "Cirugía Oftalmológica",
+                "cirugia": practica_nombre or "Cirugía Oftalmológica",
+                "ojo_intervenido": ojo_desc,
+                "ojo": ojo_desc,
+                "fecha": fecha_qx,
+                "fecha_cirugia": fecha_qx,
+                "hora_cirugia": hora_qx,
+                "hora_inicio": hora_qx,
+                "ayuno_horas": str(ayuno_horas),
+            }
+        )
+        
+        mensaje_final = (
+            f"📋 *INDICACIONES PREQUIRÚRGICAS*\n\n"
+            f"Estimado/a *{pac_nombre}*, le recordamos las pautas de preparación para su cirugía de *{practica_nombre}* ({ojo_desc}) programada para el día *{fecha_qx}* a las *{hora_qx} hs* con el/la Dr/a. *{cirujano}*:\n\n"
+            f"⏳ *Ayuno Requerido:* {ayuno_horas} horas antes del horario indicado.\n\n"
+            f"📌 *Indicaciones Médicas:*\n{indicaciones_personalizadas}\n\n"
+            f"Ante cualquier duda o consulta urgente, por favor comuníquese por este medio.\n"
+            f"Equipo Quirúrgico."
+        )
+        
+        jid = telefono if "@" in telefono else f"{telefono}@s.whatsapp.net"
+        res_wa = whatsapp_manager.enviar_mensaje(jid, mensaje_final)
+        
+        # Guardar estado en checks_adicionales de turnos_quirofano
+        from datetime import datetime, timezone
+        checks = turno.get("checks_adicionales") or {}
+        checks["preparacion_enviada"] = True
+        checks["preparacion_enviada_at"] = datetime.now(timezone.utc).isoformat()
+        checks["preparacion_ayuno_horas"] = ayuno_horas
+        
+        actualizar_turno_quirofano(turno_id, {"checks_adicionales": checks})
+        
+        return {
+            "success": True,
+            "mensaje": "Indicaciones de preparación enviadas por WhatsApp exitosamente.",
+            "resultado_wa": res_wa,
+            "ayuno_horas": ayuno_horas
+        }
+    except Exception as e:
+        logger.error(f"Error al enviar preparación por WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Endpoint Público para la pantalla de firma del paciente

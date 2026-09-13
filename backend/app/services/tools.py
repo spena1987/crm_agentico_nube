@@ -571,3 +571,108 @@ def vincular_paciente_geclisa(
         return {"success": False, "error": f"Error consultando el sistema Geclisa: {str(e)}"}
 
 
+def consultar_preparacion_cirugia(paciente_id: Optional[str] = None) -> dict:
+    """
+    Consulta las indicaciones médicas de preparación prequirúrgica y horas de ayuno
+    del próximo turno quirúrgico programado del paciente en el CRM, resueltas desde el Nomenclador.
+    
+    Args:
+        paciente_id: El UUID del paciente en el CRM (inyectado automáticamente por el orquestador).
+        
+    Returns:
+        Un diccionario con la información médica de preparación, horas de ayuno, fecha y cirugía programada.
+    """
+    logger.info(f"Herramienta: consultar_preparacion_cirugia para paciente_id: {paciente_id}")
+    if not supabase or not paciente_id:
+        return {"error": "No se pudo identificar al paciente para consultar sus indicaciones quirúrgicas."}
+        
+    try:
+        from datetime import date
+        today_str = date.today().isoformat()
+        
+        # Buscar el próximo turno quirúrgico activo del paciente
+        t_resp = supabase.table("turnos_quirofano")\
+            .select("*, pacientes(*), quirofanos(nombre)")\
+            .eq("paciente_id", paciente_id)\
+            .gte("fecha_cirugia", today_str)\
+            .order("fecha_cirugia")\
+            .limit(1)\
+            .execute()
+            
+        if not t_resp.data:
+            # Si no hay turno futuro, buscar el último turno registrado
+            t_resp = supabase.table("turnos_quirofano")\
+                .select("*, pacientes(*), quirofanos(nombre)")\
+                .eq("paciente_id", paciente_id)\
+                .order("fecha_cirugia", desc=True)\
+                .limit(1)\
+                .execute()
+                
+        if not t_resp.data:
+            return {
+                "tiene_cirugia": False,
+                "mensaje": "El paciente no tiene cirugías programadas ni turnos quirúrgicos en la clínica."
+            }
+            
+        turno = t_resp.data[0]
+        from app.db import get_practica_resumen_operativo, render_consent_template
+        
+        practica_cod = turno.get("practica_codigo") or ""
+        practica_id = turno.get("practica_id") or ""
+        practica_nombre = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+        
+        resumen = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+        
+        ayuno_horas = 8
+        texto_prep = None
+        if resumen and resumen.get("habilitar_preparacion"):
+            ayuno_horas = resumen.get("ayuno_horas") or 8
+            texto_prep = resumen.get("texto_preparacion")
+            
+        paciente = turno.get("pacientes") or {}
+        ojo = turno.get("ojo") or "OD"
+        ojo_desc = "Ojo Derecho" if ojo == "OD" else "Ojo Izquierdo" if ojo == "OI" else "Ambos Ojos"
+        
+        if not texto_prep:
+            texto_prep = (
+                f"- Ayuno estricto de {ayuno_horas} horas de sólidos y líquidos previo a la hora de ingreso.\n"
+                "- Concurrir con ropa cómoda (camisa o remera con botones al frente).\n"
+                "- No usar maquillaje, esmalte de uñas, joyas ni perfumes.\n"
+                "- Venir acompañado/a por un adulto responsable.\n"
+                "- Traer DNI, carnet de obra social y estudios prequirúrgicos solicitados."
+            )
+            
+        prep_personalizada = render_consent_template(
+            texto_prep,
+            {
+                "paciente": paciente.get("nombre") or "Paciente",
+                "dni": paciente.get("dni") or "-",
+                "cirujano": turno.get("cirujano_nombre") or "Médico Cirujano",
+                "practica": practica_nombre,
+                "cirugia": practica_nombre,
+                "ojo_intervenido": ojo_desc,
+                "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
+                "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
+                "ayuno_horas": str(ayuno_horas)
+            }
+        )
+        
+        return {
+            "tiene_cirugia": True,
+            "paciente_nombre": paciente.get("nombre"),
+            "cirugia": practica_nombre,
+            "ojo": ojo_desc,
+            "fecha_cirugia": str(turno.get("fecha_cirugia")),
+            "hora_cirugia": str(turno.get("hora_inicio"))[:5],
+            "cirujano": turno.get("cirujano_nombre"),
+            "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
+            "ayuno_horas": ayuno_horas,
+            "indicaciones_preparacion": prep_personalizada,
+            "consentimiento_estado": turno.get("consentimiento_estado") or "pendiente"
+        }
+    except Exception as e:
+        logger.error(f"Error en consultar_preparacion_cirugia: {e}")
+        return {"error": f"Error consultando preparación quirúrgica: {str(e)}"}
+
+
+

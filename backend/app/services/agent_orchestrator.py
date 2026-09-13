@@ -10,7 +10,8 @@ from app.services.tools import (
     finalizar_y_cerrar_consulta,
     aprobar_presupuesto,
     consultar_presupuestos_paciente,
-    vincular_paciente_geclisa
+    vincular_paciente_geclisa,
+    consultar_preparacion_cirugia
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,8 @@ AVAILABLE_TOOLS_MAP = {
     "finalizar_y_cerrar_consulta": finalizar_y_cerrar_consulta,
     "aprobar_presupuesto": aprobar_presupuesto,
     "consultar_presupuestos_paciente": consultar_presupuestos_paciente,
-    "vincular_paciente_geclisa": vincular_paciente_geclisa
+    "vincular_paciente_geclisa": vincular_paciente_geclisa,
+    "consultar_preparacion_cirugia": consultar_preparacion_cirugia
 }
 
 # Fallbacks predeterminados en memoria por si Supabase no responde
@@ -81,8 +83,8 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Asistente Administrativo General",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Responde de forma cordial y concisa. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Responde de forma cordial y concisa. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
@@ -97,8 +99,8 @@ DEFAULT_AGENTS = {
         "codigo": "QUIRURGICO_EMPATICO",
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
-        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si pregunta sobre pautas de preparación prequirúrgica, ayuno o indicaciones de su cirugía, usa de inmediato consultar_preparacion_cirugia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {

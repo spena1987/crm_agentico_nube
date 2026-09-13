@@ -1647,6 +1647,84 @@ def listar_catalogo_completo_crm(
         return resultados
     except Exception as e:
         logger.error(f"Error al listar catálogo completo del CRM: {e}")
+def buscar_practicas_presupuesto(
+    query: Optional[str] = None,
+    fecha_consulta: Optional[str] = None,
+    filtro_moneda: Optional[str] = None,
+    limite: int = 50
+) -> List[Dict[str, Any]]:
+    """
+    Busca prácticas activas en el nomenclador y resuelve el precio/arancel vigente para la fecha indicada.
+    Retorna el formato exacto requerido por BudgetGenerator, ModalCrearPresupuestoPaciente y Asesoría.
+    """
+    if not supabase:
+        return []
+        
+    from datetime import date
+    fecha_ref = fecha_consulta or date.today().isoformat()
+    term = (query or "").strip()
+    
+    try:
+        q = supabase.table("nomenclador_practicas")\
+            .select("id, codigo, nombre, categoria, activo, nomencladores(id, nombre, codigo, moneda_default)")\
+            .eq("activo", True)
+            
+        if term:
+            q = q.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
+            
+        p_resp = q.order("nombre").limit(limite).execute()
+        practicas = p_resp.data or []
+        if not practicas:
+            return []
+            
+        p_ids = [p["id"] for p in practicas]
+        
+        # Obtener aranceles para estas prácticas vigentes para fecha_ref
+        ar_resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .in_("practica_id", p_ids)\
+            .lte("vigencia_desde", fecha_ref)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+            
+        ar_data = ar_resp.data or []
+        ar_vigente_map = {}
+        for ar in ar_data:
+            pid = ar["practica_id"]
+            if pid not in ar_vigente_map:
+                v_hasta = ar.get("vigencia_hasta")
+                if not v_hasta or v_hasta >= fecha_ref:
+                    ar_vigente_map[pid] = ar
+                    
+        resultados = []
+        for p in practicas:
+            nom_info = p.get("nomencladores") or {}
+            ar = ar_vigente_map.get(p["id"])
+            
+            precio = float(ar.get("precio", 0.0)) if ar else 0.0
+            moneda = ar.get("moneda") if ar else (nom_info.get("moneda_default") or "ARS")
+            
+            if filtro_moneda and filtro_moneda.upper() != "TODAS" and moneda != filtro_moneda.upper():
+                continue
+                
+            resultados.append({
+                "id": p["id"],
+                "codigo": p["codigo"],
+                "nombre": p["nombre"],
+                "categoria": p.get("categoria") or "General",
+                "nomenclador_id": nom_info.get("id") or "crm",
+                "nomenclador_nombre": nom_info.get("nombre") or "Nomenclador CRM",
+                "nomenclador_codigo": nom_info.get("codigo") or "CRM",
+                "precio": precio,
+                "moneda": moneda,
+                "vigencia_desde": ar.get("vigencia_desde") if ar else None,
+                "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
+                "tiene_precio": precio > 0
+            })
+            
+        return resultados
+    except Exception as e:
+        logger.error(f"Error en buscar_practicas_presupuesto: {e}")
         return []
 
 def eliminar_practica_crm(practica_id: str) -> bool:

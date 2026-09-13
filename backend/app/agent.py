@@ -90,6 +90,17 @@ def bind_tools_to_context(
             consultar_presupuestos_paciente.__doc__ = base_func.__doc__
             bound_tools.append(consultar_presupuestos_paciente)
             
+        elif name == "consultar_preparacion_cirugia":
+            def consultar_preparacion_cirugia() -> dict:
+                """
+                Consulta las indicaciones médicas de preparación prequirúrgica, horas de ayuno
+                y detalles de la cirugía programada del paciente en la clínica.
+                """
+                record_call("consultar_preparacion_cirugia")
+                return base_func(paciente_id=paciente_id)
+            consultar_preparacion_cirugia.__doc__ = base_func.__doc__
+            bound_tools.append(consultar_preparacion_cirugia)
+            
         elif name == "escalar_a_operador_humano":
             def escalar_a_operador_humano(motivo: str) -> dict:
                 """
@@ -328,7 +339,7 @@ def procesar_mensaje_agente(
                     
                     if func_name in AVAILABLE_TOOLS_MAP:
                         try:
-                            if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa"] and paciente_id:
+                            if func_name in ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia"] and paciente_id:
                                 func_args["paciente_id"] = paciente_id
                             if func_name in ["escalar_a_operador_humano", "finalizar_y_cerrar_consulta", "vincular_paciente_geclisa"] and conversacion_id:
                                 func_args["conversacion_id"] = conversacion_id
