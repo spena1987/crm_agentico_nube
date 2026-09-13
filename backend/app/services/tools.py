@@ -401,7 +401,7 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
     if not supabase:
         return {"error": "Servicio de base de datos no disponible"}
 
-    target_id = presupuesto_id if (presupuesto_id and is_valid_uuid(presupuesto_id)) else None
+    target_id = None
     real_paciente_id = paciente_id if (paciente_id and is_valid_uuid(paciente_id)) else None
 
     # Si el paciente_id no era UUID (ej. DNI o teléfono), resolverlo
@@ -414,7 +414,30 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
         except Exception as pf_err:
             logger.warning(f"Error buscando paciente por DNI {val}: {pf_err}")
 
-    # Si no se pasó un ID exacto, buscar el presupuesto más reciente pendiente o enviado del paciente
+    # Limpiar y extraer ID o prefijo hexadecimal si viene formateado (ej: 'Presupuesto #cd35f66f' o '#cd35f66f')
+    raw_str = str(presupuesto_id or "").strip()
+    match = re.search(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})?', raw_str)
+    prefix = match.group(0).lower() if match else raw_str.lower()
+
+    if prefix and is_valid_uuid(prefix):
+        target_id = prefix
+    elif prefix:
+        # Buscar en los presupuestos del paciente el que coincida por prefijo
+        try:
+            query = supabase.table("presupuestos").select("id, paciente_id, total, estado")
+            if real_paciente_id:
+                query = query.eq("paciente_id", real_paciente_id)
+            p_list = query.limit(20).execute()
+            for p in (p_list.data or []):
+                if str(p.get("id", "")).lower().startswith(prefix):
+                    target_id = p["id"]
+                    if not real_paciente_id:
+                        real_paciente_id = p.get("paciente_id")
+                    break
+        except Exception as pre_err:
+            logger.warning(f"Error buscando presupuesto por prefijo {prefix}: {pre_err}")
+
+    # Si no se pasó un ID exacto o no se encontró por prefijo, buscar el presupuesto más reciente pendiente o enviado
     if not target_id and real_paciente_id:
         try:
             pendientes = supabase.table("presupuestos") \
@@ -435,8 +458,20 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
         }
 
     try:
-        updated = cambiar_estado_presupuesto(target_id, "aprobado")
+        updated = cambiar_estado_presupuesto(target_id, "aprobado", origen="IA_WHATSAPP")
         total = updated.get("total", 0.0)
+        log_event(
+            nivel="INFO",
+            modulo="PRESUPUESTOS",
+            accion="APROBAR_PRESUPUESTO",
+            mensaje=f"Presupuesto #{target_id[:8]} aprobado exitosamente por la IA.",
+            detalles={
+                "presupuesto_id": target_id,
+                "paciente_id": real_paciente_id,
+                "total": float(total),
+                "notas": notas
+            }
+        )
         return {
             "success": True,
             "presupuesto_id": target_id,

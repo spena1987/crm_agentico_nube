@@ -2900,6 +2900,24 @@ def cambiar_estado_presupuesto(
         
         # Sincronizar asesoría quirúrgica vinculada
         target_asesoria_id = asesoria_id or presupuesto.get("asesoria_id")
+
+        # Si no tiene asesoría asociada directa, buscar si el paciente tiene un caso quirúrgico en proceso
+        if not target_asesoria_id and presupuesto.get("paciente_id"):
+            try:
+                p_as = supabase.table("asesorias_quirurgicas") \
+                    .select("id, estado") \
+                    .eq("paciente_id", presupuesto["paciente_id"]) \
+                    .in_("estado", ["en_analisis", "en_asesoramiento", "derivado"]) \
+                    .order("created_at", desc=True) \
+                    .limit(1) \
+                    .execute()
+                if p_as.data:
+                    target_asesoria_id = p_as.data[0]["id"]
+                    supabase.table("presupuestos").update({"asesoria_id": target_asesoria_id}).eq("id", presupuesto_id).execute()
+                    logger.info(f"Presupuesto {presupuesto_id} auto-vinculado a asesoría activa {target_asesoria_id} del paciente.")
+            except Exception as as_err:
+                logger.warning(f"Error auto-vinculando asesoría activa a presupuesto {presupuesto_id}: {as_err}")
+
         if target_asesoria_id:
             if estado_normalizado == "aprobado":
                 supabase.table("asesorias_quirurgicas") \

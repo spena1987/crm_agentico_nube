@@ -397,10 +397,28 @@ def procesar_mensaje_agente(
         
         # Intercepción humanizada ante escalado médico / derivación humana
         if "escalar_a_operador_humano" in funciones_ejecutadas:
-            if not respuesta_final or "procesado tu consulta de manera interna" in respuesta_final.lower():
+            if not respuesta_final or "procesado tu consulta de manera interna" in respuesta_final.lower() or "he recibido tu consulta" in respuesta_final.lower():
                 respuesta_final = "Entendido. He derivado tu consulta de manera prioritaria a nuestro equipo de atención humana. Un asesor de la clínica se comunicará contigo por este medio a la brevedad."
             elif not any(k in respuesta_final.lower() for k in ["deriv", "asesor", "humano", "operador", "equipo", "secretar"]):
                 respuesta_final = f"{respuesta_final}\n\nHe derivado tu consulta a nuestro equipo de atención humana para que un asesor te asista a la brevedad."
+        elif "aprobar_presupuesto" in funciones_ejecutadas:
+            nombre_p = (paciente_info.get("paciente", {}).get("nombre") or "").split(",")[0].strip() if paciente_info else ""
+            saludo = f"¡Excelente noticia, *{nombre_p}*! " if nombre_p else "¡Excelente noticia! "
+            if not respuesta_final or "he recibido tu consulta" in respuesta_final.lower():
+                respuesta_final = (
+                    f"{saludo}Tu presupuesto ha quedado formalmente *aprobado y confirmado* en el sistema. "
+                    "Hemos actualizado tu caso quirúrgico a estado *Confirmado*. Nuestro equipo de secretaría médica se comunicará "
+                    "a la brevedad contigo para coordinar los estudios prequirúrgicos y la fecha de intervención."
+                )
+        elif "desestimar_presupuesto" in funciones_ejecutadas:
+            if not respuesta_final or "he recibido tu consulta" in respuesta_final.lower():
+                respuesta_final = (
+                    "Comprendo perfectamente. Hemos dejado asentado formalmente en el sistema la desestimación del presupuesto. "
+                    "La clínica queda a tu entera disposición si en el futuro deseas retomar o consultar por nuevas opciones."
+                )
+        elif "finalizar_y_cerrar_consulta" in funciones_ejecutadas:
+            if not respuesta_final or "he recibido tu consulta" in respuesta_final.lower():
+                respuesta_final = "Ha sido un placer ayudarte. Cualquier otra consulta que tengas, estamos a tu total disposición. ¡Que tengas un excelente día!"
         elif not respuesta_final:
             respuesta_final = "He recibido tu consulta. ¿En qué puedo orientarte hoy?"
 
