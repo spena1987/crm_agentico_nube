@@ -40,7 +40,7 @@ function resolveModuleCode(pathname: string): string | null {
 export default function ModuleRouteGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { isAdmin, canAccess, loading, profile, effectiveLandingRoute } = usePermissions()
+  const { isAdmin, can, canAccess, loading, profile, effectiveLandingRoute } = usePermissions()
 
   const moduleCode = resolveModuleCode(pathname)
 
@@ -78,49 +78,62 @@ export default function ModuleRouteGuard({ children }: { children: React.ReactNo
     )
   }
 
+  // Helper para renderizar pantalla 403 elegante
+  const renderForbidden = (resourceName: string) => {
+    const userRole = profile?.roles?.nombre || 'Personal sin rol asignado'
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-6 text-center min-h-[70vh] animate-fade-in select-none">
+        <div className="max-w-md w-full bg-[var(--card)] border border-[var(--border)] rounded-3xl p-8 shadow-xl flex flex-col items-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-red-500/10 text-red-500 dark:text-red-400 flex items-center justify-center ring-8 ring-red-500/5">
+            <ShieldAlert size={36} />
+          </div>
+
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-[11px] font-bold">
+              <Lock size={12} />
+              <span>Acceso Denegado (403)</span>
+            </div>
+            <h2 className="text-lg font-black text-[var(--foreground)] tracking-tight">
+              Acceso no autorizado a {resourceName}
+            </h2>
+            <p className="text-xs text-[var(--secondary)] leading-relaxed">
+              Tu perfil actual (<strong className="text-[var(--foreground)]">{userRole}</strong>) no tiene permisos asignados para visualizar ni interactuar con este módulo.
+            </p>
+          </div>
+
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-[var(--border)] text-left w-full text-[11px] text-[var(--secondary)]">
+            <p className="font-semibold text-[var(--foreground)] mb-0.5">¿Necesitas acceso?</p>
+            <p>Comunícate con un Administrador General del sistema para que actualice tu perfil o matriz de permisos en Ajustes.</p>
+          </div>
+
+          <Link
+            href={effectiveLandingRoute || '/'}
+            className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md glow-primary"
+          >
+            <ArrowLeft size={16} />
+            <span>Volver a mi Sección de Inicio</span>
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  // Verificar sub-páginas administrativas específicas en /ajustes
+  if (!isAdmin && pathname.startsWith('/ajustes/usuarios') && !can('ajustes', 'ver_usuarios')) {
+    return renderForbidden('Gestión de Usuarios & Accesos')
+  }
+
+  if (!isAdmin && pathname.startsWith('/ajustes/roles') && !can('ajustes', 'ver_roles')) {
+    return renderForbidden('Perfiles & Permisos (RBAC)')
+  }
+
   // Si es Administrador o tiene permiso de acceso 'ver' al módulo
   if (isAdmin || canAccess(moduleCode)) {
     return <>{children}</>
   }
 
-  // Si no tiene permiso, obtener detalles para la pantalla de 403
+  // Si no tiene permiso de módulo
   const moduleDef = SYSTEM_MODULES.find((m) => m.code === moduleCode)
   const moduleName = moduleDef?.name || moduleCode
-  const userRole = profile?.roles?.nombre || 'Personal sin rol asignado'
-
-  return (
-    <div className="flex-1 flex flex-col items-center justify-center p-6 text-center min-h-[70vh] animate-fade-in select-none">
-      <div className="max-w-md w-full bg-[var(--card)] border border-[var(--border)] rounded-3xl p-8 shadow-xl flex flex-col items-center space-y-4">
-        <div className="w-16 h-16 rounded-2xl bg-red-500/10 text-red-500 dark:text-red-400 flex items-center justify-center ring-8 ring-red-500/5">
-          <ShieldAlert size={36} />
-        </div>
-
-        <div className="space-y-1">
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-100 dark:bg-red-950/40 text-red-600 dark:text-red-400 text-[11px] font-bold">
-            <Lock size={12} />
-            <span>Acceso Denegado (403)</span>
-          </div>
-          <h2 className="text-lg font-black text-[var(--foreground)] tracking-tight">
-            Acceso no autorizado a {moduleName}
-          </h2>
-          <p className="text-xs text-[var(--secondary)] leading-relaxed">
-            Tu perfil actual (<strong className="text-[var(--foreground)]">{userRole}</strong>) no tiene permisos asignados para visualizar ni interactuar con este módulo.
-          </p>
-        </div>
-
-        <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-[var(--border)] text-left w-full text-[11px] text-[var(--secondary)]">
-          <p className="font-semibold text-[var(--foreground)] mb-0.5">¿Necesitas acceso?</p>
-          <p>Comunícate con un Administrador General del sistema para que actualice tu perfil o matriz de permisos en Ajustes.</p>
-        </div>
-
-        <Link
-          href={effectiveLandingRoute || '/'}
-          className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md glow-primary"
-        >
-          <ArrowLeft size={16} />
-          <span>Volver a mi Sección de Inicio</span>
-        </Link>
-      </div>
-    </div>
-  )
+  return renderForbidden(moduleName)
 }

@@ -34,6 +34,7 @@ import SurgicalSettingsCard from '@/components/settings/SurgicalSettingsCard'
 import QuirofanoSettingsCard from '@/components/settings/QuirofanoSettingsCard'
 import PrestadoresSettingsCard from '@/components/settings/PrestadoresSettingsCard'
 import LioSettingsCard from '@/components/settings/LioSettingsCard'
+import { usePermissions } from '@/hooks/usePermissions'
 
 type TabType = 
   | 'whatsapp' 
@@ -48,6 +49,21 @@ type TabType =
   | 'plantilla_presupuesto' 
   | 'seguridad' 
   | 'logs'
+
+const TAB_PERMISSION_MAP: Record<TabType, string> = {
+  whatsapp: 'ver_whatsapp',
+  plantillas_whatsapp: 'ver_plantillas_whatsapp',
+  bot: 'ver_bot',
+  quirurgicos_turnos: 'ver_quirofano',
+  prestadores: 'ver_prestadores',
+  lios: 'ver_lios',
+  quirurgico: 'ver_quirurgico',
+  clinica: 'ver_clinica',
+  nomenclador: 'ver_nomencladores',
+  plantilla_presupuesto: 'ver_plantilla_presupuesto',
+  seguridad: 'ver_seguridad',
+  logs: 'ver_logs',
+}
 
 interface TabItem {
   id: TabType
@@ -111,40 +127,85 @@ function AjustesContent() {
   const searchParams = useSearchParams()
   const tabParam = searchParams.get('tab') as TabType | null
   const subParam = searchParams.get('sub') as any
+  const { can, isAdmin, loading } = usePermissions()
 
-  const [activeTab, setActiveTab] = useState<TabType>(tabParam || 'whatsapp')
+  // Comprobar si una pestaña específica está permitida para este usuario
+  const isTabAllowed = React.useCallback((tabId: TabType): boolean => {
+    if (isAdmin) return true
+    const permAction = TAB_PERMISSION_MAP[tabId]
+    return permAction ? can('ajustes', permAction) : true
+  }, [isAdmin, can])
+
+  // Categorías con pestañas filtradas por permisos
+  const permittedCategories = useMemo(() => {
+    return tabCategories.map((cat) => ({
+      ...cat,
+      items: cat.items.filter((item) => isTabAllowed(item.id))
+    })).filter((cat) => cat.items.length > 0)
+  }, [isTabAllowed])
+
+  // Primera pestaña permitida para fallback automático
+  const firstAllowedTab = useMemo((): TabType | null => {
+    for (const cat of permittedCategories) {
+      if (cat.items.length > 0) return cat.items[0].id
+    }
+    return null
+  }, [permittedCategories])
+
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    if (tabParam && isTabAllowed(tabParam)) return tabParam
+    return firstAllowedTab || 'whatsapp'
+  })
   const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
-    if (tabParam) {
+    if (tabParam && isTabAllowed(tabParam)) {
       setActiveTab(tabParam)
+    } else if (firstAllowedTab && (!isTabAllowed(activeTab) || !activeTab)) {
+      setActiveTab(firstAllowedTab)
     }
-  }, [tabParam])
+  }, [tabParam, firstAllowedTab, activeTab, isTabAllowed])
 
   // Filtrar pestañas si el usuario escribe en el buscador
   const filteredCategories = useMemo(() => {
-    if (!searchTerm.trim()) return tabCategories
+    if (!searchTerm.trim()) return permittedCategories
     const q = searchTerm.toLowerCase().trim()
     
-    return tabCategories.map((cat) => ({
+    return permittedCategories.map((cat) => ({
       ...cat,
       items: cat.items.filter((item) => 
         item.label.toLowerCase().includes(q) || 
         item.description.toLowerCase().includes(q)
       )
     })).filter((cat) => cat.items.length > 0)
-  }, [searchTerm])
+  }, [permittedCategories, searchTerm])
 
   // Obtener ítem actualmente activo para el encabezado del panel
   const currentTabItem = useMemo(() => {
-    for (const cat of tabCategories) {
+    for (const cat of permittedCategories) {
       const found = cat.items.find((it) => it.id === activeTab)
       if (found) return found
     }
-    return tabCategories[0].items[0]
-  }, [activeTab])
+    return permittedCategories[0]?.items[0] || tabCategories[0].items[0]
+  }, [permittedCategories, activeTab])
 
   const CurrentIcon = currentTabItem.icon
+
+  if (!loading && permittedCategories.length === 0) {
+    return (
+      <div className="max-w-md mx-auto my-12 p-8 bg-[var(--card)] border border-[var(--border)] rounded-3xl text-center space-y-4 shadow-sm">
+        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-500 flex items-center justify-center mx-auto ring-8 ring-amber-500/5">
+          <ShieldCheck size={30} />
+        </div>
+        <div>
+          <h2 className="text-base font-extrabold text-[var(--foreground)]">Sin secciones asignadas</h2>
+          <p className="text-xs text-[var(--secondary)] mt-1.5 leading-relaxed">
+            Tu perfil actual no posee permisos para visualizar ninguna sección de Ajustes Generales.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 pb-12">
@@ -296,20 +357,20 @@ function AjustesContent() {
             </div>
           </div>
 
-          {/* Componente Activo Renderizado */}
+          {/* Componente Activo Renderizado con doble verificación de permisos */}
           <div className="transition-all duration-300">
-            {activeTab === 'whatsapp' && <WhatsAppConfigCard />}
-            {activeTab === 'plantillas_whatsapp' && <WhatsAppTemplatesSettingsCard />}
-            {activeTab === 'bot' && <BotSettingsCard />}
-            {activeTab === 'quirurgicos_turnos' && <QuirofanoSettingsCard initialSubSection={subParam} />}
-            {activeTab === 'prestadores' && <PrestadoresSettingsCard />}
-            {activeTab === 'lios' && <LioSettingsCard />}
-            {activeTab === 'quirurgico' && <SurgicalSettingsCard />}
-            {activeTab === 'clinica' && <ClinicProfileCard />}
-            {activeTab === 'nomenclador' && <NomencladorSettingsCard />}
-            {activeTab === 'plantilla_presupuesto' && <BudgetTemplateDesignerCard />}
-            {activeTab === 'seguridad' && <SecuritySettingsCard />}
-            {activeTab === 'logs' && <SystemLogsCard />}
+            {activeTab === 'whatsapp' && isTabAllowed('whatsapp') && <WhatsAppConfigCard />}
+            {activeTab === 'plantillas_whatsapp' && isTabAllowed('plantillas_whatsapp') && <WhatsAppTemplatesSettingsCard />}
+            {activeTab === 'bot' && isTabAllowed('bot') && <BotSettingsCard />}
+            {activeTab === 'quirurgicos_turnos' && isTabAllowed('quirurgicos_turnos') && <QuirofanoSettingsCard initialSubSection={subParam} />}
+            {activeTab === 'prestadores' && isTabAllowed('prestadores') && <PrestadoresSettingsCard />}
+            {activeTab === 'lios' && isTabAllowed('lios') && <LioSettingsCard />}
+            {activeTab === 'quirurgico' && isTabAllowed('quirurgico') && <SurgicalSettingsCard />}
+            {activeTab === 'clinica' && isTabAllowed('clinica') && <ClinicProfileCard />}
+            {activeTab === 'nomenclador' && isTabAllowed('nomenclador') && <NomencladorSettingsCard />}
+            {activeTab === 'plantilla_presupuesto' && isTabAllowed('plantilla_presupuesto') && <BudgetTemplateDesignerCard />}
+            {activeTab === 'seguridad' && isTabAllowed('seguridad') && <SecuritySettingsCard />}
+            {activeTab === 'logs' && isTabAllowed('logs') && <SystemLogsCard />}
           </div>
 
         </div>

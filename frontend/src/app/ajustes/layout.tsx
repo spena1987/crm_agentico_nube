@@ -4,6 +4,7 @@ import React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Settings, Users, ShieldCheck } from 'lucide-react'
+import { usePermissions } from '@/hooks/usePermissions'
 
 export default function AjustesLayout({
   children,
@@ -11,27 +12,33 @@ export default function AjustesLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  const { can, isAdmin } = usePermissions()
 
-  const tabs = [
+  const allTabs = [
     {
       label: 'Configuración General',
       href: '/ajustes',
       icon: Settings,
       description: 'WhatsApp, IA, Perfil Clínica, Nomencladores y PDFs',
+      visible: true,
     },
     {
       label: 'Usuarios & Accesos',
       href: '/ajustes/usuarios',
       icon: Users,
       description: 'Altas, bajas y credenciales del personal',
+      visible: isAdmin || can('ajustes', 'ver_usuarios'),
     },
     {
       label: 'Perfiles & Permisos (RBAC)',
       href: '/ajustes/roles',
       icon: ShieldCheck,
       description: 'Matriz de control de acceso por módulo',
+      visible: isAdmin || can('ajustes', 'ver_roles'),
     },
   ]
+
+  const visibleTabs = allTabs.filter((t) => t.visible)
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto w-full">
@@ -51,29 +58,31 @@ export default function AjustesLayout({
         </div>
       </div>
 
-      {/* Tabs de Navegación de Ajustes */}
-      <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2 overflow-x-auto">
-        {tabs.map((tab) => {
-          const Icon = tab.icon
-          const isActive = tab.href === '/ajustes'
-            ? pathname === '/ajustes'
-            : pathname === tab.href || pathname.startsWith(tab.href + '/')
-          return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                isActive
-                  ? 'bg-blue-600 text-white shadow-sm glow-primary'
-                  : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-[var(--foreground)]'
-              }`}
-            >
-              <Icon size={16} />
-              <span>{tab.label}</span>
-            </Link>
-          )
-        })}
-      </div>
+      {/* Tabs de Navegación de Ajustes (solo si tiene más de 1 pestaña accesible) */}
+      {visibleTabs.length > 1 && (
+        <div className="flex items-center gap-2 border-b border-[var(--border)] pb-2 overflow-x-auto">
+          {visibleTabs.map((tab) => {
+            const Icon = tab.icon
+            const isActive = tab.href === '/ajustes'
+              ? pathname === '/ajustes'
+              : pathname === tab.href || pathname.startsWith(tab.href + '/')
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+                  isActive
+                    ? 'bg-blue-600 text-white shadow-sm glow-primary'
+                    : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-[var(--foreground)]'
+                }`}
+              >
+                <Icon size={16} />
+                <span>{tab.label}</span>
+              </Link>
+            )
+          })}
+        </div>
+      )}
 
       {/* Contenido de la Sub-Página */}
       <div className="pt-2">
