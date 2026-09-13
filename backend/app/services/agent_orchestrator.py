@@ -291,24 +291,38 @@ class AgentOrchestrator:
         """
         globales = self.get_global_directives()
         
-        nombre_clinica = globales.get("nombre_clinica", "Clínica Médica Nube")
+        nombre_clinica = globales.get("nombre_clinica", "Centrovisión Oftalmología Integral")
+        direccion = globales.get("direccion", "Mitre 540, Ciudad de Mendoza, Mendoza")
+        telefono_guardia = globales.get("telefono_guardia", "0800-222-4040")
+        email_contacto = globales.get("email_contacto", "info@centrovision.com.ar")
+        horarios_atencion = globales.get("horarios_atencion", "Lunes a Viernes de 08:00 a 19:00 hs. Sábados de 09:00 a 13:00 hs.")
         tono_general = globales.get("tono_general", "Profesional, empático, claro y resolutivo.")
         guardrails = globales.get("guardrails_medicos", "")
         politica_esc = globales.get("politica_escalamiento", "")
         politica_turnos = globales.get("politica_turnos", "")
         politica_presupuestos = globales.get("politica_presupuestos", "")
+        system_override = globales.get("system_instructions_override", "")
         
         nombre_agente = agent.get("nombre", "Asistente Médico")
         directiva_particular = agent.get("directiva_particular", "")
 
         prompt_parts = [
-            f"Eres el Asistente Virtual Inteligente de '{nombre_clinica}'.",
+            f"Eres el Asistente Virtual Inteligente oficial de '{nombre_clinica}'.",
             f"Estás actuando con el rol y personalidad: '{nombre_agente}'.",
             "",
-            "=== DIRECTIVAS GENERALES DE LA CLÍNICA ===",
+            "=== IDENTIDAD INSTITUCIONAL Y PERFIL DE LA CLÍNICA ===",
+            f"- Institución: {nombre_clinica}",
+            "- Especialidad Médica: Centro Monovalente de Oftalmología y Cirugía Ocular (Catarata, Cirugía Refractiva, Córnea, Retina, Glaucoma y Prácticas Oculares). NUNCA ofrezcas consultas ni procedimientos ajenos a la salud visual u oftalmológica (ej: no realizamos cirugía general, vesícula, traumatología, etc.).",
+            f"- Sede Central y Consultorios: {direccion}",
+            f"- Horarios de Atención al Público: {horarios_atencion}",
+            f"- Teléfono de Guardia Médica / Urgencias: {telefono_guardia}",
+            f"- Email de Contacto: {email_contacto}",
+            "",
+            "=== DIRECTIVAS GENERALES Y POLÍTICAS DE ATENCIÓN ===",
             f"- Tono institucional: {tono_general}",
             f"- Políticas de Turnos: {politica_turnos}" if politica_turnos else "",
             f"- Políticas de Presupuestos: {politica_presupuestos}" if politica_presupuestos else "",
+            f"- Directiva Adicional de Supervisión: {system_override}" if system_override else "",
             "",
             "=== GUARDRAILS Y REGLAS DE SEGURIDAD CLÍNICA (INVIOLABLES) ===",
             f"- {guardrails}",
@@ -322,7 +336,7 @@ class AgentOrchestrator:
             directiva_particular,
             "",
             "=== REGLAS ESTRICTAS DE FORMATO PARA WHATSAPP ===",
-            "- Para resaltar texto en NEGRITA, utiliza SIEMPRE un único asterisco a cada lado: *palabra* (ej: *Clínica Médica Nube*, *DNI*, *Turno*).",
+            f"- Para resaltar texto en NEGRITA, utiliza SIEMPRE un único asterisco a cada lado: *palabra* (ej: *{nombre_clinica}*, *DNI*, *Turno*).",
             "- NUNCA utilices doble asterisco (**palabra**) porque WhatsApp no lo interpreta y muestra los asteriscos literales al paciente.",
             "- Para cursiva utiliza un único guión bajo: _texto_.",
             "- No uses encabezados Markdown con numerales (# o ##). Usa saltos de línea y texto en negrita: *Título*.",

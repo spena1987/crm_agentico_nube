@@ -1369,6 +1369,24 @@ def update_system_settings(payload: Dict[str, Any] = Body(...)):
     """
     try:
         updated = save_settings(payload)
+        
+        # Sincronizar automáticamente hacia agentes_directivas_globales y orquestador
+        try:
+            from app.services.agent_orchestrator import orchestrator
+            orchestrator.invalidate_cache()
+            
+            clinica = payload.get("clinica")
+            if isinstance(clinica, dict) and clinica.get("nombre"):
+                nom = clinica["nombre"].strip()
+                if nom and nom.lower() != "clínica médica nube":
+                    from app.db import supabase
+                    if supabase:
+                        supabase.table("agentes_directivas_globales").update({
+                            "nombre_clinica": nom
+                        }).neq("id", "00000000-0000-0000-0000-000000000000").execute()
+        except Exception as sync_err:
+            logger.warning(f"Error sincronizando directivas agénticas desde /api/settings: {sync_err}")
+            
         return {"success": True, "settings": updated}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error actualizando configuraciones: {str(e)}")
@@ -1630,6 +1648,13 @@ def update_global_directives(payload: GlobalDirectivesUpdate):
             resp = supabase.table("agentes_directivas_globales").insert(data_to_update).execute()
         
         orchestrator.invalidate_cache()
+        if payload.nombre_clinica and payload.nombre_clinica.strip():
+            try:
+                from app.services.config_service import save_settings
+                save_settings({"clinica": {"nombre": payload.nombre_clinica.strip()}})
+            except Exception as se:
+                logger.warning(f"No se pudo sincronizar nombre_clinica en configuracion_sistema: {se}")
+
         log_event(
             nivel="INFO",
             modulo="SISTEMA",

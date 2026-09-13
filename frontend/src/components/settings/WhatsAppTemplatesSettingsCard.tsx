@@ -80,7 +80,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     category: 'UTILITY' as const,
     header_content: 'Recordatorio de Turno Quirúrgico',
     body_text: 'Hola {{1}}, le recordamos su turno quirúrgico programado para el día {{2}} a las {{3}} con el {{4}} para la práctica de {{5}} en {{6}}.\n\nPor favor confirme su asistencia respondiendo a este mensaje.',
-    footer_text: 'MedCRM • Centro Quirúrgico',
+    footer_text: 'Centrovisión • Área Quirúrgica',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'turno_fecha',
@@ -100,7 +100,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     category: 'UTILITY' as const,
     header_content: 'Presupuesto Médico Disponible',
     body_text: 'Hola {{1}}, ya se encuentra listo el presupuesto para su procedimiento de {{2}}. El monto total estimado es {{3}}.\n\nPresione el botón inferior si desea recibir el archivo PDF oficial con el membrete directamente en este chat de WhatsApp.',
-    footer_text: 'MedCRM • Área Quirúrgica',
+    footer_text: 'Centrovisión • Área Quirúrgica',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'practica_nombre',
@@ -116,7 +116,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     category: 'UTILITY' as const,
     header_content: 'Presupuesto Quirúrgico',
     body_text: 'Estimado/a {{1}}, le acercamos la cotización formal para su procedimiento de {{2}} con un total de {{3}}.\n\nPuede acceder al presupuesto detallado en línea y descargarlo pulsando el botón a continuación:',
-    footer_text: 'MedCRM • Centro Quirúrgico',
+    footer_text: 'Centrovisión • Área Quirúrgica',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'practica_nombre',
@@ -136,7 +136,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     category: 'UTILITY' as const,
     header_content: 'Confirmación de Consulta',
     body_text: 'Estimado/a {{1}}, le confirmamos su turno para consulta médica el día {{2}} a las {{3}} hs con el {{4}}.\n\nRecuerde asistir con DNI y credencial de cobertura.',
-    footer_text: 'MedCRM • Gestión de Turnos',
+    footer_text: 'Centrovisión • Gestión de Turnos',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'turno_fecha',
@@ -169,7 +169,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const [headerType, setHeaderType] = useState('TEXT')
   const [headerContent, setHeaderContent] = useState('')
   const [bodyText, setBodyText] = useState('')
-  const [footerText, setFooterText] = useState('MedCRM • Clínica Médica')
+  const [footerText, setFooterText] = useState('Centrovisión Oftalmología Integral')
   const [buttons, setButtons] = useState<Array<{ type: string; text: string; url?: string }>>([
     { type: 'QUICK_REPLY', text: 'Confirmar Turno' }
   ])

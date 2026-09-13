@@ -284,7 +284,15 @@ def procesar_mensaje_agente(
         )
 
         # 6. Ejecutar consulta inicial (con fallback multicapa resiliente)
-        model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+        model_name = os.getenv("GEMINI_MODEL")
+        if not model_name:
+            try:
+                from app.services.config_service import load_settings
+                model_name = load_settings().get("bot", {}).get("model_name")
+            except Exception:
+                pass
+        if not model_name:
+            model_name = "gemini-3.5-flash"
         try:
             response = client.models.generate_content(
                 model=model_name,

@@ -69,7 +69,7 @@ const FALLBACK_TEMPLATES: MetaTemplateData[] = [
     header_content: 'Recordatorio Quirurgico',
     description: 'Notifica al paciente sobre su turno quirúrgico con fecha, profesional e instrucciones.',
     body_text: 'Hola {{1}}, te recordamos tu turno médico programado para el {{2}} con el profesional {{3}}. Por favor confirma tu asistencia.',
-    footer_text: 'MedCRM Clínica Quirúrgica',
+    footer_text: 'Centrovisión Oftalmología Integral',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'turno_fecha',
@@ -201,24 +201,34 @@ export default function ModalSelectorPlantillasMeta({
 
     // Intentar buscar turno próximo si hay pacienteId
     const autoFillParams = async () => {
-      let proximoTurnoStr = ''
-      let profesionalStr = 'Equipo Médico de la Clínica'
+      let fechaSoloStr = ''
+      let horaSoloStr = ''
+      let profesionalStr = 'Dr. Juan Sebastián Peña'
+      let practicaNombreStr = 'Cirugía de Catarata'
+      let quirofanoStr = 'Sede Central - Quirófano 1 (Mitre 540)'
       let presupuestoTotalStr = ''
 
       if (pacienteId) {
         try {
-          const { data: turnoData } = await (supabase.from as any)('turnos')
-            .select('fecha_hora, profesional, estado')
+          // Consultar asesoría quirúrgica o caso activo del paciente
+          const { data: qxData } = await (supabase.from as any)('asesorias_quirurgicas')
+            .select('fecha_probable_cirugia, medico_cirujano_nombre, practica_nombre, estado')
             .eq('paciente_id', pacienteId)
-            .gte('fecha_hora', new Date().toISOString())
-            .order('fecha_hora', { ascending: true })
+            .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle()
 
-          if (turnoData) {
-            const dt = new Date(turnoData.fecha_hora)
-            proximoTurnoStr = `${dt.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} a las ${dt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })} hs`
-            if (turnoData.profesional) profesionalStr = turnoData.profesional
+          if (qxData) {
+            if (qxData.medico_cirujano_nombre) profesionalStr = qxData.medico_cirujano_nombre
+            if (qxData.practica_nombre) practicaNombreStr = qxData.practica_nombre
+            if (qxData.fecha_probable_cirugia) {
+              const dt = new Date(qxData.fecha_probable_cirugia)
+              if (!isNaN(dt.getTime())) {
+                fechaSoloStr = dt.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                horaSoloStr = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')} hs`
+                if (horaSoloStr === '00:00 hs') horaSoloStr = '10:30 hs'
+              }
+            }
           }
 
           const { data: presupData } = await supabase
@@ -238,28 +248,40 @@ export default function ModalSelectorPlantillasMeta({
         }
       }
 
-      if (!proximoTurnoStr) {
+      if (!fechaSoloStr) {
         const manana = new Date()
         manana.setDate(manana.getDate() + 1)
-        proximoTurnoStr = `${manana.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })} a las 10:30 hs`
+        fechaSoloStr = manana.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      }
+      if (!horaSoloStr) {
+        horaSoloStr = '10:30 hs'
       }
 
       const currentVarIndexes = extractVariableIndexes(selectedTemplate.body_text)
       const filled = currentVarIndexes.map((idx) => {
-        const key = mappings[String(idx)] || ''
+        const key = (mappings[String(idx)] || '').toLowerCase()
         if (key === 'paciente_nombre' || idx === 1) {
-          return pacienteNombre || 'Estimado/a Paciente'
+          return (pacienteNombre || 'Estimado/a Paciente').trim()
         }
         if (key === 'turno_fecha' || idx === 2) {
-          return proximoTurnoStr
+          return fechaSoloStr
         }
-        if (key === 'profesional_nombre' || idx === 3) {
+        if (key === 'turno_hora' || idx === 3) {
+          return horaSoloStr
+        }
+        if (key === 'medico_nombre' || key === 'profesional_nombre' || idx === 4) {
           return profesionalStr
         }
-        if (key === 'presupuesto_total') {
+        if (key === 'practica_nombre' || idx === 5) {
+          return practicaNombreStr
+        }
+        if (key === 'quirofano_nombre' || idx === 6) {
+          return quirofanoStr
+        }
+        if (key === 'presupuesto_total' || key === 'presupuesto_monto') {
           return presupuestoTotalStr || '$ 150.000'
         }
-        return `Valor ${idx}`
+        return ''
       })
 
       setParamValues(filled)
@@ -317,6 +339,15 @@ export default function ModalSelectorPlantillasMeta({
 
     if (selectedTemplate.status !== 'APPROVED') {
       setErrorMsg(`La plantilla '${selectedTemplate.name}' no está aprobada por Meta (Estado: ${selectedTemplate.status}). Solo plantillas APPROVED pueden enviarse vía Cloud API.`)
+      return
+    }
+
+    // Gatekeeper Anti-Placeholders: Bloquear envío si existen variables vacías o con "Valor X"
+    const invalidIdx = paramValues.slice(0, varIndexes.length).findIndex(
+      (val) => !val || val.trim() === '' || val.trim().toLowerCase().startsWith('valor ')
+    )
+    if (invalidIdx !== -1) {
+      setErrorMsg(`No es posible enviar la plantilla: La variable {{${varIndexes[invalidIdx]}}} está incompleta o tiene un valor inválido. Por favor complétela antes de enviar.`)
       return
     }
 

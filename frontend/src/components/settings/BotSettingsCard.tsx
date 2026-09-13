@@ -58,7 +58,7 @@ export default function BotSettingsCard() {
 
   // Directivas Globales
   const [globales, setGlobales] = useState<GlobalDirectives>({
-    nombre_clinica: 'Clínica Médica Nube',
+    nombre_clinica: 'Centrovisión Oftalmología Integral',
     tono_general: 'Profesional, empático, claro y resolutivo en todo momento.',
     guardrails_medicos: 'PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. Si el paciente consulta sobre síntomas o requiere atención médica urgente, explícale que lo derivarás con un profesional de la salud y utiliza la herramienta de escalamiento.',
     politica_escalamiento: 'Si el paciente solicita hablar con un humano, presenta dudas clínicas complejas o expresa enojo/frustración, invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo.',
@@ -380,7 +380,7 @@ export default function BotSettingsCard() {
               }`}
             >
               <ShieldAlert size={14} />
-              <span>Directivas de Clínica</span>
+              <span>Pautas & Directivas</span>
             </button>
 
             <button
@@ -706,13 +706,22 @@ export default function BotSettingsCard() {
           <div className="space-y-4 text-xs">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block font-bold mb-1.5">Nombre de la Institución / Clínica</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block font-bold">Nombre de la Institución / Clínica</label>
+                  <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">
+                    Sincronizado con Perfil de Clínica
+                  </span>
+                </div>
                 <input 
                   type="text" 
                   value={globales.nombre_clinica}
                   onChange={(e) => setGlobales({ ...globales, nombre_clinica: e.target.value })}
                   className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--card)] font-medium"
+                  placeholder="ej: Centrovisión Oftalmología Integral"
                 />
+                <p className="text-[10px] text-[var(--secondary)] mt-1">
+                  Se inyecta automáticamente en el system prompt de Gemini y en todas las respuestas de WhatsApp.
+                </p>
               </div>
 
               <div>
