@@ -1742,6 +1742,150 @@ def eliminar_practica_crm(practica_id: str) -> bool:
         raise
 
 # ====================================================================
+# CRUD: PRÁCTICAS RELACIONADAS Y DEPENDENCIAS CLÍNICAS (ANESTESIA/SALA)
+# ====================================================================
+
+def get_practicas_relacionadas(
+    practica_id: str,
+    fecha_consulta: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Obtiene las prácticas vinculadas/relacionadas a una práctica quirúrgica origen,
+    resolviendo simultáneamente el arancel vigente a la fecha para cada una.
+    """
+    if not supabase or not practica_id:
+        return []
+        
+    from datetime import date
+    fecha_ref = fecha_consulta or date.today().isoformat()
+    
+    try:
+        rel_resp = supabase.table("nomenclador_practicas_relacionadas")\
+            .select("*, practica_relacionada:nomenclador_practicas!practica_relacionada_id(id, codigo, nombre, categoria, activo, nomencladores(id, nombre, codigo, moneda_default))")\
+            .eq("practica_origen_id", practica_id)\
+            .order("orden")\
+            .execute()
+            
+        relaciones = rel_resp.data or []
+        if not relaciones:
+            return []
+            
+        rel_p_ids = [r["practica_relacionada_id"] for r in relaciones if r.get("practica_relacionada")]
+        if not rel_p_ids:
+            return []
+            
+        ar_resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .in_("practica_id", rel_p_ids)\
+            .lte("vigencia_desde", fecha_ref)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+            
+        ar_data = ar_resp.data or []
+        ar_vigente_map = {}
+        for ar in ar_data:
+            pid = ar["practica_id"]
+            if pid not in ar_vigente_map:
+                v_hasta = ar.get("vigencia_hasta")
+                if not v_hasta or v_hasta >= fecha_ref:
+                    ar_vigente_map[pid] = ar
+                    
+        resultados = []
+        for r in relaciones:
+            p = r.get("practica_relacionada")
+            if not p:
+                continue
+                
+            nom_info = p.get("nomencladores") or {}
+            ar = ar_vigente_map.get(p["id"])
+            
+            precio = float(ar.get("precio", 0.0)) if ar else 0.0
+            moneda = ar.get("moneda") if ar else (nom_info.get("moneda_default") or "ARS")
+            
+            resultados.append({
+                "id": p["id"],
+                "relacion_id": r["id"],
+                "practica_origen_id": r["practica_origen_id"],
+                "codigo": p["codigo"],
+                "nombre": p["nombre"],
+                "categoria": p.get("categoria") or "General",
+                "tipo_relacion": r.get("tipo_relacion") or "anestesia",
+                "es_obligatoria": bool(r.get("es_obligatoria", True)),
+                "cantidad_default": int(r.get("cantidad_default", 1)),
+                "orden": int(r.get("orden", 0)),
+                "notas": r.get("notas") or "",
+                "precio": precio,
+                "moneda": moneda,
+                "vigencia_desde": ar.get("vigencia_desde") if ar else None,
+                "tiene_precio": precio > 0
+            })
+            
+        return resultados
+    except Exception as e:
+        logger.error(f"Error al obtener prácticas relacionadas para {practica_id}: {e}")
+        return []
+
+
+def guardar_practicas_relacionadas(
+    practica_origen_id: str,
+    relaciones: List[Dict[str, Any]]
+) -> bool:
+    """
+    Reemplaza o sincroniza la lista de prácticas relacionadas para una práctica quirúrgica.
+    """
+    if not supabase or not practica_origen_id:
+        return False
+        
+    try:
+        supabase.table("nomenclador_practicas_relacionadas")\
+            .delete()\
+            .eq("practica_origen_id", practica_origen_id)\
+            .execute()
+            
+        if not relaciones:
+            return True
+            
+        filas = []
+        for idx, r in enumerate(relaciones):
+            rel_id = r.get("practica_relacionada_id") or r.get("id")
+            if not rel_id:
+                continue
+            filas.append({
+                "practica_origen_id": practica_origen_id,
+                "practica_relacionada_id": rel_id,
+                "tipo_relacion": r.get("tipo_relacion") or "anestesia",
+                "es_obligatoria": bool(r.get("es_obligatoria", True)),
+                "cantidad_default": int(r.get("cantidad_default") or 1),
+                "orden": idx,
+                "notas": str(r.get("notas") or "")[:255]
+            })
+            
+        if filas:
+            supabase.table("nomenclador_practicas_relacionadas").insert(filas).execute()
+            
+        return True
+    except Exception as e:
+        logger.error(f"Error al guardar prácticas relacionadas para {practica_origen_id}: {e}")
+        raise
+
+
+def eliminar_relacion_practica(relacion_id: str) -> bool:
+    """
+    Elimina un vínculo de relación entre dos prácticas.
+    """
+    if not supabase or not relacion_id:
+        return False
+    try:
+        supabase.table("nomenclador_practicas_relacionadas")\
+            .delete()\
+            .eq("id", relacion_id)\
+            .execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error al eliminar relación de práctica {relacion_id}: {e}")
+        raise
+
+# ====================================================================
 # CRUD: PLANTILLAS MAESTRAS DE PREPARACIONES PREQUIRÚRGICAS
 # ====================================================================
 
@@ -2753,6 +2897,9 @@ def get_presupuestos_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
                 total_ars,
                 total_usd,
                 pdf_url,
+                motivo_desistimiento,
+                desestimado_at,
+                desestimado_por,
                 created_at,
                 items_presupuesto (
                     id,
@@ -2778,21 +2925,39 @@ def get_presupuestos_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
         logger.error(f"Error al obtener presupuestos del paciente {paciente_id}: {e}")
         return []
 
-def cambiar_estado_presupuesto(presupuesto_id: str, nuevo_estado: str, asesoria_id: Optional[str] = None) -> Dict[str, Any]:
+def cambiar_estado_presupuesto(
+    presupuesto_id: str, 
+    nuevo_estado: str, 
+    asesoria_id: Optional[str] = None,
+    motivo: Optional[str] = None,
+    origen: str = "IA_WHATSAPP"
+) -> Dict[str, Any]:
     """
     Actualiza el estado de un presupuesto ('borrador', 'enviado', 'aprobado', 'rechazado').
     Si el nuevo estado es 'aprobado' y está vinculado a una asesoría, sincroniza la etapa a 'confirmado'.
+    Si el nuevo estado es 'rechazado' / 'desestimado', registra el motivo y pasa la asesoría a 'cancelado'.
     """
     if not supabase:
         raise RuntimeError("Supabase no está conectado.")
     try:
+        estado_normalizado = "rechazado" if nuevo_estado in ["desestimado", "rechazado", "cancelado"] else nuevo_estado
+        
+        datos_update = {"estado": estado_normalizado}
+        if estado_normalizado == "rechazado":
+            datos_update["motivo_desistimiento"] = motivo or "Desistido por el paciente"
+            datos_update["desestimado_at"] = "now()"
+            datos_update["desestimado_por"] = origen
+        elif estado_normalizado == "aprobado":
+            datos_update["motivo_desistimiento"] = None
+            datos_update["desestimado_at"] = None
+            datos_update["desestimado_por"] = None
+
         resp = supabase.table("presupuestos") \
-            .update({"estado": nuevo_estado}) \
+            .update(datos_update) \
             .eq("id", presupuesto_id) \
             .execute()
             
         if not resp.data:
-            # Si resp.data viene vacío, obtener el registro directamente
             fetch_resp = supabase.table("presupuestos").select("*").eq("id", presupuesto_id).execute()
             if not fetch_resp.data:
                 raise Exception(f"No se encontró el presupuesto {presupuesto_id}.")
@@ -2800,10 +2965,10 @@ def cambiar_estado_presupuesto(presupuesto_id: str, nuevo_estado: str, asesoria_
         else:
             presupuesto = resp.data[0]
         
-        # Si se aprueba o rechaza, y está vinculado a una asesoría, sincronizar
+        # Sincronizar asesoría quirúrgica vinculada
         target_asesoria_id = asesoria_id or presupuesto.get("asesoria_id")
         if target_asesoria_id:
-            if nuevo_estado == "aprobado":
+            if estado_normalizado == "aprobado":
                 supabase.table("asesorias_quirurgicas") \
                     .update({
                         "estado": "confirmado",
@@ -2813,10 +2978,11 @@ def cambiar_estado_presupuesto(presupuesto_id: str, nuevo_estado: str, asesoria_
                     }) \
                     .eq("id", target_asesoria_id) \
                     .execute()
-            elif nuevo_estado == "rechazado":
+            elif estado_normalizado == "rechazado":
                 supabase.table("asesorias_quirurgicas") \
                     .update({
-                        "motivo_cancelacion": "Presupuesto desistido / rechazado por el paciente",
+                        "estado": "cancelado",
+                        "motivo_cancelacion": motivo or "Presupuesto desistido / rechazado por el paciente",
                         "updated_at": "now()"
                     }) \
                     .eq("id", target_asesoria_id) \

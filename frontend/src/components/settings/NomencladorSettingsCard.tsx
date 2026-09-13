@@ -21,7 +21,9 @@ import {
   Check,
   Info,
   ClipboardList,
-  PenTool
+  PenTool,
+  Link2,
+  Save
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 import { RichConsentEditor } from './RichConsentEditor'
@@ -105,6 +107,22 @@ interface ArancelHistorial {
   activo: boolean
 }
 
+interface PracticaRelacionadaItem {
+  id: string
+  relacion_id?: string
+  practica_origen_id?: string
+  codigo: string
+  nombre: string
+  categoria?: string
+  tipo_relacion: 'anestesia' | 'quirofano' | 'insumo' | 'estudio' | 'honorario' | 'general'
+  es_obligatoria: boolean
+  cantidad_default: number
+  orden?: number
+  notas?: string
+  precio?: number
+  moneda?: string
+}
+
 export default function NomencladorSettingsCard() {
   const [activeMainTab, setActiveMainTab] = useState<'catalogo' | 'preparaciones' | 'consentimientos'>('catalogo')
 
@@ -124,11 +142,21 @@ export default function NomencladorSettingsCard() {
   const [loadingPlantillas, setLoadingPlantillas] = useState(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [modalSubTab, setModalSubTab] = useState<'general' | 'aranceles' | 'preparacion' | 'consentimiento'>('general')
+  const [modalSubTab, setModalSubTab] = useState<'general' | 'aranceles' | 'preparacion' | 'consentimiento' | 'relacionadas'>('general')
   const [modalMode, setModalMode] = useState<'geclisa' | 'manual' | 'edit'>('geclisa')
   const [savingModal, setSavingModal] = useState(false)
   const [historialAranceles, setHistorialAranceles] = useState<ArancelHistorial[]>([])
   const [loadingHistorial, setLoadingHistorial] = useState(false)
+
+  // Estados para Prácticas Vinculadas (Opción 1)
+  const [practicasRelacionadas, setPracticasRelacionadas] = useState<PracticaRelacionadaItem[]>([])
+  const [loadingRelacionadas, setLoadingRelacionadas] = useState(false)
+  const [savingRelacionadas, setSavingRelacionadas] = useState(false)
+  const [relPracticaSelectId, setRelPracticaSelectId] = useState('')
+  const [relTipoSelect, setRelTipoSelect] = useState<'anestesia' | 'quirofano' | 'insumo' | 'estudio' | 'honorario' | 'general'>('anestesia')
+  const [relEsObligatoria, setRelEsObligatoria] = useState(true)
+  const [relCantidad, setRelCantidad] = useState(1)
+  const [relNotas, setRelNotas] = useState('')
 
   const [formData, setFormData] = useState({
     id: '',
@@ -258,6 +286,90 @@ export default function NomencladorSettingsCard() {
     }
   }
 
+  const loadPracticasRelacionadas = async (practicaId: string) => {
+    if (!practicaId) {
+      setPracticasRelacionadas([])
+      return
+    }
+    try {
+      setLoadingRelacionadas(true)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${practicaId}/relacionadas`)
+      if (res.ok) {
+        const data = await res.json()
+        setPracticasRelacionadas(data.relaciones || [])
+      }
+    } catch (err) {
+      console.error('Error al cargar prácticas relacionadas:', err)
+    } finally {
+      setLoadingRelacionadas(false)
+    }
+  }
+
+  const handleAddRelacion = () => {
+    if (!relPracticaSelectId) {
+      setFeedback({ tipo: 'error', texto: 'Seleccione una práctica para vincular.' })
+      return
+    }
+    const match = crmPracticas.find((p) => p.id === relPracticaSelectId)
+    if (!match) return
+
+    // Evitar duplicados
+    if (practicasRelacionadas.some((r) => r.id === match.id)) {
+      setFeedback({ tipo: 'error', texto: 'Esta práctica ya se encuentra vinculada.' })
+      return
+    }
+
+    const nuevaRel: PracticaRelacionadaItem = {
+      id: match.id,
+      codigo: match.codigo,
+      nombre: match.nombre,
+      categoria: match.categoria,
+      tipo_relacion: relTipoSelect,
+      es_obligatoria: relEsObligatoria,
+      cantidad_default: Math.max(1, relCantidad),
+      notas: relNotas.trim(),
+      precio: match.precio || 0,
+      moneda: match.moneda || 'ARS'
+    }
+
+    setPracticasRelacionadas([...practicasRelacionadas, nuevaRel])
+    setRelPracticaSelectId('')
+    setRelNotas('')
+    setFeedback({ tipo: 'success', texto: `Práctica "${match.nombre}" agregada a los vínculos.` })
+  }
+
+  const handleRemoveRelacion = (index: number) => {
+    const updated = [...practicasRelacionadas]
+    updated.splice(index, 1)
+    setPracticasRelacionadas(updated)
+  }
+
+  const handleSaveRelacionesDirecto = async () => {
+    if (!formData.id) {
+      setFeedback({ tipo: 'error', texto: 'Guarde primero la práctica para habilitar el guardado de vínculos.' })
+      return
+    }
+    try {
+      setSavingRelacionadas(true)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${formData.id}/relacionadas`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relaciones: practicasRelacionadas })
+      })
+      if (res.ok) {
+        setFeedback({ tipo: 'success', texto: 'Vínculos de prácticas actualizados correctamente.' })
+        loadPracticasRelacionadas(formData.id)
+      } else {
+        const d = await res.json()
+        setFeedback({ tipo: 'error', texto: d.detail || 'Error al guardar vínculos.' })
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'error', texto: 'Error al conectar con el servidor.' })
+    } finally {
+      setSavingRelacionadas(false)
+    }
+  }
+
   const handleSearchGeclisa = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     try {
@@ -317,8 +429,10 @@ export default function NomencladorSettingsCard() {
     })
     if (item.crm_practica_id) {
       loadHistorialAranceles(item.crm_practica_id)
+      loadPracticasRelacionadas(item.crm_practica_id)
     } else {
       setHistorialAranceles([])
+      setPracticasRelacionadas([])
     }
     setIsModalOpen(true)
   }
@@ -355,6 +469,7 @@ export default function NomencladorSettingsCard() {
     duracion_estimada_minutos: 20
     })
     setHistorialAranceles([])
+    setPracticasRelacionadas([])
     setIsModalOpen(true)
   }
 
@@ -390,6 +505,7 @@ export default function NomencladorSettingsCard() {
       consentimiento_custom_texto: item.consentimiento_custom_texto || ''
     })
     loadHistorialAranceles(item.id)
+    loadPracticasRelacionadas(item.id)
     setIsModalOpen(true)
   }
 
@@ -440,7 +556,20 @@ export default function NomencladorSettingsCard() {
       })
 
       if (res.ok) {
-        setFeedback({ tipo: 'success', texto: `Práctica ${formData.codigo} configurada exitosamente.` })
+        const resData = await res.json()
+        const savedPracticaId = resData.resultado?.practica_id || formData.id
+        if (savedPracticaId) {
+          try {
+            await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${savedPracticaId}/relacionadas`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ relaciones: practicasRelacionadas })
+            })
+          } catch (relErr) {
+            console.error('Error guardando relaciones asociadas:', relErr)
+          }
+        }
+        setFeedback({ tipo: 'success', texto: `Práctica ${formData.codigo} configurada exitosamente con sus relaciones.` })
         setIsModalOpen(false)
         loadCatalogoCrm()
       } else {
@@ -1300,6 +1429,25 @@ export default function NomencladorSettingsCard() {
                 <PenTool size={13} /> 4. Consentimiento
                 {formData.habilitar_consentimiento && <span className="w-1.5 h-1.5 rounded-full bg-purple-400"></span>}
               </button>
+
+              <button
+                type="button"
+                onClick={() => setModalSubTab('relacionadas')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 ${
+                  modalSubTab === 'relacionadas'
+                    ? 'bg-indigo-600 text-white'
+                    : practicasRelacionadas.length > 0
+                    ? 'text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40'
+                    : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Link2 size={13} /> 5. Prácticas Vinculadas
+                {practicasRelacionadas.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-200 dark:bg-indigo-900 text-indigo-800 dark:text-indigo-200 font-extrabold">
+                    {practicasRelacionadas.length}
+                  </span>
+                )}
+              </button>
             </div>
 
             {/* Contenido scrolleable del formulario */}
@@ -1748,6 +1896,230 @@ export default function NomencladorSettingsCard() {
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* SUB-PESTAÑA 5: PRÁCTICAS VINCULADAS (ANESTESIA, QUIRÓFANO, INSUMOS) */}
+              {modalSubTab === 'relacionadas' && (
+                <div className="space-y-4">
+                  {/* Banner Explicativo */}
+                  <div className="p-3.5 bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-xl space-y-1">
+                    <div className="flex items-center gap-2 font-bold text-indigo-900 dark:text-indigo-200 text-xs">
+                      <Link2 size={15} className="text-indigo-600" />
+                      <span>Dependencias Clínicas & Módulos Asociados</span>
+                    </div>
+                    <p className="text-[11px] text-indigo-700/90 dark:text-indigo-300/80 leading-relaxed">
+                      Al presupuestar esta práctica desde el expediente del paciente (botón <strong>&quot;Presupuestar&quot;</strong>),
+                      el sistema sugerirá o cargará automáticamente las prestaciones vinculadas (anestesia según complejidad, derecho de sala, insumos),
+                      evitando omisiones y calculando los aranceles vigentes.
+                    </p>
+                  </div>
+
+                  {/* Panel para Agregar Nueva Relación */}
+                  <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] rounded-xl space-y-3">
+                    <span className="font-bold text-slate-700 dark:text-slate-300 text-xs block">
+                      Vincular Práctica Existente
+                    </span>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                      <div className="sm:col-span-5">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                          Práctica a Asociar *
+                        </label>
+                        <select
+                          value={relPracticaSelectId}
+                          onChange={(e) => setRelPracticaSelectId(e.target.value)}
+                          className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="">-- Seleccionar práctica del catálogo --</option>
+                          {crmPracticas
+                            .filter((p) => p.id !== formData.id)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                [{p.codigo}] {p.nombre} {p.precio ? `($ ${p.precio.toLocaleString('es-AR')} ${p.moneda})` : ''}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                          Rol / Categoría
+                        </label>
+                        <select
+                          value={relTipoSelect}
+                          onChange={(e) => setRelTipoSelect(e.target.value as any)}
+                          className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-medium outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                          <option value="anestesia">💉 Anestesiología</option>
+                          <option value="quirofano">🏥 Derecho Quirófano / Sala</option>
+                          <option value="insumo">📦 Insumo / LIO / Prótesis</option>
+                          <option value="estudio">🔬 Estudio Previo</option>
+                          <option value="honorario">👤 Honorario Extra</option>
+                          <option value="general">🔗 Conexa General</option>
+                        </select>
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                          Cant. Default
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={99}
+                          value={relCantidad}
+                          onChange={(e) => setRelCantidad(parseInt(e.target.value) || 1)}
+                          className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-bold text-center outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <button
+                          type="button"
+                          onClick={handleAddRelacion}
+                          className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1 shadow-sm transition"
+                        >
+                          <Plus size={13} />
+                          <span>Vincular</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-[var(--border)] text-[11px]">
+                      <label className="flex items-center gap-2 cursor-pointer text-slate-600 dark:text-slate-300 font-medium">
+                        <input
+                          type="checkbox"
+                          checked={relEsObligatoria}
+                          onChange={(e) => setRelEsObligatoria(e.target.checked)}
+                          className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                        />
+                        <span>Pre-tildar por defecto en el presupuesto (Obligatoria / Protocolo fijo)</span>
+                      </label>
+
+                      <input
+                        type="text"
+                        placeholder="Nota u observación clínica (opcional)"
+                        value={relNotas}
+                        onChange={(e) => setRelNotas(e.target.value)}
+                        className="p-1 px-2 text-xs rounded-lg border border-[var(--border)] bg-[var(--background)] w-64 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Lista de Prácticas Vinculadas Actualmente */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Prácticas Conexas Configuradas ({practicasRelacionadas.length})
+                      </span>
+                      {formData.id && (
+                        <button
+                          type="button"
+                          onClick={handleSaveRelacionesDirecto}
+                          disabled={savingRelacionadas}
+                          className="text-[11px] font-bold text-indigo-600 hover:underline flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {savingRelacionadas ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                          <span>Guardar solo vínculos</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {loadingRelacionadas ? (
+                      <div className="p-6 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                        <Loader2 size={14} className="animate-spin text-indigo-600" />
+                        <span>Cargando vínculos...</span>
+                      </div>
+                    ) : practicasRelacionadas.length === 0 ? (
+                      <div className="p-6 text-center border-2 border-dashed border-[var(--border)] rounded-xl text-slate-400 text-xs">
+                        No hay prácticas vinculadas a esta cirugía aún. Utilice el selector de arriba para asociar anestesia, derechos de quirófano o estudios.
+                      </div>
+                    ) : (
+                      <div className="border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--card)]">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-[var(--border)] text-[10px] text-slate-400 uppercase font-bold">
+                            <tr>
+                              <th className="py-2 px-3">Rol</th>
+                              <th className="py-2 px-3">Código & Práctica</th>
+                              <th className="py-2 px-3 text-center">Cant.</th>
+                              <th className="py-2 px-3 text-right">Tarifa Vigente</th>
+                              <th className="py-2 px-3 text-center">Inclusión</th>
+                              <th className="py-2 px-3 text-center">Acción</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)]">
+                            {practicasRelacionadas.map((r, idx) => (
+                              <tr key={r.id || idx} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
+                                <td className="py-2 px-3">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                      r.tipo_relacion === 'anestesia'
+                                        ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300'
+                                        : r.tipo_relacion === 'quirofano'
+                                        ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                                        : r.tipo_relacion === 'insumo'
+                                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                        : r.tipo_relacion === 'estudio'
+                                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                    }`}
+                                  >
+                                    {r.tipo_relacion === 'anestesia'
+                                      ? '💉 Anestesia'
+                                      : r.tipo_relacion === 'quirofano'
+                                      ? '🏥 Quirófano'
+                                      : r.tipo_relacion === 'insumo'
+                                      ? '📦 Insumo'
+                                      : r.tipo_relacion === 'estudio'
+                                      ? '🔬 Estudio'
+                                      : 'Conexa'}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3">
+                                  <div className="font-bold text-slate-800 dark:text-slate-200">
+                                    <span className="font-mono text-blue-600 mr-1.5">[{r.codigo}]</span>
+                                    {r.nombre}
+                                  </div>
+                                  {r.notas && <div className="text-[10px] text-slate-400 italic">{r.notas}</div>}
+                                </td>
+                                <td className="py-2 px-3 text-center font-bold">{r.cantidad_default || 1}</td>
+                                <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
+                                  {r.precio && r.precio > 0 ? (
+                                    <span>
+                                      {r.moneda === 'USD' ? 'USD ' : '$ '}
+                                      {r.precio.toLocaleString('es-AR', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 font-normal">Sin tarifa</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 text-center">
+                                  {r.es_obligatoria ? (
+                                    <span className="text-emerald-600 font-bold text-[10px] flex items-center justify-center gap-0.5">
+                                      <Check size={11} /> Pre-marcada
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 text-[10px]">Opcional</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveRelacion(idx)}
+                                    className="p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition"
+                                    title="Desvincular"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 

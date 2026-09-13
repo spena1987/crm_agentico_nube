@@ -79,6 +79,9 @@ from app.db import (
     listar_catalogo_completo_crm,
     buscar_practicas_presupuesto,
     eliminar_practica_crm,
+    get_practicas_relacionadas,
+    guardar_practicas_relacionadas,
+    eliminar_relacion_practica,
     get_plantillas_preparaciones,
     get_plantilla_preparacion_by_id,
     create_plantilla_preparacion,
@@ -2433,6 +2436,55 @@ def get_resumen_operativo_api(practica_id_or_codigo: str, fecha: Optional[str] =
         raise
     except Exception as e:
         logger.error(f"Error al obtener resumen operativo: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: PRÁCTICAS RELACIONADAS (ANESTESIA, QUIRÓFANO, INSUMOS)
+# ====================================================================
+
+@app.get("/api/nomenclador/practicas/{practica_id}/relacionadas")
+def get_practicas_relacionadas_api(practica_id: str, fecha: Optional[str] = None):
+    """
+    Lista las prácticas conexas vinculadas a una práctica quirúrgica origen,
+    con sus aranceles vigentes resueltos para la fecha de consulta.
+    """
+    try:
+        relaciones = get_practicas_relacionadas(practica_id, fecha_consulta=fecha)
+        return {
+            "success": True,
+            "total": len(relaciones),
+            "relaciones": relaciones
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener prácticas relacionadas para {practica_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/practicas/{practica_id}/relacionadas")
+def guardar_practicas_relacionadas_api(practica_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Guarda o actualiza en bloque las prácticas vinculadas de una práctica quirúrgica.
+    """
+    try:
+        relaciones = payload.get("relaciones", [])
+        guardar_practicas_relacionadas(practica_id, relaciones)
+        return {
+            "success": True,
+            "mensaje": f"Se configuraron {len(relaciones)} prácticas relacionadas correctamente."
+        }
+    except Exception as e:
+        logger.error(f"Error al guardar prácticas relacionadas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/nomenclador/practicas/relaciones/{relacion_id}")
+def eliminar_relacion_practica_api(relacion_id: str):
+    """
+    Elimina un vínculo de práctica relacionada.
+    """
+    try:
+        ok = eliminar_relacion_practica(relacion_id)
+        return {"success": ok, "mensaje": "Relación eliminada exitosamente."}
+    except Exception as e:
+        logger.error(f"Error al eliminar relación de práctica {relacion_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

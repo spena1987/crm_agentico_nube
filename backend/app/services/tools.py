@@ -447,6 +447,97 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
         logger.error(f"Error al aprobar presupuesto {target_id}: {e}")
         return {"error": f"No se pudo completar la aprobación del presupuesto: {str(e)}"}
 
+def desestimar_presupuesto(
+    presupuesto_id: Optional[str] = None, 
+    motivo: str = "Desistido por el paciente", 
+    paciente_id: Optional[str] = None
+) -> dict:
+    """
+    Desestima, rechaza o cancela un presupuesto médico cuando el paciente manifiesta que
+    no desea realizar el procedimiento o tratamiento cotizado, registrando obligatoriamente
+    el motivo de desistimiento (ej: económico, tiempos, decisión médica, cobertura).
+    
+    Args:
+        presupuesto_id: ID (UUID o primeros 8 caracteres) del presupuesto específico a desestimar.
+                        Si no se especifica, busca automáticamente el presupuesto pendiente (enviado/borrador) del paciente.
+        motivo: Motivo por el cual el paciente desestima el presupuesto (ej: 'Costos / Económico', 'Tiempos', 'Eligió otra clínica').
+        paciente_id: ID del paciente asociado a la conversación.
+        
+    Returns:
+        Dict con el resultado del cambio de estado, motivo registrado y datos del presupuesto.
+    """
+    logger.info(f"Herramienta: desestimar_presupuesto para ID '{presupuesto_id}' con motivo '{motivo}' (paciente: {paciente_id})")
+    if not supabase:
+        return {"error": "Servicio de base de datos no disponible."}
+
+    target_id = None
+    real_paciente_id = paciente_id
+
+    # Si se pasó un ID exacto o prefijo
+    if presupuesto_id and is_valid_uuid(presupuesto_id):
+        target_id = presupuesto_id
+    elif presupuesto_id and len(str(presupuesto_id).strip()) >= 8:
+        # Intentar buscar por prefijo de UUID
+        try:
+            p_prefix = supabase.table("presupuestos").select("id, paciente_id, total, estado").ilike("id", f"{str(presupuesto_id).strip()}%").limit(1).execute()
+            if p_prefix.data:
+                target_id = p_prefix.data[0]["id"]
+                if not real_paciente_id:
+                    real_paciente_id = p_prefix.data[0]["paciente_id"]
+        except Exception as pre_err:
+            logger.warning(f"Error buscando presupuesto por prefijo {presupuesto_id}: {pre_err}")
+
+    # Si no se pasó un ID exacto, buscar entre los presupuestos pendientes del paciente (enviado o borrador)
+    if not target_id and real_paciente_id and is_valid_uuid(real_paciente_id):
+        try:
+            pendientes = supabase.table("presupuestos") \
+                .select("id, total, estado, created_at") \
+                .eq("paciente_id", real_paciente_id) \
+                .in_("estado", ["enviado", "borrador"]) \
+                .order("created_at", desc=True) \
+                .execute()
+            if pendientes.data:
+                target_id = pendientes.data[0]["id"]
+        except Exception as q_err:
+            logger.warning(f"Error buscando presupuestos pendientes de desistimiento: {q_err}")
+
+    if not target_id:
+        return {
+            "error": "No se encontró ningún presupuesto pendiente (enviado o borrador) para desestimar. Los presupuestos ya aprobados o previamente rechazados no pueden desestimarse automáticamente."
+        }
+
+    try:
+        updated = cambiar_estado_presupuesto(
+            presupuesto_id=target_id, 
+            nuevo_estado="rechazado", 
+            motivo=motivo, 
+            origen="IA_WHATSAPP"
+        )
+        total = updated.get("total", 0.0)
+        log_event(
+            nivel="INFO",
+            modulo="PRESUPUESTOS",
+            accion="DESESTIMAR_PRESUPUESTO",
+            mensaje=f"Presupuesto #{target_id[:8]} desestimado por la IA. Motivo: {motivo}",
+            detalles={
+                "presupuesto_id": target_id,
+                "paciente_id": real_paciente_id,
+                "motivo": motivo,
+                "total": float(total)
+            }
+        )
+        return {
+            "success": True,
+            "presupuesto_id": target_id,
+            "estado": "rechazado",
+            "motivo_desistimiento": motivo,
+            "total": float(total),
+            "mensaje": f"El presupuesto #{target_id[:8]} por un valor de ${float(total):,.2f} ha quedado registrado como DESESTIMADO en el sistema con el motivo: '{motivo}'."
+        }
+    except Exception as e:
+        logger.error(f"Error al desestimar presupuesto {target_id}: {e}")
+        return {"error": f"No se pudo completar el registro de desistimiento del presupuesto: {str(e)}"}
+
 def consultar_presupuestos_paciente(paciente_id: Optional[str] = None) -> dict:
     """
     Consulta los presupuestos médicos emitidos al paciente en el sistema.

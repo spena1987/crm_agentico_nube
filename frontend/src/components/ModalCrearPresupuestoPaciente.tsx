@@ -15,6 +15,10 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import ModalSmartBundleSugerencias, {
+  RelacionPracticaPresupuesto,
+  ItemSeleccionadoBundle
+} from './ModalSmartBundleSugerencias'
 
 interface ItemPresupuestoForm {
   servicio_id?: string
@@ -77,6 +81,29 @@ export default function ModalCrearPresupuestoPaciente({
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Prácticas Vinculadas (Smart Bundle)
+  const [bundlePracticaPrincipal, setBundlePracticaPrincipal] = useState<{ codigo?: string; nombre: string } | null>(null)
+  const [bundleRelaciones, setBundleRelaciones] = useState<RelacionPracticaPresupuesto[]>([])
+  const [mostrarBundleModal, setMostrarBundleModal] = useState(false)
+
+  // Consultar y abrir modal de prácticas conexas / Smart Bundle
+  const consultarRelaciones = async (practicaId: string, practicaNombre: string, practicaCodigo?: string) => {
+    if (!practicaId) return
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/nomenclador/practicas/${practicaId}/relacionadas`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.relaciones && data.relaciones.length > 0) {
+          setBundlePracticaPrincipal({ codigo: practicaCodigo, nombre: practicaNombre })
+          setBundleRelaciones(data.relaciones)
+          setMostrarBundleModal(true)
+        }
+      }
+    } catch (err) {
+      console.error('Error al consultar prácticas vinculadas:', err)
+    }
+  }
+
   // Al abrir el modal, inicializar ítems y estados
   useEffect(() => {
     if (isOpen) {
@@ -102,15 +129,16 @@ export default function ModalCrearPresupuestoPaciente({
           setMonedaDefault('USD')
         }
 
-        // Si el precio inicial vino en 0, intentar buscar arancel sugerido en nomenclador
-        if (pPrecio === 0 && pNombre !== 'Nueva Cirugía / Procedimiento') {
+        // Buscar en nomenclador para resolver precio sugerido e ID de práctica para Smart Bundle
+        if (pNombre !== 'Nueva Cirugía / Procedimiento') {
           fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(pCodigo || pNombre)}`)
             .then((r) => r.json())
             .then((data) => {
               if (data.success && data.resultados && data.resultados.length > 0) {
                 const sugerido = data.resultados[0]
-                if (sugerido.precio && sugerido.precio > 0) {
+                if (pPrecio === 0 && sugerido.precio && sugerido.precio > 0) {
                   setItems([{
+                    servicio_id: sugerido.id,
                     codigo: sugerido.codigo || pCodigo,
                     nombre: sugerido.nombre || pNombre,
                     cantidad: 1,
@@ -119,6 +147,10 @@ export default function ModalCrearPresupuestoPaciente({
                     moneda: (sugerido.moneda === 'USD' ? 'USD' : 'ARS')
                   }])
                   if (sugerido.moneda === 'USD') setMonedaDefault('USD')
+                }
+                // Si la práctica tiene ID, verificar si posee prácticas vinculadas (Anestesia, Quirófano, Insumos)
+                if (sugerido.id) {
+                  consultarRelaciones(sugerido.id, sugerido.nombre || pNombre, sugerido.codigo || pCodigo)
                 }
               }
             })
@@ -184,6 +216,26 @@ export default function ModalCrearPresupuestoPaciente({
     setItems((prev) => [...prev, nuevo])
     setBusqueda('')
     setMostrarDropdown(false)
+
+    // Si tiene ID, consultar prácticas vinculadas (Anestesia, Quirófano, Insumos)
+    if (p.id) {
+      consultarRelaciones(p.id, p.nombre, p.codigo)
+    }
+  }
+
+  // Confirmar y agregar selección de prácticas vinculadas (Smart Bundle)
+  const handleConfirmarBundle = (seleccionadas: ItemSeleccionadoBundle[]) => {
+    if (!seleccionadas || seleccionadas.length === 0) return
+    const nuevosItems: ItemPresupuestoForm[] = seleccionadas.map((s) => ({
+      servicio_id: s.id,
+      codigo: s.codigo,
+      nombre: s.nombre,
+      cantidad: s.cantidad,
+      precio_unitario: s.precio_unitario,
+      subtotal: s.cantidad * s.precio_unitario,
+      moneda: s.moneda
+    }))
+    setItems((prev) => [...prev, ...nuevosItems])
   }
 
   // Agregar ítem manual o personalizado
@@ -611,6 +663,17 @@ export default function ModalCrearPresupuestoPaciente({
         </form>
 
       </div>
+
+      {/* Modal Sugerencias Smart Bundle (Prácticas y Costos Conexos) */}
+      {mostrarBundleModal && bundlePracticaPrincipal && bundleRelaciones.length > 0 && (
+        <ModalSmartBundleSugerencias
+          isOpen={mostrarBundleModal}
+          onClose={() => setMostrarBundleModal(false)}
+          practicaPrincipal={bundlePracticaPrincipal}
+          relaciones={bundleRelaciones}
+          onConfirmar={handleConfirmarBundle}
+        />
+      )}
     </div>
   )
 }

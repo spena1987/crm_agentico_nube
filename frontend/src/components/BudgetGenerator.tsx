@@ -60,6 +60,10 @@ interface ModalSelectedMap {
 }
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
+import ModalSmartBundleSugerencias, {
+  RelacionPracticaPresupuesto,
+  ItemSeleccionadoBundle
+} from '@/components/ModalSmartBundleSugerencias'
 import { Send } from 'lucide-react'
 
 interface BudgetGeneratorProps {
@@ -84,6 +88,57 @@ export default function BudgetGenerator({
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [modalFilterMoneda, setModalFilterMoneda] = useState<'todas' | 'ARS' | 'USD'>('todas')
   const [modalSelected, setModalSelected] = useState<ModalSelectedMap>({})
+
+  // Smart Bundle de Prácticas Vinculadas
+  const [bundlePracticaPrincipal, setBundlePracticaPrincipal] = useState<{ codigo?: string; nombre: string } | null>(null)
+  const [bundleRelaciones, setBundleRelaciones] = useState<RelacionPracticaPresupuesto[]>([])
+  const [isBundleModalOpen, setIsBundleModalOpen] = useState(false)
+
+  // Consultar prácticas conexas vinculadas
+  const checkPracticasRelacionadas = async (practicaId: string, practicaNombre: string, practicaCodigo?: string) => {
+    if (!practicaId) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${practicaId}/relacionadas`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.relaciones && data.relaciones.length > 0) {
+          setBundlePracticaPrincipal({ codigo: practicaCodigo, nombre: practicaNombre })
+          setBundleRelaciones(data.relaciones)
+          setIsBundleModalOpen(true)
+        }
+      }
+    } catch (err) {
+      console.error('Error al consultar prácticas vinculadas:', err)
+    }
+  }
+
+  // Confirmar bundle
+  const handleConfirmarBundle = (seleccionadas: ItemSeleccionadoBundle[]) => {
+    if (!seleccionadas || seleccionadas.length === 0) return
+    const updatedItems = [...items]
+    seleccionadas.forEach((s) => {
+      const existIdx = updatedItems.findIndex((it) => it.codigo === s.codigo && it.moneda === s.moneda)
+      if (existIdx > -1) {
+        updatedItems[existIdx].cantidad += s.cantidad
+        updatedItems[existIdx].subtotal = updatedItems[existIdx].cantidad * updatedItems[existIdx].precio_unitario
+      } else {
+        updatedItems.push({
+          id: s.id,
+          codigo: s.codigo,
+          nombre: s.nombre,
+          cantidad: s.cantidad,
+          precio_unitario: s.precio_unitario,
+          moneda: s.moneda,
+          subtotal: s.cantidad * s.precio_unitario
+        })
+      }
+    })
+    setItems(updatedItems)
+    setMensaje({
+      tipo: 'success',
+      texto: `Se agregaron ${seleccionadas.length} práctica(s) vinculada(s) recomendadas al presupuesto.`
+    })
+  }
 
   // Lista de Ítems del presupuesto
   const [items, setItems] = useState<BudgetItem[]>([])
@@ -177,6 +232,11 @@ export default function BudgetGenerator({
     setSearchQuery('')
     setIsSearchModalOpen(false)
     setMensaje({ tipo: 'success', texto: `Se agregó "${practice.nombre}" al presupuesto.` })
+
+    // Verificar si la práctica seleccionada tiene prácticas vinculadas (Anestesia, Quirófano, etc.)
+    if (practice.id) {
+      checkPracticasRelacionadas(practice.id, practice.nombre, practice.codigo)
+    }
   }
 
   // Selección/deselección de práctica en el modal
@@ -268,6 +328,15 @@ export default function BudgetGenerator({
     setModalSelected({})
     setSearchQuery('')
     setMensaje({ tipo: 'success', texto: `Se agregaron ${selectedEntries.length} prestación(es) al presupuesto.` })
+
+    // Si se seleccionó una sola práctica, verificar si tiene vinculadas sugeridas
+    if (selectedEntries.length === 1 && selectedEntries[0].practice.id) {
+      checkPracticasRelacionadas(
+        selectedEntries[0].practice.id,
+        selectedEntries[0].practice.nombre,
+        selectedEntries[0].practice.codigo
+      )
+    }
   }
 
   // Quitar ítem de la tabla principal
@@ -889,6 +958,17 @@ export default function BudgetGenerator({
           onSuccess={() => {
             setMensaje({ tipo: 'success', texto: '¡Presupuesto y PDF enviados por WhatsApp exitosamente!' })
           }}
+        />
+      )}
+
+      {/* Modal Sugerencias Smart Bundle (Prácticas y Costos Conexos) */}
+      {isBundleModalOpen && bundlePracticaPrincipal && bundleRelaciones.length > 0 && (
+        <ModalSmartBundleSugerencias
+          isOpen={isBundleModalOpen}
+          onClose={() => setIsBundleModalOpen(false)}
+          practicaPrincipal={bundlePracticaPrincipal}
+          relaciones={bundleRelaciones}
+          onConfirmar={handleConfirmarBundle}
         />
       )}
     </div>
