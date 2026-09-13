@@ -42,6 +42,7 @@ import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPac
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import PanelAsesoriaQuirurgica from '@/components/PanelAsesoriaQuirurgica'
 import { getAuthHeaders, BACKEND_URL } from '@/lib/api'
+import { usePermissions } from '@/hooks/usePermissions'
 
 
 interface Paciente {
@@ -74,6 +75,7 @@ interface Paciente {
 }
 
 export default function PacientesPage() {
+  const { can, canAccess } = usePermissions()
   const [pacientes, setPacientes] = useState<Paciente[]>([])
   const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -673,21 +675,25 @@ export default function PacientesPage() {
             )}
           </div>
 
-          <button
-            onClick={() => setMostrarModalGeclisa(true)}
-            className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-xs transition-all shadow flex items-center gap-2"
-          >
-            <Database size={14} />
-            <span className="hidden sm:inline">Buscar en</span> Geclisa (DNI)
-          </button>
+          {can('pacientes', 'crear') && (
+            <>
+              <button
+                onClick={() => setMostrarModalGeclisa(true)}
+                className="px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl font-bold text-xs transition-all shadow flex items-center gap-2"
+              >
+                <Database size={14} />
+                <span className="hidden sm:inline">Buscar en</span> Geclisa (DNI)
+              </button>
 
-          <button
-            onClick={() => setMostrarModalManual(true)}
-            className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs transition-all flex items-center gap-1.5"
-          >
-            <Plus size={14} />
-            <span className="hidden sm:inline">Crear</span> Manual
-          </button>
+              <button
+                onClick={() => setMostrarModalManual(true)}
+                className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs transition-all flex items-center gap-1.5"
+              >
+                <Plus size={14} />
+                <span className="hidden sm:inline">Crear</span> Manual
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -958,14 +964,16 @@ export default function PacientesPage() {
                 {/* Toolbar de Acciones del Paciente (WhatsApp, Presupuesto, Geclisa, Editar, Eliminar) */}
                 <div className="flex flex-wrap items-center gap-2">
                   {/* WhatsApp */}
-                  <Link
-                    href={`/chat?pacienteId=${pacienteSeleccionado.id}&telefono=${encodeURIComponent(pacienteSeleccionado.telefono)}`}
-                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md"
-                    title="Abrir chat de WhatsApp"
-                  >
-                    <MessageSquare size={14} />
-                    WhatsApp
-                  </Link>
+                  {canAccess('chat') && (
+                    <Link
+                      href={`/chat?pacienteId=${pacienteSeleccionado.id}&telefono=${encodeURIComponent(pacienteSeleccionado.telefono)}`}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md"
+                      title="Abrir chat de WhatsApp"
+                    >
+                      <MessageSquare size={14} />
+                      WhatsApp
+                    </Link>
+                  )}
 
                   {/* Historia Clínica (Geclisa On-Demand) */}
                   <button
@@ -979,15 +987,17 @@ export default function PacientesPage() {
                   </button>
 
                   {/* Presupuestos del Paciente y sus Casos */}
-                  <button
-                    type="button"
-                    onClick={() => setMostrarModalHistorialPresupuestos(true)}
-                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
-                    title="Consultar historial de presupuestos del paciente y sus cirugías"
-                  >
-                    <Receipt size={14} className="text-blue-400" />
-                    Presupuestos
-                  </button>
+                  {canAccess('presupuestos') && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarModalHistorialPresupuestos(true)}
+                      className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                      title="Consultar historial de presupuestos del paciente y sus cirugías"
+                    >
+                      <Receipt size={14} className="text-blue-400" />
+                      Presupuestos
+                    </button>
+                  )}
 
                   {/* Sincronizar desde Geclisa */}
                   <button
@@ -1011,26 +1021,30 @@ export default function PacientesPage() {
                   </button>
 
                   {/* Modificar en CRM */}
-                  <button
-                    type="button"
-                    onClick={() => setMostrarModalEditar(true)}
-                    className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
-                    title="Modificar todos los datos del paciente en el CRM"
-                  >
-                    <Edit3 size={14} className="text-amber-400" />
-                    Modificar
-                  </button>
+                  {can('pacientes', 'editar') && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarModalEditar(true)}
+                      className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                      title="Modificar todos los datos del paciente en el CRM"
+                    >
+                      <Edit3 size={14} className="text-amber-400" />
+                      Modificar
+                    </button>
+                  )}
 
                   {/* Eliminar Paciente */}
-                  <button
-                    type="button"
-                    onClick={() => setMostrarModalEliminar(true)}
-                    className="px-3 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-500/30 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
-                    title="Eliminar paciente y registros vinculados en cascada"
-                  >
-                    <Trash2 size={14} />
-                    Eliminar
-                  </button>
+                  {can('pacientes', 'eliminar') && (
+                    <button
+                      type="button"
+                      onClick={() => setMostrarModalEliminar(true)}
+                      className="px-3 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 border border-red-500/30 rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
+                      title="Eliminar paciente y registros vinculados en cascada"
+                    >
+                      <Trash2 size={14} />
+                      Eliminar
+                    </button>
+                  )}
                 </div>
               </div>
 

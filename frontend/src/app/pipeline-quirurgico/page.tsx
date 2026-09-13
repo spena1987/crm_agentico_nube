@@ -35,6 +35,7 @@ import {
 import Link from 'next/link'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import { usePermissions } from '@/hooks/usePermissions'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
@@ -133,6 +134,8 @@ const ETAPAS_COLUMNAS_ACTIVAS = [
 ]
 
 export default function PipelineQuirurgicoPage() {
+  const { can } = usePermissions()
+  const canChangeStage = can('pipeline-quirurgico', 'cambiar_etapa')
   const [modoVistaPipeline, setModoVistaPipeline] = useState<'kanban' | 'recepcion_hoy'>('kanban')
   const [etapas, setEtapas] = useState<Record<string, AsesoriaCasoPipeline[]>>({})
   const [metricas, setMetricas] = useState<MetricasPipeline | null>(null)
@@ -305,6 +308,11 @@ export default function PipelineQuirurgicoPage() {
   // Mover etapa vía Drag & Drop con actualización optimista inmediata
   const handleMoverEtapaDrop = async (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => {
     if (caso.estado === nuevaEtapa) return
+
+    if (!canChangeStage) {
+      mostrarToast('No tienes permiso para mover etapas de casos quirúrgicos.')
+      return
+    }
 
     // Guardar estado previo para posible rollback
     const etapasPrevias = { ...etapas }
@@ -1058,8 +1066,12 @@ export default function PipelineQuirurgicoPage() {
                         return (
                           <div
                             key={caso.id}
-                            draggable={true}
+                            draggable={canChangeStage}
                             onDragStart={(e) => {
+                              if (!canChangeStage) {
+                                e.preventDefault()
+                                return
+                              }
                               setDraggedCaso(caso)
                               e.dataTransfer.setData('text/plain', caso.id)
                               e.dataTransfer.effectAllowed = 'move'

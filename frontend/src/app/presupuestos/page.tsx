@@ -6,6 +6,7 @@ import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoW
 import ModalVisorPdfPresupuesto from '@/components/ModalVisorPdfPresupuesto'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import { usePermissions } from '@/hooks/usePermissions'
 import {
   FileText,
   PlusCircle,
@@ -43,10 +44,22 @@ interface Presupuesto {
 }
 
 export default function PresupuestosPage() {
+  const { can, canAccess } = usePermissions()
+  const canCreate = can('presupuestos', 'crear')
+  const canApprove = can('presupuestos', 'aprobar_presupuesto')
+  const canDelete = can('presupuestos', 'eliminar')
+
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('create')
   const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [loading, setLoading] = useState(false)
   const [presupuestoParaClonar, setPresupuestoParaClonar] = useState<any | null>(null)
+
+  // Ajustar tab si no tiene permiso de crear
+  useEffect(() => {
+    if (!canCreate && activeTab === 'create') {
+      setActiveTab('list')
+    }
+  }, [canCreate, activeTab])
 
   // Estado para el modal de WhatsApp
   const [selectedPresupuestoWhatsApp, setSelectedPresupuestoWhatsApp] = useState<Presupuesto | null>(null)
@@ -275,17 +288,19 @@ export default function PresupuestosPage() {
 
         {/* Tabs de Selección */}
         <div className="flex bg-slate-100 dark:bg-slate-800/40 p-1.5 rounded-xl border border-[var(--border)] self-start md:self-auto">
-          <button
-            onClick={() => setActiveTab('create')}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'create'
-                ? 'bg-white dark:bg-slate-800 shadow text-blue-600'
-                : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            <PlusCircle size={15} />
-            {presupuestoParaClonar ? 'Re-cotizar Presupuesto' : 'Crear Presupuesto'}
-          </button>
+          {canCreate && (
+            <button
+              onClick={() => setActiveTab('create')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'create'
+                  ? 'bg-white dark:bg-slate-800 shadow text-blue-600'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <PlusCircle size={15} />
+              {presupuestoParaClonar ? 'Re-cotizar Presupuesto' : 'Crear Presupuesto'}
+            </button>
+          )}
           <button
             onClick={() => {
               setPresupuestoParaClonar(null)
@@ -403,16 +418,22 @@ export default function PresupuestosPage() {
                           )}
                         </td>
                         <td className="py-3 text-center">
-                          <select
-                            value={pres.estado}
-                            onChange={(e) => updateEstado(pres.id, e.target.value as any)}
-                            className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border-0 focus:outline-none focus:ring-2 focus:ring-blue-500/25 ${getBadgeColor(pres.estado)}`}
-                          >
-                            <option value="borrador">Borrador</option>
-                            <option value="enviado">Enviado</option>
-                            <option value="aprobado">Aprobado</option>
-                            <option value="rechazado">Rechazado</option>
-                          </select>
+                          {canApprove ? (
+                            <select
+                              value={pres.estado}
+                              onChange={(e) => updateEstado(pres.id, e.target.value as any)}
+                              className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border-0 focus:outline-none focus:ring-2 focus:ring-blue-500/25 ${getBadgeColor(pres.estado)}`}
+                            >
+                              <option value="borrador">Borrador</option>
+                              <option value="enviado">Enviado</option>
+                              <option value="aprobado">Aprobado</option>
+                              <option value="rechazado">Rechazado</option>
+                            </select>
+                          ) : (
+                            <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg ${getBadgeColor(pres.estado)}`}>
+                              {pres.estado.toUpperCase()}
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 text-center">
                           {pres.pdf_url ? (
@@ -429,27 +450,33 @@ export default function PresupuestosPage() {
                           )}
                         </td>
                         <td className="py-3 text-right pr-2 space-x-1">
-                          <button
-                            onClick={() => handleDuplicarPresupuesto(pres)}
-                            className="p-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 rounded-lg transition inline-flex items-center"
-                            title="Duplicar / Re-cotizar este presupuesto"
-                          >
-                            <Copy size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleOpenWhatsApp(pres)}
-                            className="p-1.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg transition inline-flex items-center"
-                            title="Enviar / Reenviar por WhatsApp con 1 Clic"
-                          >
-                            <Send size={14} />
-                          </button>
-                          <button
-                            onClick={() => deletePresupuesto(pres.id)}
-                            className="p-1.5 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 rounded-lg transition"
-                            title="Eliminar presupuesto"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          {canCreate && (
+                            <button
+                              onClick={() => handleDuplicarPresupuesto(pres)}
+                              className="p-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 rounded-lg transition inline-flex items-center"
+                              title="Duplicar / Re-cotizar este presupuesto"
+                            >
+                              <Copy size={14} />
+                            </button>
+                          )}
+                          {canAccess('chat') && (
+                            <button
+                              onClick={() => handleOpenWhatsApp(pres)}
+                              className="p-1.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-lg transition inline-flex items-center"
+                              title="Enviar / Reenviar por WhatsApp con 1 Clic"
+                            >
+                              <Send size={14} />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button
+                              onClick={() => deletePresupuesto(pres.id)}
+                              className="p-1.5 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 rounded-lg transition"
+                              title="Eliminar presupuesto"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     )

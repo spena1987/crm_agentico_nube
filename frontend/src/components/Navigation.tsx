@@ -32,6 +32,7 @@ import { apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
 interface SubNavItem {
+  code: string
   label: string
   href: string
   icon: any
@@ -55,8 +56,8 @@ const allNavItems: NavItem[] = [
     href: '/pipeline-quirurgico',
     icon: Stethoscope,
     subItems: [
-      { label: 'Pipeline', href: '/pipeline-quirurgico', icon: TrendingUp },
-      { label: 'Recepción del Día', href: '/asesoramiento-recepcion', icon: UserCheck }
+      { code: 'pipeline-quirurgico', label: 'Pipeline', href: '/pipeline-quirurgico', icon: TrendingUp },
+      { code: 'asesoramiento-recepcion', label: 'Recepción del Día', href: '/asesoramiento-recepcion', icon: UserCheck }
     ]
   },
   {
@@ -65,9 +66,9 @@ const allNavItems: NavItem[] = [
     href: '/programacion-quirurgica',
     icon: Building2,
     subItems: [
-      { label: 'Agenda & Slots', href: '/programacion-quirurgica', icon: CalendarCheck2 },
-      { label: 'Pizarra en Vivo', href: '/quirofano-en-vivo', icon: Activity },
-      { label: 'Cálculo de LIO', href: '/calculo-lio', icon: Eye }
+      { code: 'programacion-quirurgica', label: 'Agenda & Slots', href: '/programacion-quirurgica', icon: CalendarCheck2 },
+      { code: 'quirofano-en-vivo', label: 'Pizarra en Vivo', href: '/quirofano-en-vivo', icon: Activity },
+      { code: 'calculo-lio', label: 'Cálculo de LIO', href: '/calculo-lio', icon: Eye }
     ]
   },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
@@ -163,10 +164,26 @@ export default function Navigation() {
   }
 
   // Filtrar ítems de navegación según los permisos del usuario
-  const visibleNavItems = allNavItems.filter((item) => {
-    if (isAdmin) return true
-    return canAccess(item.code)
-  })
+  const visibleNavItems = allNavItems
+    .map((item) => {
+      if (isAdmin) return item
+
+      if (item.subItems) {
+        const allowedSubItems = item.subItems.filter((sub) => canAccess(sub.code))
+        if (allowedSubItems.length > 0) {
+          const firstAllowedHref = allowedSubItems[0].href
+          return {
+            ...item,
+            href: canAccess(item.code) ? item.href : firstAllowedHref,
+            subItems: allowedSubItems,
+          }
+        }
+        return null
+      }
+
+      return canAccess(item.code) ? item : null
+    })
+    .filter(Boolean) as NavItem[]
 
   const sidebarContent = (
     <div className="h-full flex flex-col justify-between select-none">

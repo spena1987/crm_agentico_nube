@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
 import Navigation from '@/components/Navigation'
 import IdleTimeoutManager from '@/components/auth/IdleTimeoutManager'
+import ModuleRouteGuard from '@/components/auth/ModuleRouteGuard'
 import { Loader2 } from 'lucide-react'
 
 export default function AppLayoutWrapper({
@@ -61,7 +62,9 @@ export default function AppLayoutWrapper({
       <IdleTimeoutManager />
       <Navigation />
       <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
-        {children}
+        <ModuleRouteGuard>
+          {children}
+        </ModuleRouteGuard>
       </main>
     </div>
   )

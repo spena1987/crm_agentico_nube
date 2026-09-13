@@ -30,8 +30,11 @@ import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import { usePermissions } from '@/hooks/usePermissions'
 
 function ProgramacionQuirurgicaContent() {
+  const { can } = usePermissions()
+  const canCreate = can('programacion-quirurgica', 'crear')
   const searchParams = useSearchParams()
   const paramAsesoriaId = searchParams.get('asesoria_id') || ''
   const paramPacienteId = searchParams.get('paciente_id') || ''
@@ -315,18 +318,20 @@ function ProgramacionQuirurgicaContent() {
             </button>
           </div>
 
-          <button
-            onClick={() => {
-              setTurnoSeleccionado(null)
-              setCasoConfirmadoSeleccionado(null)
-              setSlotClickData(null)
-              setModalAbierto(true)
-            }}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md transition-all"
-          >
-            <Plus size={16} />
-            <span>Nuevo Turno</span>
-          </button>
+          {canCreate && (
+            <button
+              onClick={() => {
+                setTurnoSeleccionado(null)
+                setCasoConfirmadoSeleccionado(null)
+                setSlotClickData(null)
+                setModalAbierto(true)
+              }}
+              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md transition-all"
+            >
+              <Plus size={16} />
+              <span>Nuevo Turno</span>
+            </button>
+          )}
         </div>
       </div>
 

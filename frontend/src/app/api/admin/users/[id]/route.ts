@@ -92,6 +92,15 @@ export async function PATCH(
       return NextResponse.json({ error: `Error en base de datos: ${profileError.message}` }, { status: 500 })
     }
 
+    // 4. Si se desactiva el usuario, revocar inmediatamente sus sesiones activas en Auth
+    if (activo === false) {
+      try {
+        await supabaseAdmin.auth.admin.signOut(userId)
+      } catch (signOutErr) {
+        console.warn('Advertencia forzando cierre de sesión en Supabase Auth:', signOutErr)
+      }
+    }
+
     return NextResponse.json({ success: true, user: updatedProfile })
   } catch (err: any) {
     console.error('Error inesperado en PATCH /api/admin/users/[id]:', err)

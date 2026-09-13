@@ -87,7 +87,8 @@ interface Catalogos {
 
 export default function AgendaGeclisaPage() {
   const { user } = useAuth()
-  const { profile } = usePermissions()
+  const { profile, can, isAdmin } = usePermissions()
+  const canViewAllDoctors = isAdmin || can('agenda-geclisa', 'ver_todos_los_medicos')
 
   // Fecha seleccionada (YYYY-MM-DD)
   const getTodayISO = () => new Date().toISOString().split('T')[0]
@@ -169,11 +170,13 @@ export default function AgendaGeclisaPage() {
 
   // 2. Establecer prestador asignado al usuario logueado en el CRM
   useEffect(() => {
-    cargarCatalogoPrestadores()
+    if (canViewAllDoctors) {
+      cargarCatalogoPrestadores()
+    }
     if (profile?.geclisa_pre_id) {
       setSelectedPreId(String(profile.geclisa_pre_id))
     }
-  }, [profile])
+  }, [profile, canViewAllDoctors])
 
   // 3. Cargar agenda estricta de ese prestador
   const cargarAgenda = async (preIdToUse?: string, fechaToUse?: string) => {
@@ -431,24 +434,39 @@ export default function AgendaGeclisaPage() {
 
         {/* Selector de Prestador Dark Mode & Fechas */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Custom Searchable Dropdown de Prestador con Diseño Dark Mode Impecable */}
+          {/* Custom Searchable Dropdown de Prestador o Badge Fijo para Médicos */}
           <div className="relative" ref={headerDropdownRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setHeaderDropdownOpen(!headerDropdownOpen)
-                setHeaderSearchTerm('')
-              }}
-              className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-100 shadow-md transition-all min-w-[200px] justify-between"
-            >
-              <div className="flex items-center gap-2 truncate">
+            {canViewAllDoctors ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderDropdownOpen(!headerDropdownOpen)
+                  setHeaderSearchTerm('')
+                }}
+                className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-100 shadow-md transition-all min-w-[200px] justify-between"
+              >
+                <div className="flex items-center gap-2 truncate">
+                  <Stethoscope size={15} className="text-blue-400 shrink-0" />
+                  <span className="truncate">
+                    {prestadorActual.nombre} {prestadorActual.matricula ? `(${prestadorActual.matricula})` : ''}
+                  </span>
+                </div>
+                <ChevronDown size={14} className={`text-slate-400 transition-transform ${headerDropdownOpen ? 'rotate-180' : ''}`} />
+              </button>
+            ) : (
+              <div
+                className="flex items-center gap-2 bg-slate-900/90 border border-slate-700/80 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-200 shadow-xs min-w-[200px]"
+                title="Tu perfil médico está asignado a tu matrícula oficial en Geclisa."
+              >
                 <Stethoscope size={15} className="text-blue-400 shrink-0" />
                 <span className="truncate">
                   {prestadorActual.nombre} {prestadorActual.matricula ? `(${prestadorActual.matricula})` : ''}
                 </span>
+                <span className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-blue-950 text-blue-400 border border-blue-800/60 font-semibold">
+                  Mi Agenda
+                </span>
               </div>
-              <ChevronDown size={14} className={`text-slate-400 transition-transform ${headerDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
+            )}
 
             {/* Menú Desplegable Dark Mode con Buscador */}
             {headerDropdownOpen && (

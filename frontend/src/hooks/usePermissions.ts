@@ -70,6 +70,14 @@ export function usePermissions() {
       }
 
       if (profileData) {
+        // Si el usuario fue desactivado por un administrador, forzar logout inmediato
+        if (profileData.activo === false) {
+          console.warn('Usuario desactivado detectado. Cerrando sesión...')
+          await supabase.auth.signOut()
+          window.location.href = '/login?error=account_deactivated'
+          return
+        }
+
         setProfile(profileData as unknown as UserProfile)
 
         // 2. Si tiene un rol asignado, cargar los permisos de ese rol

@@ -19,15 +19,29 @@ import {
   MessageSquare,
   Users,
   FileText,
-  Settings
+  Settings,
+  Calendar,
+  TrendingUp,
+  UserCheck,
+  Building2,
+  Activity,
+  Eye,
+  ScrollText
 } from 'lucide-react'
 
 // Mapa de iconos dinámicos
 const ICON_MAP: Record<string, any> = {
   LayoutDashboard,
+  Calendar,
   MessageSquare,
-  Users,
+  TrendingUp,
+  UserCheck,
+  Building2,
+  Activity,
+  Eye,
   FileText,
+  Users,
+  ScrollText,
   Settings,
 }
 

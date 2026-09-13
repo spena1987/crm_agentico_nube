@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { Bot, User, Loader2 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { usePermissions } from '@/hooks/usePermissions'
 
 interface ToggleHumanProps {
   conversacionId: string
@@ -11,9 +12,12 @@ interface ToggleHumanProps {
 }
 
 export default function ToggleHuman({ conversacionId, botDisabled, onToggle }: ToggleHumanProps) {
+  const { can } = usePermissions()
+  const canIntervene = can('chat', 'intervenir_bot')
   const [loading, setLoading] = useState(false)
 
   const handleToggle = async () => {
+    if (!canIntervene) return
     setLoading(true)
     const nextState = !botDisabled
     
@@ -74,8 +78,11 @@ export default function ToggleHuman({ conversacionId, botDisabled, onToggle }: T
       {/* Switch Switcher */}
       <button
         onClick={handleToggle}
-        disabled={loading}
+        disabled={loading || !canIntervene}
+        title={!canIntervene ? 'No tienes permiso para pausar o alternar el Bot IA' : 'Alternar modo Humano / Bot'}
         className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+          !canIntervene ? 'opacity-50 cursor-not-allowed' : ''
+        } ${
           botDisabled ? 'bg-rose-600' : 'bg-emerald-600'
         }`}
       >
