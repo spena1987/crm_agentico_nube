@@ -200,7 +200,7 @@ export default function ChatPatientSidebar({
 
   if (!paciente) {
     return (
-      <div className="w-80 border-l border-slate-800 bg-[#0d1527] p-4 text-center text-slate-400 text-xs flex flex-col items-center justify-center">
+      <div className="w-full h-full border-l border-slate-800 bg-[#0d1527] p-4 text-center text-slate-400 text-xs flex flex-col items-center justify-center">
         <User size={32} className="text-slate-600 mb-2" />
         <p>No se encontró ficha asociada para este chat.</p>
       </div>
@@ -244,7 +244,7 @@ export default function ChatPatientSidebar({
   }
 
   return (
-    <div className="w-80 md:w-88 border-l border-slate-800 bg-[#0d1527] flex flex-col h-full overflow-y-auto panel-scroll text-slate-100 shrink-0 text-xs">
+    <div className="w-full h-full border-l border-slate-800 bg-[#0d1527] flex flex-col overflow-y-auto panel-scroll text-slate-100 text-xs">
       
       {/* Cabecera del Sidebar */}
       <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-[#101b33] sticky top-0 z-10">
@@ -259,10 +259,12 @@ export default function ChatPatientSidebar({
         </div>
         {onClose && (
           <button 
+            type="button"
             onClick={onClose}
-            className="p-1 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
+            className="p-1.5 hover:bg-slate-800/80 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Cerrar Ficha 360°"
           >
-            <X size={16} />
+            <X size={17} />
           </button>
         )}
       </div>

@@ -45,7 +45,9 @@ import {
   Users,
   Share2,
   Eye,
-  ArrowRightLeft
+  ArrowRightLeft,
+  ArrowLeft,
+  MoreVertical
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
@@ -205,7 +207,9 @@ export default function ChatInbox() {
   const presenceChannelRef = useRef<any>(null)
 
   // Opciones avanzadas de CRM
-  const [showPatientSidebar, setShowPatientSidebar] = useState(true)
+  const [showPatientSidebar, setShowPatientSidebar] = useState(false)
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false)
+  const headerMenuRef = useRef<HTMLDivElement>(null)
   const [isInternalNote, setIsInternalNote] = useState(false)
   const [quickRepliesOpen, setQuickRepliesOpen] = useState(false)
   const [copilotLoading, setCopilotLoading] = useState<'sugerir' | 'mejorar' | 'resumir' | null>(null)
@@ -213,6 +217,28 @@ export default function ChatInbox() {
   const [selectedPacienteHistoriaClinica, setSelectedPacienteHistoriaClinica] = useState<any | null>(null)
   const [selectedPacienteEditar, setSelectedPacienteEditar] = useState<any | null>(null)
   const [guardandoPaciente, setGuardandoPaciente] = useState(false)
+
+  // Abrir Ficha 360 por defecto en monitores amplios (>= 1536px)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 1536) {
+      setShowPatientSidebar(true)
+    }
+  }, [])
+
+  // Listener para cerrar el menú desplegable al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (headerMenuRef.current && !headerMenuRef.current.contains(event.target as Node)) {
+        setShowHeaderMenu(false)
+      }
+    }
+    if (showHeaderMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showHeaderMenu])
 
   // Para pruebas/simulación
   const [simTelefono, setSimTelefono] = useState('5491123456789')
@@ -1602,7 +1628,9 @@ export default function ChatInbox() {
     <div className="flex flex-1 h-full min-h-0 border border-slate-800 rounded-2xl overflow-hidden bg-[#0a101d] shadow-2xl w-full text-slate-100 min-w-0">
       
       {/* 1. Panel de Conversaciones (Izquierda) */}
-      <div className="w-80 md:w-88 border-r border-slate-800 flex flex-col bg-[#0d1527] min-w-[280px] max-w-[360px] min-h-0 shrink-0">
+      <div className={`w-full lg:w-80 xl:w-88 border-r border-slate-800 flex flex-col bg-[#0d1527] lg:min-w-[280px] lg:max-w-[350px] min-h-0 shrink-0 ${
+        selectedConvId ? 'hidden lg:flex' : 'flex'
+      }`}>
         
         {/* Cabecera de Chats y Estado de WhatsApp */}
         <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-[#101b33]">
@@ -2006,44 +2034,57 @@ export default function ChatInbox() {
 
       {/* 2. Área Central y Lateral del Chat Activo (Derecha) */}
       {selectedConv ? (
-        <div className="flex-1 flex min-w-0 min-h-0">
+        <div className="flex-1 flex min-w-0 min-h-0 relative">
           
           {/* Panel Principal del Chat (Mensajes + Entrada) */}
           <div className="flex-1 flex flex-col bg-[#090e1a] min-w-0 min-h-0">
             
             {/* Header del Chat Activo */}
-            <div className="p-3 border-b border-slate-800 bg-[#101b33] flex items-center justify-between gap-3 shadow-xs shrink-0">
+            <div className="p-2.5 sm:p-3 border-b border-slate-800 bg-[#101b33] flex items-center justify-between gap-2 shadow-xs shrink-0">
               
-              {/* Info del Paciente */}
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 rounded-full bg-blue-950 text-blue-300 border border-blue-700/60 font-bold flex items-center justify-center text-sm shrink-0 shadow-sm">
+              {/* Info del Paciente y Navegación Móvil */}
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
+                {/* Botón Volver a la Lista de Chats (Solo Móvil / Tablet < lg) */}
+                <button
+                  type="button"
+                  onClick={() => setSelectedConvId(null)}
+                  className="p-1.5 -ml-1 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/80 lg:hidden flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                  title="Volver a la lista de conversaciones"
+                >
+                  <ArrowLeft size={19} />
+                </button>
+
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-blue-950 text-blue-300 border border-blue-700/60 font-bold flex items-center justify-center text-xs sm:text-sm shrink-0 shadow-sm">
                   {getInitials(currentPaciente?.nombre)}
                 </div>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-sm truncate text-slate-100">
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    <h3 className="font-bold text-xs sm:text-sm truncate text-slate-100 max-w-[130px] sm:max-w-[200px] md:max-w-[280px]">
                       {currentPaciente?.nombre || 'Paciente'}
                     </h3>
                     {currentPaciente?.id && (
                       <button
                         onClick={() => setSelectedPacienteHistoriaClinica(currentPaciente)}
-                        className="text-[10px] font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-0.5 hover:underline"
-                        title="Ver Historia Clínica"
+                        className="px-1.5 py-0.5 rounded-md bg-blue-950/80 border border-blue-700/50 text-[9.5px] sm:text-[10px] font-semibold text-blue-300 hover:text-white hover:bg-blue-900 transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
+                        title="Ver Historia Clínica Completa"
                       >
                         <span>HC</span> <ExternalLink size={10} />
                       </button>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                      <Phone size={11} /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
+
+                  <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap mt-0.5">
+                    <p className="text-[10.5px] sm:text-[11px] text-slate-400 flex items-center gap-1 shrink-0">
+                      <Phone size={10} className="text-slate-500" /> {currentPaciente?.telefono ? formatPhoneDisplay(currentPaciente.telefono) : 'Sin teléfono'}
                     </p>
+
                     {/* Badge Ventana de 24 Horas de Meta */}
                     {metaWindow.isExpired ? (
                       <button
                         type="button"
                         onClick={() => setShowTemplateModal(true)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-700/80 hover:bg-rose-900 transition-all cursor-pointer shadow-xs"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-700/80 hover:bg-rose-900 transition-all cursor-pointer shadow-xs shrink-0"
                         title="La ventana de 24h cerró. Haz clic para enviar una plantilla homologada de Meta."
                       >
                         <AlertCircle size={10} className="text-rose-400 shrink-0" />
@@ -2051,16 +2092,16 @@ export default function ChatInbox() {
                       </button>
                     ) : metaWindow.isUrgent ? (
                       <span
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/70"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10px] font-medium bg-amber-950/70 text-amber-300 border border-amber-800/70 shrink-0"
                         title="Menos de 2 horas restantes para el cierre de la ventana."
                       >
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                        <span>24h: {metaWindow.hoursLeft}h {metaWindow.minutesLeft}m restantes</span>
+                        <span>24h: {metaWindow.hoursLeft}h {metaWindow.minutesLeft}m</span>
                       </span>
                     ) : (
                       <span
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/70"
-                        title="Ventana de 24 horas de Meta abierta. Puedes enviar texto libre y multimedia."
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10px] font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800/70 shrink-0"
+                        title="Ventana de 24 horas de Meta abierta."
                       >
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                         <span>24h activa ({metaWindow.hoursLeft}h {metaWindow.minutesLeft}m)</span>
@@ -2069,12 +2110,12 @@ export default function ChatInbox() {
 
                     {/* Badge de Operador Asignado */}
                     {selectedConv.asignado_a ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-950/80 text-indigo-300 border border-indigo-700/60" title={`Asignado a: ${selectedConv.asignado_a.email}`}>
+                      <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10px] font-semibold bg-indigo-950/80 text-indigo-300 border border-indigo-700/60 shrink-0" title={`Asignado a: ${selectedConv.asignado_a.email}`}>
                         <UserCheck size={10} className="text-indigo-400" />
-                        <span>Asignado: {selectedConv.asignado_a.nombre_completo}</span>
+                        <span>{selectedConv.asignado_a.nombre_completo}</span>
                       </span>
                     ) : !selectedConv.archivada ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9.5px] sm:text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800/60 shrink-0">
                         <UserPlus size={10} className="text-amber-400" />
                         <span>Sin Asignar</span>
                       </span>
@@ -2083,74 +2124,21 @@ export default function ChatInbox() {
                 </div>
               </div>
 
-              {/* Acciones Rápidas de la Cabecera */}
-              <div className="flex items-center gap-1.5 sm:gap-2">
-                
+              {/* Acciones Rápidas y Menú de la Cabecera */}
+              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 {/* Botón Tomar Conversación */}
                 {(!selectedConv.asignado_a_usuario_id || selectedConv.asignado_a_usuario_id !== currentUserId) && !selectedConv.archivada && (
                   <button
                     type="button"
                     onClick={handleTomarConversacion}
                     disabled={tomandoCaso}
-                    className="px-2.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm shadow-blue-600/30 disabled:opacity-50"
+                    className="px-2 sm:px-2.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold flex items-center gap-1 sm:gap-1.5 transition-all shadow-sm shadow-blue-600/30 disabled:opacity-50 shrink-0 cursor-pointer"
                     title="Asignarme este paciente para atenderlo de forma exclusiva"
                   >
                     <UserCheck size={13} />
-                    <span className="hidden sm:inline">{tomandoCaso ? 'Tomando...' : 'Tomar Caso'}</span>
+                    <span className="hidden md:inline">{tomandoCaso ? 'Tomando...' : 'Tomar Caso'}</span>
                   </button>
                 )}
-
-                {/* Botón Derivar Conversación */}
-                {!selectedConv.archivada && (
-                  <button
-                    type="button"
-                    onClick={handleOpenDerivarModal}
-                    className="px-2.5 py-1.5 rounded-xl bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-700/60 text-indigo-200 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs"
-                    title="Transferir este paciente a otro asesor o colega con nota interna"
-                  >
-                    <Share2 size={13} className="text-indigo-400" />
-                    <span className="hidden sm:inline">Derivar</span>
-                  </button>
-                )}
-
-                {/* Botón Finalizar Atención o Reabrir */}
-                {!selectedConv.archivada ? (
-                  <button
-                    type="button"
-                    onClick={handleFinalizarConversacion}
-                    disabled={finalizandoCaso}
-                    className="px-2.5 py-1.5 rounded-xl bg-emerald-950/60 text-emerald-300 border border-emerald-800/70 hover:bg-emerald-900/60 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
-                    title="Finalizar atención: archiva el caso y reactiva de inmediato al asistente virtual Gemini"
-                  >
-                    <CheckCircle2 size={13} className="text-emerald-400" />
-                    <span className="hidden md:inline">{finalizandoCaso ? 'Finalizando...' : 'Finalizar'}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => handleToggleArchivar(selectedConv.id, true)}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-all"
-                    title="Reabrir conversación"
-                  >
-                    <ArchiveRestore size={13} className="text-slate-400" />
-                    <span className="hidden md:inline">Reabrir</span>
-                  </button>
-                )}
-
-                {/* Botón Resumir Chat con IA */}
-                <button
-                  onClick={handleCopilotResumir}
-                  disabled={copilotLoading === 'resumir'}
-                  className="px-2.5 py-1.5 rounded-xl bg-purple-950/50 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
-                  title="Generar resumen ejecutivo de la conversación con Gemini IA"
-                >
-                  {copilotLoading === 'resumir' ? (
-                    <Loader2 size={13} className="animate-spin text-purple-300" />
-                  ) : (
-                    <Sparkles size={13} className="text-purple-300" />
-                  )}
-                  <span className="hidden sm:inline">Resumir Chat</span>
-                </button>
 
                 {/* Switch de Atención Humano / Bot */}
                 <ToggleHuman
@@ -2163,18 +2151,134 @@ export default function ChatInbox() {
                   }}
                 />
 
-                {/* Toggle de Sidebar 360 */}
+                {/* Toggle de Sidebar Ficha 360 */}
                 <button
+                  type="button"
                   onClick={() => setShowPatientSidebar(!showPatientSidebar)}
-                  className={`p-1.5 rounded-xl text-xs transition-colors border ${
+                  className={`px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all border flex items-center gap-1.5 shrink-0 cursor-pointer ${
                     showPatientSidebar
-                      ? 'bg-blue-900/60 text-blue-300 border-blue-600/60'
-                      : 'text-slate-400 hover:text-slate-200 border-slate-700/60 hover:bg-slate-800/60'
+                      ? 'bg-blue-600 text-white border-blue-500 shadow-sm shadow-blue-600/30'
+                      : 'text-slate-300 hover:text-white border-slate-700/80 hover:bg-slate-800/80 bg-[#131d35]'
                   }`}
-                  title={showPatientSidebar ? "Ocultar Ficha 360°" : "Mostrar Ficha 360°"}
+                  title={showPatientSidebar ? "Ocultar Ficha 360°" : "Ver Ficha 360° del Paciente"}
                 >
-                  <ShieldCheck size={16} />
+                  <ShieldCheck size={15} className={showPatientSidebar ? "text-white" : "text-blue-400"} />
+                  <span className="hidden xl:inline text-[11px]">Ficha 360°</span>
                 </button>
+
+                {/* Menú Desplegable '...' de Acciones Secundarias */}
+                <div className="relative" ref={headerMenuRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowHeaderMenu(!showHeaderMenu)}
+                    className={`p-1.5 rounded-xl text-xs transition-colors border shrink-0 cursor-pointer ${
+                      showHeaderMenu 
+                        ? 'bg-slate-700 text-white border-slate-600 shadow-sm' 
+                        : 'text-slate-400 hover:text-slate-200 border-slate-700/60 hover:bg-slate-800/60 bg-[#131d35]'
+                    }`}
+                    title="Más acciones de la conversación"
+                  >
+                    <MoreVertical size={16} />
+                  </button>
+
+                  {showHeaderMenu && (
+                    <div className="absolute right-0 mt-2 w-56 bg-[#131d35] border border-slate-700/80 rounded-2xl shadow-2xl py-1 z-30 text-xs animate-fadeIn divide-y divide-slate-800/80">
+                      <div className="px-1 py-1 space-y-0.5">
+                        {/* Resumir con IA */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowHeaderMenu(false)
+                            handleCopilotResumir()
+                          }}
+                          disabled={copilotLoading === 'resumir'}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-purple-300 hover:bg-purple-950/50 hover:text-purple-200 transition-colors text-left disabled:opacity-50 cursor-pointer"
+                        >
+                          {copilotLoading === 'resumir' ? <Loader2 size={14} className="animate-spin text-purple-400 shrink-0" /> : <Sparkles size={14} className="text-purple-400 shrink-0" />}
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-semibold text-[11.5px]">Resumir Chat con IA</span>
+                            <span className="text-[10px] text-slate-400">Resumen con Gemini</span>
+                          </div>
+                        </button>
+
+                        {/* Derivar Conversación */}
+                        {!selectedConv.archivada && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowHeaderMenu(false)
+                              handleOpenDerivarModal()
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-indigo-300 hover:bg-indigo-950/50 hover:text-indigo-200 transition-colors text-left cursor-pointer"
+                          >
+                            <Share2 size={14} className="text-indigo-400 shrink-0" />
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-semibold text-[11.5px]">Derivar Paciente</span>
+                              <span className="text-[10px] text-slate-400">Transferir a colega</span>
+                            </div>
+                          </button>
+                        )}
+
+                        {/* Alternar Modo Nota Interna */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowHeaderMenu(false)
+                            setIsInternalNote(!isInternalNote)
+                            setTimeout(() => messageInputRef.current?.focus(), 50)
+                          }}
+                          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl transition-colors text-left cursor-pointer ${
+                            isInternalNote 
+                              ? 'bg-amber-950/50 text-amber-300' 
+                              : 'text-amber-400 hover:bg-amber-950/40 hover:text-amber-300'
+                          }`}
+                        >
+                          <Lock size={14} className="text-amber-400 shrink-0" />
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-semibold text-[11.5px]">{isInternalNote ? 'Volver a WhatsApp' : 'Nota Interna Médica'}</span>
+                            <span className="text-[10px] text-slate-400">{isInternalNote ? 'Modo nota activo' : 'Privada para el equipo'}</span>
+                          </div>
+                        </button>
+                      </div>
+
+                      <div className="px-1 py-1">
+                        {/* Finalizar Atención o Reabrir */}
+                        {!selectedConv.archivada ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowHeaderMenu(false)
+                              handleFinalizarConversacion()
+                            }}
+                            disabled={finalizandoCaso}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-rose-300 hover:bg-rose-950/50 hover:text-rose-200 transition-colors text-left disabled:opacity-50 cursor-pointer"
+                          >
+                            <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-semibold text-[11.5px]">{finalizandoCaso ? 'Finalizando...' : 'Finalizar Atención'}</span>
+                              <span className="text-[10px] text-slate-400">Archivar y reactivar bot</span>
+                            </div>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowHeaderMenu(false)
+                              handleToggleArchivar(selectedConv.id, true)
+                            }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-slate-300 hover:bg-slate-800 hover:text-slate-100 transition-colors text-left cursor-pointer"
+                          >
+                            <ArchiveRestore size={14} className="text-slate-400 shrink-0" />
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-semibold text-[11.5px]">Reabrir Conversación</span>
+                              <span className="text-[10px] text-slate-400">Mover a activos</span>
+                            </div>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -2781,22 +2885,31 @@ export default function ChatInbox() {
 
           {/* 3. Panel Lateral Contextual 360° del Paciente (Drawer Derecho) */}
           {showPatientSidebar && (
-            <ChatPatientSidebar
-              paciente={currentPaciente}
-              conversacionId={selectedConv.id}
-              onClose={() => setShowPatientSidebar(false)}
-              onOpenHistoriaClinica={(pId) => setSelectedPacienteHistoriaClinica(currentPaciente)}
-              onOpenEditarPaciente={(p) => setSelectedPacienteEditar(p)}
-              onInsertMessageToChat={(text) => {
-                setNuevoMensaje(text)
-                setTimeout(() => messageInputRef.current?.focus(), 50)
-              }}
-            />
+            <>
+              {/* Backdrop para pantallas menores a 2xl (laptops, tablets y móviles) */}
+              <div 
+                className="fixed inset-0 bg-black/60 backdrop-blur-xs z-40 2xl:hidden transition-opacity" 
+                onClick={() => setShowPatientSidebar(false)} 
+              />
+              <aside className="fixed inset-y-0 right-0 z-50 w-80 sm:w-96 max-w-[90vw] 2xl:static 2xl:z-auto 2xl:w-80 md:2xl:w-88 2xl:max-w-none 2xl:shrink-0 flex flex-col h-full shadow-2xl 2xl:shadow-none transition-all">
+                <ChatPatientSidebar
+                  paciente={currentPaciente}
+                  conversacionId={selectedConv.id}
+                  onClose={() => setShowPatientSidebar(false)}
+                  onOpenHistoriaClinica={(pId) => setSelectedPacienteHistoriaClinica(currentPaciente)}
+                  onOpenEditarPaciente={(p) => setSelectedPacienteEditar(p)}
+                  onInsertMessageToChat={(text) => {
+                    setNuevoMensaje(text)
+                    setTimeout(() => messageInputRef.current?.focus(), 50)
+                  }}
+                />
+              </aside>
+            </>
           )}
 
         </div>
       ) : (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 bg-[#090e1a]">
+        <div className="flex-1 hidden lg:flex flex-col items-center justify-center p-8 text-center text-slate-400 bg-[#090e1a]">
           <div className="p-4 bg-[#101b33] border border-slate-800 rounded-full mb-3 shadow-inner">
             <MessageCircle size={32} className="text-slate-400" />
           </div>

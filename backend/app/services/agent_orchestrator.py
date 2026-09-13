@@ -57,7 +57,7 @@ AVAILABLE_TOOLS_MAP = {
 
 # Fallbacks predeterminados en memoria por si Supabase no responde
 DEFAULT_GLOBAL_DIRECTIVES = {
-    "nombre_clinica": "Clínica Médica Nube",
+    "nombre_clinica": "Centrovisión Oftalmología Integral",
     "tono_general": "Profesional, empático, claro y resolutivo en todo momento.",
     "guardrails_medicos": (
         "PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. "
@@ -83,9 +83,9 @@ DEFAULT_GLOBAL_DIRECTIVES = {
 DEFAULT_AGENTS = {
     "GENERAL": {
         "codigo": "GENERAL",
-        "nombre": "Asistente Administrativo General",
+        "nombre": "Atención General y Orientación",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
+        "directiva_particular": "Tu objetivo es brindar información general sobre Centrovisión Oftalmología Integral, horarios de atención, ubicación física (Mitre 540, Mendoza) y consultas oftalmológicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
         "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
@@ -144,22 +144,45 @@ class AgentOrchestrator:
         logger.info("Caché de AgentOrchestrator invalidada.")
 
     def get_global_directives(self) -> Dict[str, Any]:
-        """Recupera las directivas globales desde Supabase o devuelve fallback."""
+        """Recupera las directivas globales fusionando la identidad institucional de config_service con Supabase."""
         now = time.time()
         if self._cache_globales and (now - self._last_cache_time < self.CACHE_TTL):
             return self._cache_globales
 
+        globales = dict(DEFAULT_GLOBAL_DIRECTIVES)
         if supabase:
             try:
                 resp = supabase.table("agentes_directivas_globales").select("*").limit(1).execute()
                 if resp.data and len(resp.data) > 0:
-                    self._cache_globales = resp.data[0]
-                    self._last_cache_time = now
-                    return self._cache_globales
+                    globales.update(resp.data[0])
             except Exception as e:
                 logger.warning(f"Error consultando agentes_directivas_globales en Supabase: {e}")
 
-        return DEFAULT_GLOBAL_DIRECTIVES
+        # Enriquecer con los datos maestros del Perfil de la Clínica (config_service)
+        try:
+            from app.services.config_service import load_settings
+            settings = load_settings()
+            clinica = settings.get("clinica", {}) or {}
+            
+            nom_clinica = (clinica.get("nombre") or "").strip()
+            if nom_clinica and nom_clinica.lower() != "clínica médica nube":
+                globales["nombre_clinica"] = nom_clinica
+            
+            globales["direccion"] = (clinica.get("direccion") or "Mitre 540, Ciudad de Mendoza, Mendoza").strip()
+            globales["telefono_guardia"] = (clinica.get("telefono_guardia") or "0800-222-4040").strip()
+            globales["email_contacto"] = (clinica.get("email_contacto") or "info@centrovision.com.ar").strip()
+            globales["horarios_atencion"] = (clinica.get("horarios_atencion") or "Lunes a Viernes de 08:00 a 19:00 hs. Sábados de 09:00 a 13:00 hs.").strip()
+            globales["mensaje_bienvenida"] = (clinica.get("mensaje_bienvenida") or "").strip()
+            
+            bot_cfg = settings.get("bot", {}) or {}
+            if bot_cfg.get("system_instructions_override"):
+                globales["system_instructions_override"] = bot_cfg["system_instructions_override"].strip()
+        except Exception as err:
+            logger.warning(f"No se pudo fusionar config_service en get_global_directives: {err}")
+
+        self._cache_globales = globales
+        self._last_cache_time = now
+        return self._cache_globales
 
     def get_all_agents(self) -> Dict[str, Dict[str, Any]]:
         """Recupera todos los agentes situacionales indexados por su código."""
