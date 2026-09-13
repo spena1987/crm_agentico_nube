@@ -191,17 +191,6 @@ export default function CasoAcordeonHeader({
           </span>
         ) : null}
 
-        {/* Importe Cotizado / Extra */}
-        {Number(caso.monto_extra || 0) > 0 ? (
-          <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-xl bg-neutral-900 border border-[var(--border)] shadow-sm">
-            {caso.moneda_extra === 'USD' ? (
-              <span className="text-amber-400">USD {Number(caso.monto_extra).toLocaleString('es-AR')}</span>
-            ) : (
-              <span className="text-emerald-400">${Number(caso.monto_extra).toLocaleString('es-AR')} ARS</span>
-            )}
-          </span>
-        ) : null}
-
         {/* Etapa actual */}
         <span
           className={`text-[11px] font-bold px-2.5 py-1 rounded-xl border flex items-center gap-1.5 ${etapaActual.color}`}

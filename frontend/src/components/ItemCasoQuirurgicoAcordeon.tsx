@@ -31,6 +31,13 @@ export interface PresupuestoPaciente {
     subtotal: number
     nombre?: string
     moneda?: string
+    descripcion?: string
+    servicios_precios?: {
+      id?: string
+      codigo?: string
+      nombre_prestacion?: string
+      moneda?: string
+    }
   }>
 }
 
@@ -253,7 +260,7 @@ export default function ItemCasoQuirurgicoAcordeon({
       } else {
         const { data: sbData } = await supabase
           .from('presupuestos')
-          .select('*, items_presupuesto(*)')
+          .select('*, items_presupuesto(*, servicios_precios(*))')
           .eq('paciente_id', pacienteId)
           .order('created_at', { ascending: false })
         if (sbData) setPresupuestos(sbData as any)

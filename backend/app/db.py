@@ -2835,14 +2835,9 @@ def get_presupuestos_by_paciente(paciente_id: str) -> List[Dict[str, Any]]:
                 desestimado_por,
                 created_at,
                 items_presupuesto (
-                    id,
-                    servicio_id,
-                    cantidad,
-                    precio_unitario,
-                    subtotal,
+                    *,
                     servicios_precios (
-                        nombre_prestacion,
-                        codigo
+                        *
                     )
                 ),
                 asesorias_quirurgicas!presupuestos_asesoria_id_fkey (

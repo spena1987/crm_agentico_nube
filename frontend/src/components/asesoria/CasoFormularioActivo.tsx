@@ -28,7 +28,8 @@ import {
   RefreshCw,
   Search,
   Tag,
-  Eye
+  Eye,
+  X
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -173,6 +174,18 @@ export default function CasoFormularioActivo({
   const [montoExtra, setMontoExtra] = useState<number>(caso.monto_extra || 0)
   const [monedaExtra, setMonedaExtra] = useState<string>(caso.moneda_extra || 'ARS')
   const [montoSena, setMontoSena] = useState<number>(caso.monto_sena || 0)
+  
+  // Soporte Multimoneda nativo para Señas
+  const pagosIniciales = ((caso.checklist_prequirurgico as any)?._pagos) || {}
+  const [senaArs, setSenaArs] = useState<number>(() => {
+    if (pagosIniciales.sena_ars !== undefined) return Number(pagosIniciales.sena_ars)
+    return caso.moneda_extra !== 'USD' ? Number(caso.monto_sena || 0) : 0
+  })
+  const [senaUsd, setSenaUsd] = useState<number>(() => {
+    if (pagosIniciales.sena_usd !== undefined) return Number(pagosIniciales.sena_usd)
+    return caso.moneda_extra === 'USD' ? Number(caso.monto_sena || 0) : 0
+  })
+
   const [estadoPago, setEstadoPago] = useState<'pendiente' | 'seniado' | 'totalmente_cobrado'>(
     caso.estado_pago || 'pendiente'
   )
@@ -288,6 +301,8 @@ export default function CasoFormularioActivo({
       Number(montoExtra) !== Number(caso.monto_extra || 0) ||
       monedaExtra !== (caso.moneda_extra || 'ARS') ||
       Number(montoSena) !== Number(caso.monto_sena || 0) ||
+      senaArs !== (pagosIniciales.sena_ars !== undefined ? Number(pagosIniciales.sena_ars) : (caso.moneda_extra !== 'USD' ? Number(caso.monto_sena || 0) : 0)) ||
+      senaUsd !== (pagosIniciales.sena_usd !== undefined ? Number(pagosIniciales.sena_usd) : (caso.moneda_extra === 'USD' ? Number(caso.monto_sena || 0) : 0)) ||
       estadoPago !== (caso.estado_pago || 'pendiente') ||
       medioPago !== (caso.medio_pago || null) ||
       presupuestoId !== (caso.presupuesto_id || null) ||
@@ -313,6 +328,9 @@ export default function CasoFormularioActivo({
     montoExtra,
     monedaExtra,
     montoSena,
+    senaArs,
+    senaUsd,
+    pagosIniciales,
     estadoPago,
     medioPago,
     presupuestoId,
@@ -433,6 +451,17 @@ export default function CasoFormularioActivo({
       setMontoExtra(caso.monto_extra || 0)
       setMonedaExtra(caso.moneda_extra || 'ARS')
       setMontoSena(caso.monto_sena || 0)
+      const pagosSync = ((caso.checklist_prequirurgico as any)?._pagos) || {}
+      setSenaArs(
+        pagosSync.sena_ars !== undefined
+          ? Number(pagosSync.sena_ars)
+          : (caso.moneda_extra !== 'USD' ? Number(caso.monto_sena || 0) : 0)
+      )
+      setSenaUsd(
+        pagosSync.sena_usd !== undefined
+          ? Number(pagosSync.sena_usd)
+          : (caso.moneda_extra === 'USD' ? Number(caso.monto_sena || 0) : 0)
+      )
       setEstadoPago(caso.estado_pago || 'pendiente')
       setMedioPago(caso.medio_pago || null)
       setPresupuestoId(caso.presupuesto_id || null)
@@ -473,8 +502,41 @@ export default function CasoFormularioActivo({
     caso.fecha_definitiva_cirugia
   ])
 
+  // 1. Presupuestos emitidos estrictamente para este caso quirúrgico
+  const presupuestosDelCaso = useMemo(() => {
+    return presupuestos.filter((p) => p.asesoria_id === caso.id)
+  }, [presupuestos, caso.id])
+
+  // 2. Otros presupuestos del paciente no asignados a esta cirugía
+  const otrosPresupuestosPaciente = useMemo(() => {
+    return presupuestos.filter((p) => p.asesoria_id !== caso.id)
+  }, [presupuestos, caso.id])
+
+  const presupuestoVinculado = presupuestos.find((p) => p.id === presupuestoId)
+
+  // Totales multimoneda derivados del presupuesto vinculado o monto extra
+  const { calcTotalArs, calcTotalUsd } = useMemo(() => {
+    if (presupuestoVinculado) {
+      const pArs = Number(presupuestoVinculado.total_ars || 0)
+      const pUsd = Number(presupuestoVinculado.total_usd || 0)
+      if (pArs > 0 || pUsd > 0) {
+        return { calcTotalArs: pArs, calcTotalUsd: pUsd }
+      }
+      if (monedaExtra === 'USD') {
+        return { calcTotalArs: 0, calcTotalUsd: Number(presupuestoVinculado.total || 0) }
+      } else {
+        return { calcTotalArs: Number(presupuestoVinculado.total || 0), calcTotalUsd: 0 }
+      }
+    }
+    if (monedaExtra === 'USD') {
+      return { calcTotalArs: 0, calcTotalUsd: Number(montoExtra || 0) }
+    } else {
+      return { calcTotalArs: Number(montoExtra || 0), calcTotalUsd: 0 }
+    }
+  }, [presupuestoVinculado, montoExtra, monedaExtra])
+
   // Guardar Cambios
-    // Handler para emitir presupuesto guardando automáticamente el formulario previo
+  // Handler para emitir presupuesto guardando automáticamente el formulario previo
   const handleEmitirPresupuesto = () => {
     let cleanPracticaNombre = (practicaNombre || '').trim()
     if (!cleanPracticaNombre && busquedaPractica) {
@@ -499,7 +561,7 @@ export default function CasoFormularioActivo({
       practica_nombre: cleanPracticaNombre,
       monto_extra: Number(montoExtra) || 0,
       moneda_extra: monedaExtra,
-      monto_sena: Number(montoSena) || 0,
+      monto_sena: senaArs > 0 ? senaArs : senaUsd,
       estado_pago: estadoPago,
       medio_pago: medioPago,
       presupuesto_id: presupuestoId || null,
@@ -508,6 +570,12 @@ export default function CasoFormularioActivo({
       ojo: ojo,
       checklist_prequirurgico: {
         ...checklist,
+        _pagos: {
+          sena_ars: senaArs,
+          sena_usd: senaUsd,
+          total_ars: calcTotalArs,
+          total_usd: calcTotalUsd
+        },
         _meta_bilateral: {
           modalidad: ojo === 'AO' ? modalidadBilateral : null,
           orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
@@ -553,7 +621,7 @@ export default function CasoFormularioActivo({
       practica_nombre: cleanPracticaNombre,
       monto_extra: Number(montoExtra) || 0,
       moneda_extra: monedaExtra,
-      monto_sena: Number(montoSena) || 0,
+      monto_sena: senaArs > 0 ? senaArs : senaUsd,
       estado_pago: estadoPago,
       medio_pago: medioPago,
       presupuesto_id: presupuestoId || null,
@@ -562,6 +630,12 @@ export default function CasoFormularioActivo({
       ojo: ojo,
       checklist_prequirurgico: {
         ...checklist,
+        _pagos: {
+          sena_ars: senaArs,
+          sena_usd: senaUsd,
+          total_ars: calcTotalArs,
+          total_usd: calcTotalUsd
+        },
         _meta_bilateral: {
           modalidad: ojo === 'AO' ? modalidadBilateral : null,
           orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
@@ -576,18 +650,6 @@ export default function CasoFormularioActivo({
 
     onGuardar(payload)
   }
-
-  // 1. Presupuestos emitidos estrictamente para este caso quirúrgico
-  const presupuestosDelCaso = useMemo(() => {
-    return presupuestos.filter((p) => p.asesoria_id === caso.id)
-  }, [presupuestos, caso.id])
-
-  // 2. Otros presupuestos del paciente no asignados a esta cirugía
-  const otrosPresupuestosPaciente = useMemo(() => {
-    return presupuestos.filter((p) => p.asesoria_id !== caso.id)
-  }, [presupuestos, caso.id])
-
-  const presupuestoVinculado = presupuestos.find((p) => p.id === presupuestoId)
 
   return (
     <div className="p-4 sm:p-5 space-y-4 bg-neutral-950/60">
@@ -713,15 +775,39 @@ export default function CasoFormularioActivo({
                   buscarPracticasNomenclador(e.target.value)
                   setMostrarDropdownPractica(true)
                 }}
-                onFocus={() => {
+                onFocus={(e) => {
+                  e.target.select()
                   buscarPracticasNomenclador(busquedaPractica)
                   setMostrarDropdownPractica(true)
                 }}
-                className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                onBlur={() => {
+                  setTimeout(() => {
+                    if (!busquedaPractica.trim() && practicaNombre) {
+                      setBusquedaPractica(practicaCodigo ? `[${practicaCodigo}] ${practicaNombre}` : practicaNombre)
+                    }
+                  }, 250)
+                }}
+                className="w-full pl-3 pr-14 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
               />
-              {buscandoPractica && (
-                <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400" />
-              )}
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                {busquedaPractica && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBusquedaPractica('')
+                      buscarPracticasNomenclador('')
+                      setMostrarDropdownPractica(true)
+                    }}
+                    className="p-1 text-gray-500 hover:text-white rounded-md hover:bg-neutral-800 transition-colors"
+                    title="Limpiar y buscar otra práctica"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+                {buscandoPractica && (
+                  <Loader2 size={14} className="animate-spin text-indigo-400" />
+                )}
+              </div>
 
               {mostrarDropdownPractica && (
                 <div className="absolute top-full left-0 right-0 mt-1 max-h-52 overflow-y-auto bg-neutral-900 border border-indigo-500/40 rounded-xl shadow-2xl z-50 divide-y divide-[var(--border)]">
@@ -1317,16 +1403,31 @@ export default function CasoFormularioActivo({
 
                             {/* Ítems del presupuesto */}
                             {p.items_presupuesto && p.items_presupuesto.length > 0 && (
-                              <div className="mt-1.5 space-y-0.5">
-                                {p.items_presupuesto.map((it, idx) => (
-                                  <div key={idx} className="text-[11px] text-gray-300 flex items-center gap-1.5">
-                                    <span className="text-gray-500">•</span>
-                                    <span className="truncate">{it.nombre || 'Prestación médica'}</span>
-                                    <span className="text-gray-400 font-mono text-[10px]">
-                                      ({it.cantidad}x {it.moneda || 'ARS'} ${Number(it.precio_unitario || 0).toLocaleString('es-AR')})
-                                    </span>
-                                  </div>
-                                ))}
+                              <div className="mt-2 space-y-1 bg-neutral-900/70 rounded-lg p-2 border border-neutral-800/60">
+                                {p.items_presupuesto.map((it: any, idx: number) => {
+                                  const nombrePrestacion = it.servicios_precios?.nombre_prestacion || it.nombre || it.descripcion || 'Práctica Médica'
+                                  const monedaItem = it.moneda || it.servicios_precios?.moneda || (Number(p.total_usd) > 0 && !Number(p.total_ars) ? 'USD' : 'ARS')
+                                  const subtotalNum = Number(it.subtotal || (Number(it.precio_unitario || 0) * (it.cantidad || 1)))
+                                  return (
+                                    <div key={idx} className="text-[11px] text-gray-300 flex items-center justify-between gap-2 min-w-0">
+                                      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                        <span className="text-gray-500 shrink-0">•</span>
+                                        <span className="truncate font-medium text-gray-200" title={nombrePrestacion}>
+                                          {nombrePrestacion}
+                                        </span>
+                                        {it.cantidad > 1 && (
+                                          <span className="text-[10px] text-gray-400 font-mono shrink-0">
+                                            ({it.cantidad}x)
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-gray-200 font-mono text-[10.5px] font-semibold shrink-0">
+                                        {monedaItem === 'USD' ? 'USD ' : '$ '}
+                                        {subtotalNum.toLocaleString('es-AR')}
+                                      </span>
+                                    </div>
+                                  )
+                                })}
                               </div>
                             )}
 
@@ -1500,16 +1601,22 @@ export default function CasoFormularioActivo({
               )}
             </div>
 
-            {/* Widget de Seña y Cobranza */}
+            {/* Widget de Seña y Cobranza (Soporte Multimoneda nativo) */}
             <CasoPagosWidget
-              montoTotal={presupuestoVinculado ? Number(presupuestoVinculado.total) : montoExtra}
-              moneda={monedaExtra}
-              montoSena={montoSena}
+              totalArs={calcTotalArs}
+              totalUsd={calcTotalUsd}
+              senaArs={senaArs}
+              senaUsd={senaUsd}
+              montoTotalFallback={presupuestoVinculado ? Number(presupuestoVinculado.total) : montoExtra}
+              monedaFallback={monedaExtra}
+              montoSenaFallback={montoSena}
               estadoPago={estadoPago}
               medioPago={medioPago}
               disabled={guardando}
               onChange={(data) => {
-                setMontoSena(data.montoSena)
+                setSenaArs(data.senaArs)
+                setSenaUsd(data.senaUsd)
+                setMontoSena(data.montoSenaTotal)
                 setEstadoPago(data.estadoPago)
                 setMedioPago(data.medioPago || null)
               }}
@@ -1531,19 +1638,25 @@ export default function CasoFormularioActivo({
 
           {/* Card: Próxima Acción de Seguimiento & WhatsApp Rápido */}
           <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <Clock size={14} className="text-purple-400" />
-                Próxima Acción Programada
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                  <Clock size={14} className="text-purple-400" />
+                  Próxima Acción Programada
+                </div>
+                <p className="text-[10.5px] text-gray-400 mt-0.5">
+                  Recordatorio interno de seguimiento del paciente
+                </p>
               </div>
               
               <button
                 type="button"
                 onClick={onAbrirModalWhatsApp}
-                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow"
+                className="px-2.5 py-1 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border border-emerald-500/40 shrink-0 cursor-pointer"
+                title="Abrir modal para enviar plantillas quirúrgicas por WhatsApp"
               >
                 <Send size={12} />
-                WhatsApp Rápido
+                <span>Contactar WhatsApp</span>
               </button>
             </div>
 
@@ -1554,6 +1667,7 @@ export default function CasoFormularioActivo({
                   value={proximaAccionFecha}
                   onChange={(e) => setProximaAccionFecha(e.target.value)}
                   className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono"
+                  title="Fecha para la próxima acción de contacto"
                 />
               </div>
               <div className="sm:col-span-2">
@@ -1565,6 +1679,33 @@ export default function CasoFormularioActivo({
                   className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white placeholder-gray-500"
                 />
               </div>
+            </div>
+
+            {/* Estado de persistencia / Guardado inmediato del recordatorio */}
+            <div className="flex items-center justify-between text-[11px] pt-0.5">
+              {(proximaAccionFecha !== (caso.proxima_accion_fecha || '') || proximaAccionTexto !== (caso.proxima_accion_texto || '')) ? (
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-amber-400 text-[10.5px] flex items-center gap-1">
+                    <Clock size={11} /> Recordatorio modificado (sin guardar)
+                  </span>
+                  <button
+                    type="button"
+                    disabled={guardando}
+                    onClick={() => handleGuardarCambios()}
+                    className="px-2.5 py-0.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-md text-[10.5px] transition-colors shadow-xs cursor-pointer"
+                  >
+                    Guardar Recordatorio
+                  </button>
+                </div>
+              ) : (caso.proxima_accion_fecha || caso.proxima_accion_texto) ? (
+                <span className="text-emerald-400/90 text-[10.5px] flex items-center gap-1">
+                  <CheckCircle2 size={11} /> Recordatorio agendado y guardado en el caso
+                </span>
+              ) : (
+                <span className="text-gray-500 text-[10.5px]">
+                  Define una fecha y tarea para recordar el seguimiento comercial
+                </span>
+              )}
             </div>
           </div>
 
