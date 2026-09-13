@@ -58,8 +58,8 @@ export default function ModuleRouteGuard({ children }: { children: React.ReactNo
     return <>{children}</>
   }
 
-  // Mientras se cargan permisos y perfil
-  if (loading) {
+  // Mientras se cargan permisos y perfil por primera vez (arranque en frío)
+  if (loading && !profile) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400 gap-3 min-h-[50vh]">
         <Loader2 size={32} className="animate-spin text-blue-600" />

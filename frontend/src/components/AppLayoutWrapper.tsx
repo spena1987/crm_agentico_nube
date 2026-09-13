@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext'
 import Navigation from '@/components/Navigation'
 import IdleTimeoutManager from '@/components/auth/IdleTimeoutManager'
 import ModuleRouteGuard from '@/components/auth/ModuleRouteGuard'
+import { PermissionsProvider } from '@/context/PermissionsContext'
 import { Loader2 } from 'lucide-react'
 
 export default function AppLayoutWrapper({
@@ -58,14 +59,16 @@ export default function AppLayoutWrapper({
 
   // Usuario autenticado en el CRM con monitor de inactividad activo
   return (
-    <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-[var(--background)] min-w-0">
-      <IdleTimeoutManager />
-      <Navigation />
-      <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
-        <ModuleRouteGuard>
-          {children}
-        </ModuleRouteGuard>
-      </main>
-    </div>
+    <PermissionsProvider>
+      <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-[var(--background)] min-w-0">
+        <IdleTimeoutManager />
+        <Navigation />
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
+          <ModuleRouteGuard>
+            {children}
+          </ModuleRouteGuard>
+        </main>
+      </div>
+    </PermissionsProvider>
   )
 }
