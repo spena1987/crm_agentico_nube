@@ -2365,17 +2365,26 @@ def get_practicas_configuradas_crm(
 @app.get("/api/nomenclador/buscar-presupuesto")
 def buscar_presupuesto_api(
     q: Optional[str] = None,
+    query: Optional[str] = None,
     fecha: Optional[str] = None,
-    moneda: Optional[str] = None
+    moneda: Optional[str] = None,
+    limite: int = 50
 ):
     """
     Endpoint consumido por Presupuestos (BudgetGenerator, ModalCrearPresupuestoPaciente)
     y Asesoría Quirúrgica para autocompletar prácticas con arancel y moneda vigente resueltos.
     """
     try:
-        resultados = buscar_practicas_presupuesto(query=q, fecha_consulta=fecha, filtro_moneda=moneda)
+        search_term = q or query or ""
+        resultados = buscar_practicas_presupuesto(
+            query=search_term,
+            fecha_consulta=fecha,
+            filtro_moneda=moneda,
+            limite=limite
+        )
         return {
             "success": True,
+            "query": search_term,
             "total": len(resultados),
             "resultados": resultados,
             "prestaciones": resultados
@@ -2743,26 +2752,7 @@ def agregar_arancel_vigencia(practica_id: str, payload: Dict[str, Any] = Body(..
         logger.error(f"Error al registrar arancel: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ====================================================================
-# BÚSQUEDA RÁPIDA MULTI-MONEDA PARA PRESUPUESTOS (NATIVO CRM)
-# ====================================================================
 
-@app.get("/api/nomenclador/buscar-presupuesto")
-def buscar_para_presupuesto(q: Optional[str] = "", fecha: Optional[str] = None):
-    """
-    Búsqueda optimizada por texto para el modal de presupuestos con arancel vigente.
-    """
-    try:
-        resultados = buscar_practicas_presupuesto(q=q or "", fecha_consulta=fecha)
-        return {
-            "success": True,
-            "query": q,
-            "total": len(resultados),
-            "resultados": resultados
-        }
-    except Exception as e:
-        logger.error(f"Error al buscar prácticas para presupuesto: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================
 # IMPORTADOR Y EXPORTADOR MASIVO EXCEL (.XLSX / .CSV)

@@ -1649,77 +1649,123 @@ def listar_catalogo_completo_crm(
         logger.error(f"Error al listar catálogo completo del CRM: {e}")
 def buscar_practicas_presupuesto(
     query: Optional[str] = None,
+    q: Optional[str] = None,
     fecha_consulta: Optional[str] = None,
     filtro_moneda: Optional[str] = None,
-    limite: int = 50
+    limite: int = 50,
+    limit: Optional[int] = None,
+    **kwargs
 ) -> List[Dict[str, Any]]:
     """
-    Busca prácticas activas en el nomenclador y resuelve el precio/arancel vigente para la fecha indicada.
-    Retorna el formato exacto requerido por BudgetGenerator, ModalCrearPresupuestoPaciente y Asesoría.
+    Busca prácticas activas en el nomenclador del CRM y resuelve el arancel y moneda vigentes
+    para la fecha de consulta especificada. Retorna el formato estandarizado requerido por:
+    - Expedientes de Pacientes / Asesoría Quirúrgica (CasoFormularioActivo)
+    - ModalCrearPresupuestoPaciente
+    - BudgetGenerator
     """
     if not supabase:
         return []
         
     from datetime import date
     fecha_ref = fecha_consulta or date.today().isoformat()
-    term = (query or "").strip()
+    term = (query or q or "").strip()
+    max_limit = limit or limite or 50
     
     try:
-        q = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, activo, nomencladores(id, nombre, codigo, moneda_default)")\
+        query_builder = supabase.table("nomenclador_practicas")\
+            .select("id, codigo, nombre, categoria, descripcion, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
             .eq("activo", True)
             
         if term:
-            q = q.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
+            query_builder = query_builder.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
             
-        p_resp = q.order("nombre").limit(limite).execute()
+        p_resp = query_builder.order("codigo").limit(max_limit).execute()
         practicas = p_resp.data or []
         if not practicas:
             return []
             
-        p_ids = [p["id"] for p in practicas]
+        practica_ids = [p["id"] for p in practicas]
         
-        # Obtener aranceles para estas prácticas vigentes para fecha_ref
+        # 1. Obtener aranceles configurados
         ar_resp = supabase.table("nomenclador_aranceles")\
             .select("*")\
-            .in_("practica_id", p_ids)\
-            .lte("vigencia_desde", fecha_ref)\
+            .in_("practica_id", practica_ids)\
             .order("vigencia_desde", desc=True)\
             .execute()
             
         ar_data = ar_resp.data or []
-        ar_vigente_map = {}
+        arancel_map = {}
+        
+        # Primer pase: buscar coincidencia estrictamente vigente en fecha_ref
         for ar in ar_data:
             pid = ar["practica_id"]
-            if pid not in ar_vigente_map:
-                v_hasta = ar.get("vigencia_hasta")
-                if not v_hasta or v_hasta >= fecha_ref:
-                    ar_vigente_map[pid] = ar
-                    
+            if pid in arancel_map:
+                continue
+            v_desde = ar.get("vigencia_desde") or ""
+            v_hasta = ar.get("vigencia_hasta")
+            if v_desde <= fecha_ref and (not v_hasta or v_hasta >= fecha_ref):
+                arancel_map[pid] = ar
+                
+        # Segundo pase: si no hay vigente estricto, tomar el arancel configurado más reciente
+        for ar in ar_data:
+            pid = ar["practica_id"]
+            if pid not in arancel_map:
+                arancel_map[pid] = ar
+                
+        # 2. Fallback opcional a servicios_precios para compatibilidad histórica
+        codigos = [p["codigo"] for p in practicas if p.get("codigo")]
+        srv_map = {}
+        if codigos:
+            try:
+                srv_resp = supabase.table("servicios_precios")\
+                    .select("codigo, precio, moneda")\
+                    .in_("codigo", codigos)\
+                    .execute()
+                for s in (srv_resp.data or []):
+                    if s.get("codigo"):
+                        srv_map[s["codigo"]] = s
+            except Exception:
+                pass
+                
         resultados = []
         for p in practicas:
             nom_info = p.get("nomencladores") or {}
-            ar = ar_vigente_map.get(p["id"])
+            moneda_default = nom_info.get("moneda_default") or "ARS"
+            ar = arancel_map.get(p["id"])
+            srv = srv_map.get(p["codigo"])
             
-            precio = float(ar.get("precio", 0.0)) if ar else 0.0
-            moneda = ar.get("moneda") if ar else (nom_info.get("moneda_default") or "ARS")
+            hab_arancel = p.get("habilitar_arancel", True)
             
-            if filtro_moneda and filtro_moneda.upper() != "TODAS" and moneda != filtro_moneda.upper():
+            if ar and hab_arancel and float(ar.get("precio", 0) or 0) > 0:
+                precio = float(ar["precio"])
+                moneda = ar.get("moneda") or moneda_default
+            elif srv and float(srv.get("precio", 0) or 0) > 0:
+                precio = float(srv["precio"])
+                moneda = srv.get("moneda") or moneda_default
+            else:
+                precio = float(ar.get("precio", 0.0) or 0.0) if ar else 0.0
+                moneda = ar.get("moneda", moneda_default) if ar else (srv.get("moneda", moneda_default) if srv else moneda_default)
+            
+            # Filtro opcional por moneda
+            if filtro_moneda and filtro_moneda.upper() != "TODAS" and moneda.upper() != filtro_moneda.upper():
                 continue
-                
+
             resultados.append({
                 "id": p["id"],
                 "codigo": p["codigo"],
                 "nombre": p["nombre"],
                 "categoria": p.get("categoria") or "General",
-                "nomenclador_id": nom_info.get("id") or "crm",
+                "nomenclador_id": p.get("nomenclador_id") or nom_info.get("id") or "crm",
                 "nomenclador_nombre": nom_info.get("nombre") or "Nomenclador CRM",
                 "nomenclador_codigo": nom_info.get("codigo") or "CRM",
+                "habilitar_arancel": hab_arancel,
+                "habilitar_preparacion": p.get("habilitar_preparacion", False),
+                "habilitar_consentimiento": p.get("habilitar_consentimiento", False),
                 "precio": precio,
                 "moneda": moneda,
                 "vigencia_desde": ar.get("vigencia_desde") if ar else None,
                 "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
-                "tiene_precio": precio > 0
+                "tiene_precio": precio > 0 and hab_arancel
             })
             
         return resultados
@@ -2435,120 +2481,7 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
         return None
 
 
-# ====================================================================
-# BÚSQUEDA RÁPIDA PARA MODAL DE PRESUPUESTOS (NATIVO CRM)
-# ====================================================================
 
-def buscar_practicas_presupuesto(q: str = "", fecha_consulta: Optional[str] = None, limit: int = 50):
-    """
-    Búsqueda optimizada y ultra-rápida de prestaciones para el modal de presupuestos.
-    Consulta el catálogo interno resolviendo arancel y moneda vigentes para la fecha.
-    """
-    if not supabase:
-        return []
-    
-    from datetime import date
-    fecha_ref = fecha_consulta or date.today().isoformat()
-    term = (q or "").strip().upper()
-    
-    try:
-        query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
-            .eq("activo", True)
-            
-        if term:
-            query = query.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
-            
-        p_resp = query.order("codigo").limit(limit).execute()
-        practicas = p_resp.data or []
-        
-        if not practicas:
-            return []
-            
-        practica_ids = [p["id"] for p in practicas]
-        
-        # 1. Obtener aranceles configurados
-        ar_resp = supabase.table("nomenclador_aranceles")\
-            .select("*")\
-            .in_("practica_id", practica_ids)\
-            .order("vigencia_desde", desc=True)\
-            .execute()
-            
-        ar_data = ar_resp.data or []
-        arancel_map = {}
-        
-        # Primer pase: buscar coincidencia vigente en la fecha de referencia
-        for ar in ar_data:
-            pid = ar["practica_id"]
-            if pid in arancel_map:
-                continue
-            v_desde = ar.get("vigencia_desde") or ""
-            v_hasta = ar.get("vigencia_hasta")
-            if v_desde <= fecha_ref and (not v_hasta or v_hasta >= fecha_ref):
-                arancel_map[pid] = ar
-                
-        # Segundo pase: para cualquier práctica restante, tomar el arancel configurado más reciente
-        for ar in ar_data:
-            pid = ar["practica_id"]
-            if pid not in arancel_map:
-                arancel_map[pid] = ar
-                
-        # 2. Fallback a servicios_precios si existiese registro histórico
-        codigos = [p["codigo"] for p in practicas if p.get("codigo")]
-        srv_map = {}
-        if codigos:
-            try:
-                srv_resp = supabase.table("servicios_precios")\
-                    .select("codigo, precio, moneda")\
-                    .in_("codigo", codigos)\
-                    .execute()
-                for s in (srv_resp.data or []):
-                    if s.get("codigo"):
-                        srv_map[s["codigo"]] = s
-            except Exception:
-                pass
-                
-        resultados = []
-        for p in practicas:
-            nom_info = p.get("nomencladores") or {}
-            moneda_default = nom_info.get("moneda_default", "ARS")
-            ar = arancel_map.get(p["id"])
-            srv = srv_map.get(p["codigo"])
-            
-            hab_arancel = p.get("habilitar_arancel", True)
-            
-            if ar and hab_arancel and float(ar.get("precio", 0) or 0) > 0:
-                precio = float(ar["precio"])
-                moneda = ar.get("moneda", moneda_default)
-            elif srv and float(srv.get("precio", 0) or 0) > 0:
-                precio = float(srv["precio"])
-                moneda = srv.get("moneda", moneda_default)
-            else:
-                precio = float(ar.get("precio", 0.0) or 0.0) if ar else 0.0
-                moneda = ar.get("moneda", moneda_default) if ar else (srv.get("moneda", moneda_default) if srv else moneda_default)
-            
-            resultados.append({
-                "id": p["id"],
-                "codigo": p["codigo"],
-                "nombre": p["nombre"],
-                "categoria": p.get("categoria", "General"),
-                "nomenclador_id": p["nomenclador_id"],
-                "nomenclador_nombre": nom_info.get("nombre", "General"),
-                "nomenclador_codigo": nom_info.get("codigo", "GEN"),
-                "habilitar_arancel": hab_arancel,
-                "habilitar_preparacion": p.get("habilitar_preparacion", False),
-                "habilitar_consentimiento": p.get("habilitar_consentimiento", False),
-                "precio": precio,
-                "moneda": moneda,
-                "vigencia_desde": ar.get("vigencia_desde") if ar else None,
-                "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
-                "tiene_precio": precio > 0 and hab_arancel
-            })
-            
-        return resultados
-    except Exception as e:
-        logger.error(f"Error al buscar prácticas para presupuesto: {e}")
-        return []
 
 # ====================================================================
 # IMPORTADOR MASIVO EXCEL (BULK IMPORT)
