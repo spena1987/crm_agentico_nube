@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { SYSTEM_MODULES, ModuleDefinition } from '@/config/modules'
+import { SYSTEM_MODULES, ModuleDefinition, LANDING_PAGE_OPTIONS } from '@/config/modules'
 import { 
   ShieldCheck, 
   Plus, 
@@ -11,22 +11,23 @@ import {
   Loader2, 
   CheckCircle2, 
   AlertCircle, 
-  XCircle,
-  Lock,
-  RefreshCw,
-  Layers,
-  LayoutDashboard,
-  MessageSquare,
-  Users,
-  FileText,
-  Settings,
-  Calendar,
-  TrendingUp,
-  UserCheck,
-  Building2,
-  Activity,
-  Eye,
-  ScrollText
+  XCircle, 
+  Lock, 
+  RefreshCw, 
+  Layers, 
+  LayoutDashboard, 
+  MessageSquare, 
+  Users, 
+  FileText, 
+  Settings, 
+  Calendar, 
+  TrendingUp, 
+  UserCheck, 
+  Building2, 
+  Activity, 
+  Eye, 
+  ScrollText,
+  Compass
 } from 'lucide-react'
 
 // Mapa de iconos dinámicos
@@ -58,6 +59,7 @@ interface RoleItem {
   nombre: string
   descripcion: string | null
   es_sistema: boolean
+  landing_page?: string | null
   rol_permisos?: RolPermiso[]
 }
 
@@ -65,6 +67,7 @@ export default function RolesPage() {
   const [roles, setRoles] = useState<RoleItem[]>([])
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
   const [currentPerms, setCurrentPerms] = useState<Record<string, Record<string, boolean>>>({})
+  const [currentLandingPage, setCurrentLandingPage] = useState<string>('/')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -74,6 +77,7 @@ export default function RolesPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleDesc, setNewRoleDesc] = useState('')
+  const [newRoleLandingPage, setNewRoleLandingPage] = useState<string>('/')
   const [copyFromRoleId, setCopyFromRoleId] = useState('')
 
   // Cargar roles y permisos
@@ -89,7 +93,9 @@ export default function RolesPage() {
         const activeId = selectedRoleId || data.roles[0]?.id
         if (activeId) {
           setSelectedRoleId(activeId)
-          populatePermsMap(data.roles.find((r: RoleItem) => r.id === activeId))
+          const found = data.roles.find((r: RoleItem) => r.id === activeId)
+          populatePermsMap(found)
+          setCurrentLandingPage(found?.landing_page || '/')
         }
       }
     } catch (err: any) {
@@ -140,6 +146,7 @@ export default function RolesPage() {
     setSelectedRoleId(roleId)
     const role = roles.find((r) => r.id === roleId)
     populatePermsMap(role)
+    setCurrentLandingPage(role?.landing_page || '/')
     setFeedback(null)
   }
 
@@ -191,13 +198,15 @@ export default function RolesPage() {
     })
   }
 
-  // Guardar cambios de permisos
+  // Guardar cambios de configuración y permisos
   const handleSavePermissions = async () => {
     if (!selectedRoleId) return
     setSaving(true)
     setFeedback(null)
 
     try {
+      const activeRole = roles.find((r) => r.id === selectedRoleId)
+
       // Transformar el mapa en array de permisos planos
       const flatPerms: { modulo_codigo: string; accion: string; permitido: boolean }[] = []
       Object.entries(currentPerms).forEach(([modCode, acts]) => {
@@ -215,18 +224,21 @@ export default function RolesPage() {
       const res = await fetch(`/api/admin/roles/${selectedRoleId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permisos: flatPerms }),
+        body: JSON.stringify({ 
+          landing_page: currentLandingPage,
+          permisos: activeRole?.codigo === 'admin' ? undefined : flatPerms 
+        }),
       })
 
       const data = await res.json()
 
       if (!res.ok) {
-        throw new Error(data.error || 'Error al guardar permisos.')
+        throw new Error(data.error || 'Error al guardar configuración.')
       }
 
       setFeedback({
         type: 'success',
-        message: 'Matriz de permisos actualizada y guardada con éxito.',
+        message: 'Configuración de rol y matriz de permisos guardadas con éxito.',
       })
       await loadRoles()
     } catch (err: any) {
@@ -259,6 +271,7 @@ export default function RolesPage() {
         body: JSON.stringify({
           nombre: newRoleName.trim(),
           descripcion: newRoleDesc.trim(),
+          landing_page: newRoleLandingPage,
           permisos: initialPerms,
         }),
       })
@@ -276,6 +289,7 @@ export default function RolesPage() {
       setShowCreateModal(false)
       setNewRoleName('')
       setNewRoleDesc('')
+      setNewRoleLandingPage('/')
       setCopyFromRoleId('')
       await loadRoles()
       setSelectedRoleId(data.role.id)
@@ -427,16 +441,47 @@ export default function RolesPage() {
                 </button>
               )}
 
-              {activeRole.codigo !== 'admin' && (
-                <button
-                  onClick={handleSavePermissions}
-                  disabled={saving}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-2 glow-primary disabled:opacity-50"
-                >
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                  <span>Guardar Permisos</span>
-                </button>
-              )}
+              <button
+                onClick={handleSavePermissions}
+                disabled={saving}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow flex items-center gap-2 glow-primary disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                <span>Guardar Configuración</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Selector de Página de Inicio (Landing Page) */}
+          <div className="p-4 rounded-2xl bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-blue-600/10 text-blue-600 shrink-0 mt-0.5">
+                <Compass size={20} />
+              </div>
+              <div>
+                <h4 className="text-xs font-extrabold text-[var(--foreground)] flex items-center gap-2">
+                  <span>Página de Inicio Predeterminada</span>
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">
+                    Landing Page
+                  </span>
+                </h4>
+                <p className="text-[11px] text-[var(--secondary)] mt-0.5 leading-relaxed">
+                  Módulo al que se redirige automáticamente este perfil al iniciar sesión o ingresar a la raíz del CRM.
+                </p>
+              </div>
+            </div>
+            <div className="sm:w-72 shrink-0">
+              <select
+                value={currentLandingPage}
+                onChange={(e) => setCurrentLandingPage(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-[var(--card)] font-medium text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm"
+              >
+                {LANDING_PAGE_OPTIONS.map((opt) => (
+                  <option key={opt.route} value={opt.route}>
+                    {opt.label} ({opt.route})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -572,6 +617,23 @@ export default function RolesPage() {
                   {roles.map((r) => (
                     <option key={r.id} value={r.id}>
                       Copiar de {r.nombre}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                  Página de Inicio Inicial:
+                </label>
+                <select
+                  value={newRoleLandingPage}
+                  onChange={(e) => setNewRoleLandingPage(e.target.value)}
+                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  {LANDING_PAGE_OPTIONS.map((opt) => (
+                    <option key={opt.route} value={opt.route}>
+                      {opt.label} ({opt.route})
                     </option>
                   ))}
                 </select>

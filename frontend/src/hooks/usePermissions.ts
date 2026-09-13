@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
+import { LANDING_PAGE_OPTIONS } from '@/config/modules'
 
 export interface UserProfile {
   id: string
@@ -18,6 +19,7 @@ export interface UserProfile {
     codigo: string
     nombre: string
     es_sistema: boolean
+    landing_page?: string | null
   } | null
 }
 
@@ -59,7 +61,8 @@ export function usePermissions() {
             id,
             codigo,
             nombre,
-            es_sistema
+            es_sistema,
+            landing_page
           )
         `)
         .eq('id', user.id)
@@ -140,11 +143,37 @@ export function usePermissions() {
     return can(modulo, 'ver')
   }, [can])
 
+  // Calcular la ruta de inicio efectiva para el usuario actual
+  const effectiveLandingRoute = useMemo((): string => {
+    if (isAdmin) {
+      return profile?.roles?.landing_page || '/'
+    }
+
+    // 1. Si el rol tiene una landing_page configurada y el usuario tiene acceso a ella
+    const assignedLanding = profile?.roles?.landing_page
+    if (assignedLanding) {
+      const match = LANDING_PAGE_OPTIONS.find((opt) => opt.route === assignedLanding)
+      if (match && canAccess(match.moduleCode)) {
+        return assignedLanding
+      }
+    }
+
+    // 2. Fallback inteligente: buscar la primera ruta permitida según el catálogo ordenado
+    const firstAllowed = LANDING_PAGE_OPTIONS.find((opt) => canAccess(opt.moduleCode))
+    if (firstAllowed) {
+      return firstAllowed.route
+    }
+
+    // 3. Si no tiene permisos a ningún módulo conocido
+    return '/'
+  }, [isAdmin, profile, canAccess])
+
   return {
     profile,
     permissions,
     isAdmin,
     loading,
+    effectiveLandingRoute,
     can,
     canAccess,
     refreshPermissions: loadPermissions,

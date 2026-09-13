@@ -15,12 +15,13 @@ export async function PATCH(
 
     const roleId = params.id
     const body = await request.json()
-    const { nombre, descripcion, permisos } = body
+    const { nombre, descripcion, landing_page, permisos } = body
 
     // 1. Actualizar datos básicos del rol
     const updateData: any = { updated_at: new Date().toISOString() }
     if (nombre !== undefined) updateData.nombre = nombre.trim()
     if (descripcion !== undefined) updateData.descripcion = descripcion?.trim() || null
+    if (landing_page !== undefined) updateData.landing_page = landing_page?.trim() || '/'
 
     const { data: updatedRole, error: roleError } = await supabaseAdmin
       .from('roles')

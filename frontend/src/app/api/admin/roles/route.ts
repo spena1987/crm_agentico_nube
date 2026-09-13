@@ -18,6 +18,7 @@ export async function GET(request: Request) {
         nombre,
         descripcion,
         es_sistema,
+        landing_page,
         created_at,
         rol_permisos (
           id,
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { nombre, descripcion, permisos = [] } = body
+    const { nombre, descripcion, landing_page, permisos = [] } = body
 
     if (!nombre || !nombre.trim()) {
       return NextResponse.json({ error: 'El nombre del rol es obligatorio.' }, { status: 400 })
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
         codigo,
         nombre: nombre.trim(),
         descripcion: descripcion?.trim() || null,
+        landing_page: landing_page?.trim() || '/',
         es_sistema: false,
       })
       .select()

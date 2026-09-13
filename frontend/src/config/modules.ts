@@ -177,3 +177,24 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     ],
   },
 ]
+
+export interface LandingPageOption {
+  route: string
+  label: string
+  moduleCode: string
+}
+
+export const LANDING_PAGE_OPTIONS: LandingPageOption[] = [
+  { route: '/', label: 'Dashboard General', moduleCode: 'dashboard' },
+  { route: '/agenda-geclisa', label: 'Agenda Geclisa', moduleCode: 'agenda-geclisa' },
+  { route: '/chat', label: 'Chats / WhatsApp', moduleCode: 'chat' },
+  { route: '/pipeline-quirurgico', label: 'Asesoramiento / Pipeline', moduleCode: 'pipeline-quirurgico' },
+  { route: '/asesoramiento-recepcion', label: 'Recepción del Día (Asesoría)', moduleCode: 'asesoramiento-recepcion' },
+  { route: '/programacion-quirurgica', label: 'Quirófano / Agenda & Slots', moduleCode: 'programacion-quirurgica' },
+  { route: '/quirofano-en-vivo', label: 'Pizarra en Vivo (Quirófano)', moduleCode: 'quirofano-en-vivo' },
+  { route: '/calculo-lio', label: 'Cálculo de LIO', moduleCode: 'calculo-lio' },
+  { route: '/presupuestos', label: 'Presupuestos Médicos', moduleCode: 'presupuestos' },
+  { route: '/pacientes', label: 'Expedientes de Pacientes', moduleCode: 'pacientes' },
+  { route: '/logs', label: 'Logs & Auditoría', moduleCode: 'logs' },
+  { route: '/ajustes', label: 'Ajustes & Administración', moduleCode: 'ajustes' },
+]

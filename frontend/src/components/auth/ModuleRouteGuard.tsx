@@ -1,7 +1,7 @@
 'use client'
 
-import React from 'react'
-import { usePathname } from 'next/navigation'
+import React, { useEffect } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { usePermissions } from '@/hooks/usePermissions'
 import { ShieldAlert, ArrowLeft, Loader2, Lock } from 'lucide-react'
@@ -39,9 +39,19 @@ function resolveModuleCode(pathname: string): string | null {
 
 export default function ModuleRouteGuard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const { isAdmin, canAccess, loading, profile } = usePermissions()
+  const router = useRouter()
+  const { isAdmin, canAccess, loading, profile, effectiveLandingRoute } = usePermissions()
 
   const moduleCode = resolveModuleCode(pathname)
+
+  // Si está en la raíz y no tiene permiso para el Dashboard General, redirigir a su landing page efectiva
+  useEffect(() => {
+    if (!loading && pathname === '/' && !isAdmin && !canAccess('dashboard')) {
+      if (effectiveLandingRoute && effectiveLandingRoute !== '/') {
+        router.replace(effectiveLandingRoute)
+      }
+    }
+  }, [loading, pathname, isAdmin, canAccess, effectiveLandingRoute, router])
 
   // Si no pertenece a un módulo conocido o es ruta pública/no mapeada, dejar pasar
   if (!moduleCode) {
@@ -54,6 +64,16 @@ export default function ModuleRouteGuard({ children }: { children: React.ReactNo
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400 gap-3 min-h-[50vh]">
         <Loader2 size={32} className="animate-spin text-blue-600" />
         <p className="text-xs font-semibold">Verificando permisos de acceso...</p>
+      </div>
+    )
+  }
+
+  // Si está en la raíz pero redirigiéndose a su módulo predeterminado
+  if (pathname === '/' && !isAdmin && !canAccess('dashboard') && effectiveLandingRoute !== '/') {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400 gap-3 min-h-[50vh]">
+        <Loader2 size={32} className="animate-spin text-blue-600" />
+        <p className="text-xs font-semibold">Redirigiendo a tu sección principal...</p>
       </div>
     )
   }
@@ -94,11 +114,11 @@ export default function ModuleRouteGuard({ children }: { children: React.ReactNo
         </div>
 
         <Link
-          href="/"
+          href={effectiveLandingRoute || '/'}
           className="flex items-center justify-center gap-2 w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md glow-primary"
         >
           <ArrowLeft size={16} />
-          <span>Volver al Dashboard Principal</span>
+          <span>Volver a mi Sección de Inicio</span>
         </Link>
       </div>
     </div>
