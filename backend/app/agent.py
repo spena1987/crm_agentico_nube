@@ -79,6 +79,17 @@ def bind_tools_to_context(
                 return base_func(presupuesto_id=presupuesto_id, paciente_id=paciente_id, notas=notas)
             aprobar_presupuesto.__doc__ = base_func.__doc__
             bound_tools.append(aprobar_presupuesto)
+
+        elif name == "desestimar_presupuesto":
+            def desestimar_presupuesto(presupuesto_id: Optional[str] = None, motivo: str = "Desistido por el paciente") -> dict:
+                """
+                Desestima, rechaza o cancela un presupuesto médico cuando el paciente manifiesta que
+                no desea realizar el procedimiento cotizado, registrando obligatoriamente el motivo de desistimiento.
+                """
+                record_call("desestimar_presupuesto")
+                return base_func(presupuesto_id=presupuesto_id, motivo=motivo, paciente_id=paciente_id)
+            desestimar_presupuesto.__doc__ = base_func.__doc__
+            bound_tools.append(desestimar_presupuesto)
             
         elif name == "consultar_presupuestos_paciente":
             def consultar_presupuestos_paciente() -> dict:
@@ -154,6 +165,13 @@ def procesar_mensaje_agente(
     else:
         final_texto = mensaje_texto_o_paciente_id
         paciente_id = None
+        if supabase and conversacion_id:
+            try:
+                conv = supabase.table("conversaciones").select("paciente_id").eq("id", conversacion_id).execute()
+                if conv.data and len(conv.data) > 0:
+                    paciente_id = conv.data[0].get("paciente_id")
+            except Exception as ce:
+                logger.warning(f"No se pudo recuperar paciente_id de conversacion {conversacion_id}: {ce}")
 
     t_start = time.time()
     try:

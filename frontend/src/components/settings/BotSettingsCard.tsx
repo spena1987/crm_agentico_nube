@@ -88,9 +88,15 @@ export default function BotSettingsCard() {
   } | null>(null)
 
   const toolOptions = [
-    { key: 'buscar_disponibilidad_turnos', label: '📅 Agenda & Turnos', desc: 'Búsqueda de slots y disponibilidad médica' },
+    { key: 'buscar_disponibilidad_turnos', label: '📅 Agenda & Turnos', desc: 'Búsqueda de slots y disponibilidad médica en Geclisa' },
     { key: 'crear_borrador_presupuesto', label: '💰 Presupuestador', desc: 'Cálculo de aranceles y emisión de cotizaciones' },
-    { key: 'escalar_a_operador_humano', label: '🚨 Derivación Humana', desc: 'Pausa el bot y transfiere al equipo médico' }
+    { key: 'aprobar_presupuesto', label: '✅ Aprobador Presupuestos', desc: 'Confirma presupuestos aprobados y actualiza quirófano' },
+    { key: 'desestimar_presupuesto', label: '❌ Desestimar Presupuestos', desc: 'Registra rechazo de presupuesto capturando motivo de baja' },
+    { key: 'consultar_presupuestos_paciente', label: '📑 Historial Presupuestos', desc: 'Consulta cotizaciones y estado de presupuestos' },
+    { key: 'vincular_paciente_geclisa', label: '🏥 Identificación Geclisa', desc: 'Búsqueda de DNI y vinculación de ficha médica' },
+    { key: 'consultar_preparacion_cirugia', label: '🩺 Prequirúrgico & Ayuno', desc: 'Pautas de preparación y detalles de cirugía' },
+    { key: 'escalar_a_operador_humano', label: '🚨 Derivación Humana', desc: 'Pausa el bot y transfiere al equipo médico/secretaría' },
+    { key: 'finalizar_y_cerrar_consulta', label: '🏁 Cierre de Consulta', desc: 'Finaliza y archiva la conversación al completar trámite' }
   ]
 
   useEffect(() => {

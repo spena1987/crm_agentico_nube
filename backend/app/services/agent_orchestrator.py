@@ -4,11 +4,12 @@ import logging
 from typing import Optional, Dict, List, Any
 from app.db import supabase
 from app.services.tools import (
-    buscar_disponibilidad_turnos, 
-    crear_borrador_presupuesto, 
+    buscar_disponibilidad_turnos,
+    crear_borrador_presupuesto,
     escalar_a_operador_humano,
     finalizar_y_cerrar_consulta,
     aprobar_presupuesto,
+    desestimar_presupuesto,
     consultar_presupuestos_paciente,
     vincular_paciente_geclisa,
     consultar_preparacion_cirugia
@@ -18,20 +19,20 @@ logger = logging.getLogger(__name__)
 
 def formatear_texto_whatsapp(texto: str) -> str:
     """
-    Normaliza y limpia el formato del texto generado por Gemini para adaptarlo a WhatsApp:
-    - Convierte **negrita** o ***negrita*** a *negrita* (un solo asterisco).
-    - Convierte encabezados Markdown (# Titulo) a *Titulo*.
-    - Corrige espacios alrededor de asteriscos.
-    - Elimina bloques de formato incompatibles con WhatsApp.
+    Normaliza el texto generado por Gemini para ajustarlo a las convenciones de WhatsApp:
+    1. Reemplaza títulos markdown (# Titulo) por negritas (*Titulo*).
+    2. Convierte listas con asteriscos o guiones (* item / - item) en viñetas limpias (• item).
+    3. Asegura que las negritas utilicen un solo asterisco (*texto*) y no doble (**texto**).
+    4. Elimina bloques de código o sintaxis de markdown no compatibles.
     """
     if not texto:
         return ""
+        
+    # 1. Convertir títulos markdown (#, ##, ###) en líneas destacadas
+    texto = re.sub(r'^#{1,6}\s*(.+)$', r'*\1*', texto, flags=re.MULTILINE)
     
-    # 1. Convertir encabezados Markdown (# Titulo, ## Titulo) en negrita de WhatsApp (*Titulo*)
-    texto = re.sub(r'^(#{1,6})\s*(.+)$', r'*\2*', texto, flags=re.MULTILINE)
-    
-    # 2. Convertir triple asterisco (***texto***) a negrita de WhatsApp (*texto*)
-    texto = re.sub(r'\*{3}(.+?)\*{3}', r'*\1*', texto)
+    # 2. Convertir viñetas de lista no numeradas en balas limpias '• '
+    texto = re.sub(r'^\s*[\*\-]\s+', r'• ', texto, flags=re.MULTILINE)
     
     # 3. Convertir doble asterisco (**texto**) a negrita de WhatsApp (*texto*)
     texto = re.sub(r'\*{2}(.+?)\*{2}', r'*\1*', texto)
@@ -48,6 +49,7 @@ AVAILABLE_TOOLS_MAP = {
     "escalar_a_operador_humano": escalar_a_operador_humano,
     "finalizar_y_cerrar_consulta": finalizar_y_cerrar_consulta,
     "aprobar_presupuesto": aprobar_presupuesto,
+    "desestimar_presupuesto": desestimar_presupuesto,
     "consultar_presupuestos_paciente": consultar_presupuestos_paciente,
     "vincular_paciente_geclisa": vincular_paciente_geclisa,
     "consultar_preparacion_cirugia": consultar_preparacion_cirugia
@@ -74,7 +76,7 @@ DEFAULT_GLOBAL_DIRECTIVES = {
         "utiliza la herramienta finalizar_y_cerrar_consulta y despídete con cordialidad."
     ),
     "politica_turnos": "Para turnos, ofrece un máximo de 2 opciones claras de fecha/horario y confirma nombre y DNI del paciente.",
-    "politica_presupuestos": "Para cotizaciones, informa los valores con claridad, formas de pago disponibles y aclara la vigencia del presupuesto.",
+    "politica_presupuestos": "Para cotizaciones, informa los valores con claridad. Si el paciente aprueba, usa aprobar_presupuesto. Si el paciente manifiesta que desestima o cancela el presupuesto, indaga cortésmente el motivo si no lo brindó y ejecuta desestimar_presupuesto para registrarlo en el sistema.",
     "agente_defecto_codigo": "GENERAL"
 }
 
@@ -83,8 +85,8 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Asistente Administrativo General",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Responde de forma cordial y concisa. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información general sobre la clínica, horarios de atención, ubicación y especialidades médicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
@@ -99,16 +101,16 @@ DEFAULT_AGENTS = {
         "codigo": "QUIRURGICO_EMPATICO",
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
-        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si pregunta sobre pautas de preparación prequirúrgica, ayuno o indicaciones de su cirugía, usa de inmediato consultar_preparacion_cirugia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si pregunta sobre pautas de preparación prequirúrgica, ayuno o indicaciones de su cirugía, usa de inmediato consultar_preparacion_cirugia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si manifiesta que no se operará o desestima la cotización, indaga el motivo con respeto y usa desestimar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {
         "codigo": "PRESUPUESTOS_COMERCIAL",
         "nombre": "Cotizaciones y Planes de Tratamiento",
         "temperatura": 0.2,
-        "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías, o desea confirmar su presupuesto. Si solicita cotización, explica el desglose y usa crear_borrador_presupuesto. Si manifiesta que acepta el presupuesto, usa aprobar_presupuesto. Si finaliza la consulta, usa finalizar_y_cerrar_consulta.",
-        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente consulta por valores de prestaciones médicas, estudios o cirugías, o desea confirmar su presupuesto. Si solicita cotización, explica el desglose y usa crear_borrador_presupuesto. Si manifiesta que acepta el presupuesto, usa aprobar_presupuesto. Si manifiesta que no continuará o desestima el presupuesto, indaga amablemente el motivo y ejecuta desestimar_presupuesto. Si finaliza la consulta, usa finalizar_y_cerrar_consulta.",
+        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "POST_OPERATORIO": {
@@ -364,7 +366,13 @@ class AgentOrchestrator:
                     "=== REGLAS CRÍTICAS DE CONTEXTO E INTEGRALIDAD ===",
                     "1. PACIENTE YA IDENTIFICADO: La ficha anterior pertenece al paciente con quien estás hablando. NUNCA le pidas su DNI, nombre o teléfono si ya figuran arriba. Reconócelo y salúdalo amablemente por su nombre (ej: 'Hola Sebastián...').",
                     "2. APROBACIÓN DE PRESUPUESTOS: Si el paciente dice que aprueba, acepta o confirma su presupuesto (o responde 'confirmo', 'acepto', 'apruebo'), NO le pidas su DNI ni confirmación redundante. Utiliza de inmediato la herramienta 'aprobar_presupuesto' para pasar su presupuesto a estado 'aprobado' y felicítalo/infórmale con calidez que su presupuesto ha quedado aprobado y confirmado en el sistema, indicando el total y que la secretaría/equipo médico se contactará para coordinar los turnos o fecha quirúrgica.",
-                    "3. CONSULTA DE VALORES: Si el paciente consulta por presupuestos previos, cotizaciones o su saldo, utiliza los datos de su contexto o invoca 'consultar_presupuestos_paciente'."
+                    "3. DESESTIMIENTO O RECHAZO DE PRESUPUESTOS:\n"
+                    "   - Si el paciente manifiesta que NO desea realizar el presupuesto, que lo desestima, cancela, o no continuará con el tratamiento:\n"
+                    "     a) SI EL PACIENTE NO INDICÓ EL MOTIVO: NUNCA asumas ni inventes que ya quedó desestimado sin registrarlo. Pregúntale con calidez y respeto cuál es el motivo para dejar constancia en su ficha (ej: 'Comprendo perfectamente, Sebastián. Para dejar constancia en tu expediente, ¿podrías comentarme brevemente el motivo por el cual decides no realizarlo en este momento? ej: costos, tiempos o consulta adicional').\n"
+                    "     b) SI EL PACIENTE YA DIO EL MOTIVO (o responde a tu pregunta): Invoca de inmediato la herramienta 'desestimar_presupuesto' pasando el motivo descriptivo (ej: 'Costos / Presupuesto elevado', 'Eligió otra clínica', 'Postergó tratamiento').\n"
+                    "     c) MULTIPRESUPUESTOS: Si el paciente tiene varios presupuestos (ej. uno aprobado y otro enviado), asegúrate de desestimar únicamente el presupuesto pendiente o que el paciente señale, sin alterar presupuestos ya aprobados.\n"
+                    "     d) CONFIRMACIÓN: Responde confirmándole con empatía que el presupuesto ha quedado registrado como desestimado en el sistema y que la clínica queda a su disposición para cuando decida retomar.",
+                    "4. CONSULTA DE VALORES: Si el paciente consulta por presupuestos previos, cotizaciones o su saldo, utiliza los datos de su contexto o invoca 'consultar_presupuestos_paciente'."
                 ])
             else:
                 prompt_parts.extend([

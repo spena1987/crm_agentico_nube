@@ -20,6 +20,7 @@ from app.db import (
 )
 from app.services.pdf_service import generar_pdf_presupuesto
 from app.services.geclisa_client import GeclisaClient
+from app.services.logger_service import log_event
 
 logger = logging.getLogger(__name__)
 geclisa_client = GeclisaClient()
@@ -474,18 +475,24 @@ def desestimar_presupuesto(
     real_paciente_id = paciente_id
 
     # Si se pasó un ID exacto o prefijo
-    if presupuesto_id and is_valid_uuid(presupuesto_id):
-        target_id = presupuesto_id
-    elif presupuesto_id and len(str(presupuesto_id).strip()) >= 8:
-        # Intentar buscar por prefijo de UUID
+    prefix = str(presupuesto_id).strip().lower() if presupuesto_id else ""
+    if prefix and is_valid_uuid(prefix):
+        target_id = prefix
+    elif prefix:
+        # Buscar en los presupuestos del paciente el que coincida por prefijo
         try:
-            p_prefix = supabase.table("presupuestos").select("id, paciente_id, total, estado").ilike("id", f"{str(presupuesto_id).strip()}%").limit(1).execute()
-            if p_prefix.data:
-                target_id = p_prefix.data[0]["id"]
-                if not real_paciente_id:
-                    real_paciente_id = p_prefix.data[0]["paciente_id"]
+            query = supabase.table("presupuestos").select("id, paciente_id, total, estado")
+            if real_paciente_id:
+                query = query.eq("paciente_id", real_paciente_id)
+            p_list = query.limit(20).execute()
+            for p in (p_list.data or []):
+                if str(p.get("id", "")).lower().startswith(prefix):
+                    target_id = p["id"]
+                    if not real_paciente_id:
+                        real_paciente_id = p.get("paciente_id")
+                    break
         except Exception as pre_err:
-            logger.warning(f"Error buscando presupuesto por prefijo {presupuesto_id}: {pre_err}")
+            logger.warning(f"Error buscando presupuesto por prefijo {prefix}: {pre_err}")
 
     # Si no se pasó un ID exacto, buscar entre los presupuestos pendientes del paciente (enviado o borrador)
     if not target_id and real_paciente_id and is_valid_uuid(real_paciente_id):

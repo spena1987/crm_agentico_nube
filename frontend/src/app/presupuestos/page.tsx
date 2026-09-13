@@ -39,6 +39,7 @@ interface Presupuesto {
   total_ars?: number
   total_usd?: number
   pdf_url: string | null
+  motivo_desistimiento?: string | null
   created_at: string
   pacientes: Paciente | null
 }
@@ -419,20 +420,34 @@ export default function PresupuestosPage() {
                         </td>
                         <td className="py-3 text-center">
                           {canApprove ? (
-                            <select
-                              value={pres.estado}
-                              onChange={(e) => updateEstado(pres.id, e.target.value as any)}
-                              className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border-0 focus:outline-none focus:ring-2 focus:ring-blue-500/25 ${getBadgeColor(pres.estado)}`}
-                            >
-                              <option value="borrador">Borrador</option>
-                              <option value="enviado">Enviado</option>
-                              <option value="aprobado">Aprobado</option>
-                              <option value="rechazado">Rechazado</option>
-                            </select>
+                            <div className="flex flex-col items-center gap-1">
+                              <select
+                                value={pres.estado}
+                                onChange={(e) => updateEstado(pres.id, e.target.value as any)}
+                                className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border-0 focus:outline-none focus:ring-2 focus:ring-blue-500/25 ${getBadgeColor(pres.estado)}`}
+                              >
+                                <option value="borrador">Borrador</option>
+                                <option value="enviado">Enviado</option>
+                                <option value="aprobado">Aprobado</option>
+                                <option value="rechazado">Rechazado</option>
+                              </select>
+                              {pres.estado === 'rechazado' && pres.motivo_desistimiento && (
+                                <span className="text-[9px] text-rose-600 dark:text-rose-400 font-medium max-w-[140px] truncate" title={pres.motivo_desistimiento}>
+                                  {pres.motivo_desistimiento}
+                                </span>
+                              )}
+                            </div>
                           ) : (
-                            <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg ${getBadgeColor(pres.estado)}`}>
-                              {pres.estado.toUpperCase()}
-                            </span>
+                            <div className="flex flex-col items-center gap-1">
+                              <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg ${getBadgeColor(pres.estado)}`}>
+                                {pres.estado.toUpperCase()}
+                              </span>
+                              {pres.estado === 'rechazado' && pres.motivo_desistimiento && (
+                                <span className="text-[9px] text-rose-600 dark:text-rose-400 font-medium max-w-[140px] truncate" title={pres.motivo_desistimiento}>
+                                  {pres.motivo_desistimiento}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </td>
                         <td className="py-3 text-center">
