@@ -307,6 +307,15 @@ export default function ConsentimientoPublicoPage() {
     return (
       <div className="min-h-screen bg-gradient-to-b from-blue-50 to-slate-100 flex items-center justify-center p-4">
         <div className="max-w-lg w-full bg-white p-6 sm:p-8 rounded-3xl shadow-2xl border border-emerald-500/30 text-center space-y-5 animate-fade-in">
+          {datos?.clinica?.logo_url && (
+            <div className="flex justify-center mb-1">
+              <img 
+                src={datos.clinica.logo_url.startsWith('http') ? datos.clinica.logo_url : `${BACKEND_URL}${datos.clinica.logo_url}`} 
+                alt="Logo Institucional" 
+                className="h-10 max-w-[160px] object-contain"
+              />
+            </div>
+          )}
           <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto shadow-inner">
             <CheckCircle2 size={36} />
           </div>
@@ -390,8 +399,19 @@ export default function ConsentimientoPublicoPage() {
     <div className="min-h-screen bg-slate-100 py-6 px-3 sm:px-6 flex justify-center">
       <div className="max-w-2xl w-full bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-5 sm:p-6 text-center space-y-1">
-          <p className="text-[11px] font-bold uppercase tracking-widest text-blue-200">CLÍNICA OFTALMOLÓGICA</p>
+        <div className="bg-gradient-to-r from-blue-900 to-blue-800 text-white p-5 sm:p-6 text-center space-y-2">
+          {datos?.clinica?.logo_url && (
+            <div className="flex justify-center mb-1">
+              <img 
+                src={datos.clinica.logo_url.startsWith('http') ? datos.clinica.logo_url : `${BACKEND_URL}${datos.clinica.logo_url}`} 
+                alt="Logo Institucional" 
+                className="h-11 max-w-[180px] object-contain bg-white/95 px-2 py-1 rounded-xl shadow"
+              />
+            </div>
+          )}
+          <p className="text-[11px] font-bold uppercase tracking-widest text-blue-200">
+            {datos?.clinica?.nombre || 'CLÍNICA MÉDICA'}
+          </p>
           <h1 className="text-lg sm:text-xl font-bold">{consentimiento?.titulo || 'Consentimiento Informado'}</h1>
           <p className="text-xs text-blue-200">Documento Médico-Legal de Autorización Quirúrgica</p>
         </div>

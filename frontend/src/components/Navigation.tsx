@@ -28,7 +28,7 @@ import {
   Eye
 } from 'lucide-react'
 
-import { apiFetch } from '@/lib/api'
+import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
 interface SubNavItem {
@@ -90,6 +90,8 @@ export default function Navigation() {
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
   const [quirofanoMenuOpen, setQuirofanoMenuOpen] = useState(true)
   const [asesoriaMenuOpen, setAsesoriaMenuOpen] = useState(true)
+  const [clinicLogo, setClinicLogo] = useState<string | null>(null)
+  const [clinicName, setClinicName] = useState<string>('Centro Médico Nube')
 
   const fetchUnreadMetrics = async () => {
     try {
@@ -97,6 +99,35 @@ export default function Navigation() {
       if (res.ok) {
         const data = await res.json()
         setUnreadChatCount(data.no_leidos_count || 0)
+      }
+    } catch (e) {}
+  }
+
+  const fetchClinicBranding = async () => {
+    try {
+      let clinica: any = null
+      try {
+        const res = await apiFetch('/api/settings', { cache: 'no-store' })
+        if (res.ok) {
+          const data = await res.json()
+          clinica = data.clinica || null
+        }
+      } catch (e) {}
+
+      if (!clinica) {
+        const { data: dbData } = await (supabase as any)
+          .from('configuracion_sistema')
+          .select('valor')
+          .eq('clave', 'ajustes_crm')
+          .maybeSingle()
+        if (dbData && dbData.valor) {
+          clinica = (dbData.valor as any).clinica || null
+        }
+      }
+
+      if (clinica) {
+        if (clinica.logo_url) setClinicLogo(clinica.logo_url)
+        if (clinica.nombre) setClinicName(clinica.nombre)
       }
     } catch (e) {}
   }
@@ -117,11 +148,12 @@ export default function Navigation() {
     }
     window.addEventListener('resize', handleResize)
 
-    // Cargar métricas iniciales y configurar polling de respaldo (20s)
+    // Cargar branding institucional y métricas iniciales
+    fetchClinicBranding()
     fetchUnreadMetrics()
     const intervalMetrics = setInterval(fetchUnreadMetrics, 20000)
 
-    // Suscripción Realtime a mensajes para actualizar badge en vivo
+    // Suscripción Realtime a mensajes y cambios de configuración para actualizar logo en vivo
     const channel = supabase
       .channel('nav-unread-realtime')
       .on(
@@ -136,6 +168,13 @@ export default function Navigation() {
         { event: '*', schema: 'public', table: 'conversaciones' },
         () => {
           fetchUnreadMetrics()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'configuracion_sistema' },
+        () => {
+          fetchClinicBranding()
         }
       )
       .subscribe()
@@ -194,13 +233,25 @@ export default function Navigation() {
           isCollapsed ? 'px-2 justify-center' : 'px-5'
         }`}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className="p-2 rounded-xl bg-blue-600/10 text-blue-600 flex items-center justify-center glow-primary shrink-0">
-              <Activity size={22} className="animate-pulse" />
-            </div>
+            {clinicLogo ? (
+              <div className="h-9 w-9 rounded-xl bg-white dark:bg-slate-800 p-1 border border-[var(--border)] shadow-sm flex items-center justify-center shrink-0 overflow-hidden">
+                <img
+                  src={clinicLogo.startsWith('http') ? clinicLogo : `${BACKEND_URL}${clinicLogo}`}
+                  alt="Logo Institución"
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="p-2 rounded-xl bg-blue-600/10 text-blue-600 flex items-center justify-center glow-primary shrink-0">
+                <Activity size={22} className="animate-pulse" />
+              </div>
+            )}
             {!isCollapsed && (
               <div className="truncate">
-                <h1 className="font-bold text-base leading-tight tracking-tight text-[var(--foreground)]">MedCRM</h1>
-                <p className="text-[11px] text-[var(--secondary)] font-medium">Clínica Nube</p>
+                <h1 className="font-bold text-sm leading-tight tracking-tight text-[var(--foreground)] truncate">
+                  {clinicName}
+                </h1>
+                <p className="text-[10px] text-[var(--secondary)] font-medium">CRM Médico Institucional</p>
               </div>
             )}
           </div>

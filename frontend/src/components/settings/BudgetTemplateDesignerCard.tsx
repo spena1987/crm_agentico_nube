@@ -19,7 +19,8 @@ import {
   MapPin,
   Calendar,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  Image as ImageIcon
 } from 'lucide-react'
 
 interface PlantillaPresupuestoConfig {
@@ -37,6 +38,8 @@ interface PlantillaPresupuestoConfig {
   pie_pagina: string
   mostrar_firma: boolean
   texto_firma: string
+  logo_url?: string
+  mostrar_logo?: boolean
 }
 
 const DEFAULT_PLANTILLA: PlantillaPresupuestoConfig = {
@@ -58,7 +61,9 @@ const DEFAULT_PLANTILLA: PlantillaPresupuestoConfig = {
   ],
   pie_pagina: 'Documento emitido electrónicamente por el sistema CRM Médico Nube.',
   mostrar_firma: true,
-  texto_firma: 'Firma y Sello Profesional / Autorización Médica'
+  texto_firma: 'Firma y Sello Profesional / Autorización Médica',
+  mostrar_logo: true,
+  logo_url: ''
 }
 
 const PALETA_COLORES = [
@@ -108,11 +113,16 @@ export default function BudgetTemplateDesignerCard() {
         }
       }
 
-      if (data && data.plantilla_presupuesto) {
+      if (data) {
+        const plantilla = data.plantilla_presupuesto || {}
+        const clinica = data.clinica || {}
+        const logo = plantilla.logo_url || clinica.logo_url || ''
         setConfig({
           ...DEFAULT_PLANTILLA,
-          ...data.plantilla_presupuesto,
-          terminos_condiciones: data.plantilla_presupuesto.terminos_condiciones || DEFAULT_PLANTILLA.terminos_condiciones
+          ...plantilla,
+          logo_url: logo,
+          mostrar_logo: plantilla.mostrar_logo !== undefined ? plantilla.mostrar_logo : true,
+          terminos_condiciones: plantilla.terminos_condiciones || DEFAULT_PLANTILLA.terminos_condiciones
         })
       }
     } catch (err) {
@@ -438,6 +448,37 @@ export default function BudgetTemplateDesignerCard() {
                   className="w-32 p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold outline-none"
                 />
               </div>
+
+              {/* Opción de Logo Institucional */}
+              <div className="pt-3 border-t border-[var(--border)] space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700 dark:text-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={config.mostrar_logo !== false}
+                    onChange={(e) => setConfig({ ...config, mostrar_logo: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                  />
+                  <span>Incluir Logo Institucional en el Encabezado del PDF</span>
+                </label>
+                
+                {config.logo_url ? (
+                  <div className="flex items-center gap-3 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
+                    <img
+                      src={config.logo_url.startsWith('http') ? config.logo_url : `${API_BASE_URL}${config.logo_url}`}
+                      alt="Logo Activo"
+                      className="h-9 max-w-[90px] object-contain rounded bg-white p-1 border border-slate-200"
+                    />
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 block">Logo Institucional Vinculado</span>
+                      <span>Sincronizado desde el Perfil del Centro Médico.</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 italic">
+                    No se ha cargado un logo institucional aún. Puedes subirlo desde la pestaña <b>Perfil del Centro Médico</b>.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
 
@@ -540,22 +581,31 @@ export default function BudgetTemplateDesignerCard() {
             {/* Hoja de Presupuesto Simulada */}
             <div className="bg-white text-slate-800 p-6 rounded-2xl shadow-xl border border-slate-200 text-[11px] space-y-4 font-sans select-none overflow-hidden">
               {/* Encabezado */}
-              <div className="flex items-start justify-between border-b pb-3" style={{ borderColor: config.color_primario }}>
-                <div>
-                  <div className="font-black text-sm tracking-tight" style={{ color: config.color_primario }}>
-                    {config.nombre_institucion || 'CLÍNICA MÉDICA'}
-                  </div>
-                  <div className="text-[9px] text-slate-500 mt-0.5">
-                    {config.subtitulo_institucion}
-                  </div>
-                  {(config.direccion || config.telefono) && (
-                    <div className="text-[8px] text-slate-400 mt-0.5">
-                      {config.direccion} • Tel: {config.telefono}
-                    </div>
+              <div className="flex items-center justify-between border-b pb-3 gap-3" style={{ borderColor: config.color_primario }}>
+                <div className="flex items-center gap-3 min-w-0">
+                  {config.mostrar_logo !== false && config.logo_url && (
+                    <img
+                      src={config.logo_url.startsWith('http') ? config.logo_url : `${API_BASE_URL}${config.logo_url}`}
+                      alt="Logo Institucional"
+                      className="max-h-12 max-w-[100px] object-contain shrink-0"
+                    />
                   )}
+                  <div className="min-w-0">
+                    <div className="font-black text-sm tracking-tight truncate" style={{ color: config.color_primario }}>
+                      {config.nombre_institucion || 'CLÍNICA MÉDICA'}
+                    </div>
+                    <div className="text-[9px] text-slate-500 mt-0.5 truncate">
+                      {config.subtitulo_institucion}
+                    </div>
+                    {(config.direccion || config.telefono) && (
+                      <div className="text-[8px] text-slate-400 mt-0.5 truncate">
+                        {config.direccion} • Tel: {config.telefono}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div className="text-right">
+                <div className="text-right shrink-0">
                   <div className="font-bold text-xs" style={{ color: config.color_primario }}>
                     {config.titulo_documento || 'PRESUPUESTO MÉDICO'}
                   </div>

@@ -4128,6 +4128,10 @@ def obtener_datos_consentimiento_publico(token: str):
             "consentimiento": {
                 "titulo": titulo_consentimiento,
                 "cuerpo": cuerpo_renderizado
+            },
+            "clinica": {
+                "nombre": (load_settings().get("clinica") or {}).get("nombre") or "Centro Médico Nube",
+                "logo_url": (load_settings().get("clinica") or {}).get("logo_url") or (load_settings().get("plantilla_presupuesto") or {}).get("logo_url") or ""
             }
         }
     except Exception as e:

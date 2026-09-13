@@ -4,6 +4,7 @@ import uuid
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
+from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors

@@ -22,11 +22,12 @@
     "telefono_guardia": "+54 9 261 470-3230",
     "email_contacto": "info@centrovision.com.ar",
     "horarios_atencion": "Lunes a Viernes de 08:00 a 20:00 hs. Sábados de 09:00 a 13:00 hs.",
-    "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?"
+    "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?",
+    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?"
   },
   "plantilla_presupuesto": {
-    "titulo_documento": "PRESUPUESTO MÉDICO",
-    "nombre_institucion": "CENTRO VISIÓN OFTALMOLOGÍA",
+    "titulo_documento": "PRESUPUESTO",
+    "nombre_institucion": "CENTROVISIÓN OFTALMOLOGÍA",
     "subtitulo_institucion": "Cirugía Ocular & Especialidades Médicas",
     "direccion": "San Martín 1540, Ciudad de Mendoza, Mendoza",
     "telefono": "+54 9 261 470-3230",
@@ -38,11 +39,13 @@
     "terminos_condiciones": [
       "Este presupuesto tiene una validez de 30 días corridos a partir de la fecha de emisión.",
       "Los precios cotizados respetan la moneda especificada (Pesos ARS o Dólares USD).",
-      "La confirmación de turnos quirúrgicos, prácticas y estudios de alta complejidad queda supeditada a disponibilidad de agenda y confirmación de pago.",
-      "Formas de pago habilitadas: Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración."
+      "Formas de pago habilitadas: Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración.",
+      "Los precis incluyen IVA."
     ],
-    "pie_pagina": "Documento emitido electrónicamente por el sistema CRM Médico Nube.",
-    "mostrar_firma": true,
-    "texto_firma": "Firma y Sello Profesional / Autorización Médica"
+    "pie_pagina": "Documento emitido electrónicamente por el sistema Centrovisión",
+    "mostrar_firma": false,
+    "texto_firma": "Firma y Sello Profesional / Autorización Médica",
+    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?",
+    "mostrar_logo": true
   }
 }

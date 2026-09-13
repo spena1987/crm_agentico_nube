@@ -20,6 +20,8 @@ swagger_geclisa.json
 backend/app/static/*.pdf
 backend/app/static/temp_*
 backend/app/static/media/*
+backend/app/static/branding/*
+!backend/app/static/branding/.gitkeep
 !backend/app/static/.gitkeep
 
 # Node & Next.js
