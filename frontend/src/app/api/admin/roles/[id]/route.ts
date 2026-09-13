@@ -54,6 +54,7 @@ export async function PATCH(
 
         if (insertError) {
           console.error('Error actualizando permisos:', insertError)
+          return NextResponse.json({ error: `Error al guardar permisos: ${insertError.message}` }, { status: 500 })
         }
       }
     }

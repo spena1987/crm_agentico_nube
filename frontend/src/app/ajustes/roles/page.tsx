@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { supabase } from '@/lib/supabase'
 import { SYSTEM_MODULES, ModuleDefinition, LANDING_PAGE_OPTIONS } from '@/config/modules'
 import { 
   ShieldCheck, 
@@ -80,11 +81,27 @@ export default function RolesPage() {
   const [newRoleLandingPage, setNewRoleLandingPage] = useState<string>('/')
   const [copyFromRoleId, setCopyFromRoleId] = useState('')
 
+  // Obtener headers con token Bearer actual de Supabase
+  const getHeaders = async (contentType = true) => {
+    const headers: Record<string, string> = {}
+    if (contentType) headers['Content-Type'] = 'application/json'
+    try {
+      const { data } = await supabase.auth.getSession()
+      if (data.session?.access_token) {
+        headers['Authorization'] = `Bearer ${data.session.access_token}`
+      }
+    } catch {
+      // ignore
+    }
+    return headers
+  }
+
   // Cargar roles y permisos
   const loadRoles = async () => {
     try {
       setLoading(true)
-      const res = await fetch('/api/admin/roles')
+      const headers = await getHeaders(false)
+      const res = await fetch('/api/admin/roles', { headers })
       const data = await res.json()
 
       if (data.roles) {
@@ -221,9 +238,10 @@ export default function RolesPage() {
         })
       })
 
+      const headers = await getHeaders(true)
       const res = await fetch(`/api/admin/roles/${selectedRoleId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ 
           landing_page: currentLandingPage,
           permisos: activeRole?.codigo === 'admin' ? undefined : flatPerms 
@@ -265,9 +283,10 @@ export default function RolesPage() {
         }
       }
 
+      const headers = await getHeaders(true)
       const res = await fetch('/api/admin/roles', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           nombre: newRoleName.trim(),
           descripcion: newRoleDesc.trim(),
@@ -307,8 +326,10 @@ export default function RolesPage() {
     setFeedback(null)
 
     try {
+      const headers = await getHeaders(false)
       const res = await fetch(`/api/admin/roles/${selectedRoleId}`, {
         method: 'DELETE',
+        headers,
       })
 
       const data = await res.json()

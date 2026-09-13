@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useMemo } from 'react'
+import { supabase } from '@/lib/supabase'
 import { 
   UserPlus, 
   Search, 
@@ -95,13 +96,29 @@ export default function UsuariosPage() {
   const [searchPreEdit, setSearchPreEdit] = useState('')
   const [dropdownOpenEdit, setDropdownOpenEdit] = useState(false)
 
+  // Obtener headers con token Bearer actual de Supabase
+  const getHeaders = async (contentType = true) => {
+    const headers: Record<string, string> = {}
+    if (contentType) headers['Content-Type'] = 'application/json'
+    try {
+      const { data } = await supabase.auth.getSession()
+      if (data.session?.access_token) {
+        headers['Authorization'] = `Bearer ${data.session.access_token}`
+      }
+    } catch {
+      // ignore
+    }
+    return headers
+  }
+
   // Cargar datos principales
   const loadData = async () => {
     try {
       setLoading(true)
+      const headers = await getHeaders(false)
       const [usersRes, rolesRes] = await Promise.all([
-        fetch('/api/admin/users'),
-        fetch('/api/admin/roles'),
+        fetch('/api/admin/users', { headers }),
+        fetch('/api/admin/roles', { headers }),
       ])
 
       const usersData = await usersRes.json()
@@ -126,7 +143,8 @@ export default function UsuariosPage() {
   const cargarPrestadores = async (termino = '') => {
     try {
       setCargandoPrestadores(true)
-      const res = await fetch(`/api/admin/geclisa-prestadores?query=${encodeURIComponent(termino)}`)
+      const headers = await getHeaders(false)
+      const res = await fetch(`/api/admin/geclisa-prestadores?query=${encodeURIComponent(termino)}`, { headers })
       if (res.ok) {
         const data = await res.json()
         setPrestadores(data.prestadores || [])
@@ -167,9 +185,10 @@ export default function UsuariosPage() {
     setActionLoading(true)
 
     try {
+      const headers = await getHeaders(true)
       const res = await fetch('/api/admin/users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           nombre_completo: createNombre,
           email: createEmail,
@@ -244,9 +263,10 @@ export default function UsuariosPage() {
         payload.password = editPassword.trim()
       }
 
+      const headers = await getHeaders(true)
       const res = await fetch(`/api/admin/users/${selectedUser.id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       })
 
@@ -276,8 +296,10 @@ export default function UsuariosPage() {
     setActionLoading(true)
 
     try {
+      const headers = await getHeaders(false)
       const res = await fetch(`/api/admin/users/${selectedUser.id}`, {
         method: 'DELETE',
+        headers,
       })
 
       const data = await res.json()

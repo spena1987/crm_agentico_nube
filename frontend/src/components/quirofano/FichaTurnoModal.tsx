@@ -220,6 +220,7 @@ export default function FichaTurnoModal({
   const [guardando, setGuardando] = useState(false)
   const [cancelando, setCancelando] = useState(false)
   const [enviandoWA, setEnviandoWA] = useState(false)
+  const [enviandoPrepWA, setEnviandoPrepWA] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
@@ -502,6 +503,28 @@ export default function FichaTurnoModal({
       setError(err.message || 'Error al enviar WhatsApp')
     } finally {
       setEnviandoWA(false)
+    }
+  }
+
+  const handleEnviarPreparacionWA = async () => {
+    if (!turno?.id) return
+    try {
+      setEnviandoPrepWA(true)
+      setError(null)
+      const res = await apiFetch(`/api/turnos-quirofano/${turno.id}/enviar-preparacion-wa`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error enviando indicaciones por WhatsApp')
+      }
+      setMensajeExito(`✔ Indicaciones de preparación y ayuno (${data.ayuno_horas || 8}h) enviadas al WhatsApp del paciente.`)
+      onSaved()
+      setTimeout(() => setMensajeExito(null), 4000)
+    } catch (err: any) {
+      setError(err.message || 'Error al enviar preparación por WhatsApp')
+    } finally {
+      setEnviandoPrepWA(false)
     }
   }
 
@@ -1778,6 +1801,85 @@ export default function FichaTurnoModal({
               />
             </div>
           </div>
+
+          {/* ESTADO DE PREPARACIÓN MÉDICA Y CONSENTIMIENTO INFORMADO (NOMENCLADOR) */}
+          {esEdicion && (
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                  <ShieldCheck size={14} className="text-blue-600" />
+                  <span>Protocolo Prequirúrgico & Consentimiento (Nomenclador)</span>
+                </span>
+                <span className="text-[11px] font-mono text-[var(--secondary)]">
+                  Práctica: {formData.practica_codigo ? `[${formData.practica_codigo}]` : ''} {formData.practica_nombre}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Tarjeta Consentimiento */}
+                <div className="p-3 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-bold uppercase text-[var(--secondary)]">Consentimiento Informado</p>
+                    <p className="text-xs font-bold flex items-center gap-1.5">
+                      {turno?.consentimiento_estado === 'firmado_digital' ? (
+                        <span className="text-emerald-600 flex items-center gap-1">
+                          <CheckCircle2 size={13} /> Firmado Digitalmente
+                        </span>
+                      ) : turno?.consentimiento_estado === 'enviado_whatsapp' ? (
+                        <span className="text-amber-600 flex items-center gap-1">
+                          <Clock size={13} /> Enviado por WhatsApp (Pendiente)
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 flex items-center gap-1">
+                          <AlertCircle size={13} /> Sin Enviar
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  {turno?.consentimiento_token && (
+                    <a
+                      href={`/consentimiento/${turno.consentimiento_token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-lg text-xs font-bold flex items-center gap-1"
+                      title="Abrir portal público de firma"
+                    >
+                      <ExternalLink size={14} />
+                      <span>Ver Portal</span>
+                    </a>
+                  )}
+                </div>
+
+                {/* Tarjeta Preparación Prequirúrgica */}
+                <div className="p-3 rounded-xl bg-[var(--card)] border border-[var(--border)] flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-bold uppercase text-[var(--secondary)]">Indicaciones & Ayuno</p>
+                    <p className="text-xs font-bold flex items-center gap-1.5">
+                      {turno?.checks_adicionales?.preparacion_enviada ? (
+                        <span className="text-emerald-600 flex items-center gap-1">
+                          <CheckCircle2 size={13} /> Enviada por WhatsApp
+                        </span>
+                      ) : (
+                        <span className="text-amber-600 flex items-center gap-1">
+                          <Timer size={13} /> Pendiente de Envío
+                        </span>
+                      )}
+                    </p>
+                    {turno?.checks_adicionales?.preparacion_ayuno_horas && (
+                      <p className="text-[10px] text-slate-500 font-medium">
+                        Ayuno configurado: {turno.checks_adicionales.preparacion_ayuno_horas} horas previas
+                      </p>
+                    )}
+                  </div>
+                  {turno?.checks_adicionales?.preparacion_enviada_at && (
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {new Date(turno.checks_adicionales.preparacion_enviada_at).toLocaleDateString('es-AR')}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </form>
 
         {/* Pie del Modal con Acciones */}
@@ -1803,9 +1905,24 @@ export default function FichaTurnoModal({
                   onClick={handleEnviarConsentimientoWA}
                   disabled={enviandoWA || !formData.paciente_telefono || cancelando}
                   className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+                  title="Enviar enlace web de firma digital por WhatsApp"
                 >
                   {enviandoWA ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                   <span>Enviar Consentimiento WA</span>
+                </button>
+
+                {/* Botón Enviar Preparación Prequirúrgica */}
+                <button
+                  type="button"
+                  onClick={handleEnviarPreparacionWA}
+                  disabled={enviandoPrepWA || !formData.paciente_telefono || cancelando}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
+                  title="Enviar por WhatsApp las indicaciones prequirúrgicas y horas de ayuno configuradas en el Nomenclador"
+                >
+                  {enviandoPrepWA ? <Loader2 size={14} className="animate-spin" /> : <Timer size={14} />}
+                  <span>
+                    {turno?.checks_adicionales?.preparacion_enviada ? 'Reenviar Preparación WA' : 'Enviar Preparación WA'}
+                  </span>
                 </button>
               </>
             )}
