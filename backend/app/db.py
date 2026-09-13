@@ -2907,7 +2907,7 @@ def cambiar_estado_presupuesto(
                 p_as = supabase.table("asesorias_quirurgicas") \
                     .select("id, estado") \
                     .eq("paciente_id", presupuesto["paciente_id"]) \
-                    .in_("estado", ["en_analisis", "en_asesoramiento", "derivado"]) \
+                    .in_("estado", ["en_analisis", "en_asesoramiento", "derivado", "confirmado"]) \
                     .order("created_at", desc=True) \
                     .limit(1) \
                     .execute()
