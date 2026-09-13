@@ -1392,6 +1392,23 @@ async def upload_branding_logo(file: UploadFile = File(...)):
             raise HTTPException(status_code=400, detail="El archivo excede el tamaño máximo permitido (5 MB).")
             
         ext = file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else "png"
+        
+        # Normalizar automáticamente cualquier orientación EXIF que traiga la foto
+        try:
+            import io
+            from PIL import Image, ImageOps
+            with Image.open(io.BytesIO(file_bytes)) as pil_img:
+                transposed = ImageOps.exif_transpose(pil_img)
+                if transposed is not None:
+                    out_buf = io.BytesIO()
+                    save_fmt = "PNG" if ext == "png" else ("JPEG" if ext in ("jpg", "jpeg") else "PNG")
+                    if save_fmt == "JPEG" and transposed.mode in ("RGBA", "P"):
+                        transposed = transposed.convert("RGB")
+                    transposed.save(out_buf, format=save_fmt, quality=95)
+                    file_bytes = out_buf.getvalue()
+        except Exception as e_exif:
+            logger.warning(f"No se pudo procesar EXIF en upload_branding_logo: {e_exif}")
+
         storage_filename = f"logo_institucional.{ext}"
         
         logo_url = None
@@ -1399,7 +1416,7 @@ async def upload_branding_logo(file: UploadFile = File(...)):
         # 1. Guardar siempre respaldo local en /static/branding/
         branding_dir = os.path.join(PDF_DIR, "branding")
         os.makedirs(branding_dir, exist_ok=True)
-        local_path = os.path.join(branding_dir, "logo_institucional.png")
+        local_path = os.path.join(branding_dir, f"logo_institucional.{ext}")
         with open(local_path, "wb") as f:
             f.write(file_bytes)
             
@@ -1412,13 +1429,16 @@ async def upload_branding_logo(file: UploadFile = File(...)):
                     file_bytes,
                     file_options={"content-type": file.content_type, "upsert": "true"}
                 )
-                logo_url = supabase.storage.from_("branding").get_public_url(storage_filename)
+                pub_url = supabase.storage.from_("branding").get_public_url(storage_filename)
+                import time
+                logo_url = f"{pub_url.split('?')[0]}?t={int(time.time())}"
                 logger.info(f"Logo institucional subido a Supabase Storage exitosamente: {logo_url}")
             except Exception as e_supa:
                 logger.warning(f"No se pudo subir logo a Supabase Storage: {e_supa}")
                 
         if not logo_url:
-            logo_url = f"/static/branding/logo_institucional.png"
+            import time
+            logo_url = f"/static/branding/{storage_filename}?t={int(time.time())}"
             
         # 3. Guardar en base de datos configuracion_sistema
         updated = save_settings({
@@ -1439,6 +1459,101 @@ async def upload_branding_logo(file: UploadFile = File(...)):
         raise
     except Exception as e:
         logger.error(f"Error subiendo logo institucional: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RotateLogoPayload(BaseModel):
+    degrees: int = 90
+
+@app.post("/api/settings/rotate-logo")
+async def rotate_branding_logo(payload: RotateLogoPayload = RotateLogoPayload()):
+    """
+    Gira el logo institucional en múltiplos de 90° horario, guarda la nueva imagen
+    en Supabase Storage y en caché local, y actualiza configuracion_sistema con
+    un timestamp para invalidar caché en navegadores y reportes.
+    """
+    try:
+        import io, time
+        from PIL import Image
+        from app.db import supabase
+        from app.services.config_service import load_settings, save_settings, obtener_o_cachear_logo_local
+        from app.services.pdf_service import PDF_DIR
+        
+        settings = load_settings(force_refresh=True)
+        clinica = settings.get("clinica") or {}
+        logo_url = clinica.get("logo_url") or (settings.get("plantilla_presupuesto") or {}).get("logo_url")
+        
+        if not logo_url:
+            raise HTTPException(status_code=404, detail="No hay ningún logo institucional configurado para girar.")
+            
+        local_path = obtener_o_cachear_logo_local(logo_url)
+        if not local_path or not os.path.exists(local_path):
+            raise HTTPException(status_code=404, detail="No se encontró el archivo del logo para procesar la rotación.")
+            
+        with Image.open(local_path) as img:
+            # Pillow rotate(): ángulos positivos van en sentido antihorario.
+            # Para rotar HORARIO: rotate(-degrees, expand=True)
+            deg = payload.degrees % 360
+            rotated = img.rotate(-deg, expand=True)
+            
+            out_buf = io.BytesIO()
+            if rotated.mode in ("RGBA", "LA", "P"):
+                rotated.save(out_buf, format="PNG")
+                content_type = "image/png"
+                ext = "png"
+            else:
+                rotated.save(out_buf, format="PNG")
+                content_type = "image/png"
+                ext = "png"
+                
+            rotated_bytes = out_buf.getvalue()
+            
+        # 1. Guardar en disco local en /static/branding/
+        branding_dir = os.path.join(PDF_DIR, "branding")
+        os.makedirs(branding_dir, exist_ok=True)
+        local_target = os.path.join(branding_dir, f"logo_institucional.{ext}")
+        with open(local_target, "wb") as f:
+            f.write(rotated_bytes)
+            
+        storage_filename = f"logo_institucional.{ext}"
+        new_logo_url = None
+        
+        # 2. Subir a Supabase Storage con upsert
+        if supabase:
+            try:
+                supabase.storage.from_("branding").upload(
+                    storage_filename,
+                    rotated_bytes,
+                    file_options={"content-type": content_type, "upsert": "true"}
+                )
+                pub_url = supabase.storage.from_("branding").get_public_url(storage_filename)
+                new_logo_url = f"{pub_url.split('?')[0]}?t={int(time.time())}"
+                logger.info(f"Logo institucional girado {deg}° y subido a Supabase: {new_logo_url}")
+            except Exception as e_supa:
+                logger.warning(f"Error subiendo logo rotado a Supabase: {e_supa}")
+                
+        if not new_logo_url:
+            new_logo_url = f"/static/branding/{storage_filename}?t={int(time.time())}"
+            
+        # 3. Guardar en configuracion_sistema
+        updated = save_settings({
+            "clinica": {"logo_url": new_logo_url},
+            "plantilla_presupuesto": {"logo_url": new_logo_url, "mostrar_logo": True}
+        })
+        
+        # 4. Asegurar caché
+        obtener_o_cachear_logo_local(new_logo_url)
+        
+        return {
+            "success": True,
+            "mensaje": f"Logo girado {deg}° exitosamente.",
+            "logo_url": new_logo_url,
+            "degrees": deg,
+            "settings": updated
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al rotar logo: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

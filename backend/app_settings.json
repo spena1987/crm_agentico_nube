@@ -23,7 +23,7 @@
     "email_contacto": "info@centrovision.com.ar",
     "horarios_atencion": "Lunes a Viernes de 08:00 a 20:00 hs. Sábados de 09:00 a 13:00 hs.",
     "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?",
-    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?"
+    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?t=1789322528"
   },
   "plantilla_presupuesto": {
     "titulo_documento": "PRESUPUESTO",
@@ -45,7 +45,7 @@
     "pie_pagina": "Documento emitido electrónicamente por el sistema Centrovisión",
     "mostrar_firma": false,
     "texto_firma": "Firma y Sello Profesional / Autorización Médica",
-    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?",
+    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?t=1789322528",
     "mostrar_logo": true
   }
 }

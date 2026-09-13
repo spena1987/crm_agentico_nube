@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { Building2, MapPin, Phone, Mail, Clock, MessageSquare, Save, CheckCircle2, Upload, Image as ImageIcon, Trash2, Loader2, AlertCircle } from 'lucide-react'
+import { Building2, MapPin, Phone, Mail, Clock, MessageSquare, Save, CheckCircle2, Upload, Image as ImageIcon, Trash2, Loader2, AlertCircle, RotateCw } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
@@ -18,6 +18,7 @@ export default function ClinicProfileCard() {
   const [mensajeBienvenida, setMensajeBienvenida] = useState('¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?')
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [rotatingLogo, setRotatingLogo] = useState(false)
   const [logoError, setLogoError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -205,6 +206,107 @@ export default function ClinicProfileCard() {
     }
   }
 
+  const rotateImageViaCanvas = async (imgSrc: string, degrees: number): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = async () => {
+        try {
+          const canvas = document.createElement('canvas')
+          const ctx = canvas.getContext('2d')
+          if (!ctx) throw new Error('No se pudo inicializar canvas 2D')
+
+          const rads = (degrees * Math.PI) / 180
+          const is90or270 = Math.abs(degrees % 180) === 90
+          canvas.width = is90or270 ? img.height : img.width
+          canvas.height = is90or270 ? img.width : img.height
+
+          ctx.translate(canvas.width / 2, canvas.height / 2)
+          ctx.rotate(rads)
+          ctx.drawImage(img, -img.width / 2, -img.height / 2)
+
+          canvas.toBlob(async (blob) => {
+            if (!blob) throw new Error('No se pudo generar blob de imagen')
+            const fileName = 'logo_institucional.png'
+            const { error: uploadErr } = await supabase.storage
+              .from('branding')
+              .upload(fileName, blob, { upsert: true, contentType: 'image/png' })
+
+            if (uploadErr) throw uploadErr
+
+            const { data: pubData } = supabase.storage.from('branding').getPublicUrl(fileName)
+            const stampedUrl = `${pubData.publicUrl.split('?')[0]}?t=${Date.now()}`
+
+            const { data: currentDb } = await (supabase as any)
+              .from('configuracion_sistema')
+              .select('valor')
+              .eq('clave', 'ajustes_crm')
+              .maybeSingle()
+
+            const currentVal = (currentDb && currentDb.valor) ? (currentDb.valor as any) : {}
+            const newVal = {
+              ...currentVal,
+              clinica: { ...(currentVal.clinica || {}), logo_url: stampedUrl },
+              plantilla_presupuesto: { ...(currentVal.plantilla_presupuesto || {}), logo_url: stampedUrl }
+            }
+
+            await (supabase as any)
+              .from('configuracion_sistema')
+              .upsert({
+                clave: 'ajustes_crm',
+                valor: newVal,
+                updated_at: new Date().toISOString(),
+                actualizado_por: 'admin_crm'
+              })
+
+            resolve(stampedUrl)
+          }, 'image/png')
+        } catch (e) {
+          reject(e)
+        }
+      }
+      img.onerror = () => reject(new Error('No se pudo cargar la imagen para rotación'))
+      img.src = imgSrc
+    })
+  }
+
+  const handleRotateLogo = async (degrees = 90) => {
+    try {
+      setRotatingLogo(true)
+      setLogoError(null)
+
+      let newUrl: string | null = null
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/settings/rotate-logo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ degrees })
+        })
+        if (res.ok) {
+          const data = await res.json()
+          newUrl = data.logo_url
+        }
+      } catch (e) {
+        console.warn('Backend rotate-logo no respondió, intentando rotación cliente:', e)
+      }
+
+      if (!newUrl && logoUrl) {
+        newUrl = await rotateImageViaCanvas(logoUrl, degrees)
+      }
+
+      if (newUrl) {
+        setLogoUrl(newUrl)
+        setFeedback(`¡Logo girado ${degrees}° exitosamente!`)
+        setTimeout(() => setFeedback(null), 3500)
+      }
+    } catch (err: any) {
+      console.error('Error al girar logo:', err)
+      setLogoError(err.message || 'No se pudo girar la imagen del logo.')
+    } finally {
+      setRotatingLogo(false)
+    }
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
@@ -352,15 +454,32 @@ export default function ClinicProfileCard() {
                 </button>
 
                 {logoUrl && (
-                  <button
-                    type="button"
-                    onClick={handleRemoveLogo}
-                    disabled={uploadingLogo}
-                    className="px-3.5 py-2 rounded-xl text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 border border-red-200 dark:border-red-800/40 flex items-center gap-1.5 transition-all"
-                  >
-                    <Trash2 size={14} />
-                    <span>Eliminar</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleRotateLogo(90)}
+                      disabled={uploadingLogo || rotatingLogo}
+                      title="Girar imagen 90° en sentido horario"
+                      className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-[var(--border)] flex items-center gap-1.5 transition-all shadow-xs disabled:opacity-50"
+                    >
+                      {rotatingLogo ? (
+                        <Loader2 size={14} className="animate-spin text-blue-600" />
+                      ) : (
+                        <RotateCw size={14} className="text-blue-600" />
+                      )}
+                      <span>Girar 90° ↻</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRemoveLogo}
+                      disabled={uploadingLogo || rotatingLogo}
+                      className="px-3.5 py-2 rounded-xl text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 border border-red-200 dark:border-red-800/40 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                    >
+                      <Trash2 size={14} />
+                      <span>Eliminar</span>
+                    </button>
+                  </>
                 )}
               </div>
 
