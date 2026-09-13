@@ -1373,6 +1373,74 @@ def update_system_settings(payload: Dict[str, Any] = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error actualizando configuraciones: {str(e)}")
 
+@app.post("/api/settings/upload-logo")
+async def upload_branding_logo(file: UploadFile = File(...)):
+    """
+    Sube el logo institucional a Supabase Storage (bucket 'branding'),
+    obtiene su URL pública y actualiza la configuración centralizada del CRM.
+    """
+    try:
+        from app.db import supabase
+        from app.services.config_service import save_settings, obtener_o_cachear_logo_local
+        from app.services.pdf_service import PDF_DIR
+        
+        if not file.content_type or not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="El archivo debe ser una imagen válida (PNG, JPG, WebP, SVG).")
+            
+        file_bytes = await file.read()
+        if len(file_bytes) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="El archivo excede el tamaño máximo permitido (5 MB).")
+            
+        ext = file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else "png"
+        storage_filename = f"logo_institucional.{ext}"
+        
+        logo_url = None
+        
+        # 1. Guardar siempre respaldo local en /static/branding/
+        branding_dir = os.path.join(PDF_DIR, "branding")
+        os.makedirs(branding_dir, exist_ok=True)
+        local_path = os.path.join(branding_dir, "logo_institucional.png")
+        with open(local_path, "wb") as f:
+            f.write(file_bytes)
+            
+        # 2. Subir a Supabase Storage bucket 'branding'
+        if supabase:
+            try:
+                # Upsert en bucket 'branding'
+                supabase.storage.from_("branding").upload(
+                    storage_filename,
+                    file_bytes,
+                    file_options={"content-type": file.content_type, "upsert": "true"}
+                )
+                logo_url = supabase.storage.from_("branding").get_public_url(storage_filename)
+                logger.info(f"Logo institucional subido a Supabase Storage exitosamente: {logo_url}")
+            except Exception as e_supa:
+                logger.warning(f"No se pudo subir logo a Supabase Storage: {e_supa}")
+                
+        if not logo_url:
+            logo_url = f"/static/branding/logo_institucional.png"
+            
+        # 3. Guardar en base de datos configuracion_sistema
+        updated = save_settings({
+            "clinica": {"logo_url": logo_url},
+            "plantilla_presupuesto": {"logo_url": logo_url, "mostrar_logo": True}
+        })
+        
+        # 4. Asegurar caché
+        obtener_o_cachear_logo_local(logo_url)
+        
+        return {
+            "success": True,
+            "mensaje": "Logo institucional cargado y propagado correctamente a todos los módulos.",
+            "logo_url": logo_url,
+            "settings": updated
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error subiendo logo institucional: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ====================================================================
 # ENDPOINTS DEL SISTEMA MULTI-AGENTE (PROMPT LAYERING & PERSONAS)
 # ====================================================================

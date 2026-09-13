@@ -294,8 +294,10 @@ def escalar_a_operador_humano(conversacion_id: str, motivo: str, nivel_urgencia:
     """
     Desactiva el bot automático para esta conversación para transferir la atención
     a un operador humano (secretaria / médico) de la clínica.
-    Utilízala cuando el paciente lo solicite expresamente, cuando la consulta médica/administrativa
-    esté fuera de tu alcance o directivas, o ante reiterada confusión o reclamo.
+    Utilízala ÚNICAMENTE cuando el paciente lo solicite expresamente (ej: 'quiero hablar con una persona')
+    o cuando la consulta médica/administrativa esté fuera de tu alcance o directivas.
+    NUNCA la utilices tras invocar aprobar_presupuesto ni para confirmar la aprobación de un presupuesto,
+    ya que el presupuesto se aprueba y confirma de forma autónoma.
     
     Args:
         conversacion_id: El UUID de la conversación.
@@ -477,7 +479,7 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
             "presupuesto_id": target_id,
             "estado": "aprobado",
             "total": float(total),
-            "mensaje": f"Presupuesto #{target_id[:8]} por un total de ${float(total):,.2f} aprobado y confirmado exitosamente en el sistema."
+            "mensaje": f"Presupuesto #{target_id[:8]} por un total de ${float(total):,.2f} aprobado y confirmado exitosamente en el sistema. El caso quirúrgico fue confirmado. NO llames a escalar_a_operador_humano. Responde directamente al paciente felicitándolo y confirmándole que la secretaría coordinará los turnos prequirúrgicos."
         }
     except Exception as e:
         logger.error(f"Error al aprobar presupuesto {target_id}: {e}")

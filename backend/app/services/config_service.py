@@ -25,7 +25,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "telefono_guardia": "+54 9 11 5555-0199",
         "email_contacto": "contacto@centromediconube.com",
         "horarios_atencion": "Lunes a Viernes de 08:00 a 20:00 hs. Sábados de 09:00 a 13:00 hs.",
-        "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?"
+        "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?",
+        "logo_url": ""
     },
     "plantilla_presupuesto": {
         "titulo_documento": "PRESUPUESTO MÉDICO",
@@ -46,7 +47,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         ],
         "pie_pagina": "Documento emitido electrónicamente por el sistema CRM Médico Nube.",
         "mostrar_firma": True,
-        "texto_firma": "Firma y Sello Profesional / Autorización Médica"
+        "texto_firma": "Firma y Sello Profesional / Autorización Médica",
+        "logo_url": "",
+        "mostrar_logo": True
     }
 }
 
@@ -94,8 +97,70 @@ def apply_inheritance(settings: Dict[str, Any]) -> Dict[str, Any]:
     if email_c and (not email_p or email_p == "contacto@centromediconube.com"):
         plantilla["email"] = email_c
 
+    # Herencia bidireccional de Logo Institucional
+    logo_c = (clinica.get("logo_url") or "").strip()
+    logo_p = (plantilla.get("logo_url") or "").strip()
+    if logo_c and not logo_p:
+        plantilla["logo_url"] = logo_c
+    elif logo_p and not logo_c:
+        clinica["logo_url"] = logo_p
+
+    settings["clinica"] = clinica
     settings["plantilla_presupuesto"] = plantilla
     return settings
+
+
+def obtener_o_cachear_logo_local(logo_url: Optional[str] = None) -> Optional[str]:
+    """
+    Descarga o valida la existencia de la imagen de logo en caché local
+    para inserción inmediata en ReportLab sin peticiones de red repetitivas.
+    """
+    try:
+        from app.services.pdf_service import PDF_DIR
+    except Exception:
+        PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+    branding_dir = os.path.join(PDF_DIR, "branding")
+    os.makedirs(branding_dir, exist_ok=True)
+    local_cache_path = os.path.join(branding_dir, "logo_institucional.png")
+
+    target_url = logo_url
+    if not target_url:
+        s = load_settings()
+        target_url = s.get("plantilla_presupuesto", {}).get("logo_url") or s.get("clinica", {}).get("logo_url")
+
+    if not target_url:
+        if os.path.exists(local_cache_path) and os.path.getsize(local_cache_path) > 100:
+            return local_cache_path
+        return None
+
+    # Si es URL remota (http/https de Supabase Storage o CDN)
+    if target_url.startswith("http://") or target_url.startswith("https://"):
+        try:
+            import httpx
+            with httpx.Client(timeout=8.0, follow_redirects=True) as client:
+                resp = client.get(target_url)
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    with open(local_cache_path, "wb") as f:
+                        f.write(resp.content)
+                    return local_cache_path
+        except Exception as e:
+            logger.warning(f"No se pudo descargar logo desde {target_url}: {e}")
+
+    # Si es ruta estática local relativa (ej: /static/branding/...)
+    if target_url.startswith("/static/"):
+        static_rel = target_url.replace("/static/", "")
+        candidate_path = os.path.join(PDF_DIR, static_rel)
+        if os.path.exists(candidate_path) and os.path.getsize(candidate_path) > 100:
+            return candidate_path
+
+    if os.path.exists(target_url) and os.path.getsize(target_url) > 100:
+        return target_url
+
+    if os.path.exists(local_cache_path) and os.path.getsize(local_cache_path) > 100:
+        return local_cache_path
+
+    return None
 
 
 def load_settings(force_refresh: bool = False) -> Dict[str, Any]:

@@ -4,12 +4,11 @@ import uuid
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-from app.services.config_service import load_settings
+from app.services.config_service import load_settings, obtener_o_cachear_logo_local
 
 logger = logging.getLogger(__name__)
 
@@ -428,6 +427,10 @@ def generar_pdf_presupuesto(
     )
     
     # 1. Cabecera Institucional
+    # 1. Cabecera Institucional (con soporte omnicanal de Logo)
+    mostrar_logo = plantilla.get("mostrar_logo", True)
+    logo_path = obtener_o_cachear_logo_local(plantilla.get("logo_url") or clinica.get("logo_url")) if mostrar_logo else None
+
     inst_content = f"<b>{nombre_inst}</b><br/><font size=8 color='#64748B'>{subtitulo_inst}"
     if direccion_inst or telefono_inst:
         inst_content += f"<br/>{direccion_inst} • Tel: {telefono_inst}"
@@ -439,16 +442,55 @@ def generar_pdf_presupuesto(
         doc_content += f"<br/>{sitio_web}"
     doc_content += "</font>"
     
-    t_header = Table([
-        [Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
-    ], colWidths=[310, 230])
-    
-    t_header.setStyle(TableStyle([
-        ('ALIGN', (0,0), (0,0), 'LEFT'),
-        ('ALIGN', (1,0), (1,0), 'RIGHT'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-    ]))
+    if logo_path and os.path.exists(logo_path):
+        try:
+            from PIL import Image as PILImage
+            with PILImage.open(logo_path) as pimg:
+                orig_w, orig_h = pimg.size
+                ratio = orig_w / float(orig_h) if orig_h > 0 else 1.0
+                
+            target_h = 42.0
+            target_w = target_h * ratio
+            if target_w > 125.0:
+                target_w = 125.0
+                target_h = target_w / ratio
+                
+            rl_logo = RLImage(logo_path, width=target_w, height=target_h)
+            rl_logo.hAlign = 'LEFT'
+            
+            t_header = Table([
+                [rl_logo, Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
+            ], colWidths=[130, 240, 170])
+            t_header.setStyle(TableStyle([
+                ('ALIGN', (0,0), (0,0), 'LEFT'),
+                ('ALIGN', (1,0), (1,0), 'LEFT'),
+                ('ALIGN', (2,0), (2,0), 'RIGHT'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('TOPPADDING', (0,0), (-1,-1), 0),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ]))
+        except Exception as e_l:
+            logger.warning(f"Error procesando logo en generar_pdf_presupuesto: {e_l}")
+            t_header = Table([
+                [Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
+            ], colWidths=[310, 230])
+            t_header.setStyle(TableStyle([
+                ('ALIGN', (0,0), (0,0), 'LEFT'),
+                ('ALIGN', (1,0), (1,0), 'RIGHT'),
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ]))
+    else:
+        t_header = Table([
+            [Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
+        ], colWidths=[310, 230])
+        t_header.setStyle(TableStyle([
+            ('ALIGN', (0,0), (0,0), 'LEFT'),
+            ('ALIGN', (1,0), (1,0), 'RIGHT'),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
     story.append(t_header)
     
     # Línea divisoria decorativa
@@ -1265,17 +1307,42 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
 
     # 1. Cabecera Institucional
     codigo_ref = turno.get("codigo_turno") or turno.get("codigo_caso") or f"QX-26-{str(turno_id)[:4].upper()}-{turno.get('ojo', 'OD')}"
-    header_data = [
-        [
-            Paragraph(f"<b><font size=12 color='{color_primario_hex}'>{nombre_inst.upper()}</font></b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal),
-            Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=9 color='{color_acento_hex}'><b>N° Registro: {codigo_ref}</b></font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {parsear_fecha_hora_argentina()}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
-        ]
-    ]
-    t_head = Table(header_data, colWidths=[270, 270])
-    t_head.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-    ]))
+    logo_path = obtener_o_cachear_logo_local()
+    
+    inst_p = Paragraph(f"<b><font size=12 color='{color_primario_hex}'>{nombre_inst.upper()}</font></b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal)
+    doc_p = Paragraph(f"<b>PROTOCOLO QUIRÚRGICO OFICIAL</b><br/><font size=9 color='{color_acento_hex}'><b>N° Registro: {codigo_ref}</b></font><br/><font size=7 color='#94A3B8'>Fecha Emisión: {parsear_fecha_hora_argentina()}</font>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
+    
+    if logo_path and os.path.exists(logo_path):
+        try:
+            from PIL import Image as PILImage
+            with PILImage.open(logo_path) as pimg:
+                orig_w, orig_h = pimg.size
+                ratio = orig_w / float(orig_h) if orig_h > 0 else 1.0
+            target_h = 36.0
+            target_w = target_h * ratio
+            if target_w > 100.0:
+                target_w = 100.0
+                target_h = target_w / ratio
+            rl_logo = RLImage(logo_path, width=target_w, height=target_h)
+            rl_logo.hAlign = 'LEFT'
+            t_head = Table([[rl_logo, inst_p, doc_p]], colWidths=[105, 235, 200])
+            t_head.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),
+            ]))
+        except Exception:
+            t_head = Table([[inst_p, doc_p]], colWidths=[270, 270])
+            t_head.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ]))
+    else:
+        t_head = Table([[inst_p, doc_p]], colWidths=[270, 270])
+        t_head.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
     story.append(t_head)
     story.append(Spacer(1, 4))
 
