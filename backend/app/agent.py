@@ -118,7 +118,7 @@ def bind_tools_to_context(
                 Deriva la conversación a un operador humano de secretaría o equipo médico.
                 IMPORTANTE: Úsala ÚNICAMENTE si el paciente solicita explícitamente hablar con una persona o si no es posible resolver su consulta con ninguna otra herramienta. NO la utilices tras aprobar un presupuesto.
                 """
-                if "aprobar_presupuesto" in funciones_ejecutadas:
+                if tracker is not None and "aprobar_presupuesto" in tracker:
                     logger.info("Omitiendo escalar_a_operador_humano porque ya se aprobó el presupuesto en este turno.")
                     return {"success": True, "mensaje": "Presupuesto ya aprobado y confirmado exitosamente en el CRM. No se requiere transferir a operador humano."}
                 record_call("escalar_a_operador_humano")
