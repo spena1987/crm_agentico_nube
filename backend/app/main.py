@@ -5296,7 +5296,7 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
         sincronizados = 0
 
         # Traer familias de modelos_lio para asignación automática si no está vinculado
-        fam_res = supabase.table("modelos_lio").select("id, modelo, marca").execute()
+        fam_res = supabase.table("modelos_lio").select("id, modelo, marca, admite_toricos").execute()
         familias_crm = fam_res.data or []
 
         batch_updates = []
@@ -5321,14 +5321,39 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
                         "updated_at": "now()"
                     })
 
-                # Vincular en modelos_lio_items si corresponde
+                # Vincular en modelos_lio_items si corresponde respetando toricidad
                 mod_id = it.get("modelo_lio_id")
+                it_es_torico = bool(it.get("es_torico", False))
+
                 if not mod_id and it.get("familia_nombre"):
                     fn = str(it["familia_nombre"]).lower()
-                    for f in familias_crm:
-                        if f["modelo"].lower() in fn or fn in f["modelo"].lower() or ("vivity" in fn and "vivity" in f["modelo"].lower()) or ("panoptix" in fn and "panoptix" in f["modelo"].lower()):
-                            mod_id = f["id"]
-                            break
+                    # Filtrar candidatas estrictamente por compatibilidad de toricidad
+                    candidatas = [f for f in familias_crm if bool(f.get("admite_toricos", False)) == it_es_torico]
+
+                    # 1. Búsqueda específica según toricidad
+                    for f in candidatas:
+                        f_mod = f["modelo"].lower()
+                        if it_es_torico:
+                            if ("toric" in fn or "tóric" in fn) and ("toric" in f_mod or "tóric" in f_mod):
+                                if f_mod in fn or fn in f_mod:
+                                    mod_id = f["id"]
+                                    break
+                        else:
+                            if "toric" not in f_mod and "tóric" not in f_mod:
+                                if f_mod in fn or fn in f_mod:
+                                    mod_id = f["id"]
+                                    break
+
+                    # 2. Búsqueda por familia principal si aún no resolvió
+                    if not mod_id:
+                        for f in candidatas:
+                            f_mod = f["modelo"].lower()
+                            if ("vivity" in fn and "vivity" in f_mod) or \
+                               ("panoptix" in fn and "panoptix" in f_mod) or \
+                               ("clareon" in fn and "clareon" in f_mod) or \
+                               ("acrysof" in fn and "acrysof" in f_mod):
+                                mod_id = f["id"]
+                                break
 
                 if mod_id and it.get("dioptria") is not None:
                     items_lio_sync.append({
@@ -5337,8 +5362,8 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
                         "geclisa_ele_cod": ele_cod,
                         "geclisa_nombre": ele_nom,
                         "dioptria": it["dioptria"],
-                        "es_torico": it.get("es_torico", False),
-                        "torico_valor": it.get("torico_valor")
+                        "es_torico": it_es_torico,
+                        "torico_valor": it.get("torico_valor") if it_es_torico else None
                     })
 
                 sincronizados += 1

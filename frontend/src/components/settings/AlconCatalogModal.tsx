@@ -399,7 +399,7 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        mostrarToast(`⚡ Sincronización con Geclisa completada exitosamente:\n- ${data.total_sincronizados} productos vinculados con stock y eleId de Geclisa.`, 'error')
+        mostrarToast(`⚡ Sincronización con Geclisa completada exitosamente:\n- ${data.total_sincronizados} productos vinculados con stock y eleId de Geclisa.`, 'success')
         fetchCatalogo()
       } else {
         alert(data.detail || 'Error al sincronizar con Geclisa.')

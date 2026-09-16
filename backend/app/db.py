@@ -4929,13 +4929,44 @@ def crear_modelo_lio_item(datos: Dict[str, Any]) -> Dict[str, Any]:
             "dioptria": float(datos.get("dioptria")),
             "es_torico": es_torico,
             "torico_valor": datos.get("torico_valor") if es_torico else None,
-            "created_at": "now()",
             "updated_at": "now()"
         }
-        resp = supabase.table("modelos_lio_items").insert(payload).execute()
-        return resp.data[0] if resp.data else {}
+
+        # 1. Comprobación de preexistencia para Upsert idempotente sin 409
+        q_exist = supabase.table("modelos_lio_items")\
+            .select("id")\
+            .eq("modelo_lio_id", modelo_lio_id)\
+            .eq("dioptria", payload["dioptria"])
+
+        if es_torico and payload.get("torico_valor"):
+            q_exist = q_exist.eq("torico_valor", payload["torico_valor"])
+        else:
+            q_exist = q_exist.is_("torico_valor", "null")
+
+        exist_res = q_exist.limit(1).execute()
+        if exist_res.data:
+            item_id = exist_res.data[0]["id"]
+            up_res = supabase.table("modelos_lio_items").update(payload).eq("id", item_id).execute()
+            return up_res.data[0] if up_res.data else {}
+
+        # 2. Inserción nueva con captura defensiva de carrera
+        try:
+            payload["created_at"] = "now()"
+            resp = supabase.table("modelos_lio_items").insert(payload).execute()
+            return resp.data[0] if resp.data else {}
+        except Exception as e_ins:
+            err_str = str(e_ins).lower()
+            if "23505" in err_str or "duplicate key" in err_str or "uq_modelo_dioptria_torico" in err_str:
+                # Si ocurrió inserción concurrente, recuperar y actualizar
+                rec_res = q_exist.limit(1).execute()
+                if rec_res.data:
+                    item_id = rec_res.data[0]["id"]
+                    payload.pop("created_at", None)
+                    up_res = supabase.table("modelos_lio_items").update(payload).eq("id", item_id).execute()
+                    return up_res.data[0] if up_res.data else {}
+            raise e_ins
     except Exception as e:
-        logger.error(f"Error al crear item de modelo LIO: {e}")
+        logger.error(f"Error al crear/actualizar item de modelo LIO: {e}")
         raise e
 
 def eliminar_modelo_lio_item(item_id: str) -> bool:
@@ -5067,11 +5098,14 @@ def sincronizar_lentes_masivos(items_coincidentes: List[Dict[str, Any]]) -> Dict
                 "created_at": "now()",
                 "updated_at": "now()"
             }
-            res_item = supabase.table("modelos_lio_items").insert(nuevo_item_payload).execute()
-            if res_item.data:
-                nuevos_items_count += 1
-                gtins_existentes.add(gtin_cod)
-                resultado_items.append({**item, "estado": "SINCRONIZADO", "modelo_lio_id": fam_id, "id": res_item.data[0]["id"]})
+            try:
+                res_item = crear_modelo_lio_item(nuevo_item_payload)
+                if res_item and res_item.get("id"):
+                    nuevos_items_count += 1
+                    gtins_existentes.add(gtin_cod)
+                    resultado_items.append({**item, "estado": "SINCRONIZADO", "modelo_lio_id": fam_id, "id": res_item["id"]})
+            except Exception as e_s:
+                logger.warning(f"Aviso sync item {gtin_cod}: {e_s}")
 
         return {
             "total_analizados": len(items_coincidentes),
