@@ -4969,13 +4969,13 @@ def buscar_elementos_geclisa_endpoint(q: str = Query(..., min_length=1, descript
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/geclisa/elementos/{ele_id}/stock-lotes")
-def obtener_stock_lotes_geclisa_endpoint(ele_id: int):
+def obtener_stock_lotes_geclisa_endpoint(ele_id: int, forzar_refresco: bool = False):
     """
-    Obtiene el stock consolidado (Quirófano y Consignación) y lotes activos para un eleId de Geclisa.
+    Retorna el stock consolidado de Quirófano (dep 1), Consignación (dep 3) y Farmacia (dep 4) con sus lotes físicos.
     """
     try:
         from app.services.geclisa_client import geclisa_client
-        resumen = geclisa_client.obtener_resumen_stock_lotes(ele_id)
+        resumen = geclisa_client.obtener_resumen_stock_lotes(ele_id, forzar_refresco=forzar_refresco)
         return {"success": True, "resumen": resumen}
     except Exception as e:
         logger.error(f"Error al obtener stock y lotes para eleId {ele_id}: {e}")
@@ -5417,6 +5417,65 @@ def resolver_sku_lio_endpoint(payload: ResolverSkuPayload):
         }
     except Exception as e:
         logger.error(f"Error resolviendo SKU LIO: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ResolverSkuItemPayload(BaseModel):
+    id: Optional[str] = None
+    modelo_lio_id: Optional[str] = None
+    modelo_nombre: Optional[str] = None
+    dioptria: float
+    torico_valor: Optional[str] = None
+    es_torico: Optional[bool] = False
+
+class ResolverSkuLotePayload(BaseModel):
+    opciones: List[ResolverSkuItemPayload]
+    forzar_refresco: Optional[bool] = False
+
+@app.post("/api/modelos-lio/resolver-sku-lote")
+def resolver_sku_lote_endpoint(payload: ResolverSkuLotePayload):
+    """
+    Resuelve múltiples opciones de LIO de forma concurrente con sus existencias de Geclisa.
+    Ideal para calculo-lio que evalúa opciones A, B, Tórico y Sulcus simultáneamente.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _resolver_opcion(op: ResolverSkuItemPayload):
+            sku = resolver_sku_lio(
+                modelo_lio_id=op.modelo_lio_id,
+                modelo_nombre=op.modelo_nombre,
+                dioptria=op.dioptria,
+                torico_valor=op.torico_valor,
+                es_torico=bool(op.es_torico)
+            )
+            resumen_stock = None
+            if sku and sku.get("geclisa_ele_id"):
+                try:
+                    resumen_stock = geclisa_client.obtener_resumen_stock_lotes(
+                        sku["geclisa_ele_id"],
+                        forzar_refresco=bool(payload.forzar_refresco)
+                    )
+                except Exception as e_stk:
+                    logger.warning(f"Error al obtener stock para {sku.get('geclisa_ele_id')}: {e_stk}")
+
+            return {
+                "id_solicitud": op.id,
+                "mapeado": sku is not None,
+                "item": sku,
+                "stock": resumen_stock
+            }
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            resultados = list(executor.map(_resolver_opcion, payload.opciones))
+
+        return {
+            "success": True,
+            "total": len(resultados),
+            "resultados": resultados
+        }
+    except Exception as e:
+        logger.error(f"Error en resolver_sku_lote_endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -934,10 +934,12 @@ export default function LioSettingsCard() {
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <label className="text-[11px] font-black text-[var(--foreground)]">Cilindro Tórico</label>
-                        <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-600 dark:text-slate-400 cursor-pointer">
+                        <label className={`flex items-center gap-1.5 text-[11px] font-bold ${
+                          familiaActiva.admite_toricos ? 'text-slate-600 dark:text-slate-400 cursor-pointer' : 'text-slate-400 opacity-60 cursor-not-allowed'
+                        }`}>
                           <input
                             type="checkbox"
-                            checked={gtinEsTorico}
+                            checked={familiaActiva.admite_toricos ? gtinEsTorico : false}
                             disabled={!familiaActiva.admite_toricos}
                             onChange={(e) => setGtinEsTorico(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -947,14 +949,19 @@ export default function LioSettingsCard() {
                       </div>
                       <select
                         value={gtinToricoValor}
-                        disabled={!gtinEsTorico}
+                        disabled={!familiaActiva.admite_toricos || !gtinEsTorico}
                         onChange={(e) => setGtinToricoValor(e.target.value)}
-                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                        className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         {TORICOS_OPCIONES.map((t) => (
                           <option key={t} value={t}>{t}</option>
                         ))}
                       </select>
+                      {!familiaActiva.admite_toricos && (
+                        <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 block pt-0.5">
+                          ⚠️ Familia configurada como puramente esférica.
+                        </span>
+                      )}
                     </div>
                   </div>
 

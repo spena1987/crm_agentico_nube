@@ -4912,14 +4912,23 @@ def crear_modelo_lio_item(datos: Dict[str, Any]) -> Dict[str, Any]:
     if not supabase:
         return {}
     try:
+        modelo_lio_id = datos.get("modelo_lio_id")
+        es_torico = bool(datos.get("es_torico", False))
+
+        # Validación Estricta de Toricidad: No permitir GTINs tóricos si la familia es puramente esférica
+        if es_torico and modelo_lio_id:
+            fam_check = supabase.table("modelos_lio").select("admite_toricos, modelo").eq("id", modelo_lio_id).limit(1).execute()
+            if fam_check.data and not fam_check.data[0].get("admite_toricos", False):
+                raise ValueError(f"La familia clínica '{fam_check.data[0].get('modelo')}' está configurada como puramente esférica y no admite lentes tóricos (T2 a T9).")
+
         payload = {
-            "modelo_lio_id": datos.get("modelo_lio_id"),
+            "modelo_lio_id": modelo_lio_id,
             "geclisa_ele_id": int(datos.get("geclisa_ele_id")),
             "geclisa_ele_cod": str(datos.get("geclisa_ele_cod", "")).strip(),
             "geclisa_nombre": re.sub(r'[\x00-\x1f\x7f-\x9f]', '', str(datos.get("geclisa_nombre") or "")).strip(),
             "dioptria": float(datos.get("dioptria")),
-            "es_torico": bool(datos.get("es_torico", False)),
-            "torico_valor": datos.get("torico_valor") if datos.get("es_torico") else None,
+            "es_torico": es_torico,
+            "torico_valor": datos.get("torico_valor") if es_torico else None,
             "created_at": "now()",
             "updated_at": "now()"
         }

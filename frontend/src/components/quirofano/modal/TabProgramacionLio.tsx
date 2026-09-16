@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import Link from 'next/link'
 import {
   Calendar,
@@ -130,6 +130,24 @@ export default function TabProgramacionLio({
       setReservandoStock(false)
     }
   }
+
+  // Alerta de Reconciliación Presupuesto vs LIO Implante
+  const advertenciaReconciliacion = useMemo(() => {
+    const practica = (turno?.practica_nombre || turno?.asesorias_quirurgicas?.practica_nombre || '').toLowerCase()
+    const lente = (formData?.lente_tipo || '').toLowerCase()
+    const esTorico = Boolean(formData?.es_torico) || lente.includes('tóric') || lente.includes('toric')
+    const cotizoMonofocal = practica.includes('monofocal') || practica.includes('estandar') || practica.includes('básic') || practica.includes('basic')
+    const programoPremium = lente.includes('panoptix') || lente.includes('trifocal') || lente.includes('vivity') || lente.includes('edof') || lente.includes('bifocal') || esTorico
+
+    if (cotizoMonofocal && programoPremium && lente.length > 0) {
+      return {
+        tipo: 'warning',
+        titulo: 'Discrepancia Presupuesto vs LIO Programado',
+        mensaje: `El turno/presupuesto registra una práctica Estándar/Monofocal, pero se está programando un lente Premium (${formData.lente_tipo}${esTorico ? ' Tórico' : ''}). Verifique con Facturación/Asesoría para evitar inconsistencias de cobro y cobertura.`
+      }
+    }
+    return null
+  }, [turno?.practica_nombre, turno?.asesorias_quirurgicas?.practica_nombre, formData?.lente_tipo, formData?.es_torico])
 
   return (
     <form onSubmit={onGuardar} className="space-y-6">
@@ -571,6 +589,21 @@ export default function TabProgramacionLio({
                 </span>
               </div>
 
+              {/* Alerta de Reconciliación Presupuesto vs LIO Implante */}
+              {advertenciaReconciliacion && (
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-900 dark:text-amber-200 flex items-start gap-2.5">
+                  <AlertTriangle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <p className="font-black text-amber-800 dark:text-amber-300">
+                      {advertenciaReconciliacion.titulo}
+                    </p>
+                    <p className="mt-0.5 text-amber-700 dark:text-amber-400 font-medium">
+                      {advertenciaReconciliacion.mensaje}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {/* Si no hay opciones estructuradas, mostrar selector manual */}
               {!tieneOpciones && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
@@ -640,51 +673,68 @@ export default function TabProgramacionLio({
                       </div>
                     </div>
 
-                    {/* Stock Quirófano, Farmacia & Consignación */}
+                    {/* Semáforo Logístico Inteligente de Stock */}
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1 ${
-                        (skuResuelto.stock?.stock_total ?? skuResuelto.stock?.stock_quirofano ?? 0) > 0
-                          ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
-                          : 'bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400'
-                      }`}>
-                        <Package size={13} />
-                        <span>Stock Total: {skuResuelto.stock?.stock_total ?? skuResuelto.stock?.stock_quirofano ?? 0} un</span>
-                      </span>
+                      {/* Quirófano */}
+                      {(skuResuelto.stock?.stock_quirofano ?? 0) > 0 ? (
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 shadow-sm">
+                          <CheckCircle2 size={13} className="text-emerald-600" />
+                          <span>En Quirófano: {skuResuelto.stock.stock_quirofano} un (Listo en Sala)</span>
+                        </span>
+                      ) : (
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                          <AlertCircle size={13} />
+                          <span>Quirófano: 0 un</span>
+                        </span>
+                      )}
 
+                      {/* Farmacia Central */}
                       {(skuResuelto.stock?.stock_farmacia ?? 0) > 0 && (
-                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-cyan-500/10 border border-cyan-500/30 text-cyan-700 dark:text-cyan-300 flex items-center gap-1" title="En Farmacia / Depósito Central">
-                          <span>Farmacia: {skuResuelto.stock.stock_farmacia} un</span>
+                        <span className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 ${
+                          (skuResuelto.stock?.stock_quirofano ?? 0) === 0
+                            ? 'bg-blue-500/15 border border-blue-500/40 text-blue-700 dark:text-blue-300 animate-pulse'
+                            : 'bg-slate-100 dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                        }`} title="Depósito Central / Farmacia">
+                          <Building2 size={13} />
+                          <span>
+                            Farmacia Central: {skuResuelto.stock.stock_farmacia} un
+                            {(skuResuelto.stock?.stock_quirofano ?? 0) === 0 ? ' (⚠️ Trasladar a Quirófano)' : ''}
+                          </span>
                         </span>
                       )}
 
-                      {(skuResuelto.stock?.stock_quirofano ?? 0) > 0 && (
-                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 flex items-center gap-1" title="En Quirófano">
-                          <span>Quirófano: {skuResuelto.stock.stock_quirofano} un</span>
-                        </span>
-                      )}
-
+                      {/* Consignación */}
                       {(skuResuelto.stock?.stock_consignacion ?? 0) > 0 && (
                         <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                          <Package size={13} />
                           <span>Consignación: {skuResuelto.stock.stock_consignacion} un</span>
+                        </span>
+                      )}
+
+                      {/* Sin Stock Absoluto */}
+                      {(skuResuelto.stock?.stock_total ?? 0) === 0 && (skuResuelto.stock?.stock_quirofano ?? 0) === 0 && (skuResuelto.stock?.stock_farmacia ?? 0) === 0 && (
+                        <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                          <AlertTriangle size={13} />
+                          <span>Sin Stock en Clínica</span>
                         </span>
                       )}
                     </div>
                   </div>
 
-                  {/* Lotes disponibles para auto-completar (de todos los depósitos) */}
+                  {/* Lotes disponibles clasificados por ubicación */}
                   {(() => {
-                    const todosLotes = [
-                      ...(skuResuelto.stock?.lotes_quirofano || []),
-                      ...(skuResuelto.stock?.lotes_farmacia || []),
-                      ...(skuResuelto.stock?.lotes_consignacion || [])
+                    const lotesConOrigen = [
+                      ...(skuResuelto.stock?.lotes_quirofano || []).map((l: any) => ({ ...l, origen: 'Quirófano', color: 'border-emerald-400 text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/40' })),
+                      ...(skuResuelto.stock?.lotes_farmacia || []).map((l: any) => ({ ...l, origen: 'Farmacia', color: 'border-blue-400 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-950/40' })),
+                      ...(skuResuelto.stock?.lotes_consignacion || []).map((l: any) => ({ ...l, origen: 'Consignación', color: 'border-purple-400 text-purple-800 dark:text-purple-200 bg-purple-50 dark:bg-purple-950/40' }))
                     ]
-                    if (todosLotes.length === 0) return null
+                    if (lotesConOrigen.length === 0) return null
                     return (
                       <div className="pt-2 border-t border-cyan-200/60 dark:border-cyan-800/40 flex flex-wrap items-center gap-2">
                         <span className="text-[10px] font-bold text-cyan-800 dark:text-cyan-300">
                           Lotes físicos disponibles (Clic para cargar):
                         </span>
-                        {todosLotes.map((lot: any, lIdx: number) => (
+                        {lotesConOrigen.map((lot: any, lIdx: number) => (
                           <button
                             key={lIdx}
                             type="button"
@@ -696,9 +746,11 @@ export default function TabProgramacionLio({
                                 lente_vencimiento: lot.fechaVto && !lot.fechaVto.startsWith('9999') ? lot.fechaVto.split('T')[0] : prev.lente_vencimiento
                               }))
                             }}
-                            className="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-800 border border-cyan-300 dark:border-cyan-700 text-[10px] font-mono font-bold hover:bg-cyan-500 hover:text-black transition cursor-pointer"
+                            className={`px-2 py-0.5 rounded-lg border text-[10px] font-mono font-bold hover:brightness-95 transition cursor-pointer flex items-center gap-1 ${lot.color}`}
+                            title={`Ubicación: ${lot.origen} - Cant: ${lot.cantidad}`}
                           >
-                            Lote: {lot.lote} (Cant: {lot.cantidad})
+                            <span className="text-[9px] font-sans uppercase font-black opacity-90">[{lot.origen}]</span>
+                            <span>Lote: {lot.lote} ({lot.cantidad} un)</span>
                           </button>
                         ))}
                       </div>

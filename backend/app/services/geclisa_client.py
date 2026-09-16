@@ -37,9 +37,11 @@ class GeclisaClient:
         self.session = requests.Session()
         self.session.verify = False
         
-        # Caché de Token
+        # Caché de Token y Cerrojo Concurrente
         self._token = None
         self._token_expires_at = 0
+        import threading
+        self._token_lock = threading.Lock()
 
         # Caché en memoria para stock de LIOs (TTL 45 segundos)
         self._stock_lotes_cache: Dict[int, Any] = {}
@@ -92,18 +94,23 @@ class GeclisaClient:
         if self._token and ahora < self._token_expires_at - 60: # 60 segundos de holgura
             return self._token
 
-        if not self.username or not self.password:
-            raise ValueError("Faltan las variables de entorno GECLISA_USERNAME o GECLISA_PASSWORD en el servidor.")
+        with self._token_lock:
+            # Doble comprobación atómica
+            if self._token and time.time() < self._token_expires_at - 60:
+                return self._token
 
-        token_url = f"{self.base_url}/connect/token"
-        payload = {
-            "userName": self.username,
-            "password": self.password,
-            "grant_type": "password",
-            "client_id": "geclisaWeb"
-        }
+            if not self.username or not self.password:
+                raise ValueError("Faltan las variables de entorno GECLISA_USERNAME o GECLISA_PASSWORD en el servidor.")
 
-        logger.info(f"Solicitando nuevo Token JWT a Geclisa en: {token_url}...")
+            token_url = f"{self.base_url}/connect/token"
+            payload = {
+                "userName": self.username,
+                "password": self.password,
+                "grant_type": "password",
+                "client_id": "geclisaWeb"
+            }
+
+            logger.info(f"Solicitando nuevo Token JWT a Geclisa en: {token_url}...")
         t_start = time.time()
         try:
             # Petición Form URL Encoded usando _do_request
