@@ -5084,43 +5084,98 @@ def resolver_sku_lio(
 ) -> Optional[Dict[str, Any]]:
     """
     Busca el SKU / GTIN de Geclisa exacto para un modelo (por ID o nombre), dioptría y toricidad (T2-T9).
+    Consulta primero en modelos_lio_items y complementa con catalogo_maestro_gtin para cobertura 100%.
     """
     if not supabase:
         return None
     try:
         m_id = modelo_lio_id
         if not m_id and modelo_nombre:
-            # Limpiar nombre (remover marcas prefijadas y sufijos tipo 'Alcon — ' o '(Trifocal)')
-            clean = re.sub(r'^[^\—\-]+[\—\-]\s*', '', str(modelo_nombre)).strip()
+            clean = str(modelo_nombre).strip()
+            # Eliminar prefijos tipo 'Alcon — ' o sufijos tipo '(Trifocal)'
+            clean = re.sub(r'^[^\—\-]+[\—\-]\s*', '', clean).strip()
             clean = re.sub(r'\s*\([^)]*\)', '', clean).strip()
             if not clean:
                 clean = str(modelo_nombre).strip()
 
-            m_res = supabase.table("modelos_lio").select("id, modelo, marca, constante_a").ilike("modelo", f"%{clean}%").limit(1).execute()
-            if m_res.data:
-                m_id = m_res.data[0]["id"]
+            m_res = supabase.table("modelos_lio").select("id, modelo, marca, constante_a").execute()
+            familias = m_res.data or []
+            clean_low = clean.lower()
+            
+            # 1. Coincidencia directa o contenida
+            for fam in familias:
+                f_low = fam["modelo"].lower()
+                if f_low == clean_low or f_low in clean_low or clean_low in f_low:
+                    m_id = fam["id"]
+                    break
+            
+            # 2. Si no encontró, buscar por tokens clave significativos
+            if not m_id:
+                tokens = [t for t in re.split(r'[\s\-_]+', clean_low) if len(t) >= 4]
+                for fam in familias:
+                    f_low = fam["modelo"].lower()
+                    if any(tk in f_low for tk in tokens):
+                        m_id = fam["id"]
+                        break
 
-        if not m_id:
-            return None
-
-        # Redondear dioptria a 2 decimales
         diop_val = round(float(dioptria), 2)
-        q = supabase.table("modelos_lio_items").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)").eq("modelo_lio_id", m_id).eq("dioptria", diop_val)
+
+        # A) Buscar en modelos_lio_items
+        if m_id:
+            q = supabase.table("modelos_lio_items").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)").eq("modelo_lio_id", m_id).eq("dioptria", diop_val)
+            
+            if es_torico or (torico_valor and str(torico_valor).strip() not in ["", "null", "None", "0"]):
+                t_match = re.search(r'[Tt]?(\d)', str(torico_valor or ''))
+                t_num = t_match.group(1) if t_match else ''
+                if t_num:
+                    q = q.ilike("torico_valor", f"%T{t_num}%")
+                else:
+                    q = q.eq("es_torico", True)
+            else:
+                q = q.or_("torico_valor.is.null,es_torico.eq.false")
+
+            resp = q.limit(1).execute()
+            if resp.data and len(resp.data) > 0:
+                return resp.data[0]
+
+        # B) Fallback: Buscar en catalogo_maestro_gtin (unificado)
+        q_cat = supabase.table("catalogo_maestro_gtin").select("*, modelos_lio(id, marca, modelo, tipo_optica, constante_a)").eq("dioptria", diop_val).eq("activo", True)
         
+        fam_act = next((f for f in familias if f["id"] == m_id), None) if m_id else None
+        fam_nom = fam_act["modelo"] if fam_act else clean
+
+        if m_id and fam_nom:
+            q_cat = q_cat.or_(f"modelo_lio_id.eq.{m_id},familia_nombre.ilike.%{fam_nom}%")
+        elif m_id:
+            q_cat = q_cat.eq("modelo_lio_id", m_id)
+        elif fam_nom:
+            q_cat = q_cat.ilike("familia_nombre", f"%{fam_nom}%")
+
         if es_torico or (torico_valor and str(torico_valor).strip() not in ["", "null", "None", "0"]):
-            # Extraer número de cilindro T2..T9
             t_match = re.search(r'[Tt]?(\d)', str(torico_valor or ''))
             t_num = t_match.group(1) if t_match else ''
             if t_num:
-                q = q.ilike("torico_valor", f"%T{t_num}%")
+                q_cat = q_cat.ilike("torico_valor", f"%T{t_num}%")
             else:
-                q = q.eq("es_torico", True)
+                q_cat = q_cat.eq("es_torico", True)
         else:
-            q = q.or_("torico_valor.is.null,es_torico.eq.false")
+            q_cat = q_cat.or_("torico_valor.is.null,es_torico.eq.false")
 
-        resp = q.limit(1).execute()
-        if resp.data and len(resp.data) > 0:
-            return resp.data[0]
+        resp_cat = q_cat.limit(1).execute()
+        if resp_cat.data and len(resp_cat.data) > 0:
+            row = resp_cat.data[0]
+            return {
+                "id": row["id"],
+                "modelo_lio_id": row.get("modelo_lio_id") or m_id,
+                "geclisa_ele_id": row.get("geclisa_ele_id"),
+                "geclisa_ele_cod": row.get("geclisa_ele_cod") or row.get("gtin_14"),
+                "geclisa_nombre": row.get("nombre_producto"),
+                "dioptria": row.get("dioptria"),
+                "es_torico": row.get("es_torico", False),
+                "torico_valor": row.get("torico_valor"),
+                "modelos_lio": row.get("modelos_lio")
+            }
+
         return None
     except Exception as e:
         logger.error(f"Error al resolver SKU LIO ({modelo_lio_id}, {modelo_nombre}, {dioptria}, {torico_valor}, {es_torico}): {e}")
@@ -5697,7 +5752,24 @@ def crear_item_catalogo_maestro(datos: Dict[str, Any]) -> Dict[str, Any]:
         }
 
         res = supabase.table("catalogo_maestro_gtin").upsert(payload, on_conflict="gtin_14").execute()
-        return res.data[0] if res.data else {}
+        item_creado = res.data[0] if res.data else {}
+
+        # Sincronización automática con modelos_lio_items si está vinculado a familia LIO
+        if payload.get("categoria") == "LIO" and payload.get("modelo_lio_id") and payload.get("dioptria") is not None:
+            try:
+                crear_modelo_lio_item({
+                    "modelo_lio_id": payload["modelo_lio_id"],
+                    "geclisa_ele_id": payload.get("geclisa_ele_id"),
+                    "geclisa_ele_cod": payload.get("geclisa_ele_cod") or payload["gtin_14"],
+                    "geclisa_nombre": payload["nombre_producto"],
+                    "dioptria": payload["dioptria"],
+                    "es_torico": payload.get("es_torico", False),
+                    "torico_valor": payload.get("torico_valor")
+                })
+            except Exception as e_m:
+                logger.debug(f"Aviso sync modelos_lio_items en crear catalogo maestro: {e_m}")
+
+        return item_creado
     except Exception as e:
         logger.error(f"Error al crear item en catalogo maestro: {e}")
         raise e
@@ -5720,7 +5792,24 @@ def actualizar_item_catalogo_maestro(item_id: str, datos: Dict[str, Any]) -> Dic
             payload["constante_a"] = float(payload["constante_a"])
 
         res = supabase.table("catalogo_maestro_gtin").update(payload).eq("id", item_id).execute()
-        return res.data[0] if res.data else {}
+        item_act = res.data[0] if res.data else {}
+
+        # Sincronización automática con modelos_lio_items si está vinculado a familia LIO
+        if item_act and item_act.get("categoria") == "LIO" and item_act.get("modelo_lio_id") and item_act.get("dioptria") is not None:
+            try:
+                crear_modelo_lio_item({
+                    "modelo_lio_id": item_act["modelo_lio_id"],
+                    "geclisa_ele_id": item_act.get("geclisa_ele_id"),
+                    "geclisa_ele_cod": item_act.get("geclisa_ele_cod") or item_act.get("gtin_14"),
+                    "geclisa_nombre": item_act.get("nombre_producto") or f"LIO {item_act.get('gtin_14')}",
+                    "dioptria": item_act["dioptria"],
+                    "es_torico": item_act.get("es_torico", False),
+                    "torico_valor": item_act.get("torico_valor")
+                })
+            except Exception as e_m:
+                logger.debug(f"Aviso sync modelos_lio_items en actualizar catalogo maestro: {e_m}")
+
+        return item_act
     except Exception as e:
         logger.error(f"Error al actualizar item #{item_id} en catalogo maestro: {e}")
         raise e

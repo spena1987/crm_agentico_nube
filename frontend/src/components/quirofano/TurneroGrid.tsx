@@ -72,10 +72,38 @@ export default function TurneroGrid({
   }
 
   const numDiaHoy = getNumeroDiaSemana(fechaSeleccionada)
+  const algunQuirofanoOperaHoy = quirofanos.some((q) => (q.dias_operativos || [1, 2, 3, 4, 5]).includes(numDiaHoy))
+  const turnosHoy = turnos.filter((t) => t.fecha_cirugia === fechaSeleccionada)
+
+  // Empty State para Vista Día si ningún quirófano opera hoy y no hay cirugías extraordinarias
+  if (modo === 'dia' && !algunQuirofanoOperaHoy && turnosHoy.length === 0) {
+    return (
+      <div className="w-full bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm p-12 text-center space-y-3 animate-fade-in">
+        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 mx-auto flex items-center justify-center border border-amber-500/20 shadow-inner">
+          <CalendarX size={30} />
+        </div>
+        <h3 className="text-base font-bold text-[var(--foreground)]">
+          Quirófanos fuera de servicio para esta fecha
+        </h3>
+        <p className="text-xs text-[var(--secondary)] max-w-md mx-auto leading-relaxed">
+          Ninguna sala de quirófano se encuentra operativa habitualmente para la fecha seleccionada ({fechaSeleccionada}).
+        </p>
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => onSlotClick(quirofanoActual?.id || '', '08:00', fechaSeleccionada)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-all inline-flex items-center gap-2"
+          >
+            <span>+ Programar Guardia o Cirugía Extraordinaria</span>
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="w-full overflow-x-auto bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm">
-      <table className="w-full border-collapse text-left min-w-[850px]">
+      <table className="w-full border-collapse text-left min-w-[750px]">
         {/* Cabecera */}
         <thead>
           <tr className="bg-slate-100 dark:bg-slate-800/80 border-b border-[var(--border)]">
@@ -103,7 +131,7 @@ export default function TurneroGrid({
                           ⏱ {q.duracion_slot_minutos || 15}m
                         </span>
                         {!estaOperativoHoy && (
-                          <span className="text-[9px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded">
+                          <span className="text-[9px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
                             Cerrado Hoy
                           </span>
                         )}
@@ -119,13 +147,16 @@ export default function TurneroGrid({
                 const bloqueMed = bloquesMedicos.find(
                   (b) => b.quirofano_id === quirofanoActual?.id && b.dia_semana === d.numeroDia
                 )
+                const turnosEsteDia = turnos.filter(
+                  (t) => t.quirofano_id === quirofanoActual?.id && t.fecha_cirugia === d.fecha
+                )
 
                 return (
                   <th
                     key={d.fecha}
                     className={`p-3 text-xs font-bold border-r border-[var(--border)] last:border-0 ${
                       !estaOperativoEsteDia
-                        ? 'bg-slate-200/50 dark:bg-slate-800/40 text-slate-400'
+                        ? 'bg-amber-500/5 dark:bg-amber-950/20 text-slate-400'
                         : d.esHoy
                         ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
                         : 'text-[var(--foreground)]'
@@ -136,9 +167,15 @@ export default function TurneroGrid({
                         <div className="flex items-center gap-1.5">
                           <p className="uppercase text-[11px] font-bold">{d.nombreDia}</p>
                           {!estaOperativoEsteDia && (
-                            <span className="text-[9px] px-1 py-0.2 rounded bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-normal">
-                              No opera
-                            </span>
+                            turnosEsteDia.length > 0 ? (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold border border-amber-300 dark:border-amber-800">
+                                Excepción ({turnosEsteDia.length} QX)
+                              </span>
+                            ) : (
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-normal">
+                                No opera
+                              </span>
+                            )
                           )}
                         </div>
                         <p className="text-[10px] font-mono opacity-80">{d.fecha.slice(5)}</p>
@@ -177,17 +214,6 @@ export default function TurneroGrid({
                     const diasOp = q.dias_operativos || [1, 2, 3, 4, 5]
                     const estaOperativoHoy = diasOp.includes(numDiaHoy)
 
-                    if (!estaOperativoHoy) {
-                      return (
-                        <td
-                          key={q.id}
-                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
-                        >
-                          <span className="text-[9px] text-slate-400 italic">No operativo</span>
-                        </td>
-                      )
-                    }
-
                     const turnoInicio = turnos.find(
                       (t) =>
                         t.quirofano_id === q.id &&
@@ -209,6 +235,17 @@ export default function TurneroGrid({
                       const hasta = horaAMinutos(b.hora_hasta)
                       return slotMin >= desde && slotMin < hasta
                     })
+
+                    if (!estaOperativoHoy && !turnoInicio && !turnoCubriendo && !bloqueo) {
+                      return (
+                        <td
+                          key={q.id}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
+                        >
+                          <span className="text-[9px] text-slate-400 italic">No operativo</span>
+                        </td>
+                      )
+                    }
 
                     if (turnoCubriendo) {
                       return (
@@ -335,17 +372,6 @@ export default function TurneroGrid({
                     const diasOp = quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5]
                     const estaOperativoEsteDia = diasOp.includes(d.numeroDia)
 
-                    if (!estaOperativoEsteDia) {
-                      return (
-                        <td
-                          key={d.fecha}
-                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
-                        >
-                          <span className="text-[9px] text-slate-400 italic">Cerrado</span>
-                        </td>
-                      )
-                    }
-
                     const turnoInicio = turnos.find(
                       (t) =>
                         t.quirofano_id === qId &&
@@ -375,6 +401,22 @@ export default function TurneroGrid({
                         slotMin >= horaAMinutos(b.hora_desde) &&
                         slotMin < horaAMinutos(b.hora_hasta)
                     )
+
+                    // Si este día no es operativo habitual y no hay turno ni bloqueo en este slot:
+                    if (!estaOperativoEsteDia && !turnoInicio && !turnoCubriendo && !bloqueo) {
+                      return (
+                        <td
+                          key={d.fecha}
+                          onClick={() => onSlotClick(qId, horaSlot, d.fecha)}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 hover:opacity-100 hover:bg-blue-500/10 transition-all text-center cursor-pointer group"
+                          title="Día no operativo habitual. Clic para agendar guardia o jornada extraordinaria."
+                        >
+                          <span className="text-[9px] text-slate-400 group-hover:text-blue-600 italic font-medium">
+                            Cerrado (+ Agendar)
+                          </span>
+                        </td>
+                      )
+                    }
 
                     if (turnoCubriendo) {
                       return (

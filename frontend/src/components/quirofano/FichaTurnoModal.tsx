@@ -395,8 +395,14 @@ export default function FichaTurnoModal({
     }
 
     if (!esDiaOperativo(formData.fecha_cirugia, quirofanoActual)) {
-      setError(`La sala seleccionada (${quirofanoActual?.nombre}) no se encuentra operativa los ${diaSeleccionadoNombre}s. Por favor elija un día habilitado.`)
-      return
+      const continuar = confirm(
+        `Atención: La sala seleccionada (${quirofanoActual?.nombre}) no opera habitualmente los días ${diaSeleccionadoNombre}s.\n\n` +
+        `¿Desea registrar esta cirugía como Jornada Extraordinaria / Urgencia en día no operativo?`
+      )
+      if (!continuar) {
+        setError(`La sala seleccionada (${quirofanoActual?.nombre}) no se encuentra operativa los ${diaSeleccionadoNombre}s.`)
+        return
+      }
     }
 
     if (conflictoHorario && conflictoHorario.tipo === 'bloqueo') {

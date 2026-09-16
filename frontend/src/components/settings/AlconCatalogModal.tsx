@@ -137,6 +137,13 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
   const [incluirGuiasCorte, setIncluirGuiasCorte] = useState<boolean>(true)
   const [generandoPdf, setGenerandoPdf] = useState<boolean>(false)
 
+  // Notificaciones Toast
+  const [toast, setToast] = useState<{ mensaje: string; tipo: 'success' | 'error' | 'info' } | null>(null)
+  const mostrarToast = (mensaje: string, tipo: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ mensaje, tipo })
+    setTimeout(() => setToast(null), 3500)
+  }
+
   // Cargar catálogo desde la base de datos Supabase
   const fetchCatalogo = async () => {
     try {
@@ -303,12 +310,12 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
 
     const g14 = itemEnEdicion.gtin_14.trim()
     if (!g14 || g14.length < 8) {
-      alert('Debe ingresar un código GTIN válido (hasta 14 dígitos numéricos).')
+      mostrarToast('Debe ingresar un código GTIN válido (hasta 14 dígitos numéricos).', 'error')
       return
     }
 
     if (!itemEnEdicion.nombre_producto.trim()) {
-      alert('Debe ingresar el Nombre del Producto.')
+      mostrarToast('Debe ingresar el Nombre del Producto.', 'error')
       return
     }
 
@@ -379,7 +386,7 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       }
     } catch (e) {
       console.error('Error eliminando elemento:', e)
-      alert('Error de conexión al eliminar.')
+      mostrarToast('Error de conexión al eliminar.', 'error')
     }
   }
 
@@ -392,14 +399,14 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        alert(`⚡ Sincronización con Geclisa completada exitosamente:\n- ${data.total_sincronizados} productos vinculados con stock y eleId de Geclisa.`)
+        mostrarToast(`⚡ Sincronización con Geclisa completada exitosamente:\n- ${data.total_sincronizados} productos vinculados con stock y eleId de Geclisa.`, 'error')
         fetchCatalogo()
       } else {
         alert(data.detail || 'Error al sincronizar con Geclisa.')
       }
     } catch (e) {
       console.error('Error en sincronización Geclisa:', e)
-      alert('Error al conectar con el servicio de Geclisa.')
+      mostrarToast('Error al conectar con el servicio de Geclisa.', 'error')
     } finally {
       setSincronizandoGeclisa(false)
     }
@@ -507,7 +514,7 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       doc.save(filename)
     } catch (err) {
       console.error('Error al generar PDF de stickers:', err)
-      alert('Error al generar archivo PDF.')
+      mostrarToast('Error al generar archivo PDF.', 'error')
     } finally {
       setGenerandoPdf(false)
     }
@@ -518,8 +525,21 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
   if (!abierto) return null
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 md:p-6 animate-fade-in">
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-6xl w-full h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end animate-fade-in">
+      <div className="bg-[var(--card)] border-l border-[var(--border)] w-full max-w-5xl h-full flex flex-col shadow-2xl overflow-hidden animate-slide-left relative">
+        {/* BANNER TOAST FLOTANTE */}
+        {toast && (
+          <div className={`absolute top-4 left-6 right-6 z-50 p-3 rounded-2xl shadow-xl flex items-center justify-between text-xs font-bold animate-fade-in border ${
+            toast.tipo === 'success' ? 'bg-emerald-500 text-white border-emerald-400' :
+            toast.tipo === 'error' ? 'bg-rose-500 text-white border-rose-400' :
+            'bg-blue-500 text-white border-blue-400'
+          }`}>
+            <span>{toast.mensaje}</span>
+            <button type="button" onClick={() => setToast(null)} className="p-1 hover:bg-white/20 rounded-lg">
+              <X size={14} />
+            </button>
+          </div>
+        )}
         {/* CABECERA DEL MODAL */}
         <div className="p-5 md:p-6 border-b border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50/50 dark:bg-slate-900/50">
           <div className="flex items-center gap-3">

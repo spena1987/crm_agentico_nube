@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, Suspense } from 'react'
+import React, { useState, useEffect, useMemo, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -23,7 +23,9 @@ import {
   X,
   Check,
   Radio,
-  RefreshCw
+  RefreshCw,
+  Eye,
+  EyeOff
 } from 'lucide-react'
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
@@ -58,6 +60,11 @@ function ProgramacionQuirurgicaContent() {
 
   // Panel lateral de casos confirmados pendientes
   const [drawerCasosAbierto, setDrawerCasosAbierto] = useState(false)
+  const [mostrarDiasInhabiles, setMostrarDiasInhabiles] = useState(false)
+
+  // Quirófano actualmente activo y sus días operativos
+  const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
+  const diasOp: number[] = quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5]
 
   // Cálculo de fechas de la semana (Lunes a Domingo)
   const calcularDiasSemana = (fechaBaseStr: string) => {
@@ -86,9 +93,50 @@ function ProgramacionQuirurgicaContent() {
     return dias
   }
 
-  const diasSemana = calcularDiasSemana(fechaSeleccionada)
-  const fechaDesdeSemana = diasSemana[0].fecha
-  const fechaHastaSemana = diasSemana[6].fecha
+  const diasSemana = useMemo(() => calcularDiasSemana(fechaSeleccionada), [fechaSeleccionada])
+  const fechaDesdeSemana = diasSemana[0]?.fecha || fechaSeleccionada
+  const fechaHastaSemana = diasSemana[6]?.fecha || fechaSeleccionada
+
+  // Derivación de días visibles en la grilla semanal
+  const diasVisibles = useMemo(() => {
+    if (mostrarDiasInhabiles) return diasSemana
+
+    return diasSemana.filter((d) => {
+      // 1. Si la sala está configurada para operar este día
+      if (diasOp.includes(d.numeroDia)) return true
+
+      // 2. REGLA DE SALVAGUARDA POR CONTENIDO (QA):
+      // Si el día no es operativo pero contiene turnos o bloqueos agendados para esta sala,
+      // se debe mostrar obligatoriamente para evitar "turnos ciegos"
+      const tieneTurnos = turnos.some(
+        (t) => t.quirofano_id === quirofanoActual?.id && t.fecha_cirugia === d.fecha
+      )
+      const tieneBloqueos = bloqueos.some(
+        (b) => b.quirofano_id === quirofanoActual?.id && b.fecha === d.fecha
+      )
+
+      return tieneTurnos || tieneBloqueos
+    })
+  }, [diasSemana, diasOp, mostrarDiasInhabiles, turnos, bloqueos, quirofanoActual?.id])
+
+  const fechaInicioVisible = diasVisibles[0]?.fecha || fechaDesdeSemana
+  const fechaFinVisible = diasVisibles[diasVisibles.length - 1]?.fecha || fechaHastaSemana
+
+  // Texto dinámico para el toggle semanal
+  const textoVistaSemanal = useMemo(() => {
+    if (mostrarDiasInhabiles || diasOp.length === 7) return 'Vista Semanal (L-D)'
+    if (diasOp.length === 5 && diasOp.includes(1) && diasOp.includes(5)) return 'Vista Semanal (L-V)'
+    if (diasOp.length === 6 && diasOp.includes(1) && diasOp.includes(6)) return 'Vista Semanal (L-S)'
+    return `Vista Semanal (${diasOp.length} días)`
+  }, [diasOp, mostrarDiasInhabiles])
+
+  const getRegimenDiasTxt = (q: any) => {
+    const d: number[] = q?.dias_operativos || [1, 2, 3, 4, 5]
+    if (d.length === 5 && d.includes(1) && d.includes(5)) return 'L-V'
+    if (d.length === 6 && d.includes(1) && d.includes(6)) return 'L-S'
+    if (d.length === 7) return 'L-D'
+    return `${d.length}d`
+  }
 
   const fetchDatos = async () => {
     try {
@@ -187,8 +235,21 @@ function ProgramacionQuirurgicaContent() {
   }
 
   const cambiarDia = (delta: number) => {
-    const base = new Date(fechaSeleccionada + 'T12:00:00')
-    base.setDate(base.getDate() + delta)
+    let base = new Date(fechaSeleccionada + 'T12:00:00')
+    if (mostrarDiasInhabiles || diasOp.length === 7) {
+      base.setDate(base.getDate() + delta)
+      setFechaSeleccionada(base.toISOString().slice(0, 10))
+      return
+    }
+
+    // Saltar días no operativos
+    for (let i = 0; i < 7; i++) {
+      base.setDate(base.getDate() + delta)
+      const numDia = base.getDay() === 0 ? 7 : base.getDay()
+      if (diasOp.includes(numDia)) {
+        break
+      }
+    }
     setFechaSeleccionada(base.toISOString().slice(0, 10))
   }
 
@@ -223,8 +284,6 @@ function ProgramacionQuirurgicaContent() {
       console.error('Error al eliminar bloqueo:', err)
     }
   }
-
-  const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
 
   return (
     <div className="space-y-6 animate-fade-in p-4 md:p-8 max-w-[1600px] mx-auto">
@@ -314,7 +373,7 @@ function ProgramacionQuirurgicaContent() {
               }`}
             >
               <CalendarDays size={14} />
-              <span>Vista Semanal (L-D)</span>
+              <span>{textoVistaSemanal}</span>
             </button>
           </div>
 
@@ -356,6 +415,9 @@ function ProgramacionQuirurgicaContent() {
                 <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
                 <span>{q.nombre}</span>
                 <span className="text-[10px] font-mono opacity-80 font-normal">({q.duracion_slot_minutos || 15}m)</span>
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold ml-1">
+                  {getRegimenDiasTxt(q)}
+                </span>
               </button>
             )
           })}
@@ -393,20 +455,38 @@ function ProgramacionQuirurgicaContent() {
             <span className="text-xs font-bold text-[var(--foreground)]">
               {modoVista === 'dia'
                 ? `Día: ${fechaSeleccionada}`
-                : `Semana: ${fechaDesdeSemana} al ${fechaHastaSemana}`}
+                : `Semana: ${fechaInicioVisible} al ${fechaFinVisible}${!mostrarDiasInhabiles && diasVisibles.length < 7 ? ` (${diasVisibles.length} días hábiles)` : ''}`}
             </span>
           </div>
         </div>
 
-        {/* Input Selector de Fecha */}
-        <div className="flex items-center gap-2">
-          <label className="text-[11px] font-semibold text-[var(--secondary)]">Ir a Fecha:</label>
-          <input
-            type="date"
-            value={fechaSeleccionada}
-            onChange={(e) => setFechaSeleccionada(e.target.value)}
-            className="px-3 py-1.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
-          />
+        {/* Input Selector de Fecha y Toggle de Días Inhábiles */}
+        <div className="flex items-center gap-3">
+          {modoVista === 'semana' && (
+            <button
+              type="button"
+              onClick={() => setMostrarDiasInhabiles(!mostrarDiasInhabiles)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border shadow-sm ${
+                mostrarDiasInhabiles
+                  ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                  : 'bg-[var(--card)] text-[var(--secondary)] border-[var(--border)] hover:text-[var(--foreground)] hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+              title="Alternar visualización de días no operativos (Sábados y Domingos)"
+            >
+              {mostrarDiasInhabiles ? <Eye size={14} className="text-amber-500" /> : <EyeOff size={14} />}
+              <span>{mostrarDiasInhabiles ? '7 Días (Con Cerrados)' : 'Solo Días Operativos'}</span>
+            </button>
+          )}
+
+          <div className="flex items-center gap-2">
+            <label className="text-[11px] font-semibold text-[var(--secondary)]">Ir a Fecha:</label>
+            <input
+              type="date"
+              value={fechaSeleccionada}
+              onChange={(e) => setFechaSeleccionada(e.target.value)}
+              className="px-3 py-1.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
+            />
+          </div>
         </div>
       </div>
 
@@ -425,7 +505,7 @@ function ProgramacionQuirurgicaContent() {
           bloqueos={bloqueos}
           bloquesMedicos={bloquesMedicos}
           fechaSeleccionada={fechaSeleccionada}
-          diasSemana={diasSemana}
+          diasSemana={diasVisibles}
           onSlotClick={handleSlotClick}
           onTurnoClick={handleTurnoClick}
           onEliminarBloqueo={handleEliminarBloqueo}

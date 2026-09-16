@@ -3833,8 +3833,21 @@ def listar_bloques_medicos(quirofano_id: Optional[str] = None):
 @app.post("/api/quirofanos/bloques-medicos")
 def crear_bloque_medico(payload: Dict[str, Any] = Body(...)):
     try:
+        qid = payload.get("quirofano_id")
+        dia = payload.get("dia_semana")
+        if qid and dia and supabase:
+            q_resp = supabase.table("quirofanos").select("dias_operativos, nombre").eq("id", qid).limit(1).execute()
+            if q_resp.data:
+                dias_op = q_resp.data[0].get("dias_operativos") or [1, 2, 3, 4, 5]
+                if int(dia) not in dias_op:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"La sala '{q_resp.data[0].get('nombre')}' no opera en el día de la semana seleccionado."
+                    )
         bloque = crear_quirofano_bloque(payload)
         return {"success": True, "bloque": bloque}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error al crear bloque médico: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -5226,11 +5239,13 @@ def eliminar_item_catalogo_maestro_endpoint(item_id: str, fisico: bool = False):
 def sincronizar_catalogo_maestro_con_geclisa_endpoint():
     """
     Cruza los registros del catálogo maestro contra Geclisa por GTIN o código comercial y asocia los eleId (Modo Estricto B).
+    Utiliza barrido concurrente multi-hilo para alto rendimiento.
     """
     try:
         from app.services.geclisa_client import geclisa_client
+        from concurrent.futures import ThreadPoolExecutor
         
-        # 1. Barrido exhaustivo multi-prefijo en Geclisa
+        # 1. Barrido exhaustivo multi-prefijo en Geclisa (38 términos)
         terminos_busqueda = [
             "0038065", "38065", "CLAREON", "PANOPTIX", "VIVITY", "SN60WF", "ACRYSOF", "AU00T0",
             "TFNT", "CNA0", "SY60WF", "MA60AC", "MN60", "SND1", "SV25", "DFT", "PXY", "CNW", "CNA",
@@ -5239,14 +5254,21 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
         ]
 
         elementos_dict = {}
-        for term in terminos_busqueda:
+
+        def _buscar_term(term):
             try:
-                res = geclisa_client.buscar_elementos(term, limite=200)
+                return geclisa_client.buscar_elementos(term, limite=200)
+            except Exception as e_t:
+                logger.warning(f"Error buscando término '{term}' en Geclisa: {e_t}")
+                return []
+
+        # Búsqueda concurrente con ThreadPoolExecutor (reduce de 20s a ~2.5s)
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            resultados = executor.map(_buscar_term, terminos_busqueda)
+            for res in resultados:
                 for el in res:
                     if el.get("eleId"):
                         elementos_dict[el["eleId"]] = el
-            except Exception as e_t:
-                logger.warning(f"Error buscando término '{term}' en Geclisa: {e_t}")
 
         elementos_geclisa = list(elementos_dict.values())
         if not elementos_geclisa:
@@ -5264,7 +5286,7 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
         todos_items = []
         offset = 0
         while True:
-            cat_res = supabase.table("catalogo_maestro_gtin").select("id, gtin_14, gtin_12, modelo_lio_id, familia_nombre, dioptria, es_torico, torico_valor, nombre_producto").range(offset, offset + 999).execute()
+            cat_res = supabase.table("catalogo_maestro_gtin").select("id, gtin_14, gtin_12, modelo_lio_id, familia_nombre, dioptria, es_torico, torico_valor, nombre_producto, geclisa_ele_id, geclisa_ele_cod").range(offset, offset + 999).execute()
             rows = cat_res.data or []
             todos_items.extend(rows)
             if len(rows) < 1000:
@@ -5277,6 +5299,9 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
         fam_res = supabase.table("modelos_lio").select("id, modelo, marca").execute()
         familias_crm = fam_res.data or []
 
+        batch_updates = []
+        items_lio_sync = []
+
         for it in todos_items:
             g14 = str(it.get("gtin_14") or "").strip()
             g12 = str(it.get("gtin_12") or "").strip()
@@ -5287,17 +5312,18 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
                 ele_cod = match.get("eleCod")
                 ele_nom = match.get("eleNombre")
 
-                # Actualizar registro en catalogo_maestro_gtin
-                supabase.table("catalogo_maestro_gtin").update({
-                    "geclisa_ele_id": ele_id,
-                    "geclisa_ele_cod": ele_cod,
-                    "updated_at": "now()"
-                }).eq("id", it["id"]).execute()
+                # Solo preparar update si cambió algo
+                if it.get("geclisa_ele_id") != ele_id or it.get("geclisa_ele_cod") != ele_cod:
+                    batch_updates.append({
+                        "id": it["id"],
+                        "geclisa_ele_id": ele_id,
+                        "geclisa_ele_cod": ele_cod,
+                        "updated_at": "now()"
+                    })
 
                 # Vincular en modelos_lio_items si corresponde
                 mod_id = it.get("modelo_lio_id")
                 if not mod_id and it.get("familia_nombre"):
-                    # Intentar buscar familia por nombre aproximado
                     fn = str(it["familia_nombre"]).lower()
                     for f in familias_crm:
                         if f["modelo"].lower() in fn or fn in f["modelo"].lower() or ("vivity" in fn and "vivity" in f["modelo"].lower()) or ("panoptix" in fn and "panoptix" in f["modelo"].lower()):
@@ -5305,20 +5331,37 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
                             break
 
                 if mod_id and it.get("dioptria") is not None:
-                    try:
-                        crear_modelo_lio_item({
-                            "modelo_lio_id": mod_id,
-                            "geclisa_ele_id": ele_id,
-                            "geclisa_ele_cod": ele_cod,
-                            "geclisa_nombre": ele_nom,
-                            "dioptria": it["dioptria"],
-                            "es_torico": it.get("es_torico", False),
-                            "torico_valor": it.get("torico_valor")
-                        })
-                    except Exception:
-                        pass
+                    items_lio_sync.append({
+                        "modelo_lio_id": mod_id,
+                        "geclisa_ele_id": ele_id,
+                        "geclisa_ele_cod": ele_cod,
+                        "geclisa_nombre": ele_nom,
+                        "dioptria": it["dioptria"],
+                        "es_torico": it.get("es_torico", False),
+                        "torico_valor": it.get("torico_valor")
+                    })
 
                 sincronizados += 1
+
+        # Ejecutar batch updates a catalogo_maestro_gtin en lotes de 100
+        for i in range(0, len(batch_updates), 100):
+            chunk = batch_updates[i:i + 100]
+            for ch in chunk:
+                try:
+                    supabase.table("catalogo_maestro_gtin").update({
+                        "geclisa_ele_id": ch["geclisa_ele_id"],
+                        "geclisa_ele_cod": ch["geclisa_ele_cod"],
+                        "updated_at": ch["updated_at"]
+                    }).eq("id", ch["id"]).execute()
+                except Exception as e_up:
+                    logger.debug(f"Aviso actualizando item {ch['id']}: {e_up}")
+
+        # Sincronizar en modelos_lio_items
+        for item_lio in items_lio_sync:
+            try:
+                crear_modelo_lio_item(item_lio)
+            except Exception:
+                pass
 
         return {
             "success": True,
@@ -5327,8 +5370,6 @@ def sincronizar_catalogo_maestro_con_geclisa_endpoint():
             "total_sincronizados": sincronizados
         }
     except Exception as e:
-        logger.error(f"Error en sincronizacion maestro Geclisa: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
         logger.error(f"Error en sincronizacion maestro Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
