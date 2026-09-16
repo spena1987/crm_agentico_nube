@@ -41,6 +41,10 @@ class GeclisaClient:
         self._token = None
         self._token_expires_at = 0
 
+        # Caché en memoria para stock de LIOs (TTL 45 segundos)
+        self._stock_lotes_cache: Dict[int, Any] = {}
+        self._stock_cache_ttl: float = 45.0
+
     def _do_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
         Ejecuta una petición HTTP contra Geclisa con reintento automático y fallback por IP si falla la resolución DNS.
@@ -1835,18 +1839,51 @@ class GeclisaClient:
             logger.error(f"Error al consultar lotes de eleId={ele_id}: {e}")
             return []
 
-    def obtener_resumen_stock_lotes(self, ele_id: int) -> Dict[str, Any]:
+    def limpiar_cache_stock(self, ele_id: Optional[int] = None):
+        """Limpia la caché de stock en memoria para un elemento específico o toda la caché."""
+        if ele_id is not None:
+            self._stock_lotes_cache.pop(ele_id, None)
+        else:
+            self._stock_lotes_cache.clear()
+
+    def obtener_resumen_stock_lotes(self, ele_id: int, forzar_refresco: bool = False) -> Dict[str, Any]:
         """
         Retorna un resumen consolidado de stock en Quirófano (dep 1), Consignación (dep 3) y Farmacia/Almacén (dep 4) con sus lotes activos.
+        Utiliza ThreadPoolExecutor para consultar los 3 depósitos y lotes en paralelo y caché TTL de 45 segundos.
         """
-        stock_quirofano = self.obtener_stock_elemento(ele_id, dep_id=1)
-        stock_consignacion = self.obtener_stock_elemento(ele_id, dep_id=3)
-        stock_farmacia = self.obtener_stock_elemento(ele_id, dep_id=4)
-        lotes_quirofano = self.obtener_lotes_elemento(ele_id, dep_id=1)
-        lotes_consignacion = self.obtener_lotes_elemento(ele_id, dep_id=3)
-        lotes_farmacia = self.obtener_lotes_elemento(ele_id, dep_id=4)
+        now = time.time()
+        if not forzar_refresco and ele_id in self._stock_lotes_cache:
+            ts, cached_data = self._stock_lotes_cache[ele_id]
+            if (now - ts) < self._stock_cache_ttl:
+                return cached_data
 
-        return {
+        from concurrent.futures import ThreadPoolExecutor
+
+        try:
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                fut_s1 = executor.submit(self.obtener_stock_elemento, ele_id, dep_id=1)
+                fut_s3 = executor.submit(self.obtener_stock_elemento, ele_id, dep_id=3)
+                fut_s4 = executor.submit(self.obtener_stock_elemento, ele_id, dep_id=4)
+                fut_l1 = executor.submit(self.obtener_lotes_elemento, ele_id, dep_id=1)
+                fut_l3 = executor.submit(self.obtener_lotes_elemento, ele_id, dep_id=3)
+                fut_l4 = executor.submit(self.obtener_lotes_elemento, ele_id, dep_id=4)
+
+                stock_quirofano = fut_s1.result()
+                stock_consignacion = fut_s3.result()
+                stock_farmacia = fut_s4.result()
+                lotes_quirofano = fut_l1.result()
+                lotes_consignacion = fut_l3.result()
+                lotes_farmacia = fut_l4.result()
+        except Exception as e_pool:
+            logger.warning(f"Error en consulta concurrente de stock para eleId={ele_id}, fallback secuencial: {e_pool}")
+            stock_quirofano = self.obtener_stock_elemento(ele_id, dep_id=1)
+            stock_consignacion = self.obtener_stock_elemento(ele_id, dep_id=3)
+            stock_farmacia = self.obtener_stock_elemento(ele_id, dep_id=4)
+            lotes_quirofano = self.obtener_lotes_elemento(ele_id, dep_id=1)
+            lotes_consignacion = self.obtener_lotes_elemento(ele_id, dep_id=3)
+            lotes_farmacia = self.obtener_lotes_elemento(ele_id, dep_id=4)
+
+        resumen = {
             "ele_id": ele_id,
             "stock_quirofano": stock_quirofano,
             "stock_consignacion": stock_consignacion,
@@ -1854,8 +1891,12 @@ class GeclisaClient:
             "stock_total": stock_quirofano + stock_consignacion + stock_farmacia,
             "lotes_quirofano": lotes_quirofano,
             "lotes_consignacion": lotes_consignacion,
-            "lotes_farmacia": lotes_farmacia
+            "lotes_farmacia": lotes_farmacia,
+            "cached_at": now
         }
+
+        self._stock_lotes_cache[ele_id] = (now, resumen)
+        return resumen
 
     # ====================================================================
     # SCRIPT DE DIAGNÓSTICO E INICIALIZACIÓN
