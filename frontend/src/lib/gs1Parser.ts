@@ -91,7 +91,11 @@ export function parseGs1Code(rawInput: string): Gs1ParsedData {
     return result
   }
 
-  const raw = rawInput.trim()
+  let raw = rawInput.trim()
+  // Limpiar prefijo de simbología AIM (ej: ]d2 para GS1 DataMatrix, ]Q3 para GS1 QR, ]C1 para GS1-128)
+  if (raw.startsWith(']d2') || raw.startsWith(']Q3') || raw.startsWith(']C1') || raw.startsWith(']E0') || raw.startsWith(']e0')) {
+    raw = raw.substring(3)
+  }
 
   // 1. GS1 Digital Link (ej. https://id.gs1.org/01/00380658428867/21/SN123?17=281130&10=LOT456)
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
@@ -231,3 +235,195 @@ export function parseGs1Code(rawInput: string): Gs1ParsedData {
 
   return result
 }
+
+// ====================================================================
+// PROCESAMIENTO UNIVERSAL DE ENTRADAS DE ESCÁNER (1D COMÚN Y 2D GS1)
+// ====================================================================
+
+export type TipoCodigoDetectado =
+  | 'gs1_datamatrix'
+  | 'gs1_stream'
+  | 'upc_a'
+  | 'ean_13'
+  | 'ean_8'
+  | 'gtin_14'
+  | 'texto_alfanumerico'
+
+export interface ResultadoLecturaCodigo {
+  gtin14: string | null         // GTIN normalizado a 14 dígitos (ej: "00380658437817")
+  gtinOriginal: string | null   // GTIN original antes de padding con ceros (12 o 13 dígitos)
+  tipoCodigo: TipoCodigoDetectado
+  descripcionTipo: string       // Mensaje descriptivo para badges de interfaz
+  lote: string | null           // Si vino de GS1
+  vencimiento: string | null    // YYYY-MM-DD si vino de GS1
+  serie: string | null          // Si vino de GS1
+  esGs1: boolean                // true si es formato GS1 compuesto
+  esCodigoBarras1D: boolean     // true si es UPC-A, EAN-13, EAN-8 o GTIN-14 común
+  esValidoParaGtin: boolean     // true si se resolvió un GTIN-14 válido
+  rawOriginal: string
+}
+
+/**
+ * Procesa cualquier entrada proveniente de un lector de código de barras (1D o 2D) o teclado,
+ * identificando el estándar (GS1 DataMatrix, UPC-A, EAN-13, ITF-14 o texto libre) y
+ * normalizando inmediatamente el GTIN de 14 dígitos.
+ */
+export function procesarLecturaCodigo(rawInput: string): ResultadoLecturaCodigo {
+  const rawOriginal = rawInput || ''
+  // Limpiar saltos de línea (\r, \n) típicos del sufijo Enter del escáner y espacios
+  let clean = rawOriginal.replace(/[\r\n\t]/g, '').trim()
+
+  const fallbackResult: ResultadoLecturaCodigo = {
+    gtin14: null,
+    gtinOriginal: null,
+    tipoCodigo: 'texto_alfanumerico',
+    descripcionTipo: 'Texto / Búsqueda libre',
+    lote: null,
+    vencimiento: null,
+    serie: null,
+    esGs1: false,
+    esCodigoBarras1D: false,
+    esValidoParaGtin: false,
+    rawOriginal
+  }
+
+  if (!clean) return fallbackResult
+
+  // 1. Limpieza de prefijos de simbología AIM emitidos por escáneres 2D/1D
+  // ]d2 = GS1 DataMatrix, ]Q3 = GS1 QR, ]C1 = GS1-128, ]E0 = EAN-13, ]A0 = Code 39
+  let sinPrefijoAim = clean
+  if (clean.startsWith(']d2') || clean.startsWith(']Q3') || clean.startsWith(']C1')) {
+    sinPrefijoAim = clean.substring(3)
+  } else if (clean.startsWith(']E0') || clean.startsWith(']e0')) {
+    sinPrefijoAim = clean.substring(3)
+  }
+
+  // 2. Detección de GS1 con identificadores entre paréntesis: (01)0038065...
+  if (sinPrefijoAim.includes('(01)')) {
+    const parsed = parseGs1Code(sinPrefijoAim)
+    if (parsed.gtin14 && parsed.gtin14.length === 14) {
+      return {
+        gtin14: parsed.gtin14,
+        gtinOriginal: parsed.gtin,
+        tipoCodigo: 'gs1_datamatrix',
+        descripcionTipo: 'GS1 DataMatrix / GS1-128',
+        lote: parsed.lote,
+        vencimiento: parsed.vencimiento,
+        serie: parsed.serie,
+        esGs1: true,
+        esCodigoBarras1D: false,
+        esValidoParaGtin: true,
+        rawOriginal
+      }
+    }
+  }
+
+  // 3. Detección de GS1 stream continuo FNC1 (ej: 010038065843781717281130...)
+  if (/^01\d{14}/.test(sinPrefijoAim) && sinPrefijoAim.length > 16) {
+    const parsed = parseGs1Code(sinPrefijoAim)
+    if (parsed.gtin14 && parsed.gtin14.length === 14) {
+      return {
+        gtin14: parsed.gtin14,
+        gtinOriginal: parsed.gtin,
+        tipoCodigo: 'gs1_stream',
+        descripcionTipo: 'GS1 DataMatrix (Stream FNC1)',
+        lote: parsed.lote,
+        vencimiento: parsed.vencimiento,
+        serie: parsed.serie,
+        esGs1: true,
+        esCodigoBarras1D: false,
+        esValidoParaGtin: true,
+        rawOriginal
+      }
+    }
+  }
+
+  // 4. Detección de Códigos de Barra Comunes 1D (Numéricos Puros)
+  const soloDigitos = sinPrefijoAim.replace(/\D/g, '')
+
+  if (soloDigitos === sinPrefijoAim) {
+    // UPC-A (12 dígitos numéricos — Estándar Alcon USA)
+    if (sinPrefijoAim.length === 12) {
+      const gtin14 = '00' + sinPrefijoAim
+      return {
+        gtin14,
+        gtinOriginal: sinPrefijoAim,
+        tipoCodigo: 'upc_a',
+        descripcionTipo: 'Código de Barra 1D (UPC-A → GTIN-14)',
+        lote: null,
+        vencimiento: null,
+        serie: null,
+        esGs1: false,
+        esCodigoBarras1D: true,
+        esValidoParaGtin: true,
+        rawOriginal
+      }
+    }
+
+    // EAN-13 (13 dígitos numéricos — Estándar Internacional / Nacional)
+    if (sinPrefijoAim.length === 13) {
+      const gtin14 = '0' + sinPrefijoAim
+      return {
+        gtin14,
+        gtinOriginal: sinPrefijoAim,
+        tipoCodigo: 'ean_13',
+        descripcionTipo: 'Código de Barra 1D (EAN-13 → GTIN-14)',
+        lote: null,
+        vencimiento: null,
+        serie: null,
+        esGs1: false,
+        esCodigoBarras1D: true,
+        esValidoParaGtin: true,
+        rawOriginal
+      }
+    }
+
+    // GTIN-14 / ITF-14 (14 dígitos numéricos directos)
+    if (sinPrefijoAim.length === 14) {
+      return {
+        gtin14: sinPrefijoAim,
+        gtinOriginal: sinPrefijoAim,
+        tipoCodigo: 'gtin_14',
+        descripcionTipo: 'Código de Barra GTIN-14',
+        lote: null,
+        vencimiento: null,
+        serie: null,
+        esGs1: false,
+        esCodigoBarras1D: true,
+        esValidoParaGtin: true,
+        rawOriginal
+      }
+    }
+
+    // EAN-8 (8 dígitos numéricos)
+    if (sinPrefijoAim.length === 8) {
+      const gtin14 = '000000' + sinPrefijoAim
+      return {
+        gtin14,
+        gtinOriginal: sinPrefijoAim,
+        tipoCodigo: 'ean_8',
+        descripcionTipo: 'Código de Barra 1D (EAN-8 → GTIN-14)',
+        lote: null,
+        vencimiento: null,
+        serie: null,
+        esGs1: false,
+        esCodigoBarras1D: true,
+        esValidoParaGtin: true,
+        rawOriginal
+      }
+    }
+  }
+
+  // 5. Fallback a texto normal (nombre de modelo, dioptría, referencia o código interno alfanumérico)
+  return fallbackResult
+}
+
+/**
+ * Extrae directamente el GTIN-14 normalizado si la entrada corresponde a un código
+ * de escáner (GS1 o 1D común); de lo contrario retorna la cadena original limpia.
+ */
+export function extraerGtinDeEntrada(rawInput: string): string {
+  const res = procesarLecturaCodigo(rawInput)
+  return res.gtin14 || (rawInput || '').replace(/[\r\n\t]/g, '').trim()
+}
+

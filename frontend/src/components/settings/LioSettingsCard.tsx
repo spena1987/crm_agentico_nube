@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import AlconCatalogModal from './AlconCatalogModal'
+import { procesarLecturaCodigo, extraerGtinDeEntrada } from '@/lib/gs1Parser'
 
 // Tipos de datos
 export interface ModeloLioItem {
@@ -100,27 +101,6 @@ const TORICOS_OPCIONES = [
   'T9 (Cil 6.00 D)'
 ]
 
-// Extrae el código GTIN limpio de una cadena de código de barras
-function extractGtinFromBarcode(raw: string): { gtin: string } {
-  const clean = raw.trim()
-  const matchAi01 = clean.match(/\(01\)(\d{14})/)
-  if (matchAi01) {
-    return { gtin: matchAi01[1] }
-  }
-  const match01NoParentheses = clean.match(/^01(\d{14})/)
-  if (match01NoParentheses) {
-    return { gtin: match01NoParentheses[1] }
-  }
-  if (clean.length === 14 && /^\d+$/.test(clean)) {
-    return { gtin: clean }
-  }
-  if (clean.length > 16 && clean.startsWith('01')) {
-    const gtin = clean.slice(2, 16)
-    return { gtin }
-  }
-  return { gtin: clean }
-}
-
 export default function LioSettingsCard() {
   // Datos
   const [familias, setFamilias] = useState<ModeloLio[]>([])
@@ -157,6 +137,7 @@ export default function LioSettingsCard() {
   const [gtinEsTorico, setGtinEsTorico] = useState<boolean>(false)
   const [gtinToricoValor, setGtinToricoValor] = useState<string>('T3 (Cil 1.50 D)')
   const [guardandoGtin, setGuardandoGtin] = useState(false)
+  const [infoEscaneoBlister, setInfoEscaneoBlister] = useState<{ texto: string; esValido: boolean } | null>(null)
 
   // Popover interactivo de stock
   const [popoverStockGtin, setPopoverStockGtin] = useState<string | null>(null)
@@ -373,7 +354,7 @@ export default function LioSettingsCard() {
     setElementoGeclisaSeleccionado(el)
     setGeclisaResultados([])
     if (el.eleCod) {
-      const { gtin } = extractGtinFromBarcode(el.eleCod)
+      const gtin = extraerGtinDeEntrada(el.eleCod)
       setScannerInput(gtin)
       validarUnicidadGtin(gtin)
     }
@@ -388,6 +369,26 @@ export default function LioSettingsCard() {
       const num = matchTor[1]
       const found = TORICOS_OPCIONES.find((t) => t.startsWith(`T${num}`))
       if (found) setGtinToricoValor(found)
+    }
+  }
+
+  // Procesamiento de lectura de GTIN para blíster en familia clínica (1D común y GS1 DataMatrix)
+  const handleCambioScannerInput = (val: string) => {
+    const res = procesarLecturaCodigo(val)
+    if (res.esValidoParaGtin && res.gtin14) {
+      setScannerInput(res.gtin14)
+      validarUnicidadGtin(res.gtin14)
+      setInfoEscaneoBlister({
+        texto: res.esGs1
+          ? `✔ GS1 DataMatrix: GTIN-14 (${res.gtin14})`
+          : `✔ ${res.descripcionTipo}: ${res.gtin14}`,
+        esValido: true
+      })
+      handleBuscarEnGeclisa(res.gtin14)
+    } else {
+      setScannerInput(val)
+      validarUnicidadGtin(val)
+      setInfoEscaneoBlister(null)
     }
   }
 
@@ -916,13 +917,16 @@ export default function LioSettingsCard() {
                         <input
                           type="text"
                           value={scannerInput}
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setScannerInput(val)
-                            const { gtin } = extractGtinFromBarcode(val)
-                            validarUnicidadGtin(gtin)
+                          onChange={(e) => handleCambioScannerInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              if (scannerInput.trim()) {
+                                handleBuscarEnGeclisa(scannerInput)
+                              }
+                            }
                           }}
-                          placeholder="Escanea el código de barras o ingresa el GTIN / SKU..."
+                          placeholder="Escanea con lector (DataMatrix / 1D) o ingresa GTIN / SKU..."
                           className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] font-mono text-xs text-[var(--foreground)] outline-none focus:ring-2 focus:ring-blue-500"
                         />
                         <button
@@ -935,6 +939,13 @@ export default function LioSettingsCard() {
                           <span>Buscar en Geclisa</span>
                         </button>
                       </div>
+
+                      {infoEscaneoBlister && (
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 animate-fade-in">
+                          <Barcode size={13} />
+                          <span>{infoEscaneoBlister.texto}</span>
+                        </div>
+                      )}
 
                       {/* Resultados del Autocomplete de Geclisa */}
                       {geclisaResultados.length > 0 && (

@@ -34,6 +34,7 @@ import {
 import { BACKEND_URL } from '@/lib/api'
 import QRCode from 'qrcode'
 import jsPDF from 'jspdf'
+import { procesarLecturaCodigo } from '@/lib/gs1Parser'
 
 export interface ItemCatalogoMaestro {
   id?: string
@@ -142,6 +143,27 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
   const mostrarToast = (mensaje: string, tipo: 'success' | 'error' | 'info' = 'success') => {
     setToast({ mensaje, tipo })
     setTimeout(() => setToast(null), 3500)
+  }
+
+  // Badges informativos de lectura de códigos de barra (1D común o 2D GS1)
+  const [infoEscaneo, setInfoEscaneo] = useState<{ texto: string; tipo: 'gs1' | '1d' } | null>(null)
+  const [infoEscaneoAlta, setInfoEscaneoAlta] = useState<{ texto: string; esValido: boolean } | null>(null)
+
+  // Procesamiento de entrada en barra de búsqueda (soporta texto, 1D común y GS1 DataMatrix)
+  const handleCambioBusqueda = (val: string) => {
+    const res = procesarLecturaCodigo(val)
+    if (res.esValidoParaGtin && res.gtin14) {
+      setBusqueda(res.gtin14)
+      setInfoEscaneo({
+        texto: res.esGs1
+          ? `✔ GS1 DataMatrix: GTIN-14 (${res.gtin14})`
+          : `✔ ${res.descripcionTipo}: ${res.gtin14}`,
+        tipo: res.esGs1 ? 'gs1' : '1d'
+      })
+      setTimeout(() => setInfoEscaneo(null), 4000)
+    } else {
+      setBusqueda(val)
+    }
   }
 
   // Cargar catálogo desde la base de datos Supabase
@@ -259,12 +281,14 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       observaciones: ''
     })
     setGeclisaResultados([])
+    setInfoEscaneoAlta(null)
     setModalFormAbierto(true)
   }
 
   const handleAbrirEdicion = (item: ItemCatalogoMaestro) => {
     setItemEnEdicion({ ...item })
     setGeclisaResultados([])
+    setInfoEscaneoAlta(null)
     setModalFormAbierto(true)
   }
 
@@ -285,6 +309,45 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
       setGeclisaResultados([])
     } finally {
       setBuscandoGeclisa(false)
+    }
+  }
+
+  // Procesamiento de lectura de GTIN en Alta / Edición (1D común y GS1 DataMatrix)
+  const handleCambioGtinAlta = (val: string) => {
+    if (!itemEnEdicion) return
+    const res = procesarLecturaCodigo(val)
+
+    if (res.esValidoParaGtin && res.gtin14) {
+      // Código escaneado válido (GS1 DataMatrix, 1D UPC-A, EAN-13 o GTIN-14)
+      const nuevoGtin14 = res.gtin14
+      setItemEnEdicion((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          gtin_14: nuevoGtin14,
+          gtin_12: res.gtinOriginal && res.gtinOriginal.length === 12 ? res.gtinOriginal : prev.gtin_12
+        }
+      })
+      setInfoEscaneoAlta({
+        texto: res.esGs1
+          ? `✔ GS1 DataMatrix: GTIN-14 (${nuevoGtin14})`
+          : `✔ ${res.descripcionTipo}: ${nuevoGtin14}`,
+        esValido: true
+      })
+      // Disparar automáticamente la búsqueda en Geclisa para continuidad inmediata del flujo
+      handleBuscarEnGeclisa(nuevoGtin14)
+    } else {
+      // Entrada manual progresiva: sólo dígitos numéricos hasta 14 caracteres
+      const limpio = val.replace(/\D/g, '').slice(0, 14)
+      setItemEnEdicion((prev) => (prev ? { ...prev, gtin_14: limpio } : prev))
+      if (limpio.length === 14) {
+        setInfoEscaneoAlta({
+          texto: '✔ GTIN-14 completo (14 dígitos)',
+          esValido: true
+        })
+      } else {
+        setInfoEscaneoAlta(null)
+      }
     }
   }
 
@@ -609,18 +672,32 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
             <input
               type="text"
               value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
+              onChange={(e) => handleCambioBusqueda(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                }
+              }}
               placeholder="Buscar por GTIN (ej: 0038065...), Ref Internacional (ej: SY60WF, ICB00) o Nombre..."
               className="w-full pl-9 pr-4 py-2.5 rounded-2xl bg-[var(--background)] border border-[var(--border)] text-xs md:text-sm font-bold text-[var(--foreground)] outline-none focus:border-amber-500 shadow-xs"
             />
             {busqueda && (
               <button
                 type="button"
-                onClick={() => setBusqueda('')}
+                onClick={() => {
+                  setBusqueda('')
+                  setInfoEscaneo(null)
+                }}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
               >
                 <X size={14} />
               </button>
+            )}
+            {infoEscaneo && (
+              <div className="absolute left-1 -bottom-5 flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 z-10 shadow-xs animate-fade-in">
+                <Barcode size={12} />
+                <span>{infoEscaneo.texto}</span>
+              </div>
             )}
           </div>
 
@@ -898,10 +975,17 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
-                    maxLength={14}
                     value={itemEnEdicion.gtin_14}
-                    onChange={(e) => setItemEnEdicion({ ...itemEnEdicion, gtin_14: e.target.value.replace(/\D/g, '') })}
-                    placeholder="Ej: 00380652251488"
+                    onChange={(e) => handleCambioGtinAlta(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        if (itemEnEdicion.gtin_14 && itemEnEdicion.gtin_14.length >= 8) {
+                          handleBuscarEnGeclisa(itemEnEdicion.gtin_14)
+                        }
+                      }
+                    }}
+                    placeholder="Escanea con lector (DataMatrix / 1D) o ingresa GTIN..."
                     className="flex-1 px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-amber-300 dark:border-amber-700 font-mono font-black text-xs text-[var(--foreground)] outline-none focus:ring-2 focus:ring-amber-500"
                   />
                   <button
@@ -914,6 +998,17 @@ export default function AlconCatalogModal({ abierto, onCerrar }: AlconCatalogMod
                     <span>Buscar en Geclisa</span>
                   </button>
                 </div>
+
+                {infoEscaneoAlta && (
+                  <div className={`mt-1.5 flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-lg border ${
+                    infoEscaneoAlta.esValido
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                      : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                  } animate-fade-in`}>
+                    <Barcode size={13} />
+                    <span>{infoEscaneoAlta.texto}</span>
+                  </div>
+                )}
 
                 {/* Resultados del Asistente Geclisa */}
                 {geclisaResultados.length > 0 && (
