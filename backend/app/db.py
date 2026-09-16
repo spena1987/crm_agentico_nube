@@ -4137,9 +4137,19 @@ COLUMN_KEYS_TURNOS_QUIROFANO = {
     "lio_stock_reservado", "lio_stock_reservado_at", "lio_stock_observaciones", "lio_opcion_implantada_id"
 }
 
-def verificar_solapamiento_turno_quirofano(quirofano_id: str, fecha_cirugia: str, hora_inicio: str, duracion_minutos: int = 20, excluir_turno_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def verificar_solapamiento_turno_quirofano(
+    quirofano_id: str,
+    fecha_cirugia: str,
+    hora_inicio: str,
+    duracion_minutos: int = 20,
+    cirujano_id: Optional[int] = None,
+    cirujano_nombre: Optional[str] = None,
+    excluir_turno_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """
-    Verifica si existe otro turno activo en la misma sala y fecha que se solape con el horario deseado.
+    Verifica si existe solapamiento:
+    1. En la misma sala y fecha ('sala').
+    2. Del mismo cirujano en otra sala en el mismo horario ('cirujano').
     """
     if not supabase or not quirofano_id or not fecha_cirugia or not hora_inicio:
         return None
@@ -4148,13 +4158,19 @@ def verificar_solapamiento_turno_quirofano(quirofano_id: str, fecha_cirugia: str
             partes = str(h_str)[:5].split(":")
             return int(partes[0]) * 60 + int(partes[1])
 
+        def minutos_a_hora(m: int) -> str:
+            return f"{m // 60:02d}:{m % 60:02d}"
+
         h_ini_min = a_minutos(hora_inicio)
         h_fin_min = h_ini_min + (duracion_minutos or 20)
 
-        res = supabase.table("turnos_quirofano").select("id, hora_inicio, duracion_minutos, estado, pacientes(nombre)").eq("quirofano_id", quirofano_id).eq("fecha_cirugia", fecha_cirugia).neq("estado", "cancelado").execute()
-        turnos_existentes = res.data or []
+        # 1. Comprobar turnos en la misma sala
+        res_sala = supabase.table("turnos_quirofano").select(
+            "id, hora_inicio, duracion_minutos, estado, quirofano_id, pacientes(nombre)"
+        ).eq("quirofano_id", quirofano_id).eq("fecha_cirugia", fecha_cirugia).neq("estado", "cancelado").execute()
+        turnos_sala = res_sala.data or []
 
-        for t in turnos_existentes:
+        for t in turnos_sala:
             if excluir_turno_id and str(t.get("id")) == str(excluir_turno_id):
                 continue
             if not t.get("hora_inicio"):
@@ -4163,9 +4179,50 @@ def verificar_solapamiento_turno_quirofano(quirofano_id: str, fecha_cirugia: str
             t_dur = t.get("duracion_minutos") or 20
             t_fin = t_ini + t_dur
 
-            # Hay solapamiento si (h_ini_min < t_fin) y (h_fin_min > t_ini)
             if max(h_ini_min, t_ini) < min(h_fin_min, t_fin):
-                return t
+                pac_nombre = (t.get("pacientes") or {}).get("nombre") or "Otro Paciente"
+                return {
+                    "tipo": "sala",
+                    "turno_id": t.get("id"),
+                    "paciente": pac_nombre,
+                    "hora_inicio": t.get("hora_inicio", "")[:5],
+                    "hora_fin": minutos_a_hora(t_fin)
+                }
+
+        # 2. Comprobar turnos del mismo cirujano en otras salas
+        c_norm = (cirujano_nombre or "").strip().lower()
+        if cirujano_id or c_norm:
+            res_cirujano = supabase.table("turnos_quirofano").select(
+                "id, hora_inicio, duracion_minutos, estado, quirofano_id, cirujano_id, cirujano_nombre, quirofanos(nombre), pacientes(nombre)"
+            ).eq("fecha_cirugia", fecha_cirugia).neq("estado", "cancelado").neq("quirofano_id", quirofano_id).execute()
+            turnos_otros = res_cirujano.data or []
+
+            for t in turnos_otros:
+                if excluir_turno_id and str(t.get("id")) == str(excluir_turno_id):
+                    continue
+                if not t.get("hora_inicio"):
+                    continue
+
+                mismo_id = cirujano_id and t.get("cirujano_id") and int(t["cirujano_id"]) == int(cirujano_id)
+                mismo_nom = c_norm and (t.get("cirujano_nombre") or "").strip().lower() == c_norm
+
+                if mismo_id or mismo_nom:
+                    t_ini = a_minutos(t["hora_inicio"])
+                    t_dur = t.get("duracion_minutos") or 20
+                    t_fin = t_ini + t_dur
+
+                    if max(h_ini_min, t_ini) < min(h_fin_min, t_fin):
+                        pac_nombre = (t.get("pacientes") or {}).get("nombre") or "Otro Paciente"
+                        sala_nom = (t.get("quirofanos") or {}).get("nombre") or "Otra Sala"
+                        return {
+                            "tipo": "cirujano",
+                            "turno_id": t.get("id"),
+                            "paciente": pac_nombre,
+                            "sala": sala_nom,
+                            "hora_inicio": t.get("hora_inicio", "")[:5],
+                            "hora_fin": minutos_a_hora(t_fin)
+                        }
+
         return None
     except Exception as e:
         logger.warning(f"Error verificando solapamiento: {e}")

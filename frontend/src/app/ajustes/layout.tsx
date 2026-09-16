@@ -41,7 +41,7 @@ export default function AjustesLayout({
   const visibleTabs = allTabs.filter((t) => t.visible)
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto w-full">
+    <div className="space-y-5 w-full max-w-full px-3 sm:px-6 lg:px-8 xl:px-10 py-4">
       {/* Cabecera Principal de Ajustes */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--border)] pb-5">
         <div>

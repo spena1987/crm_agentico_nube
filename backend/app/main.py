@@ -118,6 +118,7 @@ from app.db import (
     crear_turno_quirofano,
     actualizar_turno_quirofano,
     eliminar_turno_quirofano,
+    verificar_solapamiento_turno_quirofano,
     get_consentimiento_by_token,
     registrar_firma_consentimiento,
     get_prestadores,
@@ -3924,8 +3925,39 @@ def listar_turnos_quirofano(
 @app.post("/api/turnos-quirofano")
 def crear_turno(payload: Dict[str, Any] = Body(...)):
     try:
+        qid = payload.get("quirofano_id")
+        fecha = payload.get("fecha_cirugia")
+        hora = payload.get("hora_inicio")
+        dur = payload.get("duracion_minutos") or 20
+        cid = payload.get("cirujano_id")
+        cnom = payload.get("cirujano_nombre")
+        forzar_conflicto = payload.get("forzar_conflicto_cirujano", False)
+
+        if qid and fecha and hora:
+            conflicto = verificar_solapamiento_turno_quirofano(
+                quirofano_id=qid,
+                fecha_cirugia=fecha,
+                hora_inicio=hora,
+                duracion_minutos=int(dur),
+                cirujano_id=int(cid) if cid else None,
+                cirujano_nombre=cnom
+            )
+            if conflicto:
+                if conflicto.get("tipo") == "sala":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Superposición de Horario: La sala ya está ocupada por el turno de {conflicto.get('paciente')} de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs."
+                    )
+                elif conflicto.get("tipo") == "cirujano" and not forzar_conflicto:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Conflicto de Cirujano Simultáneo: {cnom or 'El profesional'} ya tiene asignada una cirugía en otra sala ({conflicto.get('sala')}) de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs con {conflicto.get('paciente')}. Confirme explícitamente para continuar."
+                    )
+
         turno = crear_turno_quirofano(payload)
         return {"success": True, "turno": turno}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error al crear turno de quirófano: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -3933,8 +3965,40 @@ def crear_turno(payload: Dict[str, Any] = Body(...)):
 @app.put("/api/turnos-quirofano/{turno_id}")
 def actualizar_turno(turno_id: str, payload: Dict[str, Any] = Body(...)):
     try:
+        qid = payload.get("quirofano_id")
+        fecha = payload.get("fecha_cirugia")
+        hora = payload.get("hora_inicio")
+        dur = payload.get("duracion_minutos") or 20
+        cid = payload.get("cirujano_id")
+        cnom = payload.get("cirujano_nombre")
+        forzar_conflicto = payload.get("forzar_conflicto_cirujano", False)
+
+        if qid and fecha and hora:
+            conflicto = verificar_solapamiento_turno_quirofano(
+                quirofano_id=qid,
+                fecha_cirugia=fecha,
+                hora_inicio=hora,
+                duracion_minutos=int(dur),
+                cirujano_id=int(cid) if cid else None,
+                cirujano_nombre=cnom,
+                excluir_turno_id=turno_id
+            )
+            if conflicto:
+                if conflicto.get("tipo") == "sala":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Superposición de Horario: La sala ya está ocupada por el turno de {conflicto.get('paciente')} de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs."
+                    )
+                elif conflicto.get("tipo") == "cirujano" and not forzar_conflicto:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Conflicto de Cirujano Simultáneo: {cnom or 'El profesional'} ya tiene asignada una cirugía en otra sala ({conflicto.get('sala')}) de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs con {conflicto.get('paciente')}. Confirme explícitamente para continuar."
+                    )
+
         turno = actualizar_turno_quirofano(turno_id, payload)
         return {"success": True, "turno": turno}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error al actualizar turno de quirófano {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

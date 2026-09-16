@@ -223,6 +223,7 @@ export default function FichaTurnoModal({
   const [enviandoPrepWA, setEnviandoPrepWA] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
+  const [confirmadoConflictoCirujano, setConfirmadoConflictoCirujano] = useState<boolean>(false)
 
   // Aplicar datos heredados desde la asesoría quirúrgica confirmada
   const aplicarCasoConfirmado = (caso: any) => {
@@ -415,12 +416,26 @@ export default function FichaTurnoModal({
       if (!continuar) return
     }
 
+    if (conflictoCirujanoCrossRoom && !confirmadoConflictoCirujano) {
+      const continuar = confirm(
+        `ALERTA DE CIRUJANO EN MÚLTIPLES SALAS SIMULTÁNEAS:\n\n` +
+        `${conflictoCirujanoCrossRoom.mensaje}\n\n` +
+        `¿Confirma explícitamente esta superposición (equipo médico compartido / autorización médica) y desea proceder a guardar el turno?`
+      )
+      if (!continuar) {
+        setError(`Operación cancelada: Se detectó superposición del cirujano en múltiples salas simultáneas sin confirmación explícita.`)
+        return
+      }
+      setConfirmadoConflictoCirujano(true)
+    }
+
     try {
       setGuardando(true)
       setError(null)
 
       const payload = {
         ...formData,
+        forzar_conflicto_cirujano: confirmadoConflictoCirujano || !!conflictoCirujanoCrossRoom,
         obra_social: formData.obra_social?.trim() || 'Particular',
         duracion_minutos: Number(formData.duracion_minutos) || 20,
         fecha_cirugia: formData.fecha_cirugia || fechaDefecto || new Date().toISOString().slice(0, 10),
@@ -753,6 +768,55 @@ export default function FichaTurnoModal({
 
     return null
   }, [formData.hora_inicio, formData.duracion_minutos, formData.fecha_cirugia, formData.quirofano_id, turnosExistentes, bloqueosExistentes, turno])
+
+  // Conflicto de cirujano asignado en múltiples salas simultáneas (Cross-Room)
+  const conflictoCirujanoCrossRoom = useMemo(() => {
+    if (!formData.hora_inicio || !formData.fecha_cirugia || !formData.quirofano_id) return null
+    const nombreCirujano = (formData.cirujano_nombre || '').trim().toLowerCase()
+    if (!nombreCirujano && !formData.cirujano_id) return null
+
+    const horaIniMin = horaAMinutos(formData.hora_inicio)
+    const durMin = Number(formData.duracion_minutos) || 20
+    const horaFinMin = horaIniMin + durMin
+
+    const turnoChocando = (turnosExistentes || []).find((t: any) => {
+      if (turno?.id && t.id === turno.id) return false
+      if (t.fecha_cirugia !== formData.fecha_cirugia) return false
+      if (t.quirofano_id === formData.quirofano_id) return false // Misma sala ya se evalúa en conflictoHorario
+
+      const mismoId = formData.cirujano_id && t.cirujano_id && String(t.cirujano_id) === String(formData.cirujano_id)
+      const mismoNombre = nombreCirujano && t.cirujano_nombre && t.cirujano_nombre.trim().toLowerCase() === nombreCirujano
+
+      if (!mismoId && !mismoNombre) return false
+
+      const tIni = horaAMinutos(t.hora_inicio)
+      const tDur = Number(t.duracion_minutos) || 20
+      const tFin = tIni + tDur
+      return horaIniMin < tFin && horaFinMin > tIni
+    })
+
+    if (turnoChocando) {
+      const salaOtra = quirofanos.find((q: any) => q.id === turnoChocando.quirofano_id)
+      const pNombre = turnoChocando.pacientes?.nombre || turnoChocando.paciente_nombre || 'Otro Paciente'
+      const tIni = (turnoChocando.hora_inicio || '').slice(0, 5)
+      const tFin = minutosAHora(horaAMinutos(tIni) + (Number(turnoChocando.duracion_minutos) || 20))
+      const nombreMostrar = formData.cirujano_nombre || turnoChocando.cirujano_nombre || 'El cirujano'
+      const salaNombre = salaOtra?.nombre || 'Otra sala'
+
+      return {
+        turno: turnoChocando,
+        salaNombre,
+        cirujanoNombre: nombreMostrar,
+        pacienteNombre: pNombre,
+        horaInicio: tIni,
+        horaFin: tFin,
+        practicaNombre: turnoChocando.practica_nombre || 'Cirugía',
+        mensaje: `Conflicto de Cirujano Simultáneo: ${nombreMostrar} ya tiene asignada una cirugía (${turnoChocando.practica_nombre || 'Cirugía'}) con ${pNombre} en la sala "${salaNombre}" de ${tIni} a ${tFin} hs.`
+      }
+    }
+
+    return null
+  }, [formData.hora_inicio, formData.duracion_minutos, formData.fecha_cirugia, formData.quirofano_id, formData.cirujano_id, formData.cirujano_nombre, turnosExistentes, quirofanos, turno])
 
   // Nombres y validación de días operativos (1=Lun .. 7=Dom)
   const nombresDiasMap: Record<number, string> = {
@@ -1410,6 +1474,34 @@ export default function FichaTurnoModal({
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs flex items-center gap-2.5 animate-fade-in">
                 <AlertTriangle size={18} className="text-amber-600 shrink-0" />
                 <span className="font-semibold">{conflictoHorario.mensaje}</span>
+              </div>
+            )}
+
+            {/* Alerta de Conflicto Cross-Room de Cirujano Simultáneo con Confirmación Explícita */}
+            {conflictoCirujanoCrossRoom && (
+              <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-900 dark:text-amber-100 text-xs space-y-2 animate-fade-in shadow-xs">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle size={18} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-[12px] text-amber-900 dark:text-amber-200">
+                      Superposición de Cirujano en Múltiples Salas
+                    </p>
+                    <p className="leading-relaxed opacity-95 text-[11px]">
+                      {conflictoCirujanoCrossRoom.mensaje}
+                    </p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 pt-2 border-t border-amber-500/20 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={confirmadoConflictoCirujano}
+                    onChange={(e) => setConfirmadoConflictoCirujano(e.target.checked)}
+                    className="rounded border-amber-400 text-amber-600 focus:ring-amber-500 w-4 h-4 cursor-pointer"
+                  />
+                  <span className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
+                    Confirmo explícitamente esta superposición (equipo médico compartido / autorización médica)
+                  </span>
+                </label>
               </div>
             )}
 

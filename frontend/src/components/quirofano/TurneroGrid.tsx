@@ -53,6 +53,23 @@ export default function TurneroGrid({
 }: TurneroGridProps) {
   const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
 
+  // Hora y minuto actual para el indicador "Línea de Ahora" en tiempo real
+  const [minutoActual, setMinutoActual] = React.useState<number>(() => {
+    const ahora = new Date()
+    return ahora.getHours() * 60 + ahora.getMinutes()
+  })
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      const ahora = new Date()
+      setMinutoActual(ahora.getHours() * 60 + ahora.getMinutes())
+    }, 30000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const fechaHoyStr = new Date().toISOString().slice(0, 10)
+  const esFechaHoy = fechaSeleccionada === fechaHoyStr
+
   // Paso de slots
   const pasoMinutos = modo === 'semana' && quirofanoActual?.duracion_slot_minutos
     ? quirofanoActual.duracion_slot_minutos
@@ -200,11 +217,28 @@ export default function TurneroGrid({
         <tbody>
           {slots.map((horaSlot) => {
             const slotMin = horaAMinutos(horaSlot)
+            const esSlotActual = esFechaHoy && minutoActual >= slotMin && minutoActual < slotMin + pasoMinutos
 
             return (
-              <tr key={horaSlot} className="border-b border-[var(--border)]/60 hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors">
+              <tr
+                key={horaSlot}
+                className={`border-b border-[var(--border)]/60 hover:bg-slate-50/40 dark:hover:bg-slate-800/20 transition-colors relative ${
+                  esSlotActual ? 'bg-rose-500/[0.04] border-t-2 border-t-rose-500' : ''
+                }`}
+              >
                 {/* Hora */}
-                <td className="p-2 text-center font-mono text-[11px] font-bold text-[var(--secondary)] bg-slate-50/50 dark:bg-slate-900/30 border-r border-[var(--border)] sticky left-0 z-10">
+                <td className={`p-2 text-center font-mono text-[11px] font-bold text-[var(--secondary)] bg-slate-50/50 dark:bg-slate-900/30 border-r border-[var(--border)] sticky left-0 z-10 relative ${
+                  esSlotActual ? 'border-t-2 border-t-rose-500 text-rose-600 dark:text-rose-400' : ''
+                }`}>
+                  {esSlotActual && (
+                    <div
+                      className="absolute -top-[10px] left-1 z-30 flex items-center gap-1 bg-rose-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full shadow-md pointer-events-none animate-pulse whitespace-nowrap"
+                      title={`Hora actual: ${minutosAHora(minutoActual)} hs`}
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      {minutosAHora(minutoActual)}
+                    </div>
+                  )}
                   {horaSlot}
                 </td>
 

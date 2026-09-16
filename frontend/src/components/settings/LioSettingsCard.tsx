@@ -17,6 +17,7 @@ import {
   Sparkles,
   Layers,
   ArrowRight,
+  ArrowLeft,
   ExternalLink,
   QrCode,
   Copy,
@@ -129,8 +130,9 @@ export default function LioSettingsCard() {
   const [error, setError] = useState<string | null>(null)
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
 
-  // Selección Master-Detail
+  // Selección Master-Detail y Modo Responsive Móvil/Tablet
   const [familiaSeleccionadaId, setFamiliaSeleccionadaId] = useState<string | null>(null)
+  const [vistaMovil, setVistaMovil] = useState<'familias' | 'graduaciones'>('familias')
 
   // Filtros Panel Izquierdo (Familias)
   const [filtroFamiliaSearch, setFiltroFamiliaSearch] = useState('')
@@ -613,12 +615,40 @@ export default function LioSettingsCard() {
         </div>
       )}
 
-      {/* 2. LAYOUT MASTER-DETAIL (2 COLUMNAS) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* SELECTOR RESPONSIVE DE VISTA EN TABLETS Y CELULARES (< LG) */}
+      <div className="flex lg:hidden items-center p-1 bg-slate-100 dark:bg-slate-800/60 rounded-2xl border border-[var(--border)] gap-1">
+        <button
+          type="button"
+          onClick={() => setVistaMovil('familias')}
+          className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            vistaMovil === 'familias'
+              ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs'
+              : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+          }`}
+        >
+          <Layers size={14} />
+          <span>Familias ({familiasFiltradas.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setVistaMovil('graduaciones')}
+          className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+            vistaMovil === 'graduaciones'
+              ? 'bg-white dark:bg-slate-900 text-blue-600 shadow-xs'
+              : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+          }`}
+        >
+          <Barcode size={14} />
+          <span>Graduaciones & Stock ({itemsDeFamiliaActiva.length})</span>
+        </button>
+      </div>
+
+      {/* 2. LAYOUT MASTER-DETAIL FLUIDO (GRID ADAPTATIVO) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
         {/* ==================================================================== */}
-        {/* PANEL IZQUIERDO: LISTA DE FAMILIAS CLÍNICAS (COL-SPAN-4) */}
+        {/* PANEL IZQUIERDO: LISTA DE FAMILIAS CLÍNICAS (COL-SPAN-4 / 2XL:COL-SPAN-3) */}
         {/* ==================================================================== */}
-        <div className="lg:col-span-4 xl:col-span-4 space-y-4">
+        <div className={`lg:col-span-4 xl:col-span-4 2xl:col-span-3 space-y-4 ${vistaMovil === 'familias' ? 'block' : 'hidden lg:block'}`}>
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-extrabold text-[var(--secondary)] uppercase tracking-wider flex items-center gap-1.5">
               <Layers size={14} />
@@ -694,6 +724,7 @@ export default function LioSettingsCard() {
                     onClick={() => {
                       setFamiliaSeleccionadaId(f.id!)
                       setMostrandoAltaGtin(false)
+                      setVistaMovil('graduaciones')
                     }}
                     className={`p-3.5 rounded-2xl border transition-all cursor-pointer select-none relative group ${
                       esSeleccionada
@@ -774,11 +805,26 @@ export default function LioSettingsCard() {
         </div>
 
         {/* ==================================================================== */}
-        {/* PANEL DERECHO: DETALLE DE FAMILIA & GRADUACIONES EN VIVO (COL-SPAN-8) */}
+        {/* PANEL DERECHO: DETALLE DE FAMILIA & GRADUACIONES EN VIVO (COL-SPAN-8 / 2XL:COL-SPAN-9) */}
         {/* ==================================================================== */}
-        <div className="lg:col-span-8 xl:col-span-8 space-y-4">
+        <div className={`lg:col-span-8 xl:col-span-8 2xl:col-span-9 space-y-4 ${vistaMovil === 'graduaciones' ? 'block' : 'hidden lg:block'}`}>
           {familiaActiva ? (
             <div className="space-y-4">
+              {/* Botón Volver a Familias en Tablets / Celulares */}
+              <div className="lg:hidden flex items-center justify-between pb-1">
+                <button
+                  type="button"
+                  onClick={() => setVistaMovil('familias')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-blue-600 font-bold text-xs hover:bg-slate-200 transition cursor-pointer"
+                >
+                  <ArrowLeft size={14} />
+                  <span>Volver a Lista de Familias</span>
+                </button>
+                <span className="text-[11px] font-mono text-[var(--secondary)]">
+                  {familiaActiva.marca} • {familiaActiva.modelo}
+                </span>
+              </div>
+
               {/* HERO CARD DE LA FAMILIA SELECCIONADA */}
               <div className="p-4 md:p-5 rounded-3xl bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-transparent border border-blue-500/30 space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1061,7 +1107,7 @@ export default function LioSettingsCard() {
                               </td>
 
                               {/* Nombre Geclisa */}
-                              <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 text-[11px] truncate max-w-[180px]" title={it.geclisa_nombre}>
+                              <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400 text-[11px] truncate max-w-[240px] xl:max-w-[400px] 2xl:max-w-[600px]" title={it.geclisa_nombre}>
                                 {it.geclisa_nombre}
                               </td>
 

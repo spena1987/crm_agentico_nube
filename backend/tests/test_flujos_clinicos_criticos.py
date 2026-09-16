@@ -116,6 +116,53 @@ class TestFlujoTurnoQuirofano:
             # Documental: este es el gap identificado — el 200 no debería ocurrir
             # FIX SUGERIDO: Añadir un modelo Pydantic que exija paciente_id en POST /api/turnos-quirofano
 
+    def test_crear_turno_conflicto_cirujano_cross_room_bloqueado(self):
+        """
+        Si un cirujano ya tiene cirugía en otra sala al mismo tiempo y NO se confirma explícitamente,
+        debe retornar HTTP 409 Conflict con mensaje explicativo.
+        """
+        with patch("app.main.verificar_solapamiento_turno_quirofano") as mock_solap:
+            mock_solap.return_value = {
+                "tipo": "cirujano",
+                "turno_id": "uuid-otro-turno",
+                "paciente": "PACIENTE_OTRA_SALA",
+                "sala": "Quirófano 2",
+                "hora_inicio": "08:30",
+                "hora_fin": "09:00"
+            }
+            res = client.post(
+                "/api/turnos-quirofano",
+                json={**self.TURNO_VALIDO, "forzar_conflicto_cirujano": False},
+                headers=AUTH_HEADERS
+            )
+            assert res.status_code == 409
+            assert "Conflicto de Cirujano Simultáneo" in res.json().get("detail", "")
+
+    def test_crear_turno_conflicto_cirujano_cross_room_confirmado_explicito(self):
+        """
+        Si se envía forzar_conflicto_cirujano=True (confirmación explícita del usuario),
+        el sistema permite guardar el turno (HTTP 200).
+        """
+        with patch("app.main.verificar_solapamiento_turno_quirofano") as mock_solap, \
+             patch("app.main.crear_turno_quirofano") as mock_crear:
+            mock_solap.return_value = {
+                "tipo": "cirujano",
+                "turno_id": "uuid-otro-turno",
+                "paciente": "PACIENTE_OTRA_SALA",
+                "sala": "Quirófano 2",
+                "hora_inicio": "08:30",
+                "hora_fin": "09:00"
+            }
+            mock_crear.return_value = {**self.TURNO_VALIDO, "id": "uuid-turno-con-conflicto"}
+            res = client.post(
+                "/api/turnos-quirofano",
+                json={**self.TURNO_VALIDO, "forzar_conflicto_cirujano": True},
+                headers=AUTH_HEADERS
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data.get("success") is True
+
     def test_listar_quirofanos(self):
         """GET /api/quirofanos retorna la lista de quirófanos disponibles.
         La respuesta tiene formato {success: True, quirofanos: [...]}

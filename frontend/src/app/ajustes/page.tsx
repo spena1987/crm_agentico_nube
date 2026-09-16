@@ -20,7 +20,10 @@ import {
   Sparkles,
   SlidersHorizontal,
   X,
-  MessageSquareText
+  MessageSquareText,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Menu
 } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import WhatsAppTemplatesSettingsCard from '@/components/settings/WhatsAppTemplatesSettingsCard'
@@ -191,6 +194,9 @@ function AjustesContent() {
 
   const CurrentIcon = currentTabItem.icon
 
+  const [menuColapsado, setMenuColapsado] = useState(false)
+  const [menuMovilAbierto, setMenuMovilAbierto] = useState(false)
+
   if (!loading && permittedCategories.length === 0) {
     return (
       <div className="max-w-md mx-auto my-12 p-8 bg-[var(--card)] border border-[var(--border)] rounded-3xl text-center space-y-4 shadow-sm">
@@ -207,138 +213,221 @@ function AjustesContent() {
     )
   }
 
-  return (
-    <div className="w-full max-w-7xl mx-auto space-y-6 pb-12">
-      
-      {/* Layout Dividido Master-Detail */}
-      <div className="flex flex-col lg:flex-row gap-6 items-start">
-        
-        {/* ==================================================================== */}
-        {/* PANEL LATERAL IZQUIERDO: MENÚ DE CONFIGURACIONES POR CATEGORÍA */}
-        {/* ==================================================================== */}
-        <div className="w-full lg:w-72 xl:w-80 shrink-0 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col">
-          
-          {/* Header del menú lateral con buscador */}
-          <div className="p-4 border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--secondary)]">
-                <SlidersHorizontal size={14} className="text-blue-600" />
-                <span>Módulos de Ajustes</span>
-              </div>
-              <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 border border-blue-200 dark:border-blue-800/40">
-                11 secciones
-              </span>
-            </div>
-
-            {/* Buscador de Ajustes */}
-            <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Buscar ajuste..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-[var(--foreground)] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all font-medium"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[var(--foreground)]"
-                >
-                  <X size={12} />
-                </button>
-              )}
-            </div>
+  // Contenido del Menú de Categorías (reutilizable en desktop y en drawer móvil)
+  const renderContenidoMenu = (esMovil: boolean = false) => (
+    <div className="flex flex-col h-full">
+      {/* Header del menú lateral con buscador */}
+      <div className="p-3.5 border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30 space-y-2.5 shrink-0">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--secondary)]">
+            <SlidersHorizontal size={14} className="text-blue-600" />
+            <span>Módulos de Ajustes</span>
           </div>
-
-          {/* Navegación por Categorías */}
-          <div className="p-2 space-y-4 max-h-[calc(100vh-16rem)] overflow-y-auto panel-scroll">
-            {filteredCategories.length === 0 ? (
-              <div className="p-6 text-center text-xs text-[var(--secondary)] space-y-1">
-                <p className="font-semibold">No se encontraron ajustes</p>
-                <p className="text-[10px]">Intenta con otro término de búsqueda.</p>
-              </div>
-            ) : (
-              filteredCategories.map((category) => (
-                <div key={category.id} className="space-y-1">
-                  {/* Título de Categoría */}
-                  <div className="px-3 py-1.5 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-                    <span>{category.label}</span>
-                  </div>
-
-                  {/* Ítems de la Categoría */}
-                  <div className="space-y-1">
-                    {category.items.map((item) => {
-                      const Icon = item.icon
-                      const isActive = activeTab === item.id
-
-                      return (
-                        <button
-                          key={item.id}
-                          onClick={() => setActiveTab(item.id)}
-                          className={`w-full text-left p-2.5 rounded-xl transition-all duration-200 flex items-center justify-between group relative ${
-                            isActive
-                              ? 'bg-blue-600 text-white shadow-md glow-primary'
-                              : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-[var(--foreground)]'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0 pr-2">
-                            <div className={`p-2 rounded-lg transition-colors shrink-0 ${
-                              isActive 
-                                ? 'bg-white/20 text-white' 
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 group-hover:text-blue-600'
-                            }`}>
-                              <Icon size={16} />
-                            </div>
-
-                            <div className="truncate min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <p className={`text-xs font-bold truncate leading-tight ${
-                                  isActive ? 'text-white' : 'text-[var(--foreground)]'
-                                }`}>
-                                  {item.label}
-                                </p>
-                                {item.badge && (
-                                  <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-mono font-bold shrink-0 ${
-                                    isActive ? 'bg-white/25 text-white' : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
-                                  }`}>
-                                    {item.badge}
-                                  </span>
-                                )}
-                              </div>
-                              <p className={`text-[10px] truncate mt-0.5 font-normal ${
-                                isActive ? 'text-blue-100' : 'text-slate-400'
-                              }`}>
-                                {item.description}
-                              </p>
-                            </div>
-                          </div>
-
-                          <ChevronRight size={14} className={`shrink-0 transition-transform ${
-                            isActive ? 'text-white translate-x-0.5' : 'text-slate-400 opacity-0 group-hover:opacity-100'
-                          }`} />
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              ))
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/40 text-blue-600 border border-blue-200 dark:border-blue-800/40">
+              {filteredCategories.reduce((acc, c) => acc + c.items.length, 0)} secciones
+            </span>
+            {!esMovil && (
+              <button
+                type="button"
+                onClick={() => setMenuColapsado(true)}
+                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)] transition cursor-pointer"
+                title="Contraer menú para ganar espacio"
+              >
+                <PanelLeftClose size={15} />
+              </button>
+            )}
+            {esMovil && (
+              <button
+                type="button"
+                onClick={() => setMenuMovilAbierto(false)}
+                className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)] transition"
+              >
+                <X size={16} />
+              </button>
             )}
           </div>
-
         </div>
 
-        {/* ==================================================================== */}
+        {/* Buscador de Ajustes */}
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Buscar módulo o ajuste..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-8 pr-7 py-1.5 text-xs rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-[var(--foreground)] placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 transition-all font-medium"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[var(--foreground)]"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Navegación por Categorías */}
+      <div className="p-2 space-y-3 overflow-y-auto panel-scroll flex-1">
+        {filteredCategories.length === 0 ? (
+          <div className="p-6 text-center text-xs text-[var(--secondary)] space-y-1">
+            <p className="font-semibold">No se encontraron ajustes</p>
+            <p className="text-[10px]">Intenta con otro término de búsqueda.</p>
+          </div>
+        ) : (
+          filteredCategories.map((category) => (
+            <div key={category.id} className="space-y-1">
+              {/* Título de Categoría */}
+              <div className="px-3 py-1 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                <span>{category.label}</span>
+              </div>
+
+              {/* Ítems de la Categoría */}
+              <div className="space-y-0.5">
+                {category.items.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeTab === item.id
+
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => {
+                        setActiveTab(item.id)
+                        if (esMovil) setMenuMovilAbierto(false)
+                      }}
+                      className={`w-full text-left p-2 rounded-xl transition-all duration-200 flex items-center justify-between group relative cursor-pointer ${
+                        isActive
+                          ? 'bg-blue-600 text-white shadow-sm glow-primary'
+                          : 'text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                        <div className={`p-1.5 rounded-lg transition-colors shrink-0 ${
+                          isActive 
+                            ? 'bg-white/20 text-white' 
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 group-hover:text-blue-600'
+                        }`}>
+                          <Icon size={15} />
+                        </div>
+
+                        <div className="truncate min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className={`text-xs font-bold truncate leading-tight ${
+                              isActive ? 'text-white' : 'text-[var(--foreground)]'
+                            }`}>
+                              {item.label}
+                            </p>
+                            {item.badge && (
+                              <span className={`text-[9px] px-1.5 py-0.2 rounded-md font-mono font-bold shrink-0 ${
+                                isActive ? 'bg-white/25 text-white' : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                              }`}>
+                                {item.badge}
+                              </span>
+                            )}
+                          </div>
+                          <p className={`text-[10px] truncate mt-0.5 font-normal ${
+                            isActive ? 'text-blue-100' : 'text-slate-400'
+                          }`}>
+                            {item.description}
+                          </p>
+                        </div>
+                      </div>
+
+                      <ChevronRight size={13} className={`shrink-0 transition-transform ${
+                        isActive ? 'text-white translate-x-0.5' : 'text-slate-400 opacity-0 group-hover:opacity-100'
+                      }`} />
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="w-full space-y-4 pb-12">
+      
+      {/* ==================================================================== */}
+      {/* BARRA RESPONSIVE PARA TABLETS Y CELULARES (< LG) */}
+      {/* ==================================================================== */}
+      <div className="lg:hidden p-3 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-xs flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 shrink-0">
+            <CurrentIcon size={18} />
+          </div>
+          <div className="truncate min-w-0">
+            <span className="text-[10px] font-bold text-[var(--secondary)] uppercase tracking-wider block">
+              Módulo Activo
+            </span>
+            <span className="text-xs font-extrabold text-[var(--foreground)] truncate block">
+              {currentTabItem.label}
+            </span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setMenuMovilAbierto(true)}
+          className="px-3 py-1.5 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm hover:bg-blue-700 transition shrink-0"
+        >
+          <Menu size={14} />
+          <span>Cambiar Sección</span>
+        </button>
+      </div>
+
+      {/* DRAWER MÓVIL / TABLET */}
+      {menuMovilAbierto && (
+        <div className="fixed inset-0 z-50 flex lg:hidden animate-fade-in">
+          <div 
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs"
+            onClick={() => setMenuMovilAbierto(false)}
+          />
+          <div className="relative w-80 max-w-[85vw] h-full bg-[var(--card)] border-r border-[var(--border)] shadow-2xl z-10 flex flex-col">
+            {renderContenidoMenu(true)}
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* LAYOUT PRINCIPAL MASTER-DETAIL FLUIDO (100% ANCHO) */}
+      {/* ==================================================================== */}
+      <div className="flex gap-5 items-start">
+        
+        {/* PANEL LATERAL IZQUIERDO DESKTOP (COLAPSABLE) */}
+        {!menuColapsado && (
+          <aside className="hidden lg:flex w-72 xl:w-80 shrink-0 bg-[var(--card)] border border-[var(--border)] rounded-3xl shadow-xs overflow-hidden flex-col h-[calc(100vh-14rem)] sticky top-4">
+            {renderContenidoMenu(false)}
+          </aside>
+        )}
+
         {/* PANEL PRINCIPAL DERECHO: TARJETA DE CONFIGURACIÓN ACTIVA */}
-        {/* ==================================================================== */}
         <div className="flex-1 w-full min-w-0 space-y-4">
           
-          {/* Header Contextual de la Tarjeta Seleccionada */}
-          <div className="p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-xs flex items-center justify-between gap-4">
+          {/* Header Contextual con botón para descolapsar menú */}
+          <div className="p-3.5 sm:p-4 rounded-3xl bg-[var(--card)] border border-[var(--border)] shadow-xs flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-600 border border-blue-500/20 shrink-0">
+              {menuColapsado && (
+                <button
+                  type="button"
+                  onClick={() => setMenuColapsado(false)}
+                  className="hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-blue-500/10 hover:text-blue-600 text-xs font-extrabold text-[var(--foreground)] border border-[var(--border)] transition cursor-pointer shrink-0"
+                  title="Mostrar menú de módulos"
+                >
+                  <PanelLeftOpen size={16} className="text-blue-600" />
+                  <span>Ver Módulos</span>
+                </button>
+              )}
+
+              <div className="p-2.5 rounded-2xl bg-blue-500/10 text-blue-600 border border-blue-500/20 shrink-0">
                 <CurrentIcon size={20} />
               </div>
+
               <div className="truncate min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-extrabold text-[var(--foreground)] tracking-tight truncate">
@@ -355,6 +444,19 @@ function AjustesContent() {
                 </p>
               </div>
             </div>
+
+            {/* Acceso rápido a colapso si está abierto */}
+            {!menuColapsado && (
+              <button
+                type="button"
+                onClick={() => setMenuColapsado(true)}
+                className="hidden lg:flex items-center gap-1 text-[11px] font-bold text-slate-400 hover:text-blue-600 transition shrink-0"
+                title="Contraer menú para maximizar área de trabajo"
+              >
+                <span>Maximizar pantalla</span>
+                <PanelLeftClose size={14} />
+              </button>
+            )}
           </div>
 
           {/* Componente Activo Renderizado con doble verificación de permisos */}

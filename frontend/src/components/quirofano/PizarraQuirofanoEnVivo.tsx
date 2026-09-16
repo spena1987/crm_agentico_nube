@@ -37,7 +37,12 @@ import {
   ListFilter,
   Layers,
   ArrowRight,
-  PackageCheck
+  PackageCheck,
+  Maximize2,
+  Minimize2,
+  Moon,
+  Sun,
+  ShieldAlert
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
@@ -86,6 +91,48 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [subiendoGeclisaId, setSubiendoGeclisaId] = useState<string | null>(null)
   const [desvinculandoGeclisaId, setDesvinculandoGeclisaId] = useState<string | null>(null)
   const [subiendoConsentimientoId, setSubiendoConsentimientoId] = useState<string | null>(null)
+
+  // Modo Quirófano Oscuro (Ultra-Low Brightness para salas de microcirugía)
+  const [modoOscuroQuirofano, setModoOscuroQuirofano] = useState<boolean>(false)
+  const [esPantallaCompleta, setEsPantallaCompleta] = useState<boolean>(false)
+
+  // Salvaguarda de Consentimiento Informado
+  const [alertaConsentimiento, setAlertaConsentimiento] = useState<{
+    turno: any
+    nuevoEstado: string
+  } | null>(null)
+  const [justificacionExcepcion, setJustificacionExcepcion] = useState<string>('')
+  const [reenviandoConsentimientoId, setReenviandoConsentimientoId] = useState<string | null>(null)
+
+  // Cargar preferencia de modo oscuro clínico y listener de fullscreen
+  useEffect(() => {
+    try {
+      const savedDark = localStorage.getItem('quirofano_modo_oscuro_clinico')
+      if (savedDark === 'true') setModoOscuroQuirofano(true)
+    } catch {}
+
+    const handleFsChange = () => setEsPantallaCompleta(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handleFsChange)
+    return () => document.removeEventListener('fullscreenchange', handleFsChange)
+  }, [])
+
+  const toggleModoOscuro = () => {
+    setModoOscuroQuirofano((prev) => {
+      const nuevo = !prev
+      try {
+        localStorage.setItem('quirofano_modo_oscuro_clinico', String(nuevo))
+      } catch {}
+      return nuevo
+    })
+  }
+
+  const togglePantallaCompleta = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().then(() => setEsPantallaCompleta(true)).catch(() => {})
+    } else {
+      document.exitFullscreen().then(() => setEsPantallaCompleta(false)).catch(() => {})
+    }
+  }
 
   // Procesador inteligente de escaneos en Pizarra de Quirófano (Garantiza Time-Out OMS)
   const procesarEscaneoPizarra = async (raw: string, tId: string) => {
@@ -294,15 +341,22 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     fetchTurnosDia()
   }, [fecha, quirofanoFiltro])
 
-  // Suscripción Realtime a Supabase
+  // Suscripción Realtime a Supabase con Delta Updates incrementales
   useEffect(() => {
     const channel = supabase
       .channel('realtime-pizarra-quirofano')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'turnos_quirofano' },
-        () => {
-          fetchTurnosDia()
+        (payload: any) => {
+          if (payload.eventType === 'UPDATE' && payload.new?.id) {
+            // Actualización delta reactiva en memoria sin refetch masivo HTTP
+            setTurnos((prev) =>
+              prev.map((t) => (t.id === payload.new.id ? { ...t, ...payload.new } : t))
+            )
+          } else {
+            fetchTurnosDia()
+          }
         }
       )
       .subscribe()
@@ -313,12 +367,12 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   }, [fecha, quirofanoFiltro])
 
   // Cambiar estado del turno (en_espera, pre_quirofano, en_operacion, operado, cancelado)
-  const handleCambiarEstado = async (turnoId: string, nuevoEstado: string) => {
+  const handleCambiarEstado = async (turnoId: string, nuevoEstado: string, extras?: any) => {
     try {
       setProcesandoId(turnoId)
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
-        body: JSON.stringify({ estado: nuevoEstado })
+        body: JSON.stringify({ estado: nuevoEstado, ...(extras || {}) })
       })
       const data = await res.json()
       if (res.ok && data.success) {
@@ -332,6 +386,45 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       console.error('Error actualizando estado:', err)
     } finally {
       setProcesandoId(null)
+    }
+  }
+
+  // Interceptor con Salvaguarda de Consentimiento Informado
+  const solicitarPasoAPreQuirofano = (t: any) => {
+    if (t.consentimiento_estado !== 'firmado_digital') {
+      setAlertaConsentimiento({ turno: t, nuevoEstado: 'pre_quirofano' })
+      return
+    }
+    handleCambiarEstado(t.id, 'pre_quirofano')
+  }
+
+  const handleConfirmarExcepcionConsentimiento = () => {
+    if (!alertaConsentimiento) return
+    const justif = justificacionExcepcion.trim() || 'Urgencia o autorización médica documentada en sala'
+    handleCambiarEstado(alertaConsentimiento.turno.id, alertaConsentimiento.nuevoEstado, {
+      observaciones_intraoperatorias: `[Excepción Consentimiento]: ${justif}`
+    })
+    setAlertaConsentimiento(null)
+    setJustificacionExcepcion('')
+  }
+
+  const handleReenviarConsentimientoDesdeAlerta = async () => {
+    if (!alertaConsentimiento) return
+    const tId = alertaConsentimiento.turno.id
+    try {
+      setReenviandoConsentimientoId(tId)
+      const res = await apiFetch(`/api/turnos-quirofano/${tId}/enviar-consentimiento-wa`, { method: 'POST' })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        alert('✔ Enlace de consentimiento enviado por WhatsApp al paciente exitosamente.')
+      } else {
+        alert(data.detail || 'Error al enviar WhatsApp.')
+      }
+    } catch (e) {
+      console.error(e)
+      alert('Error de conexión al enviar WhatsApp.')
+    } finally {
+      setReenviandoConsentimientoId(null)
     }
   }
 
@@ -536,12 +629,20 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const esMultiseleccionActiva = filtrosEstado.length > 1 && !filtrosEstado.includes('todos')
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className={`space-y-5 animate-fade-in ${
+      modoOscuroQuirofano ? 'bg-[#070b14] text-slate-100 p-4 rounded-3xl border border-slate-800/80 shadow-2xl transition-all' : ''
+    }`}>
       {/* 1. BARRA SUPERIOR DE CONTROL, FECHA, FILTRO Y BÚSQUEDA */}
-      <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-4 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className={`border rounded-2xl p-4 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4 transition-colors ${
+        modoOscuroQuirofano
+          ? 'bg-[#0e1626] border-slate-800 text-slate-100 shadow-none'
+          : 'bg-[var(--card)] border-[var(--border)]'
+      }`}>
         {/* Selector de Fecha */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-xl p-1 border border-[var(--border)]">
+          <div className={`flex items-center rounded-xl p-1 border transition-colors ${
+            modoOscuroQuirofano ? 'bg-[#090e1a] border-slate-800' : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)]'
+          }`}>
             <button
               onClick={() => cambiarDia(-1)}
               className="p-1.5 hover:bg-white dark:hover:bg-slate-700 rounded-lg text-[var(--secondary)] hover:text-[var(--foreground)] transition"
@@ -572,10 +673,14 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             type="date"
             value={fecha}
             onChange={(e) => setFecha(e.target.value)}
-            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl border border-[var(--border)] text-xs font-mono font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
+            className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-bold outline-none focus:border-blue-500 transition-colors ${
+              modoOscuroQuirofano
+                ? 'bg-[#090e1a] border-slate-800 text-slate-200'
+                : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
+            }`}
           />
 
-          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[10px] font-bold">
+          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-[10px] font-bold">
             <Radio size={12} className="animate-pulse text-emerald-500" />
             <span>En Vivo</span>
           </div>
@@ -591,7 +696,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               placeholder="Buscar por DNI, paciente, médico..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              className="w-full pl-8 pr-7 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl border border-[var(--border)] text-xs text-[var(--foreground)] placeholder:text-slate-400 outline-none focus:border-blue-500 focus:bg-white dark:focus:bg-slate-900 transition"
+              className={`w-full pl-8 pr-7 py-2 rounded-xl border text-xs placeholder:text-slate-400 outline-none focus:border-blue-500 transition-colors ${
+                modoOscuroQuirofano
+                  ? 'bg-[#090e1a] border-slate-800 text-slate-100 focus:bg-[#070b14]'
+                  : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)] focus:bg-white dark:focus:bg-slate-900'
+              }`}
             />
             {busqueda && (
               <button
@@ -609,7 +718,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           <select
             value={quirofanoFiltro}
             onChange={(e) => handleSeleccionarSala(e.target.value)}
-            className="px-3 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
+            className={`px-3 py-2 rounded-xl border text-xs font-bold outline-none focus:border-blue-500 transition-colors ${
+              modoOscuroQuirofano
+                ? 'bg-[#090e1a] border-slate-800 text-slate-200'
+                : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
+            }`}
           >
             <option value="todos">Todas las Salas</option>
             {quirofanos.map((q) => (
@@ -618,6 +731,35 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               </option>
             ))}
           </select>
+
+          {/* Botón Modo Quirófano Oscuro */}
+          <button
+            type="button"
+            onClick={toggleModoOscuro}
+            className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition shadow-sm ${
+              modoOscuroQuirofano
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-amber-500/10'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-[var(--border)] hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+            title="Alternar Modo Quirófano de Ultra-Bajo Brillo (óptimo para microcirugía ocular tenue)"
+          >
+            {modoOscuroQuirofano ? <Sun size={15} className="text-amber-400" /> : <Moon size={15} />}
+            <span className="hidden md:inline">{modoOscuroQuirofano ? 'Modo Normal' : 'Modo Quirófano'}</span>
+          </button>
+
+          {/* Botón Pantalla Completa / Kiosco TV */}
+          <button
+            type="button"
+            onClick={togglePantallaCompleta}
+            className={`p-2 rounded-xl border text-xs font-bold flex items-center transition shadow-sm ${
+              esPantallaCompleta
+                ? 'bg-blue-600 text-white border-blue-500'
+                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-[var(--border)] hover:bg-slate-200 dark:hover:bg-slate-700'
+            }`}
+            title={esPantallaCompleta ? 'Salir de pantalla completa' : 'Modo Kiosco / Pantalla Completa para Smart TV o monitor de pared'}
+          >
+            {esPantallaCompleta ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
 
           <button
             type="button"
@@ -1162,10 +1304,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         disabled={procesandoId === t.id}
                         onClick={(e) => {
                           e.stopPropagation()
-                          handleCambiarEstado(t.id, 'pre_quirofano')
+                          solicitarPasoAPreQuirofano(t)
                         }}
                         className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-cyan-500/20 transition disabled:opacity-50"
-                        title="Ingresar paciente al circuito de Pre-Quirófano (Dilatación y Chequeos)"
+                        title="Ingresar paciente al circuito de Pre-Quirófano (Dilatación y Chequeos con salvaguarda de consentimiento)"
                       >
                         {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={14} />}
                         <span>🩵 Pasar a Pre-Qx</span>
@@ -1369,6 +1511,79 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             procesarEscaneoPizarra(raw, tId)
           }}
         />
+      )}
+
+      {/* 6. MODAL DE SALVAGUARDA: CONSENTIMIENTO INFORMADO PENDIENTE */}
+      {alertaConsentimiento && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-[var(--card)] border border-amber-500/40 rounded-3xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-scale-in text-[var(--foreground)]">
+            <div className="flex items-start gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/30">
+                <ShieldAlert size={26} />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-amber-700 dark:text-amber-300">
+                  Salvaguarda Médico-Legal: Consentimiento No Firmado
+                </h3>
+                <p className="text-xs text-[var(--secondary)] mt-0.5">
+                  El paciente no cuenta con Consentimiento Informado digital firmado.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-100 dark:bg-slate-800/60 rounded-2xl border border-[var(--border)] text-xs space-y-1.5 font-medium">
+              <p><b>Paciente:</b> {alertaConsentimiento.turno.pacientes?.nombre || alertaConsentimiento.turno.paciente_nombre}</p>
+              <p><b>DNI:</b> {alertaConsentimiento.turno.pacientes?.dni || alertaConsentimiento.turno.paciente_dni || 'Sin DNI'}</p>
+              <p><b>Cirugía:</b> {alertaConsentimiento.turno.practica_nombre || 'Cirugía Oftalmológica'} ({alertaConsentimiento.turno.ojo || 'OD'})</p>
+              <p><b>Estado del Consentimiento:</b> <span className="text-amber-600 dark:text-amber-400 font-bold uppercase">{alertaConsentimiento.turno.consentimiento_estado || 'Pendiente'}</span></p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-[var(--secondary)]">
+                Justificación clínica (obligatoria para autorizar ingreso por excepción/urgencia):
+              </label>
+              <input
+                type="text"
+                value={justificacionExcepcion}
+                onChange={(e) => setJustificacionExcepcion(e.target.value)}
+                placeholder="Ej: Urgencia quirúrgica médica / Firma física en papel en recepción"
+                className="w-full px-3 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-xs outline-none focus:border-amber-500 text-[var(--foreground)]"
+              />
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-2">
+              <button
+                type="button"
+                disabled={reenviandoConsentimientoId === alertaConsentimiento.turno.id}
+                onClick={handleReenviarConsentimientoDesdeAlerta}
+                className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
+              >
+                {reenviandoConsentimientoId ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                <span>Reenviar por WhatsApp</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmarExcepcionConsentimiento}
+                className="flex-1 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
+              >
+                <AlertTriangle size={14} />
+                <span>Autorizar Excepción</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAlertaConsentimiento(null)
+                  setJustificacionExcepcion('')
+                }}
+                className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 dark:bg-slate-800 dark:hover:bg-slate-700 text-[var(--foreground)] rounded-xl text-xs font-bold transition"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
