@@ -137,7 +137,7 @@ export default function ModalDetalleCirugiaEnVivo({
   useEffect(() => {
     const fetchLio = async () => {
       try {
-        const res = await apiFetch('/api/modelos-lio')
+        const res = await apiFetch('/api/modelos-lio?solo_activos=true')
         const data = await res.json()
         if (data.success && data.modelos) {
           setModelosLio(data.modelos)

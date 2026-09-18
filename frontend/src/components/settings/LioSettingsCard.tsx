@@ -27,7 +27,8 @@ import {
   Info,
   ChevronRight,
   ChevronDown,
-  X
+  X,
+  EyeOff
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import AlconCatalogModal from './AlconCatalogModal'
@@ -118,6 +119,8 @@ export default function LioSettingsCard() {
   const [filtroFamiliaSearch, setFiltroFamiliaSearch] = useState('')
   const [filtroFamiliaOptica, setFiltroFamiliaOptica] = useState('ALL')
   const [filtroMarca, setFiltroMarca] = useState('ALL')
+  const [filtroEstado, setFiltroEstado] = useState<'ACTIVAS' | 'INACTIVAS' | 'TODAS'>('ACTIVAS')
+  const [cambiandoEstadoId, setCambiandoEstadoId] = useState<string | null>(null)
 
   // Formulario Familia (Modal/Drawer in-situ)
   const [mostrandoFormFamilia, setMostrandoFormFamilia] = useState(false)
@@ -328,6 +331,36 @@ export default function LioSettingsCard() {
     }
   }
 
+  const handleToggleActivo = async (id: string, nuevoEstado: boolean, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    try {
+      setCambiandoEstadoId(id)
+      const res = await fetch(`${BACKEND_URL}/api/modelos-lio/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: nuevoEstado })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setFamilias((prev) =>
+          prev.map((f) => (f.id === id ? { ...f, activo: nuevoEstado } : f))
+        )
+        setMensajeExito(
+          nuevoEstado
+            ? '✔ Familia reactivada (disponible en Cálculo de LIO y Quirófano).'
+            : '✔ Familia marcada en desuso (oculta en Cálculo de LIO y Quirófano).'
+        )
+        setTimeout(() => setMensajeExito(null), 3500)
+      } else {
+        throw new Error(data.detail || 'Error al actualizar el estado de la familia.')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Error al cambiar estado.')
+    } finally {
+      setCambiandoEstadoId(null)
+    }
+  }
+
   // ====================================================================
   // ASISTENTE DE ESCANEO / VINCULACIÓN DE GTIN
   // ====================================================================
@@ -481,6 +514,9 @@ export default function LioSettingsCard() {
   // ====================================================================
   // FILTRADO DE FAMILIAS & SELECCIÓN MASTER-DETAIL
   // ====================================================================
+  const totalActivas = useMemo(() => familias.filter((f) => f.activo !== false).length, [familias])
+  const totalInactivas = useMemo(() => familias.filter((f) => f.activo === false).length, [familias])
+
   const familiasFiltradas = useMemo(() => {
     const cleanSearch = filtroFamiliaSearch.trim().toLowerCase()
     return familias.filter((f) => {
@@ -491,9 +527,13 @@ export default function LioSettingsCard() {
         (f.descripcion || '').toLowerCase().includes(cleanSearch)
       const matchOptica = filtroFamiliaOptica === 'ALL' || f.tipo_optica === filtroFamiliaOptica
       const matchMarca = filtroMarca === 'ALL' || f.marca === filtroMarca
-      return matchSearch && matchOptica && matchMarca
+      const matchEstado =
+        filtroEstado === 'TODAS' ||
+        (filtroEstado === 'ACTIVAS' && f.activo !== false) ||
+        (filtroEstado === 'INACTIVAS' && f.activo === false)
+      return matchSearch && matchOptica && matchMarca && matchEstado
     })
-  }, [familias, filtroFamiliaSearch, filtroFamiliaOptica, filtroMarca])
+  }, [familias, filtroFamiliaSearch, filtroFamiliaOptica, filtroMarca, filtroEstado])
 
   // Familia activa seleccionada
   const familiaActiva = useMemo(() => {
@@ -670,6 +710,43 @@ export default function LioSettingsCard() {
               />
             </div>
 
+            {/* Selector de Estado: Activas / En Desuso / Todas */}
+            <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800/60 rounded-2xl border border-[var(--border)] gap-1 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setFiltroEstado('ACTIVAS')}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-bold transition cursor-pointer text-center whitespace-nowrap ${
+                  filtroEstado === 'ACTIVAS'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                Activas ({totalActivas})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroEstado('INACTIVAS')}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-bold transition cursor-pointer text-center whitespace-nowrap ${
+                  filtroEstado === 'INACTIVAS'
+                    ? 'bg-slate-700 text-white shadow-xs'
+                    : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                En Desuso ({totalInactivas})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFiltroEstado('TODAS')}
+                className={`flex-1 py-1.5 px-2 rounded-xl font-bold transition cursor-pointer text-center whitespace-nowrap ${
+                  filtroEstado === 'TODAS'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                Todas ({familias.length})
+              </button>
+            </div>
+
             {/* Chips de Marca */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] scrollbar-none">
               <button
@@ -709,7 +786,7 @@ export default function LioSettingsCard() {
               </div>
             ) : familiasFiltradas.length === 0 ? (
               <div className="p-6 text-center text-xs text-slate-400 border border-dashed border-[var(--border)] rounded-2xl">
-                No se encontraron familias clínicas.
+                No se encontraron familias clínicas con estos filtros.
               </div>
             ) : (
               familiasFiltradas.map((f) => {
@@ -731,7 +808,7 @@ export default function LioSettingsCard() {
                       esSeleccionada
                         ? 'bg-blue-500/10 border-blue-500/60 shadow-md ring-1 ring-blue-500/40'
                         : 'bg-white dark:bg-slate-900/60 border-[var(--border)] hover:border-blue-400/50 hover:bg-slate-50/50'
-                    }`}
+                    } ${f.activo === false ? 'opacity-70 hover:opacity-100 bg-slate-100/60 dark:bg-slate-900/40' : ''}`}
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="space-y-1">
@@ -742,6 +819,15 @@ export default function LioSettingsCard() {
                           <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400">
                             {f.tipo_optica}
                           </span>
+                          {f.activo !== false ? (
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 font-extrabold text-[9px] flex items-center gap-0.5 border border-emerald-500/30">
+                              <Check size={9} /> Activa
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold text-[9px] flex items-center gap-0.5 border border-slate-300 dark:border-slate-700">
+                              <EyeOff size={9} /> En desuso
+                            </span>
+                          )}
                         </div>
                         <h4 className="text-sm font-black text-[var(--foreground)] tracking-tight">
                           {f.modelo}
@@ -754,6 +840,25 @@ export default function LioSettingsCard() {
 
                       {/* Botones de acción rápida en la tarjeta */}
                       <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                        <button
+                          type="button"
+                          disabled={cambiandoEstadoId === f.id}
+                          onClick={(e) => handleToggleActivo(f.id!, f.activo === false, e)}
+                          className={`p-1.5 rounded-lg transition cursor-pointer ${
+                            f.activo !== false
+                              ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
+                          }`}
+                          title={f.activo !== false ? 'Marcar en desuso (ocultar en Cálculo de LIO y Quirófano)' : 'Reactivar familia'}
+                        >
+                          {cambiandoEstadoId === f.id ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : f.activo !== false ? (
+                            <Eye size={13} className="text-emerald-600 dark:text-emerald-400" />
+                          ) : (
+                            <EyeOff size={13} className="text-slate-400" />
+                          )}
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -850,6 +955,15 @@ export default function LioSettingsCard() {
                           Apto Sulcus
                         </span>
                       )}
+                      {familiaActiva.activo !== false ? (
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 font-extrabold text-[10px] flex items-center gap-1 border border-emerald-500/30">
+                          <CheckCircle2 size={10} /> Activa en CRM
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-lg bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-bold text-[10px] flex items-center gap-1 border border-slate-300 dark:border-slate-700">
+                          <EyeOff size={10} /> En desuso (Oculta)
+                        </span>
+                      )}
                     </div>
                     <h3 className="text-xl font-black text-[var(--foreground)] mt-1.5 tracking-tight">
                       {familiaActiva.modelo}
@@ -863,6 +977,27 @@ export default function LioSettingsCard() {
 
                   {/* Acciones de la Familia */}
                   <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      disabled={cambiandoEstadoId === familiaActiva.id}
+                      onClick={(e) => handleToggleActivo(familiaActiva.id!, familiaActiva.activo === false, e)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border ${
+                        familiaActiva.activo !== false
+                          ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30'
+                          : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 border-emerald-500/30'
+                      }`}
+                      title={familiaActiva.activo !== false ? 'Marcar en desuso (ocultar en Cálculo de LIO y Quirófano)' : 'Reactivar familia para uso clínico'}
+                    >
+                      {cambiandoEstadoId === familiaActiva.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : familiaActiva.activo !== false ? (
+                        <EyeOff size={13} />
+                      ) : (
+                        <Eye size={13} />
+                      )}
+                      <span>{familiaActiva.activo !== false ? 'Marcar en Desuso' : 'Reactivar Familia'}</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => handleRefrescarStockFamilia(itemsDeFamiliaActiva)}
@@ -1310,7 +1445,7 @@ export default function LioSettingsCard() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-6 pt-1">
+              <div className="flex items-center gap-6 pt-1 flex-wrap">
                 <label className="flex items-center gap-2 font-bold text-slate-700 dark:text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1328,6 +1463,17 @@ export default function LioSettingsCard() {
                     className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   />
                   <span>Apto para Sulcus</span>
+                </label>
+                <label className="flex items-center gap-2 font-bold cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={familiaEnEdicion.activo !== false}
+                    onChange={(e) => setFamiliaEnEdicion({ ...familiaEnEdicion, activo: e.target.checked })}
+                    className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className={familiaEnEdicion.activo !== false ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500 line-through'}>
+                    {familiaEnEdicion.activo !== false ? '✔ Familia Activa en Clínica' : 'Familia en Desuso (Oculta)'}
+                  </span>
                 </label>
               </div>
 

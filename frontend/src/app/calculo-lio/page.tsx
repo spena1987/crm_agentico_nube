@@ -1147,6 +1147,11 @@ export default function CalculoLioPage() {
                                 className="w-full px-3 py-2 bg-white dark:bg-slate-900 rounded-xl border border-[var(--border)] text-xs font-bold text-[var(--foreground)] outline-none focus:border-cyan-500 cursor-pointer shadow-xs"
                               >
                                 <option value="">-- Seleccionar LIO de Ajustes ({modelosLio.length} disponibles) --</option>
+                                {op.modelo_lio_id && !modelosLio.some((m) => m.id === op.modelo_lio_id) && (
+                                  <option value={op.modelo_lio_id}>
+                                    ⚠️ {op.modelo || 'LIO Asignado'} (Familia en desuso / histórica)
+                                  </option>
+                                )}
                                 {modelosLio.map((m) => (
                                   <option key={m.id || m.modelo} value={m.id}>
                                     {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
