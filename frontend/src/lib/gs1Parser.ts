@@ -427,3 +427,108 @@ export function extraerGtinDeEntrada(rawInput: string): string {
   return res.gtin14 || (rawInput || '').replace(/[\r\n\t]/g, '').trim()
 }
 
+/**
+ * Identifica si una cadena escaneada corresponde a una Pulsera Quirúrgica de Paciente
+ * (formatos: MEDCRM:QX:<uuid>, QX-<uuid>, URL con ?t=<uuid>, o UUID v4 directo).
+ */
+export function esCodigoPulseraPaciente(rawCode: string): { esPulsera: boolean; turnoId?: string } {
+  if (!rawCode) return { esPulsera: false }
+  const raw = rawCode.trim()
+
+  // 1. Prefijo institucional MEDCRM:QX:<uuid>
+  if (raw.toUpperCase().startsWith('MEDCRM:QX:')) {
+    const partes = raw.split(':')
+    if (partes.length >= 3 && partes[2].trim()) {
+      return { esPulsera: true, turnoId: partes[2].trim() }
+    }
+  }
+
+  // 2. Prefijo QX-<uuid> o QX:<uuid>
+  if (raw.toUpperCase().startsWith('QX-') || raw.toUpperCase().startsWith('QX:')) {
+    const id = raw.slice(3).trim()
+    if (id) return { esPulsera: true, turnoId: id }
+  }
+
+  // 3. URL con query param ?t= o ?turno_id=
+  if (raw.includes('http') && (raw.includes('?t=') || raw.includes('?turno_id='))) {
+    try {
+      const url = new URL(raw)
+      const t = url.searchParams.get('t') || url.searchParams.get('turno_id')
+      if (t) return { esPulsera: true, turnoId: t.trim() }
+    } catch {
+      // Ignorar fallo de parseo de URL
+    }
+  }
+
+  // 4. UUID directo (36 caracteres hexadecimales con 4 guiones)
+  if (raw.length === 36 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+    return { esPulsera: true, turnoId: raw }
+  }
+
+  return { esPulsera: false }
+}
+
+/**
+ * Determina si una cadena escaneada corresponde a un código de Lente Intraocular (DataMatrix GS1 / 1D).
+ */
+export function esCodigoLioGs1(rawCode: string): boolean {
+  if (!rawCode) return false
+  const raw = rawCode.trim()
+
+  // Si contiene el AI (01) típico de DataMatrix médico
+  if (raw.includes('(01)') && raw.length >= 12) return true
+
+  // Si tiene prefijo AIM de DataMatrix GS1
+  if (raw.startsWith(']d2') || raw.startsWith(']Q3') || raw.startsWith(']C1')) return true
+
+  // Si inicia con stream numérico 01 seguido de 14 dígitos
+  if (/^01\d{14}/.test(raw)) return true
+
+  // Si es un Digital Link de GS1 con /01/
+  if ((raw.startsWith('http://') || raw.startsWith('https://')) && (raw.includes('/01/') || raw.includes('gtin='))) return true
+
+  return false
+}
+
+export type TipoClasificacionEscaneo =
+  | { tipo: 'PULSERA_PACIENTE'; turnoId: string; raw: string }
+  | { tipo: 'LIO_DATAMATRIX'; gs1: Gs1ParsedData; raw: string }
+  | { tipo: 'CODIGO_1D_GTIN'; gtin14: string; raw: string }
+  | { tipo: 'DESCONOCIDO'; raw: string }
+
+/**
+ * Clasifica inmediatamente cualquier lectura de escáner en base a su sintaxis y estructura.
+ */
+export function clasificarLecturaEscaneo(rawInput: string): TipoClasificacionEscaneo {
+  const raw = (rawInput || '').replace(/[\r\n\t]/g, '').trim()
+  if (!raw) return { tipo: 'DESCONOCIDO', raw: '' }
+
+  // 1. Pulsera de paciente
+  const checkPulsera = esCodigoPulseraPaciente(raw)
+  if (checkPulsera.esPulsera && checkPulsera.turnoId) {
+    return { tipo: 'PULSERA_PACIENTE', turnoId: checkPulsera.turnoId, raw }
+  }
+
+  // 2. DataMatrix GS1 de LIO
+  if (esCodigoLioGs1(raw)) {
+    const parsedGs1 = parseGs1Code(raw)
+    return { tipo: 'LIO_DATAMATRIX', gs1: parsedGs1, raw }
+  }
+
+  // 3. Código de barra 1D estándar de producto (UPC / EAN / GTIN puro)
+  if (/^\d{8,14}$/.test(raw)) {
+    const res1D = procesarLecturaCodigo(raw)
+    if (res1D.gtin14) {
+      return { tipo: 'CODIGO_1D_GTIN', gtin14: res1D.gtin14, raw }
+    }
+  }
+
+  // 4. Intentar parseo GS1 genérico por si tiene AIs combinados
+  const posibleGs1 = parseGs1Code(raw)
+  if (posibleGs1.esValido && posibleGs1.gtin) {
+    return { tipo: 'LIO_DATAMATRIX', gs1: posibleGs1, raw }
+  }
+
+  return { tipo: 'DESCONOCIDO', raw }
+}
+

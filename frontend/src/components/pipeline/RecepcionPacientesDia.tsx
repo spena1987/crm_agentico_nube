@@ -31,8 +31,10 @@ import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
-import { useQRScannerListener } from '@/hooks/useQRScannerListener'
-import { Printer, QrCode, Camera } from 'lucide-react'
+import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
+import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
+import { reproducirBeepExito, reproducirBeepAlerta, reproducirBeepScan } from '@/lib/audioFeedback'
+import { Printer, QrCode, Camera, Barcode } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 
 interface TurnoRecepcion {
@@ -101,12 +103,19 @@ export default function RecepcionPacientesDia() {
   const [scanVerifTurnoId, setScanVerifTurnoId] = useState<string | null>(null)
   const [scanVerifRawQR, setScanVerifRawQR] = useState<string>('')
   const [mostrarModalCamara, setMostrarModalCamara] = useState<boolean>(false)
+  const [mostrarModalGuiaS224, setMostrarModalGuiaS224] = useState<boolean>(false)
 
-  // Listener global de escáner QR (Pistolas USB / Bluetooth)
-  useQRScannerListener({
-    onScan: (raw, tId) => {
-      setScanVerifRawQR(raw)
-      setScanVerifTurnoId(tId)
+  // Motor universal de escáner inteligente (ProSoft S224 / USB HID / Bluetooth)
+  const { estaEscaneando } = useSmartScannerEngine({
+    enabled: true,
+    onScanPaciente: (scannedTurnoId, rawCode) => {
+      setScanVerifRawQR(rawCode)
+      setScanVerifTurnoId(scannedTurnoId)
+      reproducirBeepExito()
+    },
+    onScanLio: () => {
+      // En recepción, alertar amablemente si escanearon una caja de lente en vez de pulsera
+      reproducirBeepAlerta()
     }
   })
 
@@ -464,12 +473,25 @@ export default function RecepcionPacientesDia() {
 
           <button
             type="button"
+            onClick={() => setMostrarModalGuiaS224(true)}
+            className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 hover:text-blue-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm shrink-0"
+            title="Guía de calibración y probador del escáner ProSoft S224"
+          >
+            <Barcode size={14} />
+            <span className="hidden sm:inline">Escáner S224</span>
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${estaEscaneando ? 'bg-emerald-300 scale-125' : 'bg-emerald-400 animate-pulse'}`}
+            />
+          </button>
+
+          <button
+            type="button"
             onClick={() => setMostrarModalCamara(true)}
             className="px-3 py-1.5 bg-neutral-950 hover:bg-neutral-800 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm shrink-0"
             title="Escanear pulsera QR con cámara o pistola"
           >
             <Camera size={14} />
-            <span className="hidden sm:inline">Escanear QR</span>
+            <span className="hidden sm:inline">Cámara</span>
           </button>
 
           <button
@@ -919,6 +941,13 @@ export default function RecepcionPacientesDia() {
             setScanVerifRawQR(raw)
             setScanVerifTurnoId(tId)
           }}
+        />
+      )}
+
+      {mostrarModalGuiaS224 && (
+        <ModalGuiaEscanerS224
+          isOpen={mostrarModalGuiaS224}
+          onClose={() => setMostrarModalGuiaS224(false)}
         />
       )}
     </div>

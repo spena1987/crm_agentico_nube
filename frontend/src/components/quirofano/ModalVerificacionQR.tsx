@@ -20,6 +20,7 @@ import {
   ExternalLink
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { reproducirBeepExito, reproducirBeepAlerta } from '@/lib/audioFeedback'
 
 interface ModalVerificacionQRProps {
   isOpen: boolean
@@ -29,34 +30,6 @@ interface ModalVerificacionQRProps {
   estacion?: string
   onEstadoActualizado?: (turnoActualizado: any) => void
   onAbrirImprimirPulsera?: (turnoId: string) => void
-}
-
-// Reproductor de sonido de verificación médica exitosa (Web Audio API)
-function reproducirBeepExito() {
-  try {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext
-    if (!AudioContext) return
-    const ctx = new AudioContext()
-
-    const playTone = (freq: number, start: number, duration: number) => {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(freq, ctx.currentTime + start)
-      gain.gain.setValueAtTime(0.15, ctx.currentTime + start)
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration)
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.start(ctx.currentTime + start)
-      osc.stop(ctx.currentTime + start + duration)
-    }
-
-    // Doble tono ascendente agradable (880 Hz -> 1760 Hz)
-    playTone(880, 0, 0.08)
-    playTone(1760, 0.09, 0.12)
-  } catch (e) {
-    // Ignorar si el navegador bloquea audio
-  }
 }
 
 export default function ModalVerificacionQR({
@@ -107,6 +80,7 @@ export default function ModalVerificacionQR({
       } catch (err: any) {
         console.error('Error procesando escaneo QR:', err)
         setError(err.message || 'No se pudo verificar el turno quirúrgico.')
+        reproducirBeepAlerta()
       } finally {
         setProcesando(false)
       }

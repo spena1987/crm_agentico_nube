@@ -48,6 +48,9 @@ import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso } from '@/lib/dateUtils'
 import { useDebounce } from '@/lib/useDebounce'
 import ModalAsistenteSRKT from '@/components/calculo-lio/ModalAsistenteSRKT'
+import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
+import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
+import { reproducirBeepExito, reproducirBeepAlerta, reproducirBeepScan } from '@/lib/audioFeedback'
 
 interface OpcionLio {
   id: string
@@ -120,6 +123,26 @@ export default function CalculoLioPage() {
   const [cargandoArchivos, setCargandoArchivos] = useState<boolean>(false)
   const [archivoVisor, setArchivoVisor] = useState<any | null>(null)
   const [visorPantallaCompleta, setVisorPantallaCompleta] = useState<boolean>(false)
+  const [modalGuiaS224Abierto, setModalGuiaS224Abierto] = useState<boolean>(false)
+
+  // Motor inteligente de escáner en Mesa de Cálculo de LIO
+  useSmartScannerEngine({
+    enabled: true,
+    onScanPaciente: (scannedTurnoId) => {
+      const pMatch = todosPacientes.find(
+        (p) => p.turno_id === scannedTurnoId || p.id_compuesto === scannedTurnoId || p.codigo_turno === scannedTurnoId
+      )
+      if (pMatch) {
+        seleccionarPaciente(pMatch)
+        reproducirBeepExito()
+      } else {
+        reproducirBeepAlerta()
+      }
+    },
+    onScanLio: () => {
+      reproducirBeepScan()
+    }
+  })
 
   // Cargar catálogo de modelos de LIO
   useEffect(() => {
@@ -661,6 +684,17 @@ export default function CalculoLioPage() {
           >
             <Calculator size={14} />
             <span className="hidden sm:inline">Calculadora SRK/T</span>
+          </button>
+
+          {/* Guía Escáner ProSoft S224 */}
+          <button
+            type="button"
+            onClick={() => setModalGuiaS224Abierto(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border border-blue-500/30 bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-bold transition shadow-xs cursor-pointer"
+            title="Calibración y probador del escáner ProSoft S224"
+          >
+            <Barcode size={14} />
+            <span className="hidden sm:inline">Escáner S224</span>
           </button>
 
           <button
@@ -1631,6 +1665,12 @@ export default function CalculoLioPage() {
             actualizarOpcionLio(opcionesLio[0].id, 'dioptria', diop.replace('+', ''))
           }
         }}
+      />
+
+      {/* 6. MODAL GUÍA Y CALIBRACIÓN ESCÁNER PROSOFT S224 */}
+      <ModalGuiaEscanerS224
+        isOpen={modalGuiaS224Abierto}
+        onClose={() => setModalGuiaS224Abierto(false)}
       />
     </div>
   )

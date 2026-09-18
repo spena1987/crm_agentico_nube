@@ -42,14 +42,17 @@ import {
   Minimize2,
   Moon,
   Sun,
-  ShieldAlert
+  ShieldAlert,
+  Barcode
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
-import { useQRScannerListener } from '@/hooks/useQRScannerListener'
+import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
+import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
+import { reproducirBeepExito, reproducirBeepScan, reproducirBeepAlerta } from '@/lib/audioFeedback'
 import { Printer, QrCode, Camera } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
@@ -167,10 +170,36 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     setScanVerifTurnoId(tId)
   }
 
-  // Listener global de escáner QR en Pizarra de Quirófano
-  useQRScannerListener({
-    onScan: (raw, tId) => {
-      procesarEscaneoPizarra(raw, tId)
+  const [mostrarModalGuiaS224, setMostrarModalGuiaS224] = useState<boolean>(false)
+  const [hudEscaneoLio, setHudEscaneoLio] = useState<{ texto: string; gtin?: string; lote?: string; vto?: string } | null>(null)
+
+  // Motor inteligente de escáner universal (ProSoft S224 / USB HID / Bluetooth)
+  const { ultimoEscaneo, estaEscaneando } = useSmartScannerEngine({
+    enabled: true,
+    onScanPaciente: (scannedTurnoId, rawCode) => {
+      procesarEscaneoPizarra(rawCode, scannedTurnoId)
+    },
+    onScanLio: (gs1, rawCode) => {
+      // Buscar si hay una cirugía en preparación o activa en la sala seleccionada
+      const turnoActivo = turnos.find(
+        (t) =>
+          (t.estado === 'pre_quirofano' || t.estado === 'en_operacion') &&
+          (quirofanoFiltro === 'todos' || t.quirofano_id === quirofanoFiltro)
+      )
+
+      if (turnoActivo && turnoActivo.estado === 'pre_quirofano') {
+        setTurnoParaPausaOms(turnoActivo)
+        reproducirBeepExito()
+      } else {
+        setHudEscaneoLio({
+          texto: 'Lente Intraocular (DataMatrix GS1)',
+          gtin: gs1.gtin14 || gs1.gtin || undefined,
+          lote: gs1.lote || undefined,
+          vto: gs1.vencimiento || undefined
+        })
+        reproducirBeepScan()
+        setTimeout(() => setHudEscaneoLio(null), 5000)
+      }
     }
   })
 
@@ -763,12 +792,26 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
           <button
             type="button"
+            onClick={() => setMostrarModalGuiaS224(true)}
+            className="px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-xl border border-blue-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            title="Guía de configuración y probador en vivo para escáner ProSoft S224 (2.4 GHz USB)"
+          >
+            <Barcode size={15} />
+            <span className="hidden sm:inline">Escáner S224</span>
+            <span
+              className={`w-2 h-2 rounded-full ${estaEscaneando ? 'bg-emerald-400 scale-125' : 'bg-emerald-500 animate-pulse'}`}
+              title="Escáner listo y escuchando ráfagas"
+            />
+          </button>
+
+          <button
+            type="button"
             onClick={() => setMostrarModalCamara(true)}
             className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
-            title="Escanear pulsera QR con cámara o lector"
+            title="Escanear pulsera QR con cámara integrada o móvil"
           >
             <Camera size={15} />
-            <span className="hidden sm:inline">Escanear QR</span>
+            <span className="hidden sm:inline">Cámara</span>
           </button>
 
           <button
@@ -781,6 +824,36 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           </button>
         </div>
       </div>
+
+      {/* BANNER HUD DE LECTURA DE ESCÁNER EN VIVO */}
+      {hudEscaneoLio && (
+        <div className="bg-blue-600 text-white px-4 py-3 rounded-2xl shadow-xl flex items-center justify-between gap-4 animate-scale-in border border-blue-400/40">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+              <Barcode size={18} className="text-white" />
+            </div>
+            <div>
+              <div className="text-xs font-bold flex items-center gap-2">
+                <span>{hudEscaneoLio.texto} capturado por ProSoft S224</span>
+                <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] uppercase font-mono">
+                  En Memoria
+                </span>
+              </div>
+              <div className="text-[11px] text-blue-100 flex flex-wrap gap-3 mt-0.5">
+                {hudEscaneoLio.gtin && <span>GTIN: <b className="font-mono text-white">{hudEscaneoLio.gtin}</b></span>}
+                {hudEscaneoLio.lote && <span>Lote: <b className="font-mono text-white">{hudEscaneoLio.lote}</b></span>}
+                {hudEscaneoLio.vto && <span>Vto: <b className="font-mono text-white">{hudEscaneoLio.vto}</b></span>}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setHudEscaneoLio(null)}
+            className="p-1 text-white/80 hover:text-white rounded-lg hover:bg-white/10 transition"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* 2. KPI COUNTERS INTERACTIVOS (6 KPIs: Por Llegar, Espera, Pre-Qx, Quirófano, Operados, Todos) */}
       <div className="space-y-2">
@@ -1510,6 +1583,13 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             setMostrarModalCamara(false)
             procesarEscaneoPizarra(raw, tId)
           }}
+        />
+      )}
+
+      {mostrarModalGuiaS224 && (
+        <ModalGuiaEscanerS224
+          isOpen={mostrarModalGuiaS224}
+          onClose={() => setMostrarModalGuiaS224(false)}
         />
       )}
 

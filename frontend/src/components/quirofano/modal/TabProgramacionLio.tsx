@@ -26,10 +26,13 @@ import {
   Lock,
   Layers,
   Compass,
-  Check
+  Check,
+  Barcode
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso } from '@/lib/dateUtils'
+import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
+import { reproducirBeepExito, reproducirBeepAlerta } from '@/lib/audioFeedback'
 
 interface TabProgramacionLioProps {
   turno: any
@@ -66,6 +69,23 @@ export default function TabProgramacionLio({
 
   const [reservandoStock, setReservandoStock] = useState<boolean>(false)
   const [stockLocal, setStockLocal] = useState<boolean>(stockReservado)
+
+  // Escaneo en vivo de caja o blíster de LIO con ProSoft S224
+  const [ultimoLioEscaneado, setUltimoLioEscaneado] = useState<any | null>(null)
+
+  const { estaEscaneando } = useSmartScannerEngine({
+    enabled: true,
+    onScanLio: (gs1) => {
+      setFormData((prev: any) => ({
+        ...prev,
+        lente_lote: gs1.lote || prev.lente_lote,
+        lente_serie: gs1.serie || prev.lente_serie,
+        lente_vencimiento: gs1.vencimiento || prev.lente_vencimiento
+      }))
+      setUltimoLioEscaneado(gs1)
+      reproducirBeepExito()
+    }
+  })
 
   // Resolución de SKU Geclisa y Stock en Vivo
   const [skuResuelto, setSkuResuelto] = useState<any | null>(null)
@@ -766,6 +786,33 @@ export default function TabProgramacionLio({
                   </Link>
                 </div>
               ) : null}
+
+              {/* Banner Interactivo de Escáner ProSoft S224 */}
+              <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/60 border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/20">
+                    <Barcode size={18} />
+                  </div>
+                  <div>
+                    <span className="font-bold text-[var(--foreground)] flex items-center gap-2">
+                      <span>Carga Rápida por Escáner ProSoft S224</span>
+                      <span
+                        className={`w-2 h-2 rounded-full ${estaEscaneando ? 'bg-emerald-400 scale-125' : 'bg-emerald-500 animate-pulse'}`}
+                        title="Escuchando lector"
+                      />
+                    </span>
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      {ultimoLioEscaneado ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                          ✔ Blíster escaneado: Lote {ultimoLioEscaneado.lote || 'OK'} • Serie {ultimoLioEscaneado.serie || 'OK'} • Vto {ultimoLioEscaneado.vencimiento || 'OK'}
+                        </span>
+                      ) : (
+                        'Apunta y dispara a la caja/blíster del lente para autopoblar Lote, Serie y Caducidad.'
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
 
               {/* Lote, Serie y Vencimiento del Blíster */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

@@ -26,6 +26,8 @@ import {
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { parseGs1Code, Gs1ParsedData } from '@/lib/gs1Parser'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
+import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
+import { reproducirBeepExito, reproducirBeepAlerta } from '@/lib/audioFeedback'
 
 interface ModalPausaQuirurgicaOmsProps {
   isOpen: boolean
@@ -61,10 +63,6 @@ export default function ModalPausaQuirurgicaOms({
   const [mostrandoOverride, setMostrandoOverride] = useState(false)
   const [justificacionCambio, setJustificacionCambio] = useState('')
   const [autorizadoPorCirujano, setAutorizadoPorCirujano] = useState(false)
-
-  // Listener para pistola lectora USB en vivo
-  const bufferRef = useRef<string>('')
-  const lastKeyTimeRef = useRef<number>(0)
 
   // Inicializar checks al abrir o recibir turno
   useEffect(() => {
@@ -108,42 +106,30 @@ export default function ModalPausaQuirurgicaOms({
     }
   }, [isOpen, turno])
 
-  // Listener de pistola lectora de código de barras USB/Bluetooth en el modal
-  useEffect(() => {
-    if (!isOpen || !turno?.lleva_lente) return
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignorar si el usuario está escribiendo en el textarea de justificación
-      const target = e.target as HTMLElement | null
-      if (target && target.tagName === 'TEXTAREA') return
-
-      const currentTime = Date.now()
-      const timeDiff = currentTime - lastKeyTimeRef.current
-
-      // Las pistolas envían teclas en ráfaga rápida (< 60 ms entre caracteres)
-      if (timeDiff > 60 && bufferRef.current.length > 0 && bufferRef.current.length < 5) {
-        bufferRef.current = ''
+  // Motor inteligente de escáner USB HID / Inalámbrico ProSoft S224
+  useSmartScannerEngine({
+    enabled: isOpen && !!turno,
+    onScanPaciente: (scannedTurnoId) => {
+      if (scannedTurnoId === turno?.id) {
+        setCheckIdentidad(true)
+        setErrorValidacion(null)
+        reproducirBeepExito()
+      } else {
+        reproducirBeepAlerta()
+        setErrorValidacion(`⚠️ Discrepancia de Pulsera: El código escaneado pertenece a otro turno (${scannedTurnoId}).`)
       }
-
-      lastKeyTimeRef.current = currentTime
-
-      if (e.key === 'Enter') {
-        const rawCode = bufferRef.current.trim()
-        bufferRef.current = ''
-        if (rawCode.length >= 6) {
-          e.preventDefault()
-          procesarCodigoBlister(rawCode)
-        }
-      } else if (e.key.length === 1) {
-        bufferRef.current += e.key
+    },
+    onScanLio: (_gs1, rawCode) => {
+      if (turno?.lleva_lente) {
+        procesarCodigoBlister(rawCode)
+      }
+    },
+    onScanGtin: (_gtin, rawCode) => {
+      if (turno?.lleva_lente) {
+        procesarCodigoBlister(rawCode)
       }
     }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [isOpen, turno])
+  })
 
   if (!isOpen || !turno) return null
 
@@ -189,13 +175,16 @@ export default function ModalPausaQuirurgicaOms({
       if (data.coincide && data.estado_validacion === 'COINCIDENCIA_TOTAL') {
         setCheckLio(true)
         setMostrandoOverride(false)
+        reproducirBeepExito()
       } else {
         setCheckLio(false)
         setAutorizadoPorCirujano(false)
+        reproducirBeepAlerta()
       }
     } catch (err: any) {
       console.error('Error validando lente GS1:', err)
       setErrorValidacion(err.message || 'Error de conexión al validar código GS1.')
+      reproducirBeepAlerta()
     } finally {
       setValidandoLio(false)
     }
