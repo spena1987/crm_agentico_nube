@@ -1909,6 +1909,7 @@ def preview_plantilla_presupuesto():
         
         sample_presupuesto = {
             "id": "A1B2C3D4",
+            "numero_presupuesto": 1,
             "created_at": date.today().isoformat(),
             "estado": "borrador",
             "total": 30500.00

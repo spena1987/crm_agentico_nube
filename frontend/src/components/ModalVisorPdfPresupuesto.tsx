@@ -18,6 +18,7 @@ interface ModalVisorPdfPresupuestoProps {
   onClose: () => void
   pdfUrl?: string | null
   presupuestoId: string
+  numeroPresupuesto?: number | null
   pacienteNombre?: string
   onEnviarWhatsApp?: () => void
 }
@@ -27,6 +28,7 @@ export default function ModalVisorPdfPresupuesto({
   onClose,
   pdfUrl,
   presupuestoId,
+  numeroPresupuesto,
   pacienteNombre = '',
   onEnviarWhatsApp
 }: ModalVisorPdfPresupuestoProps) {
@@ -60,7 +62,7 @@ export default function ModalVisorPdfPresupuesto({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-extrabold text-white tracking-tight">
-                  Documento PDF Oficial • Presupuesto #{presupuestoId.slice(0, 8).toUpperCase()}
+                  Documento PDF Oficial • Presupuesto {numeroPresupuesto ? `N° ${String(numeroPresupuesto).padStart(8, '0')}` : `#${presupuestoId.slice(0, 8).toUpperCase()}`}
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/40">
                   Membretado

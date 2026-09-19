@@ -33,6 +33,7 @@ interface Paciente {
 
 interface Presupuesto {
   id: string
+  numero_presupuesto?: number | null
   paciente_id: string
   estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
   total: number
@@ -354,7 +355,7 @@ export default function PresupuestosPage() {
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="border-b border-[var(--border)] text-slate-400 font-semibold uppercase text-[11px]">
-                    <th className="py-3 pl-2">ID</th>
+                    <th className="py-3 pl-2">Número</th>
                     <th>Paciente</th>
                     <th>Emisión & Seguimiento</th>
                     <th className="text-right">Monto Multi-Moneda</th>
@@ -373,7 +374,7 @@ export default function PresupuestosPage() {
                     return (
                       <tr key={pres.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition text-slate-700 dark:text-slate-300">
                         <td className="py-3 pl-2 font-mono font-bold text-[11px] text-blue-600">
-                          {pres.id.slice(0, 8).toUpperCase()}
+                          {pres.numero_presupuesto ? String(pres.numero_presupuesto).padStart(8, '0') : pres.id.slice(0, 8).toUpperCase()}
                         </td>
                         <td className="py-3">
                           <div className="font-bold text-slate-900 dark:text-slate-100">
@@ -533,6 +534,7 @@ export default function PresupuestosPage() {
           }}
           pdfUrl={selectedPresupuestoVisor.pdf_url}
           presupuestoId={selectedPresupuestoVisor.id}
+          numeroPresupuesto={selectedPresupuestoVisor.numero_presupuesto}
           pacienteNombre={selectedPresupuestoVisor.pacientes?.nombre}
           onEnviarWhatsApp={() => {
             handleOpenWhatsApp(selectedPresupuestoVisor)

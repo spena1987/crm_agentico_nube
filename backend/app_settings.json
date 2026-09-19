@@ -14,23 +14,43 @@
       "hablar con alguien",
       "doctor directo"
     ],
-    "system_instructions_override": ""
+    "system_instructions_override": "",
+    "handover": {
+      "auto_escalamiento_activo": true,
+      "max_reintentos_incomprension": 2,
+      "mensaje_reintento": "Disculpá, no logré comprender bien tu consulta. ¿Podrías indicarme si necesitás agendar un turno, solicitar un presupuesto o hablar con una asesora quirúrgica?",
+      "mensaje_derivacion": "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!",
+      "mensaje_post_dni": "¡Hola *{nombre}*! Hemos localizado tu ficha en el sistema (Cobertura: *{cobertura}*).\n\n¿Deseas consultar sobre tu presupuesto, coordinar un turno o hablar con una asesora quirúrgica?",
+      "palabras_clave_escape": [
+        "humano",
+        "operador",
+        "persona",
+        "asesor",
+        "asesora",
+        "asesora quirurgica",
+        "secretaria",
+        "doctor directo",
+        "hablar con alguien",
+        "urgencia",
+        "reclamo"
+      ]
+    }
   },
   "clinica": {
-    "nombre": "Centro Visión Oftalmología Integral",
-    "direccion": "San Martín 1540, Ciudad de Mendoza, Mendoza",
-    "telefono_guardia": "+54 9 261 470-3230",
+    "nombre": "Centrovisión Oftalmología Integral",
+    "direccion": "Mitre 540, Ciudad de Mendoza, Mendoza",
+    "telefono_guardia": "0800-222-4040",
     "email_contacto": "info@centrovision.com.ar",
-    "horarios_atencion": "Lunes a Viernes de 08:00 a 20:00 hs. Sábados de 09:00 a 13:00 hs.",
-    "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centro Médico Nube. ¿En qué podemos ayudarte hoy?",
-    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?t=1789322528"
+    "horarios_atencion": "Lunes a Viernes de 08:00 a 19:00 hs. Sábados de 09:00 a 13:00 hs.",
+    "mensaje_bienvenida": "¡Hola! Gracias por comunicarte con Centrovision, Clínica Oftalmólogica. ¿En qué podemos ayudarte hoy?",
+    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?t=1789813313"
   },
   "plantilla_presupuesto": {
     "titulo_documento": "PRESUPUESTO",
-    "nombre_institucion": "CENTROVISIÓN OFTALMOLOGÍA",
-    "subtitulo_institucion": "Cirugía Ocular & Especialidades Médicas",
-    "direccion": "San Martín 1540, Ciudad de Mendoza, Mendoza",
-    "telefono": "+54 9 261 470-3230",
+    "nombre_institucion": "CENTROVISIÓN",
+    "subtitulo_institucion": "Clínica Oftalmológica",
+    "direccion": "Mitre 540, Ciudad de Mendoza, Mendoza",
+    "telefono": "0800-222-4040",
     "email": "info@centrovision.com.ar",
     "sitio_web": "www.centrovision.com.ar",
     "color_primario": "#0369A1",
@@ -38,14 +58,13 @@
     "validez_dias": 30,
     "terminos_condiciones": [
       "Este presupuesto tiene una validez de 30 días corridos a partir de la fecha de emisión.",
-      "Los precios cotizados respetan la moneda especificada (Pesos ARS o Dólares USD).",
       "Formas de pago habilitadas: Transferencia bancaria, Tarjetas de crédito/débito y Efectivo en administración.",
-      "Los precis incluyen IVA."
+      "Los precios incluyen IVA."
     ],
-    "pie_pagina": "Documento emitido electrónicamente por el sistema Centrovisión",
+    "pie_pagina": "Documento emitido electrónicamente",
     "mostrar_firma": false,
     "texto_firma": "Firma y Sello Profesional / Autorización Médica",
-    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?t=1789322528",
+    "logo_url": "https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/logo_institucional.png?t=1789813313",
     "mostrar_logo": true
   }
 }

@@ -315,8 +315,8 @@ def generar_pdf_presupuesto(
         name='InstStyle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=15,
-        leading=18,
+        fontSize=13.5,
+        leading=16,
         textColor=color_primario
     )
     
@@ -324,8 +324,8 @@ def generar_pdf_presupuesto(
         name='DocTitleStyle',
         parent=styles['Normal'],
         fontName='Helvetica-Bold',
-        fontSize=13,
-        leading=16,
+        fontSize=12,
+        leading=15,
         alignment=2, # Derecha
         textColor=color_secundario
     )
@@ -427,8 +427,7 @@ def generar_pdf_presupuesto(
         textColor=colors.HexColor('#1E293B')
     )
     
-    # 1. Cabecera Institucional
-    # 1. Cabecera Institucional (con soporte omnicanal de Logo)
+    # 1. Cabecera Institucional (con soporte de Logo Horizontal y Nombre en 1 sola línea)
     mostrar_logo = plantilla.get("mostrar_logo", True)
     logo_path = obtener_o_cachear_logo_local(plantilla.get("logo_url") or clinica.get("logo_url")) if mostrar_logo else None
 
@@ -437,8 +436,17 @@ def generar_pdf_presupuesto(
         inst_content += f"<br/>{direccion_inst} • Tel: {telefono_inst}"
     inst_content += "</font>"
     
-    doc_id_str = str(presupuesto.get('id', ''))[:8].upper()
-    doc_content = f"<b>{titulo_doc}</b><br/><font size=8 color='#64748B'>Doc. N°: <b>{doc_id_str}</b>"
+    # Número de presupuesto correlativo de 8 dígitos (ej: 00000001)
+    num_presupuesto_val = presupuesto.get('numero_presupuesto')
+    if num_presupuesto_val is not None:
+        try:
+            num_presupuesto_str = f"{int(num_presupuesto_val):08d}"
+        except Exception:
+            num_presupuesto_str = str(num_presupuesto_val).zfill(8)
+    else:
+        num_presupuesto_str = "00000001"
+
+    doc_content = f"<b>{titulo_doc}</b><br/><font size=8.5 color='#475569'>Número: <b>{num_presupuesto_str}</b>"
     if sitio_web:
         doc_content += f"<br/>{sitio_web}"
     doc_content += "</font>"
@@ -450,18 +458,22 @@ def generar_pdf_presupuesto(
                 orig_w, orig_h = pimg.size
                 ratio = orig_w / float(orig_h) if orig_h > 0 else 1.0
                 
-            target_h = 42.0
-            target_w = target_h * ratio
-            if target_w > 125.0:
-                target_w = 125.0
+            if ratio >= 2.0:
+                target_w = 110.0
                 target_h = target_w / ratio
+                if target_h > 40.0:
+                    target_h = 40.0
+                    target_w = target_h * ratio
+            else:
+                target_h = 36.0
+                target_w = min(target_h * ratio, 110.0)
                 
             rl_logo = RLImage(logo_path, width=target_w, height=target_h)
             rl_logo.hAlign = 'LEFT'
             
             t_header = Table([
                 [rl_logo, Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
-            ], colWidths=[130, 240, 170])
+            ], colWidths=[115, 285, 140])
             t_header.setStyle(TableStyle([
                 ('ALIGN', (0,0), (0,0), 'LEFT'),
                 ('ALIGN', (1,0), (1,0), 'LEFT'),
@@ -475,7 +487,7 @@ def generar_pdf_presupuesto(
             logger.warning(f"Error procesando logo en generar_pdf_presupuesto: {e_l}")
             t_header = Table([
                 [Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
-            ], colWidths=[310, 230])
+            ], colWidths=[380, 160])
             t_header.setStyle(TableStyle([
                 ('ALIGN', (0,0), (0,0), 'LEFT'),
                 ('ALIGN', (1,0), (1,0), 'RIGHT'),
@@ -485,7 +497,7 @@ def generar_pdf_presupuesto(
     else:
         t_header = Table([
             [Paragraph(inst_content, style_institucion), Paragraph(doc_content, style_titulo_doc)]
-        ], colWidths=[310, 230])
+        ], colWidths=[380, 160])
         t_header.setStyle(TableStyle([
             ('ALIGN', (0,0), (0,0), 'LEFT'),
             ('ALIGN', (1,0), (1,0), 'RIGHT'),
@@ -514,11 +526,25 @@ def generar_pdf_presupuesto(
         moneda_resumen = "Pesos Argentinos (ARS)"
         
     fecha_emision = parse_and_format_date(presupuesto.get('created_at'))
-    estado_raw = str(presupuesto.get('estado', 'BORRADOR')).upper()
+    validez_dias = int(plantilla.get('validez_dias', 30) or 30)
     
+    # Calcular fecha exacta de vencimiento
+    try:
+        created_val = presupuesto.get('created_at')
+        if created_val and str(created_val).lower() not in ('now()', 'none', ''):
+            dt_base = datetime.fromisoformat(str(created_val).strip().replace("Z", "+00:00")).astimezone(TZ_ARGENTINA)
+        else:
+            dt_base = datetime.now(TZ_ARGENTINA)
+    except Exception:
+        dt_base = datetime.now(TZ_ARGENTINA)
+        
+    dt_vence = dt_base + timedelta(days=validez_dias)
+    vence_str = dt_vence.strftime('%d/%m/%Y')
+    
+    estado_raw = str(presupuesto.get('estado', 'BORRADOR')).upper()
     color_estado = '#16A34A' if estado_raw == 'APROBADO' else ('#2563EB' if estado_raw == 'ENVIADO' else ('#DC2626' if estado_raw == 'RECHAZADO' else '#475569'))
     
-    # Información del Paciente y Detalle de Emisión
+    # Información del Paciente y Detalle de Emisión (Limpio y con Vencimiento)
     info_box = [
         [
             Paragraph("<b>DATOS DEL PACIENTE:</b>", style_seccion_header),
@@ -533,9 +559,8 @@ def generar_pdf_presupuesto(
                 style_texto
             ),
             Paragraph(
-                f"<b>Tipo de Documento:</b> Cotización Médica Oficial<br/>"
                 f"<b>Fecha de Emisión:</b> {fecha_emision}<br/>"
-                f"<b>Validez de Aranceles:</b> {plantilla.get('validez_dias', 30)} días corridos<br/>"
+                f"<b>Validez:</b> {validez_dias} días corridos (Vence: {vence_str})<br/>"
                 f"<b>Moneda de Cotización:</b> {moneda_resumen}", 
                 style_texto
             )
@@ -555,8 +580,8 @@ def generar_pdf_presupuesto(
     story.append(t_info)
     story.append(Spacer(1, 10))
     
-    # 3. Tabla de Prestaciones / Items Presupuestados (Exact 540 pt)
-    # Anchos: Código (55) + Descripción (245) + Moneda (45) + P. Unit (80) + Cant (35) + Subtotal (80) = 540 pt
+    # 3. Tabla de Prestaciones / Items Presupuestados (Exact 540 pt, 1 sola línea garantizada)
+    # Anchos optimizados: Cód (70) + Descripción (275) + Mon (35) + P. Unit (70) + Cant (25) + Subtotal (65) = 540 pt
     table_data = [[
         Paragraph("<b>Código</b>", style_encabezado_tabla),
         Paragraph("<b>Prestación / Descripción Médica</b>", style_encabezado_tabla),
@@ -585,13 +610,29 @@ def generar_pdf_presupuesto(
         p_unit_str = formatear_monto_moneda(p_unit, moneda_item)
         subtotal_str = formatear_monto_moneda(subtotal, moneda_item)
         
+        # Tipografía auto-fit para código (evita wrapping de códigos de 9-12 chars como ANESTESIA1)
+        if len(codigo) > 7:
+            style_item_cod = ParagraphStyle('ItemCodS', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=7.2, leading=8.5, textColor=colors.HexColor('#2563EB'))
+        else:
+            style_item_cod = ParagraphStyle('ItemCodN', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.2, leading=10, textColor=colors.HexColor('#2563EB'))
+            
+        # Tipografía auto-fit para descripción médica (evita wrapping de descripciones de 38+ chars)
+        if len(nombre) > 38:
+            style_item_nom = ParagraphStyle('ItemNomS', parent=styles['Normal'], fontName='Helvetica', fontSize=7.4, leading=9.0, textColor=colors.HexColor('#334155'))
+        else:
+            style_item_nom = ParagraphStyle('ItemNomN', parent=styles['Normal'], fontName='Helvetica', fontSize=8.2, leading=10.5, textColor=colors.HexColor('#334155'))
+            
+        style_num_cell = ParagraphStyle('NumCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#334155'))
+        style_num_bold = ParagraphStyle('NumBoldCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#0F172A'))
+        style_cant_cell = ParagraphStyle('CantCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8.0, leading=10, alignment=1, textColor=colors.HexColor('#334155'))
+
         table_data.append([
-            Paragraph(f"<font color='#2563EB'><b>{codigo}</b></font>", style_texto),
-            Paragraph(nombre, style_texto),
+            Paragraph(f"<b>{codigo}</b>", style_item_cod),
+            Paragraph(nombre, style_item_nom),
             Paragraph(f"<b>{moneda_item}</b>", style_moneda_tag),
-            Paragraph(p_unit_str, style_texto_right),
-            Paragraph(str(cantidad), ParagraphStyle('CantCenter', parent=style_texto, alignment=1)),
-            Paragraph(f"<b>{subtotal_str}</b>", style_texto_bold_right)
+            Paragraph(p_unit_str, style_num_cell),
+            Paragraph(str(cantidad), style_cant_cell),
+            Paragraph(f"<b>{subtotal_str}</b>", style_num_bold)
         ])
         
     num_items = len(items)
@@ -621,7 +662,7 @@ def generar_pdf_presupuesto(
             Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount)
         ])
         
-    t_items = Table(table_data, colWidths=[55, 245, 45, 80, 35, 80])
+    t_items = Table(table_data, colWidths=[70, 275, 35, 70, 25, 65])
     
     table_styles = [
         ('BACKGROUND', (0,0), (-1,0), color_primario),
@@ -662,7 +703,8 @@ def generar_pdf_presupuesto(
     # 4. Términos y Condiciones
     condiciones_html = f"<b><font color='{color_primario_hex}'>TÉRMINOS Y CONDICIONES DEL PRESUPUESTO:</font></b><br/>"
     for i, cond in enumerate(terminos, 1):
-        condiciones_html += f"<b>{i}.</b> {cond}<br/>"
+        cond_limpia = cond.replace("Los precis ", "Los precios cotizados ").replace("Los precis", "Los precios cotizados").replace("precis", "precios")
+        condiciones_html += f"<b>{i}.</b> {cond_limpia}<br/>"
         
     t_cond = Table([[Paragraph(condiciones_html, style_texto)]], colWidths=[540])
     t_cond.setStyle(TableStyle([

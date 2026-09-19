@@ -31,6 +31,7 @@ export interface ItemPresupuestoDetalle {
 
 export interface PresupuestoPaciente {
   id: string
+  numero_presupuesto?: number | null
   paciente_id: string
   asesoria_id?: string | null
   total: number
@@ -445,9 +446,9 @@ export default function ModalHistorialPresupuestosPaciente({
                             type="button"
                             onClick={() => handleCopiarId(p.id)}
                             className="text-xs font-mono font-bold text-white hover:text-blue-300 flex items-center gap-1 bg-neutral-800 px-2 py-0.5 rounded-md border border-gray-700"
-                            title="Copiar ID de presupuesto"
+                            title="Copiar ID interno del presupuesto"
                           >
-                            #{p.id.slice(0, 8)}
+                            N° {p.numero_presupuesto ? String(p.numero_presupuesto).padStart(8, '0') : p.id.slice(0, 8).toUpperCase()}
                             {copiadoId === p.id ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
                           </button>
 

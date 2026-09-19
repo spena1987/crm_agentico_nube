@@ -3072,20 +3072,10 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             
         presupuesto_id = str(uuid.uuid4())
         total_escalar = total_ars if total_ars > 0 else total_usd
-        
-        # 4. Generar PDF membretado oficial del CRM con totales discriminados
-        pdf_dict = {
-            "id": presupuesto_id,
-            "total": total_escalar,
-            "total_ars": total_ars,
-            "total_usd": total_usd,
-            "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
-            "created_at": "now()"
-        }
-        pdf_filename = generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
+        pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
         pdf_url = f"/static/{pdf_filename}"
         
-        # 5. Insertar cabecera de presupuesto en Supabase
+        # 4. Insertar cabecera de presupuesto en Supabase (obtiene numero_presupuesto correlativo de la BD)
         pres_data = {
             "id": presupuesto_id,
             "paciente_id": paciente_id,
@@ -3099,6 +3089,19 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         p_ins = supabase.table("presupuestos").insert(pres_data).execute()
         if not p_ins.data:
             raise Exception("No se pudo crear la cabecera del presupuesto.")
+        presupuesto_db = p_ins.data[0]
+            
+        # 5. Generar PDF membretado oficial del CRM con número correlativo y totales discriminados
+        pdf_dict = {
+            "id": presupuesto_id,
+            "numero_presupuesto": presupuesto_db.get("numero_presupuesto"),
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
+            "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
+            "created_at": presupuesto_db.get("created_at") or "now()"
+        }
+        generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
             
         # 6. Insertar ítems
         for it in items_db:

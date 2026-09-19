@@ -734,6 +734,7 @@ export type Database = {
           created_at: string
           estado: string
           id: string
+          numero_presupuesto: number | null
           paciente_id: string
           pdf_url: string | null
           total: number
@@ -743,6 +744,7 @@ export type Database = {
           created_at?: string
           estado?: string
           id?: string
+          numero_presupuesto?: number | null
           paciente_id: string
           pdf_url?: string | null
           total?: number
@@ -752,6 +754,7 @@ export type Database = {
           created_at?: string
           estado?: string
           id?: string
+          numero_presupuesto?: number | null
           paciente_id?: string
           pdf_url?: string | null
           total?: number

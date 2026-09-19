@@ -587,18 +587,18 @@ export default function BudgetTemplateDesignerCard() {
                     <img
                       src={config.logo_url.startsWith('http') ? config.logo_url : `${API_BASE_URL}${config.logo_url}`}
                       alt="Logo Institucional"
-                      className="max-h-12 max-w-[100px] object-contain shrink-0"
+                      className="max-h-11 max-w-[125px] object-contain shrink-0"
                     />
                   )}
                   <div className="min-w-0">
-                    <div className="font-black text-sm tracking-tight truncate" style={{ color: config.color_primario }}>
+                    <div className="font-black text-xs sm:text-sm tracking-tight whitespace-nowrap" style={{ color: config.color_primario }}>
                       {config.nombre_institucion || 'CLÍNICA MÉDICA'}
                     </div>
-                    <div className="text-[9px] text-slate-500 mt-0.5 truncate">
+                    <div className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap truncate">
                       {config.subtitulo_institucion}
                     </div>
                     {(config.direccion || config.telefono) && (
-                      <div className="text-[8px] text-slate-400 mt-0.5 truncate">
+                      <div className="text-[8px] text-slate-400 mt-0.5 whitespace-nowrap truncate">
                         {config.direccion} • Tel: {config.telefono}
                       </div>
                     )}
@@ -609,7 +609,7 @@ export default function BudgetTemplateDesignerCard() {
                   <div className="font-bold text-xs" style={{ color: config.color_primario }}>
                     {config.titulo_documento || 'PRESUPUESTO MÉDICO'}
                   </div>
-                  <div className="text-[9px] text-slate-500">Doc. N°: <b>39F2C255</b></div>
+                  <div className="text-[9px] text-slate-600">Número: <b>00000001</b></div>
                   {config.sitio_web && (
                     <div className="text-[8px] text-slate-400">{config.sitio_web}</div>
                   )}
@@ -623,9 +623,9 @@ export default function BudgetTemplateDesignerCard() {
                     Datos del Paciente:
                   </div>
                   <div className="space-y-0.5 text-slate-600">
-                    <div><b>Nombre:</b> SOTTILE, MAYRA</div>
-                    <div><b>Teléfono:</b> +54 9 261 470-3230</div>
-                    <div><b>Cobertura:</b> Particular</div>
+                    <div className="truncate"><b>Nombre:</b> SOTTILE, MAYRA</div>
+                    <div className="truncate"><b>Teléfono:</b> +54 9 261 470-3230</div>
+                    <div className="truncate"><b>Cobertura:</b> Particular</div>
                   </div>
                 </div>
 
@@ -634,50 +634,50 @@ export default function BudgetTemplateDesignerCard() {
                     Detalle de Emisión:
                   </div>
                   <div className="space-y-0.5 text-slate-600">
-                    <div><b>Fecha:</b> 2026-08-15</div>
-                    <div><b>Validez:</b> {config.validez_dias} días</div>
+                    <div><b>Fecha de Emisión:</b> {new Date().toLocaleDateString('es-AR')}</div>
+                    <div><b>Validez:</b> {config.validez_dias} días corridos (Vence: {new Date(Date.now() + (config.validez_dias || 30) * 86400000).toLocaleDateString('es-AR')})</div>
                     <div><b>Moneda:</b> <span className="font-bold text-emerald-600">Multi-moneda (ARS / USD)</span></div>
                   </div>
                 </div>
               </div>
 
-              {/* Tabla de Prestaciones de Muestra */}
+              {/* Tabla de Prestaciones de Muestra (1 sola línea garantizada) */}
               <div className="rounded-lg overflow-hidden border border-slate-200">
-                <table className="w-full text-left text-[10px]">
+                <table className="w-full text-left text-[10px] table-fixed">
                   <thead>
                     <tr className="text-white font-bold" style={{ backgroundColor: config.color_primario }}>
-                      <th className="py-1.5 px-2">Cód.</th>
-                      <th className="py-1.5 px-2">Prestación / Descripción</th>
-                      <th className="py-1.5 px-2 text-center">Mon.</th>
-                      <th className="py-1.5 px-2 text-right">P. Unit.</th>
-                      <th className="py-1.5 px-2 text-center">Cant.</th>
-                      <th className="py-1.5 px-2 text-right">Subtotal</th>
+                      <th className="py-1.5 px-2 w-[13%]">Código</th>
+                      <th className="py-1.5 px-2 w-[51%]">Prestación / Descripción Médica</th>
+                      <th className="py-1.5 px-2 w-[7%] text-center">Mon.</th>
+                      <th className="py-1.5 px-2 w-[13%] text-right">P. Unit.</th>
+                      <th className="py-1.5 px-2 w-[5%] text-center">Cant.</th>
+                      <th className="py-1.5 px-2 w-[11%] text-right">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     <tr className="bg-white">
-                      <td className="py-1.5 px-2 font-mono font-bold text-blue-600">420101</td>
-                      <td className="py-1.5 px-2">Consulta Médica en Consultorio</td>
+                      <td className="py-1.5 px-2 font-mono font-bold text-blue-600 truncate whitespace-nowrap text-[9px]">420101</td>
+                      <td className="py-1.5 px-2 truncate whitespace-nowrap">Consulta Médica en Consultorio</td>
                       <td className="py-1.5 px-2 text-center font-bold text-[9px]">ARS</td>
-                      <td className="py-1.5 px-2 text-right font-mono">$ 8.500,00</td>
+                      <td className="py-1.5 px-2 text-right font-mono whitespace-nowrap">$ 8.500,00</td>
                       <td className="py-1.5 px-2 text-center">1</td>
-                      <td className="py-1.5 px-2 text-right font-mono font-bold">$ 8.500,00</td>
+                      <td className="py-1.5 px-2 text-right font-mono font-bold whitespace-nowrap">$ 8.500,00</td>
                     </tr>
                     <tr className="bg-slate-50/50">
-                      <td className="py-1.5 px-2 font-mono font-bold text-blue-600">180104</td>
-                      <td className="py-1.5 px-2">Ecografía Tocoginecológica</td>
+                      <td className="py-1.5 px-2 font-mono font-bold text-blue-600 truncate whitespace-nowrap text-[9px]">180104</td>
+                      <td className="py-1.5 px-2 truncate whitespace-nowrap">Ecografía Tocoginecológica Transvaginal</td>
                       <td className="py-1.5 px-2 text-center font-bold text-[9px]">ARS</td>
-                      <td className="py-1.5 px-2 text-right font-mono">$ 22.000,00</td>
+                      <td className="py-1.5 px-2 text-right font-mono whitespace-nowrap">$ 22.000,00</td>
                       <td className="py-1.5 px-2 text-center">1</td>
-                      <td className="py-1.5 px-2 text-right font-mono font-bold">$ 22.000,00</td>
+                      <td className="py-1.5 px-2 text-right font-mono font-bold whitespace-nowrap">$ 22.000,00</td>
                     </tr>
                     <tr className="bg-white">
-                      <td className="py-1.5 px-2 font-mono font-bold text-blue-600">FIV-01</td>
-                      <td className="py-1.5 px-2">Tratamiento FIV + ICSI Completo</td>
+                      <td className="py-1.5 px-2 font-mono font-bold text-blue-600 truncate whitespace-nowrap text-[9px]">FIV-01</td>
+                      <td className="py-1.5 px-2 truncate whitespace-nowrap">Tratamiento FIV + ICSI Completo</td>
                       <td className="py-1.5 px-2 text-center font-bold text-[9px] text-amber-600">USD</td>
-                      <td className="py-1.5 px-2 text-right font-mono text-amber-700">USD 1.500,00</td>
+                      <td className="py-1.5 px-2 text-right font-mono text-amber-700 whitespace-nowrap">USD 1.500,00</td>
                       <td className="py-1.5 px-2 text-center">1</td>
-                      <td className="py-1.5 px-2 text-right font-mono font-bold text-amber-700">USD 1.500,00</td>
+                      <td className="py-1.5 px-2 text-right font-mono font-bold text-amber-700 whitespace-nowrap">USD 1.500,00</td>
                     </tr>
                   </tbody>
                   <tfoot className="border-t-2" style={{ borderColor: config.color_primario }}>
