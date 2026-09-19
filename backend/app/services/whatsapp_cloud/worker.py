@@ -568,8 +568,80 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     import asyncio
                     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 
+                    def check_human_handover_match(text: str, keywords: list) -> Optional[str]:
+                        if not text or not keywords:
+                            return None
+                        import unicodedata
+                        def _norm(s: str) -> str:
+                            s = unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('utf-8')
+                            return re.sub(r'[^a-z0-9\s]', ' ', s.lower()).strip()
+                        clean_text = f" {_norm(text)} "
+                        for kw in keywords:
+                            norm_kw = _norm(kw)
+                            if not norm_kw:
+                                continue
+                            if f" {norm_kw} " in clean_text or clean_text.strip() == norm_kw:
+                                return kw
+                        return None
+
                     async def responder_con_agente():
                         try:
+                            from app.services.config_service import load_settings
+                            settings = load_settings()
+                            bot_cfg = settings.get("bot", {})
+                            handover_cfg = bot_cfg.get("handover", {})
+
+                            # 1. Fast-Path: Detección Determinística Inmediata de Escape Humano
+                            if handover_cfg.get("auto_escalamiento_activo", True):
+                                kw_list = handover_cfg.get("palabras_clave_escape") or bot_cfg.get("human_escalation_keywords") or []
+                                matched_kw = check_human_handover_match(text_content, kw_list)
+                                if matched_kw:
+                                    logger.info(f"[Fast-Path Handover] Escape directo detectado por palabra clave '{matched_kw}' para paciente {paciente_id}.")
+                                    msg_derivacion = handover_cfg.get("mensaje_derivacion") or (
+                                        "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. "
+                                        "Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!"
+                                    )
+                                    phone_id, token = get_whatsapp_cloud_credentials()
+                                    if phone_id and token:
+                                        wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+                                        send_res = await wa_client.send_free_text(normalized_phone, msg_derivacion)
+                                        bot_wamid = send_res.get("wamid")
+                                        await wa_client.close()
+
+                                        if crm_conv_id:
+                                            supabase.table("mensajes").insert({
+                                                "conversacion_id": crm_conv_id,
+                                                "emisor": "bot",
+                                                "contenido": msg_derivacion,
+                                                "metadata_json": {
+                                                    "wamid": bot_wamid,
+                                                    "tipo": "text",
+                                                    "delivery_status": "enviado",
+                                                    "provider": "meta_cloud_api",
+                                                    "fast_path_handover": True,
+                                                    "keyword_matched": matched_kw
+                                                }
+                                            }).execute()
+
+                                            conv_res = supabase.table("conversaciones").select("metadata_json").eq("id", crm_conv_id).limit(1).execute()
+                                            curr_meta = (conv_res.data[0].get("metadata_json") or {}) if conv_res.data else {}
+                                            curr_meta.update({
+                                                "fallback_strikes": 0,
+                                                "handover_motivo": f"Escape directo por solicitud de paciente: '{matched_kw}'",
+                                                "handover_at": datetime.now(timezone.utc).isoformat()
+                                            })
+
+                                            supabase.table("conversaciones").update({
+                                                "bot_disabled": True,
+                                                "estado_gestion": "SIN_ASIGNAR",
+                                                "ultimo_mensaje": msg_derivacion,
+                                                "metadata_json": curr_meta,
+                                                "updated_at": datetime.now(timezone.utc).isoformat()
+                                            }).eq("id", crm_conv_id).execute()
+
+                                    return
+
+                            # 2. Despachar Inferencia Semántica a Gemini
                             from app.agent import procesar_mensaje_agente
                             logger.info(f"[Agente IA] Ejecutando Gemini para paciente {paciente_id}...")
                             respuesta_bot = procesar_mensaje_agente(

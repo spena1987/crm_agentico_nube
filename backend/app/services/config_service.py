@@ -14,10 +14,23 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "model_name": "gemini-2.5-flash",
         "typing_delay_seconds": 3,
         "human_escalation_keywords": [
-            "humano", "operador", "persona", "asesor", "urgencia", 
-            "emergencia", "reclamo", "hablar con alguien", "doctor directo"
+            "humano", "operador", "persona", "asesor", "asesora", "asesora quirurgica",
+            "secretaria", "urgencia", "emergencia", "reclamo", "hablar con alguien", 
+            "doctor directo", "atencion personalizada"
         ],
-        "system_instructions_override": ""
+        "system_instructions_override": "",
+        "handover": {
+            "auto_escalamiento_activo": True,
+            "max_reintentos_incomprension": 2,
+            "mensaje_reintento": "Disculpá, no logré comprender bien tu consulta. ¿Podrías indicarme si necesitás agendar un turno, solicitar un presupuesto o hablar con una asesora quirúrgica?",
+            "mensaje_derivacion": "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!",
+            "mensaje_post_dni": "¡Hola *{nombre}*! Hemos localizado tu ficha en el sistema (Cobertura: *{cobertura}*).\n\n¿Deseas consultar sobre tu presupuesto, coordinar un turno o hablar con una asesora quirúrgica?",
+            "palabras_clave_escape": [
+                "humano", "operador", "persona", "asesor", "asesora", 
+                "asesora quirurgica", "secretaria", "doctor directo", 
+                "hablar con alguien", "urgencia", "reclamo"
+            ]
+        }
     },
     "clinica": {
         "nombre": "Centro Médico Nube",
@@ -163,6 +176,15 @@ def obtener_o_cachear_logo_local(logo_url: Optional[str] = None) -> Optional[str
     return None
 
 
+def _deep_merge(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
+    for k, v in update.items():
+        if isinstance(v, dict) and k in base and isinstance(base[k], dict):
+            base[k] = _deep_merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
 def load_settings(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Carga las configuraciones del sistema con persistencia prioritaria en Supabase
@@ -196,14 +218,10 @@ def load_settings(force_refresh: bool = False) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"Error al leer archivo local {CONFIG_FILE_PATH}: {e}")
 
-    # 3. Fusionar con DEFAULT_SETTINGS para campos faltantes
+    # 3. Fusionar recursivamente con DEFAULT_SETTINGS para campos faltantes
     merged = json.loads(json.dumps(DEFAULT_SETTINGS))
     if saved_data and isinstance(saved_data, dict):
-        for k, v in saved_data.items():
-            if isinstance(v, dict) and k in merged:
-                merged[k] = {**merged[k], **v}
-            else:
-                merged[k] = v
+        merged = _deep_merge(merged, saved_data)
 
     # 4. Aplicar herencia inteligente de datos
     merged = apply_inheritance(merged)
@@ -226,11 +244,7 @@ def save_settings(new_settings: Dict[str, Any]) -> Dict[str, Any]:
         # Cargar configuración actual sin caché
         current = load_settings(force_refresh=True)
 
-        for k, v in new_settings.items():
-            if isinstance(v, dict) and k in current:
-                current[k] = {**current[k], **v}
-            else:
-                current[k] = v
+        current = _deep_merge(current, new_settings)
 
         current = apply_inheritance(current)
 

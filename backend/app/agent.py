@@ -407,6 +407,10 @@ def procesar_mensaje_agente(
         raw_text = response.text or ""
         respuesta_final = formatear_texto_whatsapp(raw_text)
         
+        from app.services.config_service import load_settings
+        app_settings = load_settings()
+        handover_cfg = app_settings.get("bot", {}).get("handover", {})
+
         # Intercepción humanizada ante acciones transaccionales del agente
         if "aprobar_presupuesto" in funciones_ejecutadas:
             raw_nom = (paciente_info.get("paciente", {}).get("nombre") or "").strip() if paciente_info else ""
@@ -428,16 +432,111 @@ def procesar_mensaje_agente(
                     "Comprendo perfectamente. Hemos dejado asentado formalmente en el sistema la desestimación del presupuesto. "
                     "La clínica queda a tu entera disposición si en el futuro deseas retomar o consultar por nuevas opciones."
                 )
+        elif "vincular_paciente_geclisa" in funciones_ejecutadas:
+            # Recuperar ficha actualizada del paciente vinculado
+            info_actualizada = get_paciente_contexto_360(paciente_id) if paciente_id else None
+            p_data = (info_actualizada or {}).get("paciente", {}) if info_actualizada else {}
+            raw_nom = (p_data.get("nombre") or "").strip()
+            if "," in raw_nom:
+                partes = raw_nom.split(",")
+                nombre_p = partes[1].strip().split(" ")[0].title() if len(partes) > 1 and partes[1].strip() else partes[0].title()
+            else:
+                nombre_p = raw_nom.split(" ")[0].title() if raw_nom else ""
+            
+            os_nombre = (p_data.get("obra_social") or "").strip()
+            plan_os = (p_data.get("plan") or "").strip()
+            cobertura_p = f"{os_nombre} ({plan_os})" if plan_os else os_nombre if os_nombre else "Particular"
+
+            plantilla_dni = handover_cfg.get("mensaje_post_dni") or (
+                "¡Hola *{nombre}*! Hemos localizado tu ficha en el sistema (Cobertura: *{cobertura}*).\n\n"
+                "¿Deseas consultar sobre un presupuesto, coordinar un turno o hablar con una asesora quirúrgica?"
+            )
+            mensaje_dni_formateado = plantilla_dni.replace("{nombre}", nombre_p or "Estimado/a").replace("{cobertura}", cobertura_p)
+
+            if not respuesta_final or "he recibido tu consulta" in respuesta_final.lower() or len(respuesta_final.strip()) < 10:
+                respuesta_final = mensaje_dni_formateado
+
         elif "escalar_a_operador_humano" in funciones_ejecutadas:
+            msg_der = handover_cfg.get("mensaje_derivacion") or "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!"
             if not respuesta_final or "procesado tu consulta de manera interna" in respuesta_final.lower() or "he recibido tu consulta" in respuesta_final.lower():
-                respuesta_final = "Entendido. He derivado tu consulta de manera prioritaria a nuestro equipo de atención humana. Un asesor de la clínica se comunicará contigo por este medio a la brevedad."
+                respuesta_final = msg_der
             elif not any(k in respuesta_final.lower() for k in ["deriv", "asesor", "humano", "operador", "equipo", "secretar"]):
-                respuesta_final = f"{respuesta_final}\n\nHe derivado tu consulta a nuestro equipo de atención humana para que un asesor te asista a la brevedad."
+                respuesta_final = f"{respuesta_final}\n\n{msg_der}"
         elif "finalizar_y_cerrar_consulta" in funciones_ejecutadas:
             if not respuesta_final or "he recibido tu consulta" in respuesta_final.lower():
                 respuesta_final = "Ha sido un placer ayudarte. Cualquier otra consulta que tengas, estamos a tu total disposición. ¡Que tengas un excelente día!"
-        elif not respuesta_final:
-            respuesta_final = "He recibido tu consulta. ¿En qué puedo orientarte hoy?"
+
+        # Detección de Incomprensión / Fallback / Loop de Reintentos
+        es_incomprension = False
+        if not respuesta_final or "he recibido tu consulta" in respuesta_final.lower() or respuesta_final.strip() in [".", "?", "¿?"]:
+            es_incomprension = True
+
+        if es_incomprension:
+            auto_esc = handover_cfg.get("auto_escalamiento_activo", True)
+            max_strikes = int(handover_cfg.get("max_reintentos_incomprension", 2))
+            msg_reprompt = handover_cfg.get("mensaje_reintento") or "Disculpá, no logré comprender bien tu consulta. ¿Podrías indicarme si necesitás agendar un turno, solicitar un presupuesto o hablar con una asesora quirúrgica?"
+            msg_deriv = handover_cfg.get("mensaje_derivacion") or "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!"
+
+            strikes = 1
+            curr_meta = {}
+            if conversacion_id:
+                try:
+                    c_res = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).limit(1).execute()
+                    if c_res.data:
+                        curr_meta = c_res.data[0].get("metadata_json") or {}
+                        strikes = int(curr_meta.get("fallback_strikes") or 0) + 1
+                except Exception:
+                    pass
+
+            if auto_esc and strikes >= max_strikes:
+                from datetime import datetime, timezone
+                respuesta_final = msg_deriv
+                if conversacion_id:
+                    try:
+                        curr_meta.update({
+                            "fallback_strikes": strikes,
+                            "handover_motivo": f"Límite de fallbacks por incomprensión superado ({strikes} strikes)",
+                            "handover_at": datetime.now(timezone.utc).isoformat()
+                        })
+                        supabase.table("conversaciones").update({
+                            "bot_disabled": True,
+                            "estado_gestion": "SIN_ASIGNAR",
+                            "metadata_json": curr_meta,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("id", conversacion_id).execute()
+                        logger.info(f"[Handover Escalation] Conversación {conversacion_id} escalada a humano tras {strikes} fallbacks.")
+                    except Exception as esc_err:
+                        logger.error(f"Error escalando conversación por strikes: {esc_err}")
+            else:
+                from datetime import datetime, timezone
+                respuesta_final = msg_reprompt
+                if conversacion_id:
+                    try:
+                        curr_meta.update({
+                            "fallback_strikes": strikes,
+                            "ultimo_fallback_at": datetime.now(timezone.utc).isoformat()
+                        })
+                        supabase.table("conversaciones").update({
+                            "metadata_json": curr_meta,
+                            "updated_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("id", conversacion_id).execute()
+                        logger.info(f"[Handover Reprompt] Conversación {conversacion_id} en strike {strikes}/{max_strikes}.")
+                    except Exception:
+                        pass
+        else:
+            # Respuesta válida o herramienta exitosa: Limpiar contador de fallbacks
+            if conversacion_id:
+                try:
+                    c_res = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).limit(1).execute()
+                    if c_res.data:
+                        curr_meta = c_res.data[0].get("metadata_json") or {}
+                        if curr_meta.get("fallback_strikes", 0) > 0:
+                            curr_meta["fallback_strikes"] = 0
+                            supabase.table("conversaciones").update({
+                                "metadata_json": curr_meta
+                            }).eq("id", conversacion_id).execute()
+                except Exception:
+                    pass
 
         if guardar_en_db and conversacion_id:
             guardar_mensaje(conversacion_id=conversacion_id, emisor="bot", contenido=respuesta_final)

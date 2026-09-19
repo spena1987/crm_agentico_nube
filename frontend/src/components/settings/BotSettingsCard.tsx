@@ -22,9 +22,20 @@ import {
   Stethoscope, 
   AlertCircle,
   Check,
-  RotateCcw
+  RotateCcw,
+  PhoneForwarded,
+  UserCheck
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+
+export interface HandoverSettings {
+  auto_escalamiento_activo: boolean
+  max_reintentos_incomprension: number
+  mensaje_reintento: string
+  mensaje_derivacion: string
+  mensaje_post_dni: string
+  palabras_clave_escape: string[]
+}
 
 interface GlobalDirectives {
   id?: string
@@ -50,7 +61,7 @@ interface SituationalAgent {
 }
 
 export default function BotSettingsCard() {
-  const [subTab, setSubTab] = useState<'globales' | 'agentes' | 'simulador' | 'motor'>('agentes')
+  const [subTab, setSubTab] = useState<'globales' | 'agentes' | 'handover' | 'simulador' | 'motor'>('agentes')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -71,6 +82,21 @@ export default function BotSettingsCard() {
   const [agentes, setAgentes] = useState<SituationalAgent[]>([])
   const [editingAgent, setEditingAgent] = useState<SituationalAgent | null>(null)
   const [isCreatingAgent, setIsCreatingAgent] = useState(false)
+
+  // Políticas de Derivación & Handover
+  const [handover, setHandover] = useState<HandoverSettings>({
+    auto_escalamiento_activo: true,
+    max_reintentos_incomprension: 2,
+    mensaje_reintento: 'Disculpá, no logré comprender bien tu consulta. ¿Podrías indicarme si necesitás agendar un turno, solicitar un presupuesto o hablar con una asesora quirúrgica?',
+    mensaje_derivacion: 'He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!',
+    mensaje_post_dni: '¡Hola *{nombre}*! Hemos localizado tu ficha en el sistema (Cobertura: *{cobertura}*).\n\n¿Deseas consultar sobre tu presupuesto, coordinar un turno o hablar con una asesora quirúrgica?',
+    palabras_clave_escape: [
+      'humano', 'operador', 'persona', 'asesor', 'asesora',
+      'asesora quirurgica', 'secretaria', 'doctor directo',
+      'hablar con alguien', 'urgencia', 'reclamo'
+    ]
+  })
+  const [newKeyword, setNewKeyword] = useState('')
 
   // Parámetros Generales del Bot (Settings)
   const [botEnabled, setBotEnabled] = useState(true)
@@ -124,6 +150,15 @@ export default function BotSettingsCard() {
         setBotEnabled(bot.enabled ?? true)
         setTypingDelay(bot.typing_delay_seconds ?? 3)
         setModelName(bot.model_name || 'gemini-3.5-flash')
+        if (bot.handover) {
+          setHandover(prev => ({
+            ...prev,
+            ...bot.handover,
+            palabras_clave_escape: Array.isArray(bot.handover.palabras_clave_escape)
+              ? bot.handover.palabras_clave_escape
+              : prev.palabras_clave_escape
+          }))
+        }
       }
     } catch (err: any) {
       console.error('Error cargando configuración multi-agente:', err)
@@ -136,6 +171,66 @@ export default function BotSettingsCard() {
   const showFeedbackMsg = (msg: string) => {
     setFeedback(msg)
     setTimeout(() => setFeedback(null), 4000)
+  }
+
+  // Guardar Políticas de Handover & Derivación
+  const handleSaveHandover = async () => {
+    try {
+      setSaving(true)
+      setErrorMessage(null)
+      const payload = {
+        bot: {
+          handover: handover
+        }
+      }
+      const res = await fetch(`${BACKEND_URL}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (res.ok) {
+        showFeedbackMsg('¡Políticas de derivación y reintentos guardadas con éxito!')
+      } else {
+        const err = await res.json()
+        setErrorMessage(err.detail || 'Error guardando políticas de derivación.')
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error de red al guardar políticas.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAddKeyword = () => {
+    const val = newKeyword.trim().toLowerCase()
+    if (!val) return
+    if (!handover.palabras_clave_escape.includes(val)) {
+      setHandover(prev => ({
+        ...prev,
+        palabras_clave_escape: [...prev.palabras_clave_escape, val]
+      }))
+    }
+    setNewKeyword('')
+  }
+
+  const handleRemoveKeyword = (keywordToRemove: string) => {
+    setHandover(prev => ({
+      ...prev,
+      palabras_clave_escape: prev.palabras_clave_escape.filter(k => k !== keywordToRemove)
+    }))
+  }
+
+  const handleResetDefaultKeywords = () => {
+    const defaultKws = [
+      'humano', 'operador', 'persona', 'asesor', 'asesora',
+      'asesora quirurgica', 'secretaria', 'doctor directo',
+      'hablar con alguien', 'urgencia', 'reclamo'
+    ]
+    setHandover(prev => ({
+      ...prev,
+      palabras_clave_escape: defaultKws
+    }))
+    showFeedbackMsg('Palabras clave restauradas a valores sugeridos.')
   }
 
   // Guardar Directivas Globales
@@ -381,6 +476,18 @@ export default function BotSettingsCard() {
             >
               <ShieldAlert size={14} />
               <span>Pautas & Directivas</span>
+            </button>
+
+            <button
+              onClick={() => setSubTab('handover')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                subTab === 'handover'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <PhoneForwarded size={14} />
+              <span>Derivación & Reintentos</span>
             </button>
 
             <button
@@ -806,6 +913,223 @@ export default function BotSettingsCard() {
       )}
 
       {/* ==================================================================== */}
+      {/* SUBTAB: POLÍTICAS DE DERIVACIÓN & REINTENTOS (HANDOVER MANAGEMENT)   */}
+      {/* ==================================================================== */}
+      {subTab === 'handover' && (
+        <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-6 animate-fade-in">
+          {/* Cabecera y Botón Guardar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+            <div>
+              <h4 className="font-bold text-base flex items-center gap-2">
+                <PhoneForwarded size={18} className="text-blue-600 dark:text-blue-400" />
+                <span>Políticas de Derivación Humana & Gestión de Fallbacks</span>
+              </h4>
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Controla cómo actúa la IA ante incomprensión de mensajes, define las palabras de escape directo y personaliza la bienvenida tras ingresar el DNI.
+              </p>
+            </div>
+            <button
+              onClick={handleSaveHandover}
+              disabled={saving}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition disabled:opacity-50 shadow-md shadow-blue-600/20 self-start sm:self-auto"
+            >
+              <Save size={15} />
+              <span>{saving ? 'Guardando...' : 'Guardar Políticas'}</span>
+            </button>
+          </div>
+
+          {/* TARJETA 1: Escape Directo Inmediato (Fast-Path) */}
+          <div className="p-5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h5 className="font-bold text-sm flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                  <UserCheck size={16} />
+                  <span>Escape Rápido a Asesor Humano (Fast-Path)</span>
+                </h5>
+                <p className="text-xs text-[var(--secondary)] mt-0.5">
+                  Si el paciente solicita explícitamente atención humana, el sistema transfiere de inmediato en 1 turno, pausa el bot y notifica al equipo humano.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHandover(prev => ({ ...prev, auto_escalamiento_activo: !prev.auto_escalamiento_activo }))}
+                className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                  handover.auto_escalamiento_activo ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${
+                  handover.auto_escalamiento_activo ? 'translate-x-5' : 'translate-x-0'
+                }`} />
+              </button>
+            </div>
+
+            {/* Palabras Clave de Escape */}
+            <div className="pt-3 border-t border-[var(--border)] space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <label className="font-bold">Palabras y Frases Clave de Escape Directo</label>
+                <button
+                  type="button"
+                  onClick={handleResetDefaultKeywords}
+                  className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                >
+                  Restaurar sugeridas
+                </button>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Escribe una palabra o frase (ej. 'asesora quirúrgica', 'secretaria') y presiona Enter..."
+                  value={newKeyword}
+                  onChange={e => setNewKeyword(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddKeyword(); } }}
+                  className="p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] text-xs grow"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddKeyword}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition"
+                >
+                  Agregar
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                {handover.palabras_clave_escape.map(kw => (
+                  <span
+                    key={kw}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/40 shadow-xs"
+                  >
+                    <span>{kw}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveKeyword(kw)}
+                      className="hover:text-red-500 font-bold ml-1 transition"
+                      title="Eliminar palabra clave"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              {/* Mensaje de Derivación Inmediata */}
+              <div className="pt-2">
+                <label className="block font-bold mb-1.5">Mensaje de Confirmación de Derivación a Operador:</label>
+                <textarea
+                  rows={2}
+                  value={handover.mensaje_derivacion}
+                  onChange={e => setHandover(prev => ({ ...prev, mensaje_derivacion: e.target.value }))}
+                  className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--card)] leading-relaxed"
+                  placeholder="Mensaje que se enviará al paciente antes de silenciar el bot..."
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* TARJETA 2: Incomprensión & Política de Reintentos (Reprompts) */}
+          <div className="p-5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30 space-y-4">
+            <div>
+              <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200">
+                🔄 Política de Reintentos por Incomprensión (2-Strike Reprompt Loop)
+              </h5>
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Si el paciente formula mensajes confusos, ininteligibles o la IA no logra interpretar la consulta, se aplican reintentos guiados antes de derivar.
+              </p>
+            </div>
+
+            <div className="pt-3 border-t border-[var(--border)] space-y-4 text-xs">
+              <div>
+                <label className="block font-bold mb-2">Tolerancia de Reintentos (Fallos antes de derivar al equipo humano):</label>
+                <div className="grid grid-cols-3 gap-2.5">
+                  {[1, 2, 3].map(num => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setHandover(prev => ({ ...prev, max_reintentos_incomprension: num }))}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition ${
+                        handover.max_reintentos_incomprension === num
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                          : 'bg-[var(--card)] border-[var(--border)] text-[var(--secondary)] hover:border-blue-500/40'
+                      }`}
+                    >
+                      {num} {num === 1 ? 'Reintento' : 'Reintentos'} {num === 2 && '⭐ (Recomendado)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold mb-1.5">Mensaje de Primer Reintento (Reprompt Orientador):</label>
+                <textarea
+                  rows={2}
+                  value={handover.mensaje_reintento}
+                  onChange={e => setHandover(prev => ({ ...prev, mensaje_reintento: e.target.value }))}
+                  className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--card)] leading-relaxed"
+                  placeholder="Mensaje amigable que orienta al paciente tras el primer mensaje incomprensible..."
+                />
+                <p className="text-[11px] text-[var(--secondary)] mt-1">
+                  Se envía en el primer fallo para orientar sobre turnos, cirugías, presupuestos o pedir asesor. El bot permanece activo.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* TARJETA 3: Bienvenida y Contexto tras Ingreso de DNI (Geclisa) */}
+          <div className="p-5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30 space-y-4">
+            <div>
+              <h5 className="font-bold text-sm text-slate-800 dark:text-slate-200">
+                🏥 Saludo Contextual tras Identificación Médica (DNI / Geclisa)
+              </h5>
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Plantilla de mensaje enviada automáticamente cuando el paciente proporciona su DNI y el sistema vincula su ficha de Geclisa.
+              </p>
+            </div>
+
+            <div className="pt-3 border-t border-[var(--border)] space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <label className="block font-bold">Plantilla de Mensaje Post-Vinculación:</label>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-[var(--secondary)] font-medium">Insertar variable:</span>
+                  <button
+                    type="button"
+                    onClick={() => setHandover(prev => ({ ...prev, mensaje_post_dni: prev.mensaje_post_dni + ' *{nombre}*' }))}
+                    className="px-2 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-mono text-[10px] hover:bg-blue-200 transition"
+                  >
+                    + &#123;nombre&#125;
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHandover(prev => ({ ...prev, mensaje_post_dni: prev.mensaje_post_dni + ' *{cobertura}*' }))}
+                    className="px-2 py-0.5 rounded-lg bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-mono text-[10px] hover:bg-blue-200 transition"
+                  >
+                    + &#123;cobertura&#125;
+                  </button>
+                </div>
+              </div>
+
+              <textarea
+                rows={3}
+                value={handover.mensaje_post_dni}
+                onChange={e => setHandover(prev => ({ ...prev, mensaje_post_dni: e.target.value }))}
+                className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--card)] leading-relaxed font-sans"
+              />
+
+              {/* Previsualización en Vivo */}
+              <div className="p-3 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-1">
+                <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
+                  Previsualización en WhatsApp:
+                </span>
+                <p className="text-xs italic text-[var(--secondary)] whitespace-pre-wrap">
+                  {handover.mensaje_post_dni.replace('{nombre}', 'Sebastián').replace('{cobertura}', 'OSDE (Plan 210)')}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
       {/* 3. SUBTAB: SIMULADOR EN VIVO (PLAYGROUND)                            */}
       {/* ==================================================================== */}
       {subTab === 'simulador' && (
@@ -853,7 +1177,7 @@ export default function BotSettingsCard() {
             </div>
 
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setSimMessage('Hola, quiero sacar un turno para cardiología mañana por la mañana')}
@@ -863,17 +1187,31 @@ export default function BotSettingsCard() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSimMessage('Me tengo que operar de hernia el martes y tengo mucho miedo, ¿qué estudios llevo?')}
-                  className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] hover:bg-slate-200 text-[var(--secondary)]"
-                >
-                  Ej: Cirugía y Miedo
-                </button>
-                <button
-                  type="button"
                   onClick={() => setSimMessage('¿Cuánto sale la consulta médica y el estudio CON-001? ¿Aceptan tarjeta?')}
                   className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] hover:bg-slate-200 text-[var(--secondary)]"
                 >
                   Ej: Presupuesto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimMessage('Mi DNI es 33516799')}
+                  className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/40 text-[10px] font-semibold hover:bg-blue-100"
+                >
+                  Ej: DNI Geclisa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimMessage('Por favor necesito hablar con una asesora quirúrgica urgente')}
+                  className="px-2.5 py-1 rounded-lg bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/40 text-[10px] font-semibold hover:bg-purple-100"
+                >
+                  Ej: Escape a Asesora
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSimMessage('asdkjh ??? 🥑🚜 ///')}
+                  className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/40 text-[10px] font-semibold hover:bg-amber-100"
+                >
+                  Ej: Incomprensión
                 </button>
               </div>
 

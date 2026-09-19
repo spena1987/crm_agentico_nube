@@ -576,9 +576,10 @@ def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
                 cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
                 c_meta = dict(cur_conv.data[0].get("metadata_json") or {}) if cur_conv.data else {}
                 c_meta["ultimo_mensaje_humano_at"] = 0
+                c_meta["fallback_strikes"] = 0
                 update_data["metadata_json"] = c_meta
             except Exception as e_meta:
-                logger.warning(f"No se pudo resetear ultimo_mensaje_humano_at: {e_meta}")
+                logger.warning(f"No se pudo resetear ultimo_mensaje_humano_at/fallback_strikes: {e_meta}")
 
         response = supabase.table("conversaciones").update(update_data).eq("id", conversacion_id).execute()
         if response.data:
