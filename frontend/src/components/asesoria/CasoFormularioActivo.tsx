@@ -420,16 +420,25 @@ export default function CasoFormularioActivo({
   }
 
   const casoIdAnteriorRef = React.useRef(caso.id)
+  const casoEstadoAnteriorRef = React.useRef(caso.estado)
 
   // Sincronizar estados locales cuando cambia el caso de forma segura (sin sobreescribir ediciones activas)
   useEffect(() => {
     const esCambioDeCaso = casoIdAnteriorRef.current !== caso.id
     casoIdAnteriorRef.current = caso.id
 
+    const estServidor = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
+    const cambioEstadoServidor = casoEstadoAnteriorRef.current !== caso.estado
+    casoEstadoAnteriorRef.current = caso.estado
+
+    // Si el estado en el servidor cambió externamente (ej: enviado por WhatsApp -> en_analisis)
+    if (cambioEstadoServidor) {
+      setEstado(estServidor)
+    }
+
     // Si cambió de caso, o si no hay cambios locales sucios, sincronizar todo
     if (esCambioDeCaso || !hasUnsavedChanges) {
-      const est = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
-      setEstado(est)
+      setEstado(estServidor)
       setCobertura(caso.cobertura_obra_social || obraSocialDefault || '')
       setMedicoDerivador({
         id: caso.medico_derivador_id,
@@ -664,7 +673,7 @@ export default function CasoFormularioActivo({
             Progreso del Embudo Quirúrgico
           </span>
           <span className="text-[10px] text-gray-400 font-mono">
-            Paso: <strong className={estado === 'programado' ? 'text-cyan-400 font-bold' : estado === 'operado' ? 'text-teal-400 font-bold' : 'text-blue-400 font-bold'}>{estado.toUpperCase()}</strong>
+            Paso: <strong className={estado === 'programado' ? 'text-cyan-400 font-bold' : estado === 'operado' ? 'text-teal-400 font-bold' : estado === 'confirmado' ? 'text-emerald-400 font-bold' : 'text-blue-400 font-bold'}>{estado.toUpperCase()}</strong>
           </span>
         </div>
 
@@ -675,6 +684,7 @@ export default function CasoFormularioActivo({
               const isSelected = estado === e.id
               const isOperado = e.id === 'operado'
               const isProgramado = e.id === 'programado'
+              const isConfirmado = e.id === 'confirmado'
               return (
                 <button
                   key={e.id}
@@ -687,6 +697,8 @@ export default function CasoFormularioActivo({
                         ? 'bg-teal-500/20 border-teal-500 text-teal-300 shadow-md ring-1 ring-teal-500/30'
                         : isProgramado
                         ? 'bg-cyan-500/20 border-cyan-500 text-cyan-300 shadow-md ring-1 ring-cyan-500/30'
+                        : isConfirmado
+                        ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-md ring-1 ring-emerald-500/30'
                         : 'bg-blue-600/20 border-blue-500 text-white shadow-md ring-1 ring-blue-500/30'
                       : 'bg-neutral-950/60 border-[var(--border)] text-gray-400 hover:bg-neutral-800 hover:text-gray-200'
                   }`}
@@ -696,7 +708,7 @@ export default function CasoFormularioActivo({
                     {isSelected && (
                       <CheckCircle2
                         size={12}
-                        className={isOperado ? 'text-teal-400' : isProgramado ? 'text-cyan-400' : 'text-blue-400'}
+                        className={isOperado ? 'text-teal-400' : isProgramado ? 'text-cyan-400' : isConfirmado ? 'text-emerald-400' : 'text-blue-400'}
                       />
                     )}
                   </div>
@@ -1463,10 +1475,7 @@ export default function CasoFormularioActivo({
                             {onEnviarPresupuestoWhatsApp && (
                               <button
                                 type="button"
-                                onClick={() => {
-                                  handleGuardarCambios()
-                                  onEnviarPresupuestoWhatsApp(p)
-                                }}
+                                onClick={() => onEnviarPresupuestoWhatsApp(p)}
                                 className="p-1.5 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/50 rounded-lg text-xs font-bold transition-all"
                                 title="Enviar presupuesto por WhatsApp"
                               >

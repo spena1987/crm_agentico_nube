@@ -15,7 +15,11 @@ import {
   ShieldCheck,
   Building2,
   Eye,
-  Coffee
+  Coffee,
+  Utensils,
+  Info,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -34,6 +38,7 @@ export default function ConsentimientoPublicoPage() {
   const [firmando, setFirmando] = useState(false)
   const [firmadoExito, setFirmadoExito] = useState<any>(null)
   const [aceptoTerminos, setAceptoTerminos] = useState(false)
+  const [verIndicaciones, setVerIndicaciones] = useState(false)
 
   // Cargar datos del consentimiento
   useEffect(() => {
@@ -341,10 +346,63 @@ export default function ConsentimientoPublicoPage() {
               <Eye size={16} />
               <span>Lateralidad: {turno?.ojo_desc}</span>
             </div>
-            <div className="flex items-center gap-2 font-bold text-amber-900 pt-2 border-t border-blue-200">
-              <Coffee size={16} />
-              <span>Recuerde: 8 horas de ayuno total (líquidos y sólidos).</span>
-            </div>
+            {/* Indicación Dinámica de Ayuno y Preparación Prequirúrgica */}
+            {(() => {
+              const prep = datos?.preparacion
+              const ayunoHs = prep?.ayuno_horas !== undefined ? prep.ayuno_horas : 8
+              const tienePrepTexto = Boolean(prep?.texto_preparacion)
+
+              return (
+                <>
+                  {ayunoHs === 0 ? (
+                    <div className="flex items-start gap-2.5 font-bold text-emerald-800 pt-2 border-t border-blue-200">
+                      <div className="p-1 bg-emerald-100 text-emerald-700 rounded-lg shrink-0 mt-0.5">
+                        <Utensils size={14} />
+                      </div>
+                      <div>
+                        <span className="text-emerald-950">Indicación de Ayuno: No requiere ayuno estricto</span>
+                        <p className="font-normal text-[11px] text-emerald-700 mt-0.5 leading-snug">
+                          Puede ingerir su dieta habitual liviana previa al horario de ingreso a la clínica.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-2.5 font-bold text-amber-900 pt-2 border-t border-blue-200">
+                      <div className="p-1 bg-amber-100 text-amber-800 rounded-lg shrink-0 mt-0.5">
+                        <Coffee size={14} />
+                      </div>
+                      <div>
+                        <span className="text-amber-950">Recuerde: {ayunoHs} horas de ayuno total</span>
+                        <p className="font-normal text-[11px] text-amber-800 mt-0.5 leading-snug">
+                          No ingerir alimentos sólidos ni líquidos durante las {ayunoHs} horas previas a la cirugía.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {tienePrepTexto && (
+                    <div className="pt-2 border-t border-blue-200">
+                      <button
+                        type="button"
+                        onClick={() => setVerIndicaciones(!verIndicaciones)}
+                        className="flex items-center justify-between w-full text-blue-800 hover:text-blue-950 font-bold text-[11px] py-1 transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Info size={14} className="text-blue-600" />
+                          <span>{verIndicaciones ? 'Ocultar indicaciones completas' : 'Ver indicaciones completas de preparación'}</span>
+                        </span>
+                        {verIndicaciones ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                      </button>
+                      {verIndicaciones && (
+                        <div className="mt-2 p-3 bg-white/90 rounded-xl border border-blue-200/80 text-[11px] text-slate-700 whitespace-pre-line leading-relaxed shadow-sm">
+                          {prep.texto_preparacion}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
 
           {/* Faja de Trazabilidad Forense */}

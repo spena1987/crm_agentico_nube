@@ -11,7 +11,7 @@ CONFIG_FILE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "bot": {
         "enabled": True,
-        "model_name": "gemini-2.5-flash",
+        "model_name": "gemini-3.6-flash",
         "typing_delay_seconds": 3,
         "human_escalation_keywords": [
             "humano", "operador", "persona", "asesor", "asesora", "asesora quirurgica",
@@ -23,7 +23,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
             "auto_escalamiento_activo": True,
             "max_reintentos_incomprension": 2,
             "mensaje_reintento": "Disculpá, no logré comprender bien tu consulta. ¿Podrías indicarme si necesitás agendar un turno, solicitar un presupuesto o hablar con una asesora quirúrgica?",
-            "mensaje_derivacion": "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!",
+            "mensaje_derivacion": "Entendido. He derivado tu consulta de manera prioritaria a nuestro equipo de atención humana. Un asesor continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!",
             "mensaje_post_dni": "¡Hola *{nombre}*! Hemos localizado tu ficha en el sistema (Cobertura: *{cobertura}*).\n\n¿Deseas consultar sobre tu presupuesto, coordinar un turno o hablar con una asesora quirúrgica?",
             "palabras_clave_escape": [
                 "humano", "operador", "persona", "asesor", "asesora", 

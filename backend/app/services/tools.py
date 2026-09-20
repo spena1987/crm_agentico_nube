@@ -386,7 +386,13 @@ def escalar_a_operador_humano(conversacion_id: str, motivo: str, nivel_urgencia:
         logger.error(f"Error al escalar a humano: {e}")
         return {"error": f"Error al procesar escalado: {str(e)}"}
 
-def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optional[str] = None, notas: Optional[str] = None) -> dict:
+def aprobar_presupuesto(
+    presupuesto_id: Optional[str] = None, 
+    paciente_id: Optional[str] = None, 
+    notas: Optional[str] = None,
+    motivo: Optional[str] = None,
+    **kwargs
+) -> dict:
     """
     Aprueba formalmente un presupuesto médico cuando el paciente manifiesta su conformidad o aceptación.
     Actualiza el estado a 'aprobado' en el CRM y confirma el caso quirúrgico si aplica.
@@ -395,6 +401,7 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
         presupuesto_id: ID del presupuesto a aprobar (opcional si el paciente ya tiene un presupuesto emitido).
         paciente_id: ID del paciente en atención.
         notas: Comentarios adicionales sobre la aceptación del paciente.
+        motivo: Comentario o nota opcional sobre la aprobación.
         
     Returns:
         Confirmación del estado de aprobación del presupuesto.
@@ -462,6 +469,7 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
     try:
         updated = cambiar_estado_presupuesto(target_id, "aprobado", origen="IA_WHATSAPP")
         total = updated.get("total", 0.0)
+        comentario_final = notas or motivo
         log_event(
             nivel="INFO",
             modulo="PRESUPUESTOS",
@@ -471,7 +479,7 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
                 "presupuesto_id": target_id,
                 "paciente_id": real_paciente_id,
                 "total": float(total),
-                "notas": notas
+                "notas": comentario_final
             }
         )
         return {
@@ -488,7 +496,9 @@ def aprobar_presupuesto(presupuesto_id: Optional[str] = None, paciente_id: Optio
 def desestimar_presupuesto(
     presupuesto_id: Optional[str] = None, 
     motivo: str = "Desistido por el paciente", 
-    paciente_id: Optional[str] = None
+    paciente_id: Optional[str] = None,
+    notas: Optional[str] = None,
+    **kwargs
 ) -> dict:
     """
     Desestima, rechaza o cancela un presupuesto médico cuando el paciente manifiesta que
@@ -500,6 +510,7 @@ def desestimar_presupuesto(
                         Si no se especifica, busca automáticamente el presupuesto pendiente (enviado/borrador) del paciente.
         motivo: Motivo por el cual el paciente desestima el presupuesto (ej: 'Costos / Económico', 'Tiempos', 'Eligió otra clínica').
         paciente_id: ID del paciente asociado a la conversación.
+        notas: Notas o comentarios adicionales.
         
     Returns:
         Dict con el resultado del cambio de estado, motivo registrado y datos del presupuesto.

@@ -1,4 +1,4 @@
-﻿import os
+import os
 import jwt
 import pytest
 from unittest.mock import MagicMock, patch
@@ -127,3 +127,36 @@ def test_operadores_activos_endpoint():
         assert len(data) == 2
         assert data[0]["nombre_completo"] == "Ana Recepción"
         mock_get_ops.assert_called_once()
+
+def test_send_message_autoasignar_conversacion_sin_asignar():
+    client = TestClient(app)
+    mock_conv = {
+        "id": "conv-999",
+        "asignado_a_usuario_id": None,
+        "estado_gestion": "SIN_ASIGNAR",
+        "metadata_json": {},
+        "archivada": False
+    }
+    with patch("app.main.supabase") as mock_sup, \
+         patch("app.main.whatsapp_manager.enviar_mensaje", return_value={"success": True, "message_id": "wamid.123"}) as mock_wa, \
+         patch("app.main.tomar_conversacion") as mock_tomar:
+
+        # Mock select de conversaciones
+        mock_sup.table().select().eq().execute.return_value.data = [mock_conv]
+        mock_sup.table().update().eq().execute.return_value.data = [mock_conv]
+
+        resp = client.post(
+            "/api/whatsapp/send-message",
+            headers=get_auth_headers(),
+            json={
+                "telefono": "5492614703230",
+                "mensaje": "Hola, te respondo desde secretaría.",
+                "conversacion_id": "conv-999",
+                "usuario_id": "user-operator-123",
+                "usuario_nombre": "Lucía Ramos"
+            }
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data.get("caso_autoasignado") is True
+        mock_tomar.assert_called_once_with("conv-999", "user-operator-123", "Lucía Ramos")

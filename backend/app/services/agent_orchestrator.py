@@ -331,6 +331,7 @@ class AgentOrchestrator:
             "=== PROTOCOLO DE HERRAMIENTAS Y RESPUESTA AL PACIENTE ===",
             "- Si invocas 'escalar_a_operador_humano': NUNCA llames a ninguna otra herramienta en el mismo turno. Redacta inmediatamente tu mensaje final de respuesta al paciente informándole con empatía que has transferido su consulta a un asesor humano que se comunicará pronto.",
             "- Si invocas 'finalizar_y_cerrar_consulta': Despídete amablemente concluyendo la atención de forma cordial.",
+            "- REGLA DE INTEGRIDAD DE HERRAMIENTAS: Si ejecutas una herramienta como 'aprobar_presupuesto' o 'desestimar_presupuesto' y la herramienta retorna un error (campo 'error' o 'success': false), NUNCA afirmes al paciente que la operación se completó exitosamente ni digas que su caso fue confirmado. En caso de error, infórmale cortésmente que hubo un inconveniente técnico de registro y que la secretaría médica se comunicará para asistirlo.",
             "",
             "=== DIRECTIVA PARTICULAR Y PAUTA DE COMPORTAMIENTO PARA ESTA SITUACIÓN ===",
             directiva_particular,

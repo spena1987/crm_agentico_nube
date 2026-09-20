@@ -2916,15 +2916,55 @@ def cambiar_estado_presupuesto(
 
         if target_asesoria_id:
             if estado_normalizado == "aprobado":
+                # a & b) Actualizar estado a "confirmado" y preservar checklist_prequirurgico con presupuesto_aceptado = True
+                curr_checklist = {}
+                as_curr = None
+                try:
+                    as_curr = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico, paciente_id").eq("id", target_asesoria_id).execute()
+                    if as_curr.data:
+                        curr_checklist = as_curr.data[0].get("checklist_prequirurgico") or {}
+                except Exception as chk_err:
+                    logger.warning(f"Error leyendo checklist actual de asesoría {target_asesoria_id}: {chk_err}")
+                
+                curr_checklist["presupuesto_aceptado"] = True
+
                 supabase.table("asesorias_quirurgicas") \
                     .update({
                         "estado": "confirmado",
+                        "presupuesto_id": presupuesto_id,
+                        "monto_extra": float(presupuesto.get("total") or 0.0),
+                        "checklist_prequirurgico": curr_checklist,
+                        "updated_at": "now()"
+                    }) \
+                    .eq("id", target_asesoria_id) \
+                    .execute()
+
+                # c) Registrar evolución clínica en asesoria_evoluciones
+                p_id = presupuesto.get("paciente_id") or (as_curr.data[0].get("paciente_id") if as_curr and as_curr.data else None)
+                if p_id:
+                    try:
+                        crear_evolucion_asesoria({
+                            "asesoria_id": target_asesoria_id,
+                            "paciente_id": p_id,
+                            "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
+                            "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
+                            "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} aprobado ({origen}). Caso quirúrgico confirmado automáticamente.",
+                            "fecha_contacto": "now()"
+                        })
+                    except Exception as ev_err:
+                        logger.warning(f"Error registrando evolución de asesoría tras aprobar presupuesto: {ev_err}")
+
+            elif estado_normalizado == "enviado":
+                supabase.table("asesorias_quirurgicas") \
+                    .update({
+                        "estado": "en_analisis",
                         "presupuesto_id": presupuesto_id,
                         "monto_extra": float(presupuesto.get("total") or 0.0),
                         "updated_at": "now()"
                     }) \
                     .eq("id", target_asesoria_id) \
                     .execute()
+
             elif estado_normalizado == "rechazado":
                 supabase.table("asesorias_quirurgicas") \
                     .update({
@@ -2934,6 +2974,21 @@ def cambiar_estado_presupuesto(
                     }) \
                     .eq("id", target_asesoria_id) \
                     .execute()
+
+                # Registrar evolución clínica de desistimiento
+                p_id = presupuesto.get("paciente_id")
+                if p_id:
+                    try:
+                        crear_evolucion_asesoria({
+                            "asesoria_id": target_asesoria_id,
+                            "paciente_id": p_id,
+                            "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
+                            "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
+                            "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} desestimado ({origen}). Motivo: {motivo or 'No especificado'}. Caso quirúrgico cancelado.",
+                            "fecha_contacto": "now()"
+                        })
+                    except Exception as ev_err:
+                        logger.warning(f"Error registrando evolución de asesoría tras rechazar presupuesto: {ev_err}")
                     
         return presupuesto
     except Exception as e:
@@ -3112,7 +3167,23 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                 except Exception as it_err:
                     logger.warning(f"No se pudo registrar item {it}: {it_err}")
                     
-        # 7. Si hay asesoría vinculada, actualizar presupuesto_id y monto_extra
+        # 7. Si hay asesoría vinculada o activa del paciente, actualizar presupuesto_id y monto_extra
+        if not asesoria_id and paciente_id:
+            try:
+                p_as = supabase.table("asesorias_quirurgicas") \
+                    .select("id, estado") \
+                    .eq("paciente_id", paciente_id) \
+                    .in_("estado", ["en_asesoramiento", "derivado", "en_analisis"]) \
+                    .order("created_at", desc=True) \
+                    .limit(1) \
+                    .execute()
+                if p_as.data:
+                    asesoria_id = p_as.data[0]["id"]
+                    supabase.table("presupuestos").update({"asesoria_id": asesoria_id}).eq("id", presupuesto_id).execute()
+                    logger.info(f"Presupuesto {presupuesto_id} auto-vinculado a asesoría activa {asesoria_id} en crear_presupuesto_rapido_crm.")
+            except Exception as e_as:
+                logger.warning(f"Error auto-vinculando asesoría activa en crear_presupuesto_rapido_crm: {e_as}")
+
         if asesoria_id:
             supabase.table("asesorias_quirurgicas") \
                 .update({
@@ -3596,11 +3667,36 @@ def enviar_presupuesto_por_whatsapp(
     
     # 8. Sincronizar asesoría quirúrgica si existe y registrar evolución clínica
     asesoria_actualizada = None
-    if presupuesto.get("asesoria_id"):
-        as_id = presupuesto["asesoria_id"]
+    target_asesoria_id = presupuesto.get("asesoria_id")
+
+    # Si no tiene asesoría asociada directa, buscar si el paciente tiene un caso quirúrgico activo
+    if not target_asesoria_id and paciente.get("id"):
+        try:
+            p_as = supabase.table("asesorias_quirurgicas") \
+                .select("id, estado") \
+                .eq("paciente_id", paciente["id"]) \
+                .in_("estado", ["en_asesoramiento", "derivado", "en_analisis"]) \
+                .order("created_at", desc=True) \
+                .limit(1) \
+                .execute()
+            if p_as.data:
+                target_asesoria_id = p_as.data[0]["id"]
+                supabase.table("presupuestos").update({"asesoria_id": target_asesoria_id}).eq("id", presupuesto_id).execute()
+                logger.info(f"Presupuesto {presupuesto_id} auto-vinculado a asesoría activa {target_asesoria_id} del paciente al enviar por WhatsApp.")
+        except Exception as as_err:
+            logger.warning(f"Error auto-vinculando asesoría activa al enviar presupuesto {presupuesto_id}: {as_err}")
+
+    if target_asesoria_id:
         res_as = supabase.table("asesorias_quirurgicas") \
-            .update({"estado": "en_analisis", "updated_at": "now()"}) \
-            .eq("id", as_id) \
+            .update({
+                "estado": "en_analisis",
+                "presupuesto_id": presupuesto_id,
+                "monto_extra": float(presupuesto.get("total") or 0.0),
+                "moneda_extra": "USD" if float(presupuesto.get("total_usd") or 0.0) > 0 and float(presupuesto.get("total_ars") or 0.0) == 0 else "ARS",
+                "ultimo_contacto_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": "now()"
+            }) \
+            .eq("id", target_asesoria_id) \
             .execute()
         if res_as.data:
             asesoria_actualizada = res_as.data[0]
@@ -3608,7 +3704,7 @@ def enviar_presupuesto_por_whatsapp(
         try:
             modo_desc = "Plantilla Oficial Meta (Utility)" if effective_mode == "template" else "Texto Libre y PDF adjunto"
             crear_evolucion_asesoria({
-                "asesoria_id": as_id,
+                "asesoria_id": target_asesoria_id,
                 "paciente_id": paciente.get("id"),
                 "usuario_nombre": "Asesoramiento Quirúrgico (Sistema)",
                 "tipo_contacto": "whatsapp",
@@ -3624,8 +3720,8 @@ def enviar_presupuesto_por_whatsapp(
         "whatsapp_result": w_res,
         "telefono": clean_phone,
         "caption": mensaje_final if effective_mode != "template" else None,
-        "asesoria_id": presupuesto.get("asesoria_id"),
-        "nuevo_estado": "en_analisis" if presupuesto.get("asesoria_id") else None,
+        "asesoria_id": target_asesoria_id,
+        "nuevo_estado": "en_analisis" if target_asesoria_id else None,
         "asesoria": asesoria_actualizada
     }
 

@@ -233,6 +233,8 @@ class SendMessageRequest(BaseModel):
     is_internal_note: Optional[bool] = False
     quoted_message_id: Optional[str] = None
     quoted_message_data: Optional[Dict[str, Any]] = None
+    usuario_id: Optional[str] = None
+    usuario_nombre: Optional[str] = None
 
 class ReactMessageRequest(BaseModel):
     emoji: str
@@ -988,10 +990,12 @@ def send_message_api(payload: SendMessageRequest):
     # 1. NOTA INTERNA (Solo visible en el CRM, NUNCA se envía al paciente por WhatsApp)
     if payload.is_internal_note:
         logger.info(f"Registrando nota interna en conversación {payload.conversacion_id}")
+        autor_nombre = payload.usuario_nombre or "Operador Humano"
         meta = {
             "is_internal_note": True,
             "tipo": "nota_interna",
-            "autor": "Operador Humano"
+            "autor": autor_nombre,
+            "operador_id": payload.usuario_id
         }
         msg = guardar_mensaje(
             conversacion_id=payload.conversacion_id,
@@ -999,11 +1003,25 @@ def send_message_api(payload: SendMessageRequest):
             contenido=texto_final,
             metadata_json=meta
         )
+
+        caso_autoasignado = False
+        if payload.conversacion_id and payload.usuario_id and supabase:
+            try:
+                c_check = supabase.table("conversaciones").select("asignado_a_usuario_id, estado_gestion").eq("id", payload.conversacion_id).execute()
+                if c_check.data:
+                    c_row = c_check.data[0]
+                    if not c_row.get("asignado_a_usuario_id") or c_row.get("estado_gestion") == "SIN_ASIGNAR":
+                        tomar_conversacion(payload.conversacion_id, payload.usuario_id, autor_nombre)
+                        caso_autoasignado = True
+            except Exception as e_tomar:
+                logger.warning(f"Error al autoasignar conversación en nota interna: {e_tomar}")
+
         return {
             "success": True,
             "is_internal_note": True,
             "guardado_db": True,
-            "mensaje": msg
+            "mensaje": msg,
+            "caso_autoasignado": caso_autoasignado
         }
 
     # 2. MENSAJE SALIENTE A WHATSAPP
@@ -1081,8 +1099,10 @@ def send_message_api(payload: SendMessageRequest):
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
 
-    # Registrar marca de tiempo del operador para activar el período de gracia de 15 minutos en el Bot IA
+    # Registrar marca de tiempo del operador para activar el período de gracia de 15 minutos en el Bot IA,
+    # auto-asignar la conversación si estaba sin asignar,
     # y asegurar que la conversación se desarchive automáticamente si el operador responde en un chat cerrado
+    caso_autoasignado = False
     if conversacion_id and supabase:
         try:
             c_res = supabase.table("conversaciones").select("metadata_json, archivada, estado_gestion, asignado_a_usuario_id").eq("id", conversacion_id).execute()
@@ -1090,14 +1110,25 @@ def send_message_api(payload: SendMessageRequest):
                 conv_row = c_res.data[0]
                 c_meta = conv_row.get("metadata_json") or {}
                 c_meta["ultimo_mensaje_humano_at"] = time.time()
-                upd_conv: Dict[str, Any] = {"metadata_json": c_meta}
-                if conv_row.get("archivada") or conv_row.get("estado_gestion") == "RESUELTO":
-                    upd_conv["archivada"] = False
-                    upd_conv["estado_gestion"] = "EN_GESTION" if conv_row.get("asignado_a_usuario_id") else "SIN_ASIGNAR"
-                supabase.table("conversaciones").update(upd_conv).eq("id", conversacion_id).execute()
+                upd_conv: Dict[str, Any] = {
+                    "metadata_json": c_meta,
+                    "bot_disabled": True
+                }
+
+                # Auto-asignación inteligente: Si no tiene operador asignado o está SIN_ASIGNAR, auto-asignar a quien respondió
+                if payload.usuario_id and (not conv_row.get("asignado_a_usuario_id") or conv_row.get("estado_gestion") == "SIN_ASIGNAR"):
+                    tomar_conversacion(conversacion_id, payload.usuario_id, payload.usuario_nombre)
+                    caso_autoasignado = True
+                else:
+                    if conv_row.get("archivada") or conv_row.get("estado_gestion") == "RESUELTO":
+                        upd_conv["archivada"] = False
+                        upd_conv["estado_gestion"] = "EN_GESTION" if conv_row.get("asignado_a_usuario_id") else "SIN_ASIGNAR"
+                    supabase.table("conversaciones").update(upd_conv).eq("id", conversacion_id).execute()
         except Exception as grace_upd_err:
             logger.warning(f"Error actualizando estado de conversación tras mensaje de operador: {grace_upd_err}")
 
+    if isinstance(result, dict):
+        result["caso_autoasignado"] = caso_autoasignado
     return result
 
 @app.post("/api/mensajes/{mensaje_id}/reaccionar")
@@ -1259,7 +1290,9 @@ async def send_media_api(
     file: UploadFile = File(...),
     telefono: str = Form(...),
     conversacion_id: Optional[str] = Form(None),
-    caption: Optional[str] = Form("")
+    caption: Optional[str] = Form(""),
+    usuario_id: Optional[str] = Form(None),
+    usuario_nombre: Optional[str] = Form(None)
 ):
     """
     Envía un archivo multimedia (imagen, PDF, estudio médico) al WhatsApp del paciente
@@ -1316,6 +1349,7 @@ async def send_media_api(
         wamid = result.get("wamid") or result.get("message_id")
 
         # Guardar mensaje saliente del operador en Supabase
+        caso_autoasignado = False
         if conversacion_id:
             try:
                 guardar_mensaje(
@@ -1333,14 +1367,25 @@ async def send_media_api(
                         "file_size_bytes": len(content),
                         "caption": caption or "",
                         "delivery_status": "enviado",
-                        "provider": result.get("provider", "meta_cloud_api")
+                        "provider": result.get("provider", "meta_cloud_api"),
+                        "operador_id": usuario_id
                     }
                 )
+
+                # Auto-asignación inteligente si la conversación no tenía titular
+                if usuario_id and supabase:
+                    c_check = supabase.table("conversaciones").select("asignado_a_usuario_id, estado_gestion").eq("id", conversacion_id).execute()
+                    if c_check.data:
+                        c_row = c_check.data[0]
+                        if not c_row.get("asignado_a_usuario_id") or c_row.get("estado_gestion") == "SIN_ASIGNAR":
+                            tomar_conversacion(conversacion_id, usuario_id, usuario_nombre)
+                            caso_autoasignado = True
             except Exception as db_save_err:
-                logger.error(f"Error guardando mensaje multimedia en BD: {db_save_err}")
+                logger.error(f"Error guardando mensaje multimedia o autoasignando en BD: {db_save_err}")
 
         return {
             "success": True,
+            "caso_autoasignado": caso_autoasignado,
             "media": {
                 **saved,
                 "media_url": media_url_final,
@@ -4322,6 +4367,13 @@ def obtener_datos_consentimiento_publico(token: str):
             }
         )
         
+        preparacion_info = {
+            "habilitar_preparacion": bool(resumen_practica.get("habilitar_preparacion", False)) if resumen_practica else False,
+            "ayuno_horas": int(resumen_practica.get("ayuno_horas", 8)) if resumen_practica else 8,
+            "texto_preparacion": resumen_practica.get("texto_preparacion") if resumen_practica else None,
+            "dias_aviso": int(resumen_practica.get("dias_aviso", 2)) if resumen_practica else 2
+        }
+
         return {
             "success": True,
             "turno": {
@@ -4347,6 +4399,7 @@ def obtener_datos_consentimiento_publico(token: str):
                 "titulo": titulo_consentimiento,
                 "cuerpo": cuerpo_renderizado
             },
+            "preparacion": preparacion_info,
             "clinica": {
                 "nombre": (load_settings().get("clinica") or {}).get("nombre") or "Centro Médico Nube",
                 "logo_url": (load_settings().get("clinica") or {}).get("logo_url") or (load_settings().get("plantilla_presupuesto") or {}).get("logo_url") or ""
@@ -4395,15 +4448,47 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
             paciente = turno.get("pacientes") or {}
             tel = paciente.get("telefono")
             if tel:
+                # Determinar indicación de ayuno dinámica según la práctica médica
+                practica_id = turno.get("practica_id")
+                practica_cod = turno.get("practica_codigo") or turno.get("practica_cod")
+                practica_nombre = turno.get("practica_nombre") or turno.get("practica")
+                resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+
+                ayuno_horas = int(resumen_practica.get("ayuno_horas", 8)) if resumen_practica else 8
+                habilitar_prep = bool(resumen_practica.get("habilitar_preparacion", False)) if resumen_practica else False
+
+                if habilitar_prep and ayuno_horas == 0:
+                    indicacion_ayuno = "Recordá que para tu intervención no se requiere ayuno estricto (dieta liviana habitual)."
+                elif ayuno_horas > 0:
+                    indicacion_ayuno = f"Recordá concurrir con {ayuno_horas} horas de ayuno total (líquidos y sólidos)."
+                else:
+                    indicacion_ayuno = "Recordá que no se requiere ayuno estricto."
+
                 config = get_configuracion_quirofano()
                 conf_msg = config.get("whatsapp_mensaje_confirmacion") or (
                     "¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}. "
-                    "Recordá concurrir con 8 horas de ayuno total."
+                    "{indicacion_ayuno}"
                 )
-                msg_ok = conf_msg.format(
-                    paciente=paciente.get("nombre") or "Paciente",
-                    fecha_cirugia=str(turno.get("fecha_cirugia") or "")
-                )
+                
+                if "{indicacion_ayuno}" in conf_msg:
+                    msg_ok = conf_msg.format(
+                        paciente=paciente.get("nombre") or "Paciente",
+                        fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
+                        indicacion_ayuno=indicacion_ayuno
+                    )
+                else:
+                    msg_temp = conf_msg.format(
+                        paciente=paciente.get("nombre") or "Paciente",
+                        fecha_cirugia=str(turno.get("fecha_cirugia") or "")
+                    )
+                    import re
+                    if re.search(r'Record[áa]\s+concurrir\s+con\s+8\s+horas\s+de\s+ayuno[^.]*\.?', msg_temp, re.IGNORECASE):
+                        msg_ok = re.sub(r'Record[áa]\s+concurrir\s+con\s+8\s+horas\s+de\s+ayuno[^.]*\.?', indicacion_ayuno, msg_temp, flags=re.IGNORECASE)
+                    elif "8 horas de ayuno" in msg_temp:
+                        msg_ok = msg_temp.replace("8 horas de ayuno total (líquidos y sólidos)", indicacion_ayuno).replace("8 horas de ayuno total", indicacion_ayuno).replace("8 horas de ayuno", indicacion_ayuno)
+                    else:
+                        msg_ok = f"{msg_temp} {indicacion_ayuno}".strip()
+
                 jid = tel if "@" in tel else f"{tel}@s.whatsapp.net"
                 try:
                     whatsapp_manager.enviar_mensaje(jid, msg_ok)

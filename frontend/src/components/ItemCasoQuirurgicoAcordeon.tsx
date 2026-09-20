@@ -370,15 +370,43 @@ export default function ItemCasoQuirurgicoAcordeon({
   // Aprobar / Rechazar Presupuesto
   const handleAprobarRechazarPresupuesto = async (presId: string, nuevoEstado: 'aprobado' | 'rechazado') => {
     try {
-      const { error } = await supabase
-        .from('presupuestos')
-        .update({ estado: nuevoEstado })
-        .eq('id', presId)
+      const res = await fetch(`/api/presupuestos/${presId}/estado`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ estado: nuevoEstado, asesoria_id: caso.id })
+      })
 
-      if (!error) {
+      const casoActualizado: AsesoriaQuirurgica = {
+        ...caso,
+        estado: nuevoEstado === 'aprobado' ? 'confirmado' : caso.estado,
+        checklist_prequirurgico: nuevoEstado === 'aprobado' ? {
+          ...(caso.checklist_prequirurgico || {}),
+          presupuesto_aceptado: true
+        } : caso.checklist_prequirurgico
+      }
+
+      if (res.ok) {
         setPresupuestos((prev) =>
           prev.map((p) => (p.id === presId ? { ...p, estado: nuevoEstado } : p))
         )
+        if (onCasoActualizado) {
+          onCasoActualizado(casoActualizado)
+        }
+      } else {
+        // Fallback a Supabase directo si fetch falla
+        const { error } = await supabase
+          .from('presupuestos')
+          .update({ estado: nuevoEstado })
+          .eq('id', presId)
+
+        if (!error) {
+          setPresupuestos((prev) =>
+            prev.map((p) => (p.id === presId ? { ...p, estado: nuevoEstado } : p))
+          )
+          if (onCasoActualizado) {
+            onCasoActualizado(casoActualizado)
+          }
+        }
       }
     } catch (e) {
       console.error('Error al actualizar presupuesto:', e)
@@ -591,21 +619,30 @@ export default function ItemCasoQuirurgicoAcordeon({
           presupuestoId={presupuestoParaEnviarWA.id}
           pacienteNombre={pacienteNombre}
           telefonoDefault={pacienteTelefono || ''}
-          totalArs={presupuestoParaEnviarWA.total}
+          totalArs={presupuestoParaEnviarWA.total_ars || presupuestoParaEnviarWA.total || 0}
+          totalUsd={presupuestoParaEnviarWA.total_usd || 0}
           pdfUrl={presupuestoParaEnviarWA.pdf_url}
           onSuccess={async () => {
             const nuevoEstado: AsesoriaQuirurgica['estado'] = 'en_analisis'
             const presId = presupuestoParaEnviarWA?.id || caso.presupuesto_id
+            const monto = (presupuestoParaEnviarWA.total_usd && presupuestoParaEnviarWA.total_usd > 0)
+              ? Number(presupuestoParaEnviarWA.total_usd)
+              : Number(presupuestoParaEnviarWA.total_ars || presupuestoParaEnviarWA.total || 0)
+            const moneda = (presupuestoParaEnviarWA.total_usd && presupuestoParaEnviarWA.total_usd > 0) ? 'USD' : 'ARS'
             const casoActualizado: AsesoriaQuirurgica = {
               ...caso,
               estado: nuevoEstado,
-              presupuesto_id: presId
+              presupuesto_id: presId,
+              monto_extra: monto,
+              moneda_extra: moneda
             }
             onCasoActualizado(casoActualizado)
             try {
               await handleGuardarCambios({
                 estado: nuevoEstado,
-                presupuesto_id: presId
+                presupuesto_id: presId,
+                monto_extra: monto,
+                moneda_extra: moneda
               })
             } catch (err) {
               console.error('Error al actualizar estado del caso a en_analisis:', err)

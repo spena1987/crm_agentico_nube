@@ -1275,9 +1275,20 @@ export default function PacientesPage() {
           pacienteId={pacienteSeleccionado.id}
           pacienteNombre={pacienteSeleccionado.nombre}
           pacienteTelefono={pacienteSeleccionado.telefono}
-          onPresupuestoCreado={() => {
+          obraSocial={pacienteSeleccionado.obra_social}
+          asesoriaId={
+            pacienteSeleccionado.asesorias_quirurgicas?.find(
+              (a: any) => a.estado !== 'operado' && a.estado !== 'cancelado'
+            )?.id || null
+          }
+          onPresupuestoCreado={(nuevoPresupuesto) => {
             setMostrarModalCrearPresupuesto(false)
-            setMostrarModalHistorialPresupuestos(true)
+            if (nuevoPresupuesto) {
+              setPresupuestoParaWhatsApp(nuevoPresupuesto)
+              setMostrarModalWhatsAppPresupuesto(true)
+            } else {
+              setMostrarModalHistorialPresupuestos(true)
+            }
           }}
         />
       )}
@@ -1303,7 +1314,7 @@ export default function PacientesPage() {
                 prev.map((p) => {
                   if (p.id !== pacienteSeleccionado.id) return p
                   const asesoriasActualizadas = (p.asesorias_quirurgicas || []).map((as) =>
-                    as.id === asId ? { ...as, estado: 'en_analisis' } : as
+                    as.id === asId ? { ...as, estado: 'en_analisis', presupuesto_id: presupuestoParaWhatsApp.id } : as
                   )
                   return { ...p, asesorias_quirurgicas: asesoriasActualizadas }
                 })

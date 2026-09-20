@@ -1241,6 +1241,7 @@ export default function ChatInbox() {
       
       let dispatchedViaBackend = false
       try {
+        const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
         const response = await apiFetch('/api/whatsapp/send-message', {
           method: 'POST',
           body: JSON.stringify({
@@ -1249,7 +1250,9 @@ export default function ChatInbox() {
             conversacion_id: selectedConvId,
             is_internal_note: esNotaInternaActual,
             quoted_message_id: quotedId,
-            quoted_message_data: quotedData
+            quoted_message_data: quotedData,
+            usuario_id: user?.id,
+            usuario_nombre: currentUserName
           }),
           timeoutMs: 15000,
           retryOnNetworkError: true
@@ -1257,8 +1260,28 @@ export default function ChatInbox() {
 
         if (response.ok) {
           dispatchedViaBackend = true
-          // Conmutar a atención humana automática al intervenir el operador
-          if (!esNotaInternaActual && selectedConv && !selectedConv.bot_disabled) {
+          // Auto-asignación inteligente: Si el caso estaba sin asignar o en Espera, asignarlo al operador actual
+          if (user?.id && selectedConv && (!selectedConv.asignado_a_usuario_id || selectedConv.estado_gestion === 'SIN_ASIGNAR')) {
+            setConversaciones((prev) =>
+              prev.map((c) =>
+                c.id === selectedConvId
+                  ? {
+                      ...c,
+                      bot_disabled: true,
+                      asignado_a_usuario_id: user.id,
+                      estado_gestion: 'EN_GESTION',
+                      asignado_a: {
+                        id: user.id,
+                        nombre_completo: currentUserName,
+                        email: user.email || '',
+                        avatar_url: null
+                      }
+                    }
+                  : c
+              )
+            )
+          } else if (!esNotaInternaActual && selectedConv && !selectedConv.bot_disabled) {
+            // Conmutar a atención humana automática al intervenir el operador
             setConversaciones((prev) =>
               prev.map((c) => (c.id === selectedConvId ? { ...c, bot_disabled: true } : c))
             )
@@ -1357,6 +1380,7 @@ export default function ChatInbox() {
     if (!file || !selectedConvId || !selectedConv) return
 
     const paciente = getPatient(selectedConv)
+    const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
     setSubiendoArchivo(true)
     try {
       const formData = new FormData()
@@ -1364,6 +1388,10 @@ export default function ChatInbox() {
       formData.append('telefono', paciente?.telefono || '')
       formData.append('conversacion_id', selectedConvId)
       formData.append('caption', file.name || 'Captura de pantalla')
+      if (user?.id) {
+        formData.append('usuario_id', user.id)
+        formData.append('usuario_nombre', currentUserName)
+      }
 
       const res = await apiFetch('/api/whatsapp/send-media', {
         method: 'POST',
@@ -1373,6 +1401,28 @@ export default function ChatInbox() {
       })
 
       if (!res.ok) throw new Error('Error al enviar archivo')
+
+      // Auto-asignación inteligente si estaba sin asignar
+      if (user?.id && selectedConv && (!selectedConv.asignado_a_usuario_id || selectedConv.estado_gestion === 'SIN_ASIGNAR')) {
+        setConversaciones((prev) =>
+          prev.map((c) =>
+            c.id === selectedConvId
+              ? {
+                  ...c,
+                  bot_disabled: true,
+                  asignado_a_usuario_id: user.id,
+                  estado_gestion: 'EN_GESTION',
+                  asignado_a: {
+                    id: user.id,
+                    nombre_completo: currentUserName,
+                    email: user.email || '',
+                    avatar_url: null
+                  }
+                }
+              : c
+          )
+        )
+      }
 
       setTimeout(() => {
         fetchMensajes(selectedConvId)
@@ -1593,7 +1643,7 @@ export default function ChatInbox() {
         return !isArchived && conv.asignado_a_usuario_id === currentUserId
       }
       if (activeTab === 'sin_asignar') {
-        return !isArchived && !conv.asignado_a_usuario_id && (conv.bot_disabled || conv.estado_gestion === 'SIN_ASIGNAR')
+        return (!isArchived && !conv.asignado_a_usuario_id && (conv.bot_disabled || conv.estado_gestion === 'SIN_ASIGNAR')) || conv.id === selectedConvId
       }
       if (activeTab === 'bot') {
         return !isArchived && !conv.bot_disabled

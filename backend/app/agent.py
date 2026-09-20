@@ -35,116 +35,130 @@ def bind_tools_to_context(
     Registra en tracker cualquier herramienta invocada por AFC en tiempo real.
     """
     bound_tools = []
-
+    
     def record_call(fn_name: str):
         if tracker is not None and fn_name not in tracker:
             tracker.append(fn_name)
+
+    def _build_vincular_geclisa(fn):
+        def vincular_paciente_geclisa(dni: str) -> dict:
+            """
+            Consulta la API de Geclisa utilizando el DNI del paciente para verificar si ya posee
+            ficha médica registrada en la clínica, y en caso afirmativo, vincula e importa sus datos
+            directamente a la conversación del CRM. Si no existe, registra el DNI como nuevo paciente.
+            
+            Args:
+                dni: El número de DNI / Documento del paciente (solo dígitos).
+            """
+            record_call("vincular_paciente_geclisa")
+            return fn(dni=dni, conversacion_id=conversacion_id, paciente_id=paciente_id)
+        vincular_paciente_geclisa.__doc__ = fn.__doc__ or vincular_paciente_geclisa.__doc__
+        return vincular_paciente_geclisa
+
+    def _build_crear_borrador(fn):
+        def crear_borrador_presupuesto(items_presupuesto: List[dict], observaciones: Optional[str] = None) -> dict:
+            """
+            Crea un borrador de presupuesto para el paciente con las prácticas y cantidades solicitadas.
+            """
+            record_call("crear_borrador_presupuesto")
+            return fn(items_presupuesto=items_presupuesto, paciente_id=paciente_id, observaciones=observaciones)
+        crear_borrador_presupuesto.__doc__ = fn.__doc__ or crear_borrador_presupuesto.__doc__
+        return crear_borrador_presupuesto
+
+    def _build_aprobar_presupuesto(fn):
+        def aprobar_presupuesto(presupuesto_id: Optional[str] = None, notas: Optional[str] = None, motivo: Optional[str] = None) -> dict:
+            """
+            Aprueba y confirma formalmente un presupuesto emitido al paciente cuando manifiesta su conformidad o aceptación.
+            """
+            record_call("aprobar_presupuesto")
+            return fn(presupuesto_id=presupuesto_id, paciente_id=paciente_id, notas=notas or motivo)
+        aprobar_presupuesto.__doc__ = fn.__doc__ or aprobar_presupuesto.__doc__
+        return aprobar_presupuesto
+
+    def _build_desestimar_presupuesto(fn):
+        def desestimar_presupuesto(presupuesto_id: Optional[str] = None, motivo: str = "Desistido por el paciente", notas: Optional[str] = None) -> dict:
+            """
+            Desestima, rechaza o cancela un presupuesto médico cuando el paciente manifiesta que
+            no desea realizar el procedimiento cotizado, registrando el motivo de desistimiento.
+            """
+            record_call("desestimar_presupuesto")
+            return fn(presupuesto_id=presupuesto_id, motivo=motivo or notas or "Desistido por el paciente", paciente_id=paciente_id)
+        desestimar_presupuesto.__doc__ = fn.__doc__ or desestimar_presupuesto.__doc__
+        return desestimar_presupuesto
+
+    def _build_consultar_presupuestos(fn):
+        def consultar_presupuestos_paciente() -> dict:
+            """
+            Consulta los presupuestos médicos emitidos al paciente en el sistema.
+            """
+            record_call("consultar_presupuestos_paciente")
+            return fn(paciente_id=paciente_id)
+        consultar_presupuestos_paciente.__doc__ = fn.__doc__ or consultar_presupuestos_paciente.__doc__
+        return consultar_presupuestos_paciente
+
+    def _build_consultar_preparacion(fn):
+        def consultar_preparacion_cirugia() -> dict:
+            """
+            Consulta las indicaciones médicas de preparación prequirúrgica, horas de ayuno
+            y detalles de la cirugía programada del paciente en la clínica.
+            """
+            record_call("consultar_preparacion_cirugia")
+            return fn(paciente_id=paciente_id)
+        consultar_preparacion_cirugia.__doc__ = fn.__doc__ or consultar_preparacion_cirugia.__doc__
+        return consultar_preparacion_cirugia
+
+    def _build_escalar_humano(fn):
+        def escalar_a_operador_humano(motivo: str) -> dict:
+            """
+            Deriva la conversación a un operador humano de secretaría o equipo médico.
+            IMPORTANTE: Úsala ÚNICAMENTE si el paciente solicita explícitamente hablar con una persona o si no es posible resolver su consulta con ninguna otra herramienta. NO la utilices tras aprobar un presupuesto.
+            """
+            if tracker is not None and "aprobar_presupuesto" in tracker:
+                logger.info("Omitiendo escalar_a_operador_humano porque ya se aprobó el presupuesto en este turno.")
+                return {"success": True, "mensaje": "Presupuesto ya aprobado y confirmado exitosamente en el CRM. No se requiere transferir a operador humano."}
+            record_call("escalar_a_operador_humano")
+            return fn(conversacion_id=conversacion_id, motivo=motivo)
+        escalar_a_operador_humano.__doc__ = fn.__doc__ or escalar_a_operador_humano.__doc__
+        return escalar_a_operador_humano
+
+    def _build_finalizar_consulta(fn):
+        def finalizar_y_cerrar_consulta(motivo: str) -> dict:
+            """
+            Finaliza y archiva la conversación cuando el paciente cumplió su objetivo o se despide.
+            """
+            record_call("finalizar_y_cerrar_consulta")
+            return fn(conversacion_id=conversacion_id, motivo=motivo)
+        finalizar_y_cerrar_consulta.__doc__ = fn.__doc__ or finalizar_y_cerrar_consulta.__doc__
+        return finalizar_y_cerrar_consulta
+
+    def _build_generic(fn_name: str, fn_callable: Any):
+        def generic_tool_wrapper(*args, **kwargs):
+            record_call(fn_name)
+            return fn_callable(*args, **kwargs)
+        generic_tool_wrapper.__doc__ = fn_callable.__doc__
+        generic_tool_wrapper.__name__ = getattr(fn_callable, "__name__", fn_name)
+        return generic_tool_wrapper
+
+    builders = {
+        "vincular_paciente_geclisa": _build_vincular_geclisa,
+        "crear_borrador_presupuesto": _build_crear_borrador,
+        "aprobar_presupuesto": _build_aprobar_presupuesto,
+        "desestimar_presupuesto": _build_desestimar_presupuesto,
+        "consultar_presupuestos_paciente": _build_consultar_presupuestos,
+        "consultar_preparacion_cirugia": _build_consultar_preparacion,
+        "escalar_a_operador_humano": _build_escalar_humano,
+        "finalizar_y_cerrar_consulta": _build_finalizar_consulta,
+    }
 
     for name in enabled_names:
         if name not in raw_tools_map:
             continue
         base_func = raw_tools_map[name]
-        
-        if name == "vincular_paciente_geclisa":
-            def vincular_paciente_geclisa(dni: str) -> dict:
-                """
-                Consulta la API de Geclisa utilizando el DNI del paciente para verificar si ya posee
-                ficha médica registrada en la clínica, y en caso afirmativo, vincula e importa sus datos
-                directamente a la conversación del CRM. Si no existe, registra el DNI como nuevo paciente.
-                
-                Args:
-                    dni: El número de DNI / Documento del paciente (solo dígitos).
-                """
-                record_call("vincular_paciente_geclisa")
-                return base_func(dni=dni, conversacion_id=conversacion_id, paciente_id=paciente_id)
-            vincular_paciente_geclisa.__doc__ = base_func.__doc__
-            bound_tools.append(vincular_paciente_geclisa)
-            
-        elif name == "crear_borrador_presupuesto":
-            def crear_borrador_presupuesto(items_presupuesto: List[dict], observaciones: Optional[str] = None) -> dict:
-                """
-                Crea un borrador de presupuesto para el paciente con las prácticas y cantidades solicitadas.
-                """
-                record_call("crear_borrador_presupuesto")
-                return base_func(items_presupuesto=items_presupuesto, paciente_id=paciente_id, observaciones=observaciones)
-            crear_borrador_presupuesto.__doc__ = base_func.__doc__
-            bound_tools.append(crear_borrador_presupuesto)
-            
-        elif name == "aprobar_presupuesto":
-            def aprobar_presupuesto(presupuesto_id: Optional[str] = None, notas: Optional[str] = None) -> dict:
-                """
-                Aprueba y confirma formalmente un presupuesto emitido al paciente cuando manifiesta su conformidad.
-                """
-                record_call("aprobar_presupuesto")
-                return base_func(presupuesto_id=presupuesto_id, paciente_id=paciente_id, notas=notas)
-            aprobar_presupuesto.__doc__ = base_func.__doc__
-            bound_tools.append(aprobar_presupuesto)
-
-        elif name == "desestimar_presupuesto":
-            def desestimar_presupuesto(presupuesto_id: Optional[str] = None, motivo: str = "Desistido por el paciente") -> dict:
-                """
-                Desestima, rechaza o cancela un presupuesto médico cuando el paciente manifiesta que
-                no desea realizar el procedimiento cotizado, registrando obligatoriamente el motivo de desistimiento.
-                """
-                record_call("desestimar_presupuesto")
-                return base_func(presupuesto_id=presupuesto_id, motivo=motivo, paciente_id=paciente_id)
-            desestimar_presupuesto.__doc__ = base_func.__doc__
-            bound_tools.append(desestimar_presupuesto)
-            
-        elif name == "consultar_presupuestos_paciente":
-            def consultar_presupuestos_paciente() -> dict:
-                """
-                Consulta los presupuestos médicos emitidos al paciente en el sistema.
-                """
-                record_call("consultar_presupuestos_paciente")
-                return base_func(paciente_id=paciente_id)
-            consultar_presupuestos_paciente.__doc__ = base_func.__doc__
-            bound_tools.append(consultar_presupuestos_paciente)
-            
-        elif name == "consultar_preparacion_cirugia":
-            def consultar_preparacion_cirugia() -> dict:
-                """
-                Consulta las indicaciones médicas de preparación prequirúrgica, horas de ayuno
-                y detalles de la cirugía programada del paciente en la clínica.
-                """
-                record_call("consultar_preparacion_cirugia")
-                return base_func(paciente_id=paciente_id)
-            consultar_preparacion_cirugia.__doc__ = base_func.__doc__
-            bound_tools.append(consultar_preparacion_cirugia)
-            
-        elif name == "escalar_a_operador_humano":
-            def escalar_a_operador_humano(motivo: str) -> dict:
-                """
-                Deriva la conversación a un operador humano de secretaría o equipo médico.
-                IMPORTANTE: Úsala ÚNICAMENTE si el paciente solicita explícitamente hablar con una persona o si no es posible resolver su consulta con ninguna otra herramienta. NO la utilices tras aprobar un presupuesto.
-                """
-                if tracker is not None and "aprobar_presupuesto" in tracker:
-                    logger.info("Omitiendo escalar_a_operador_humano porque ya se aprobó el presupuesto en este turno.")
-                    return {"success": True, "mensaje": "Presupuesto ya aprobado y confirmado exitosamente en el CRM. No se requiere transferir a operador humano."}
-                record_call("escalar_a_operador_humano")
-                return base_func(conversacion_id=conversacion_id, motivo=motivo)
-            escalar_a_operador_humano.__doc__ = base_func.__doc__
-            bound_tools.append(escalar_a_operador_humano)
-
-        elif name == "finalizar_y_cerrar_consulta":
-            def finalizar_y_cerrar_consulta(motivo: str) -> dict:
-                """
-                Finaliza y archiva la conversación cuando el paciente cumplió su objetivo o se despide.
-                """
-                record_call("finalizar_y_cerrar_consulta")
-                return base_func(conversacion_id=conversacion_id, motivo=motivo)
-            finalizar_y_cerrar_consulta.__doc__ = base_func.__doc__
-            bound_tools.append(finalizar_y_cerrar_consulta)
-            
+        builder = builders.get(name)
+        if builder:
+            bound_tools.append(builder(base_func))
         else:
-            def make_generic_wrapper(fn_name: str, fn_callable: Any):
-                def generic_tool_wrapper(*args, **kwargs):
-                    record_call(fn_name)
-                    return fn_callable(*args, **kwargs)
-                generic_tool_wrapper.__doc__ = fn_callable.__doc__
-                generic_tool_wrapper.__name__ = getattr(fn_callable, "__name__", fn_name)
-                return generic_tool_wrapper
-            bound_tools.append(make_generic_wrapper(name, base_func))
+            bound_tools.append(_build_generic(name, base_func))
             
     return bound_tools
 
@@ -200,6 +214,12 @@ def procesar_mensaje_agente(
         agent_code = active_agent.get("codigo", "GENERAL")
         agent_temp = float(active_agent.get("temperatura") or 0.2)
         system_instruction = orchestrator.compile_system_prompt(active_agent, paciente_info=paciente_info)
+        system_instruction += (
+            "\n\n=== REGLA DE INTEGRIDAD DE HERRAMIENTAS (CRÍTICA) ===\n"
+            "- Si ejecutas una herramienta como 'aprobar_presupuesto' o 'desestimar_presupuesto' y la herramienta retorna un error (campo 'error' o 'success': false), "
+            "NUNCA afirmes al paciente que la operación se completó exitosamente ni digas que su caso fue confirmado. "
+            "En caso de error, infórmale cortésmente que hubo un inconveniente técnico de registro y que la secretaría médica se comunicará a la brevedad para asistirlo."
+        )
         
         habilitadas = active_agent.get("herramientas_habilitadas") or []
         if isinstance(habilitadas, str):
@@ -291,8 +311,10 @@ def procesar_mensaje_agente(
                 model_name = load_settings().get("bot", {}).get("model_name")
             except Exception:
                 pass
-        if not model_name:
-            model_name = "gemini-3.5-flash"
+        # Normalizar modelo obsoleto o no configurado (gemini-2.5-flash fue retirado por Google)
+        if not model_name or "gemini-2.5-flash" in model_name:
+            model_name = "gemini-3.6-flash"
+            
         try:
             response = client.models.generate_content(
                 model=model_name,
@@ -300,42 +322,39 @@ def procesar_mensaje_agente(
                 config=config
             )
         except Exception as api_err:
-            logger.warning(f"Error en inferencia primaria ({api_err}). Ejecutando fallback con modelo alternativo...")
+            logger.warning(f"Error en inferencia primaria con {model_name} ({api_err}). Ejecutando fallback con modelo alternativo...")
+            alt_model = "gemini-3.5-flash" if model_name != "gemini-3.5-flash" else "gemini-3.6-flash"
             try:
-                # Reintento 1: Sin historial previo con tools vinculadas
-                fallback_config = types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    tools=bound_tools if bound_tools else None,
-                    temperature=agent_temp,
-                    automatic_function_calling=afc_config
-                )
-                contents_single = [
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=final_texto or "Hola")]
-                    )
-                ]
+                # Reintento 1: Modelo alternativo manteniendo contexto y tools completas
                 response = client.models.generate_content(
-                    model=model_name,
-                    contents=contents_single,
-                    config=fallback_config
+                    model=alt_model,
+                    contents=contents,
+                    config=config
                 )
             except Exception as fb_err:
-                logger.error(f"Falla también en fallback secundario ({fb_err}). Intentando con modelo alternativo...")
+                logger.error(f"Falla también en fallback con {alt_model} ({fb_err}). Intentando con gemini-3.7-flash...")
                 try:
-                    alt_model = "gemini-3.7-flash" if model_name != "gemini-3.7-flash" else "gemini-3.5-flash"
-                    fallback_config2 = types.GenerateContentConfig(
-                        system_instruction=system_instruction,
-                        temperature=agent_temp
-                    )
+                    alt_model2 = "gemini-3.7-flash"
                     response = client.models.generate_content(
-                        model=alt_model,
-                        contents=final_texto or "Hola",
-                        config=fallback_config2
+                        model=alt_model2,
+                        contents=contents,
+                        config=config
                     )
-                except Exception as final_err:
-                    logger.critical(f"Falla crítica en todos los modelos de Gemini: {final_err}")
-                    raise final_err
+                except Exception as fb_err2:
+                    logger.error(f"Falla también con {alt_model2} ({fb_err2}). Intentando último recurso degradado...")
+                    try:
+                        fallback_config_degraded = types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=agent_temp
+                        )
+                        response = client.models.generate_content(
+                            model=alt_model,
+                            contents=final_texto or "Hola",
+                            config=fallback_config_degraded
+                        )
+                    except Exception as final_err:
+                        logger.critical(f"Falla crítica en todos los modelos de Gemini: {final_err}")
+                        raise final_err
 
         # 7. Consolidar herramientas ejecutadas durante Automatic Function Calling (AFC)
         if hasattr(response, "automatic_function_calling_history") and response.automatic_function_calling_history:
@@ -457,7 +476,9 @@ def procesar_mensaje_agente(
                 respuesta_final = mensaje_dni_formateado
 
         elif "escalar_a_operador_humano" in funciones_ejecutadas:
-            msg_der = handover_cfg.get("mensaje_derivacion") or "He transferido tu consulta con nuestro equipo de secretaría y asesoría quirúrgica. Un operador humano continuará contigo a la brevedad. ¡Muchas gracias por tu paciencia!"
+            msg_der = handover_cfg.get("mensaje_derivacion")
+            if not msg_der or "operador humano" in msg_der:
+                msg_der = "Entendido. He derivado tu consulta de manera prioritaria a nuestro equipo de atención humana. Un asesor continuará contigo a la brevedad."
             if not respuesta_final or "procesado tu consulta de manera interna" in respuesta_final.lower() or "he recibido tu consulta" in respuesta_final.lower():
                 respuesta_final = msg_der
             elif not any(k in respuesta_final.lower() for k in ["deriv", "asesor", "humano", "operador", "equipo", "secretar"]):
