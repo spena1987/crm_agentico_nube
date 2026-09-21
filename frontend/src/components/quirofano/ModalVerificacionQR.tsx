@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { reproducirBeepExito, reproducirBeepAlerta } from '@/lib/audioFeedback'
+import { normalizarDistorsionTecladoEscaner } from '@/lib/gs1Parser'
 
 interface ModalVerificacionQRProps {
   isOpen: boolean
@@ -46,58 +47,64 @@ export default function ModalVerificacionQR({
   const [error, setError] = useState<string | null>(null)
   const [resultado, setResultado] = useState<any>(null)
   const [pausarAutoCierre, setPausarAutoCierre] = useState<boolean>(true) // Por defecto pausado para que el médico coteje
+  const [codigoManual, setCodigoManual] = useState<string>('')
+
+  const ejecutarEscaneo = async (codigoParam?: string) => {
+    try {
+      setProcesando(true)
+      setError(null)
+
+      const codigoRawOriginal = codigoParam !== undefined ? codigoParam : (rawQR || `MEDCRM:QX:${turnoId}`)
+      const codigoNormalizado = normalizarDistorsionTecladoEscaner(codigoRawOriginal)
+
+      const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo_qr: codigoNormalizado,
+          estacion: estacion,
+          usuario_crm: 'Operador Scanner QR'
+        })
+      })
+
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.detail || data.error || 'Error al validar código QR.')
+      }
+
+      setResultado(data)
+      reproducirBeepExito()
+
+      if (onEstadoActualizado && data.turno) {
+        onEstadoActualizado(data.turno)
+      }
+    } catch (err: any) {
+      console.error('Error procesando escaneo QR:', err)
+      setError(err.message || 'No se pudo verificar el turno quirúrgico.')
+      reproducirBeepAlerta()
+    } finally {
+      setProcesando(false)
+    }
+  }
 
   // Procesar escaneo al abrir
   useEffect(() => {
     if (!isOpen || !turnoId) return
-
-    const procesarEscaneo = async () => {
-      try {
-        setProcesando(true)
-        setError(null)
-
-        const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            codigo_qr: rawQR || `MEDCRM:QX:${turnoId}`,
-            estacion: estacion,
-            usuario_crm: 'Operador Scanner QR'
-          })
-        })
-
-        const data = await res.json()
-        if (!res.ok || !data.success) {
-          throw new Error(data.detail || data.error || 'Error al validar código QR.')
-        }
-
-        setResultado(data)
-        reproducirBeepExito()
-
-        if (onEstadoActualizado && data.turno) {
-          onEstadoActualizado(data.turno)
-        }
-      } catch (err: any) {
-        console.error('Error procesando escaneo QR:', err)
-        setError(err.message || 'No se pudo verificar el turno quirúrgico.')
-        reproducirBeepAlerta()
-      } finally {
-        setProcesando(false)
-      }
-    }
-
-    procesarEscaneo()
+    ejecutarEscaneo()
   }, [isOpen, turnoId, rawQR, estacion])
 
   // Forzar cambio a un estado específico
   const handleForzarEstado = async (nuevoEstado: string) => {
     try {
       setEjecutandoAccion(true)
+      const codigoRawOriginal = rawQR || `MEDCRM:QX:${turnoId}`
+      const codigoNormalizado = normalizarDistorsionTecladoEscaner(codigoRawOriginal)
+
       const res = await fetch(`${BACKEND_URL}/api/turnos-quirofano/escanear-qr`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          codigo_qr: rawQR || `MEDCRM:QX:${turnoId}`,
+          codigo_qr: codigoNormalizado,
           estacion: estacion,
           accion_deseada: nuevoEstado,
           usuario_crm: 'Operador Manual QR'
@@ -171,11 +178,51 @@ export default function ModalVerificacionQR({
               <span>Validando código QR y verificando protocolo OMS...</span>
             </div>
           ) : error ? (
-            <div className="p-4 rounded-2xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-center gap-3">
-              <AlertTriangle size={20} className="text-red-400 shrink-0" />
-              <div>
-                <p className="font-bold text-white text-sm">Error en Lectura de QR</p>
-                <p>{error}</p>
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-red-950/40 border border-red-500/30 text-red-300 text-xs flex items-start gap-3">
+                <AlertTriangle size={20} className="text-red-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-bold text-white text-sm">Error en Lectura o Identificación</p>
+                  <p>{error}</p>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-neutral-950 border border-gray-800 space-y-3">
+                <label className="text-xs font-semibold text-gray-300 block">
+                  Reintentar lectura o ingresar código manualmente:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={codigoManual}
+                    onChange={(e) => setCodigoManual(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && codigoManual.trim()) {
+                        ejecutarEscaneo(codigoManual.trim())
+                      }
+                    }}
+                    placeholder="Escanear nuevamente, DNI, o Código de Caso..."
+                    className="flex-1 bg-neutral-900 border border-gray-700 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 font-mono"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    disabled={procesando || !codigoManual.trim()}
+                    onClick={() => ejecutarEscaneo(codigoManual.trim())}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition"
+                  >
+                    Verificar
+                  </button>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => ejecutarEscaneo()}
+                    className="text-xs text-gray-400 hover:text-emerald-400 transition underline"
+                  >
+                    Reintentar con turno actual
+                  </button>
+                </div>
               </div>
             </div>
           ) : (

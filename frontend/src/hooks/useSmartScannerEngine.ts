@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import {
   clasificarLecturaEscaneo,
   TipoClasificacionEscaneo,
-  Gs1ParsedData
+  Gs1ParsedData,
+  normalizarDistorsionTecladoEscaner
 } from '@/lib/gs1Parser'
 import {
   reproducirBeepScan,
@@ -93,17 +94,18 @@ export function useSmartScannerEngine({
           setEstaEscaneando(true)
           setTimeout(() => setEstaEscaneando(false), 800)
 
-          // Clasificar código mediante el motor GS1 / Pulsera
-          const clasificacion = clasificarLecturaEscaneo(rawCode)
+          // Clasificar código mediante el motor GS1 / Pulsera con normalización de teclado
+          const rawLimpio = normalizarDistorsionTecladoEscaner(rawCode)
+          const clasificacion = clasificarLecturaEscaneo(rawLimpio)
           setUltimoEscaneo(clasificacion)
 
           // Disparar callbacks específicos
           if (clasificacion.tipo === 'PULSERA_PACIENTE') {
-            callbacksRef.current.onScanPaciente?.(clasificacion.turnoId, rawCode)
+            callbacksRef.current.onScanPaciente?.(clasificacion.turnoId, rawLimpio)
           } else if (clasificacion.tipo === 'LIO_DATAMATRIX') {
-            callbacksRef.current.onScanLio?.(clasificacion.gs1, rawCode)
+            callbacksRef.current.onScanLio?.(clasificacion.gs1, rawLimpio)
           } else if (clasificacion.tipo === 'CODIGO_1D_GTIN') {
-            callbacksRef.current.onScanGtin?.(clasificacion.gtin14, rawCode)
+            callbacksRef.current.onScanGtin?.(clasificacion.gtin14, rawLimpio)
           }
 
           callbacksRef.current.onScanGeneral?.(clasificacion)

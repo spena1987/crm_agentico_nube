@@ -1,4 +1,4 @@
-﻿import os
+import os
 import pytest
 import jwt
 from unittest.mock import MagicMock, patch
@@ -139,3 +139,70 @@ def test_reabrir_calculo_lio_permite_cualquier_usuario_autenticado():
         data = res.json()
         assert data["success"] is True
         assert data["lio_calculado"] is False
+
+def test_guardar_calculo_lio_con_asesoria_no_inyecta_es_torico_en_asesorias():
+    token = generate_test_jwt(email="cirujano@clinica.com")
+    with patch("app.main.supabase") as mock_supa:
+        mock_turnos = MagicMock()
+        mock_asesorias = MagicMock()
+
+        def table_side_effect(table_name):
+            if table_name == "turnos_quirofano":
+                return mock_turnos
+            elif table_name == "asesorias_quirurgicas":
+                return mock_asesorias
+            return MagicMock()
+
+        mock_supa.table.side_effect = table_side_effect
+
+        # Mock select de asesorías
+        mock_asesorias.select.return_value.eq.return_value.execute.return_value = MagicMock(
+            data=[{"id": "ase-123", "ojo": "OD", "checklist_prequirurgico": {}}]
+        )
+        mock_turnos.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "turno-123"}])
+        mock_asesorias.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": "ase-123"}])
+
+        res = client.post(
+            "/api/calculo-lio/guardar",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "turno_id": "turno-123",
+                "asesoria_id": "ase-123",
+                "confirmar": True,
+                "ojo": "OD",
+                "opciones": [{
+                    "modelo": "Alcon Clareon PanOptix Común (Trifocal)",
+                    "dioptria": "20.50",
+                    "es_torico": True,
+                    "torico_valor": "T3",
+                    "torico_eje": "90"
+                }]
+            }
+        )
+
+        assert res.status_code == 200
+        data = res.json()
+        assert data["success"] is True
+
+        # Verificar qué se envió a turnos_quirofano: SÍ debe incluir es_torico y lote/valores planos
+        args_turno, _ = mock_turnos.update.call_args
+        payload_turno = args_turno[0]
+        assert payload_turno["es_torico"] is True
+        assert payload_turno["lente_tipo"] == "Alcon Clareon PanOptix Común (Trifocal)"
+        assert payload_turno["lente_dioptria"] == "+20.50"
+        assert payload_turno["lente_torico_valor"] == 3
+
+        # Verificar qué se envió a asesorias_quirurgicas: NUNCA debe incluir es_torico o columnas planas
+        args_asesoria, _ = mock_asesorias.update.call_args
+        payload_asesoria = args_asesoria[0]
+        assert "es_torico" not in payload_asesoria
+        assert "lente_tipo" not in payload_asesoria
+        assert "lente_dioptria" not in payload_asesoria
+        assert "lente_torico_valor" not in payload_asesoria
+        assert "lente_torico_eje" not in payload_asesoria
+
+        # Y SÍ debe incluir el checklist estructurado por ojo
+        assert "_lio_calculo_OD" in payload_asesoria["checklist_prequirurgico"]
+        assert payload_asesoria["checklist_prequirurgico"]["_lio_calculo_OD"]["lio_calculado"] is True
+        assert payload_asesoria["lio_calculado"] is True
+

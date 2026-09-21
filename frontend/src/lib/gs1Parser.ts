@@ -91,7 +91,7 @@ export function parseGs1Code(rawInput: string): Gs1ParsedData {
     return result
   }
 
-  let raw = rawInput.trim()
+  let raw = normalizarDistorsionTecladoEscaner(rawInput.trim())
   // Limpiar prefijo de simbología AIM (ej: ]d2 para GS1 DataMatrix, ]Q3 para GS1 QR, ]C1 para GS1-128)
   if (raw.startsWith(']d2') || raw.startsWith(']Q3') || raw.startsWith(']C1') || raw.startsWith(']E0') || raw.startsWith(']e0')) {
     raw = raw.substring(3)
@@ -428,12 +428,51 @@ export function extraerGtinDeEntrada(rawInput: string): string {
 }
 
 /**
+ * Normaliza y sanitiza cadenas leídas por lectores de códigos de barras / QR (modo USB HID)
+ * cuando el escáner emite scancodes en distribución de EE.UU. (US layout)
+ * pero el sistema operativo de la computadora tiene la distribución en Español (Latinoamérica / España).
+ *
+ * Ejemplos de distorsión resueltos:
+ * - Dos puntos ":" (Shift + ;) interpretados como "Ñ" o "ñ" -> MEDCRMÑQXÑ... -> MEDCRM:QX:...
+ * - Guiones "-" interpretados como apóstrofe "'" en UUIDs -> a0f831d4'9e29'4fcf... -> a0f831d4-9e29-4fcf...
+ * - Paréntesis de DataMatrix GS1: ")01=" -> "(01)", ")17=" -> "(17)", etc.
+ */
+export function normalizarDistorsionTecladoEscaner(rawInput: string): string {
+  if (!rawInput || typeof rawInput !== 'string') return ''
+  let s = rawInput.trim()
+
+  // 1. Prefijo institucional MEDCRM:QX: (cuando ":" fue tipeado como "Ñ", "ñ" o "_")
+  s = s.replace(/MEDCRM[Ññ_]QX[Ññ_]/gi, 'MEDCRM:QX:')
+  s = s.replace(/^QX[Ññ_]/gi, 'QX:')
+
+  // 2. Normalizar UUIDs distorsionados con comillas simples en vez de guiones
+  // Ejemplo: a0f831d4'9e29'4fcf'ad15'1ab72b9d3cd9 -> a0f831d4-9e29-4fcf-ad15-1ab72b9d3cd9
+  s = s.replace(
+    /([0-9a-fA-F]{8})[']([0-9a-fA-F]{4})[']([0-9a-fA-F]{4})[']([0-9a-fA-F]{4})[']([0-9a-fA-F]{12})/g,
+    '$1-$2-$3-$4-$5'
+  )
+
+  // 3. Normalizar paréntesis GS1 distorsionados
+  // En teclado US, "(" es Shift+9 y ")" es Shift+0. En teclado español, Shift+9 es ")" y Shift+0 es "="
+  // Por tanto "(01)" se convierte en ")01="
+  s = s.replace(/\)01=/g, '(01)')
+  s = s.replace(/\)17=/g, '(17)')
+  s = s.replace(/\)10=/g, '(10)')
+  s = s.replace(/\)21=/g, '(21)')
+  s = s.replace(/\)00=/g, '(00)')
+  s = s.replace(/\)02=/g, '(02)')
+  s = s.replace(/\)30=/g, '(30)')
+
+  return s
+}
+
+/**
  * Identifica si una cadena escaneada corresponde a una Pulsera Quirúrgica de Paciente
  * (formatos: MEDCRM:QX:<uuid>, QX-<uuid>, URL con ?t=<uuid>, o UUID v4 directo).
  */
 export function esCodigoPulseraPaciente(rawCode: string): { esPulsera: boolean; turnoId?: string } {
   if (!rawCode) return { esPulsera: false }
-  const raw = rawCode.trim()
+  const raw = normalizarDistorsionTecladoEscaner(rawCode.trim())
 
   // 1. Prefijo institucional MEDCRM:QX:<uuid>
   if (raw.toUpperCase().startsWith('MEDCRM:QX:')) {
@@ -500,8 +539,10 @@ export type TipoClasificacionEscaneo =
  * Clasifica inmediatamente cualquier lectura de escáner en base a su sintaxis y estructura.
  */
 export function clasificarLecturaEscaneo(rawInput: string): TipoClasificacionEscaneo {
-  const raw = (rawInput || '').replace(/[\r\n\t]/g, '').trim()
-  if (!raw) return { tipo: 'DESCONOCIDO', raw: '' }
+  const rawLimpio = (rawInput || '').replace(/[\r\n\t]/g, '').trim()
+  if (!rawLimpio) return { tipo: 'DESCONOCIDO', raw: '' }
+
+  const raw = normalizarDistorsionTecladoEscaner(rawLimpio)
 
   // 1. Pulsera de paciente
   const checkPulsera = esCodigoPulseraPaciente(raw)

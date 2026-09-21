@@ -6217,6 +6217,20 @@ def validar_y_normalizar_dioptria(val: Any) -> str:
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Graduación de lente inválida: {val}. {str(e)}")
 
+COLUMN_KEYS_ASESORIAS_QUIRURGICAS = {
+    "id", "paciente_id", "medico_derivador_id", "medico_derivador_nombre", "medico_derivador_matricula",
+    "medico_cirujano_id", "medico_cirujano_nombre", "medico_cirujano_matricula", "practica_codigo",
+    "practica_nombre", "cobertura_obra_social", "monto_extra", "moneda_extra", "presupuesto_id",
+    "fecha_probable_cirugia", "fecha_definitiva_cirugia", "estado", "situacion_paciente", "motivo_cancelacion",
+    "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at",
+    "created_at", "updated_at", "codigo_caso", "ojo", "estado_pago", "monto_sena", "medio_pago",
+    "control_postop_24h", "control_postop_7d", "alta_medica_definitiva", "observaciones_intraoperatorias",
+    "parte_quirurgico_pdf_url", "consentimiento_geclisa_archivo_id", "consentimiento_geclisa_sincronizado_at",
+    "parte_quirurgico_geclisa_archivo_id", "parte_quirurgico_geclisa_sincronizado_at",
+    "lio_calculado", "lio_calculado_at", "lio_calculado_por", "lio_calculo_opciones",
+    "lente_lote", "lente_serie", "lente_vencimiento"
+}
+
 @app.post("/api/calculo-lio/guardar")
 def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload, request: Request):
     """
@@ -6304,36 +6318,34 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload, request: Req
             if not isinstance(chk_existente, dict):
                 chk_existente = {}
 
-            if ojo_actual_caso == "AO":
-                ojo_guardar = payload.ojo or "OD"
-                chk_existente[f"_lio_calculo_{ojo_guardar}"] = {
-                    "lio_calculado": es_confirmado,
-                    "lio_calculado_at": ahora_iso if es_confirmado else None,
-                    "lio_calculado_por": firmado_por if es_confirmado else None,
-                    "opciones": opciones_dict
-                }
-                as_upd = {
-                    "checklist_prequirurgico": chk_existente,
-                    "lio_calculado": es_confirmado or bool(as_existente.get("lio_calculado")),
-                    "updated_at": ahora_iso
-                }
-                supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
-            else:
-                as_upd = {
-                    **upd_data,
-                    "updated_at": ahora_iso
-                }
-                if modelo_ppal:
-                    as_upd["lente_tipo"] = modelo_ppal
-                if dioptria_ppal:
-                    as_upd["lente_dioptria"] = dioptria_ppal
-                as_upd["es_torico"] = es_torico_ppal
-                if torico_valor_ppal is not None:
-                    as_upd["lente_torico_valor"] = torico_valor_ppal
-                if torico_eje_ppal is not None:
-                    as_upd["lente_torico_eje"] = torico_eje_ppal
+            ojo_guardar = payload.ojo or ojo_actual_caso or "OD"
+            chk_existente[f"_lio_calculo_{ojo_guardar}"] = {
+                "lio_calculado": es_confirmado,
+                "lio_calculado_at": ahora_iso if es_confirmado else None,
+                "lio_calculado_por": firmado_por if es_confirmado else None,
+                "opciones": opciones_dict
+            }
 
-                supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
+            if ojo_actual_caso == "AO":
+                lio_od = chk_existente.get("_lio_calculo_OD") or {}
+                lio_oi = chk_existente.get("_lio_calculo_OI") or {}
+                ambos_calculados = bool(lio_od.get("lio_calculado")) and bool(lio_oi.get("lio_calculado"))
+                as_lio_confirmado = ambos_calculados if es_confirmado else False
+            else:
+                as_lio_confirmado = es_confirmado
+
+            as_upd = {
+                "checklist_prequirurgico": chk_existente,
+                "lio_calculado": as_lio_confirmado,
+                "lio_calculado_at": ahora_iso if es_confirmado else None,
+                "lio_calculado_por": firmado_por if es_confirmado else None,
+                "lio_calculo_opciones": opciones_dict,
+                "updated_at": ahora_iso
+            }
+
+            # Sanitización estricta para evitar PGRST204 por columnas no existentes en asesorias_quirurgicas
+            as_upd_limpio = {k: v for k, v in as_upd.items() if k in COLUMN_KEYS_ASESORIAS_QUIRURGICAS}
+            supabase.table("asesorias_quirurgicas").update(as_upd_limpio).eq("id", payload.asesoria_id).execute()
 
         accion_log = "CALCULO_LIO_CONFIRMADO" if es_confirmado else "CALCULO_LIO_BORRADOR"
         mensaje_log = f"Cálculo de LIO {'confirmado' if es_confirmado else 'guardado como borrador'} ({len(opciones_dict)} opciones) para {payload.ojo or 'OD'} por {firmado_por}"
@@ -6406,19 +6418,18 @@ def reabrir_calculo_lio_endpoint(payload: ReabrirCalculoPayload, request: Reques
             if not isinstance(chk_existente, dict):
                 chk_existente = {}
 
-            if ojo_actual_caso == "AO":
-                ojo_reabrir = payload.ojo or "OD"
-                if f"_lio_calculo_{ojo_reabrir}" in chk_existente and isinstance(chk_existente[f"_lio_calculo_{ojo_reabrir}"], dict):
-                    chk_existente[f"_lio_calculo_{ojo_reabrir}"]["lio_calculado"] = False
-                    chk_existente[f"_lio_calculo_{ojo_reabrir}"]["lio_calculado_at"] = None
+            ojo_reabrir = payload.ojo or ojo_actual_caso or "OD"
+            if f"_lio_calculo_{ojo_reabrir}" in chk_existente and isinstance(chk_existente[f"_lio_calculo_{ojo_reabrir}"], dict):
+                chk_existente[f"_lio_calculo_{ojo_reabrir}"]["lio_calculado"] = False
+                chk_existente[f"_lio_calculo_{ojo_reabrir}"]["lio_calculado_at"] = None
 
-                as_upd = {
-                    "checklist_prequirurgico": chk_existente,
-                    "updated_at": ahora_iso
-                }
-                supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
-            else:
-                supabase.table("asesorias_quirurgicas").update(upd).eq("id", payload.asesoria_id).execute()
+            as_upd = {
+                "checklist_prequirurgico": chk_existente,
+                "lio_calculado": False,
+                "updated_at": ahora_iso
+            }
+            as_upd_limpio = {k: v for k, v in as_upd.items() if k in COLUMN_KEYS_ASESORIAS_QUIRURGICAS}
+            supabase.table("asesorias_quirurgicas").update(as_upd_limpio).eq("id", payload.asesoria_id).execute()
             
         log_event(
             nivel="INFO",
