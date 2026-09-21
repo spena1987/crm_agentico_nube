@@ -70,6 +70,12 @@ def bind_tools_to_context(
             """
             Aprueba y confirma formalmente un presupuesto emitido al paciente cuando manifiesta su conformidad o aceptación.
             """
+            if tracker is not None and "aprobar_presupuesto" in tracker:
+                logger.info("Omitiendo llamada duplicada a aprobar_presupuesto en el mismo turno conversacional.")
+                return {
+                    "success": True, 
+                    "mensaje": "Presupuesto ya formalmente aprobado y confirmado en el sistema en este turno. No lo vuelvas a invocar. Procede a responder cordialmente al paciente felicitándolo y confirmándole los próximos pasos."
+                }
             record_call("aprobar_presupuesto")
             return fn(presupuesto_id=presupuesto_id, paciente_id=paciente_id, notas=notas or motivo)
         aprobar_presupuesto.__doc__ = fn.__doc__ or aprobar_presupuesto.__doc__
@@ -81,6 +87,12 @@ def bind_tools_to_context(
             Desestima, rechaza o cancela un presupuesto médico cuando el paciente manifiesta que
             no desea realizar el procedimiento cotizado, registrando el motivo de desistimiento.
             """
+            if tracker is not None and "desestimar_presupuesto" in tracker:
+                logger.info("Omitiendo llamada duplicada a desestimar_presupuesto en el mismo turno conversacional.")
+                return {
+                    "success": True, 
+                    "mensaje": "Presupuesto ya formalmente desestimado en el sistema en este turno. No lo vuelvas a invocar. Procede a responder cordialmente al paciente."
+                }
             record_call("desestimar_presupuesto")
             return fn(presupuesto_id=presupuesto_id, motivo=motivo or notas or "Desistido por el paciente", paciente_id=paciente_id)
         desestimar_presupuesto.__doc__ = fn.__doc__ or desestimar_presupuesto.__doc__

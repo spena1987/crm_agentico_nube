@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -2939,18 +2940,30 @@ def cambiar_estado_presupuesto(
                     .eq("id", target_asesoria_id) \
                     .execute()
 
-                # c) Registrar evolución clínica en asesoria_evoluciones
+                # c) Registrar evolución clínica en asesoria_evoluciones (con deduplicación por ventana de 2 minutos)
                 p_id = presupuesto.get("paciente_id") or (as_curr.data[0].get("paciente_id") if as_curr and as_curr.data else None)
                 if p_id:
                     try:
-                        crear_evolucion_asesoria({
-                            "asesoria_id": target_asesoria_id,
-                            "paciente_id": p_id,
-                            "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
-                            "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
-                            "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} aprobado ({origen}). Caso quirúrgico confirmado automáticamente.",
-                            "fecha_contacto": "now()"
-                        })
+                        prefix_id = str(presupuesto_id)[:8]
+                        dos_min_atras = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+                        check_ev = supabase.table("asesoria_evoluciones") \
+                            .select("id") \
+                            .eq("asesoria_id", target_asesoria_id) \
+                            .ilike("contenido", f"%Presupuesto #{prefix_id}%aprobado%") \
+                            .gte("created_at", dos_min_atras) \
+                            .limit(1) \
+                            .execute()
+                        if not check_ev.data:
+                            crear_evolucion_asesoria({
+                                "asesoria_id": target_asesoria_id,
+                                "paciente_id": p_id,
+                                "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
+                                "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
+                                "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} aprobado ({origen}). Caso quirúrgico confirmado automáticamente.",
+                                "fecha_contacto": "now()"
+                            })
+                        else:
+                            logger.info(f"Evolución de aprobación para presupuesto #{prefix_id} ya registrada en los últimos 2 minutos. Omitiendo duplicado.")
                     except Exception as ev_err:
                         logger.warning(f"Error registrando evolución de asesoría tras aprobar presupuesto: {ev_err}")
 
@@ -2975,18 +2988,30 @@ def cambiar_estado_presupuesto(
                     .eq("id", target_asesoria_id) \
                     .execute()
 
-                # Registrar evolución clínica de desistimiento
+                # Registrar evolución clínica de desistimiento (con deduplicación por ventana de 2 minutos)
                 p_id = presupuesto.get("paciente_id")
                 if p_id:
                     try:
-                        crear_evolucion_asesoria({
-                            "asesoria_id": target_asesoria_id,
-                            "paciente_id": p_id,
-                            "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
-                            "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
-                            "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} desestimado ({origen}). Motivo: {motivo or 'No especificado'}. Caso quirúrgico cancelado.",
-                            "fecha_contacto": "now()"
-                        })
+                        prefix_id = str(presupuesto_id)[:8]
+                        dos_min_atras = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+                        check_ev = supabase.table("asesoria_evoluciones") \
+                            .select("id") \
+                            .eq("asesoria_id", target_asesoria_id) \
+                            .ilike("contenido", f"%Presupuesto #{prefix_id}%desestimado%") \
+                            .gte("created_at", dos_min_atras) \
+                            .limit(1) \
+                            .execute()
+                        if not check_ev.data:
+                            crear_evolucion_asesoria({
+                                "asesoria_id": target_asesoria_id,
+                                "paciente_id": p_id,
+                                "usuario_nombre": "Asistente IA WhatsApp" if origen == "IA_WHATSAPP" else "Sistema CRM",
+                                "tipo_contacto": "whatsapp" if origen == "IA_WHATSAPP" else "presencial",
+                                "contenido": f"Presupuesto #{str(presupuesto_id)[:8]} desestimado ({origen}). Motivo: {motivo or 'No especificado'}. Caso quirúrgico cancelado.",
+                                "fecha_contacto": "now()"
+                            })
+                        else:
+                            logger.info(f"Evolución de desistimiento para presupuesto #{prefix_id} ya registrada en los últimos 2 minutos. Omitiendo duplicado.")
                     except Exception as ev_err:
                         logger.warning(f"Error registrando evolución de asesoría tras rechazar presupuesto: {ev_err}")
                     

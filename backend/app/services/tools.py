@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 # Caché en memoria para evitar duplicación de notas / eventos repetidos en corto tiempo (Debounce)
 _LAST_ESCALATION_CACHE: Dict[str, float] = {}
 _LAST_CLOSE_CACHE: Dict[str, float] = {}
+_LAST_APROBACION_CACHE: Dict[str, float] = {}
+_LAST_DESESTIMAR_CACHE: Dict[str, float] = {}
 from app.db import (
     supabase, 
     actualizar_bot_disabled, 
@@ -466,6 +468,21 @@ def aprobar_presupuesto(
             "error": "No se encontró ningún presupuesto pendiente de aprobación para este paciente. Por favor consulta con la secretaría o solicita una nueva cotización."
         }
 
+    # Debounce / idempotencia en memoria (15 segundos) para evitar llamadas duplicadas por AFC o reintentos
+    now = time.time()
+    cache_key = f"{real_paciente_id or ''}_{target_id}"
+    last_time = _LAST_APROBACION_CACHE.get(cache_key, 0.0)
+    if (now - last_time) < 15.0:
+        logger.info(f"Aprobación duplicada prevenida en tools.py para presupuesto {target_id} (hace {now - last_time:.1f}s).")
+        return {
+            "success": True,
+            "presupuesto_id": target_id,
+            "estado": "aprobado",
+            "mensaje": f"Presupuesto #{target_id[:8]} ya se encuentra formalmente aprobado y confirmado. Responde directamente al paciente felicitándolo y confirmándole que la secretaría coordinará los turnos prequirúrgicos.",
+            "deduplicated": True
+        }
+    _LAST_APROBACION_CACHE[cache_key] = now
+
     try:
         updated = cambiar_estado_presupuesto(target_id, "aprobado", origen="IA_WHATSAPP")
         total = updated.get("total", 0.0)
@@ -560,6 +577,22 @@ def desestimar_presupuesto(
         return {
             "error": "No se encontró ningún presupuesto pendiente (enviado o borrador) para desestimar. Los presupuestos ya aprobados o previamente rechazados no pueden desestimarse automáticamente."
         }
+
+    # Debounce / idempotencia en memoria (15 segundos) para evitar llamadas duplicadas por AFC o reintentos
+    now = time.time()
+    cache_key = f"{real_paciente_id or ''}_{target_id}"
+    last_time = _LAST_DESESTIMAR_CACHE.get(cache_key, 0.0)
+    if (now - last_time) < 15.0:
+        logger.info(f"Desistimiento duplicado prevenido en tools.py para presupuesto {target_id} (hace {now - last_time:.1f}s).")
+        return {
+            "success": True,
+            "presupuesto_id": target_id,
+            "estado": "rechazado",
+            "motivo": motivo,
+            "mensaje": f"Presupuesto #{target_id[:8]} ya se encuentra registrado como desestimado. Responde amablemente al paciente confirmándole el registro.",
+            "deduplicated": True
+        }
+    _LAST_DESESTIMAR_CACHE[cache_key] = now
 
     try:
         updated = cambiar_estado_presupuesto(
