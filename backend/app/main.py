@@ -6351,6 +6351,16 @@ def guardar_calculo_lio_endpoint(payload: GuardarCalculoLioPayload, request: Req
                     **upd_data,
                     "updated_at": ahora_iso
                 }
+                if modelo_ppal:
+                    as_upd["lente_tipo"] = modelo_ppal
+                if dioptria_ppal:
+                    as_upd["lente_dioptria"] = dioptria_ppal
+                as_upd["es_torico"] = es_torico_ppal
+                if torico_valor_ppal is not None:
+                    as_upd["lente_torico_valor"] = torico_valor_ppal
+                if torico_eje_ppal is not None:
+                    as_upd["lente_torico_eje"] = torico_eje_ppal
+
                 supabase.table("asesorias_quirurgicas").update(as_upd).eq("id", payload.asesoria_id).execute()
 
         accion_log = "CALCULO_LIO_CONFIRMADO" if es_confirmado else "CALCULO_LIO_BORRADOR"

@@ -646,12 +646,12 @@ export default function BudgetTemplateDesignerCard() {
                 <table className="w-full text-left text-[10px] table-fixed">
                   <thead>
                     <tr className="text-white font-bold" style={{ backgroundColor: config.color_primario }}>
-                      <th className="py-1.5 px-2 w-[13%]">Código</th>
-                      <th className="py-1.5 px-2 w-[51%]">Prestación / Descripción Médica</th>
-                      <th className="py-1.5 px-2 w-[7%] text-center">Mon.</th>
+                      <th className="py-1.5 px-2 w-[11%]">Código</th>
+                      <th className="py-1.5 px-2 w-[45%]">Prestación / Descripción Médica</th>
+                      <th className="py-1.5 px-2 w-[9%] text-center">Moneda</th>
                       <th className="py-1.5 px-2 w-[13%] text-right">P. Unit.</th>
-                      <th className="py-1.5 px-2 w-[5%] text-center">Cant.</th>
-                      <th className="py-1.5 px-2 w-[11%] text-right">Subtotal</th>
+                      <th className="py-1.5 px-2 w-[7%] text-center">Cant.</th>
+                      <th className="py-1.5 px-2 w-[15%] text-right">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

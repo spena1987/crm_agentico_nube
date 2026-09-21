@@ -666,7 +666,7 @@ def generar_pdf_presupuesto(
             "", ""
         ])
         
-    t_items = Table(table_data, colWidths=[65, 270, 35, 70, 25, 75])
+    t_items = Table(table_data, colWidths=[58, 245, 48, 68, 38, 83])
     
     table_styles = [
         ('BACKGROUND', (0,0), (-1,0), color_primario),
