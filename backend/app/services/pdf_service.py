@@ -637,32 +637,36 @@ def generar_pdf_presupuesto(
         
     num_items = len(items)
     
-    # Filas de Totales con SPAN de columnas 0 a 4
+    # Filas de Totales con SPAN: (0 a 2 para etiqueta 370pt, 3 a 5 para monto 170pt)
     if total_ars > 0 and total_usd > 0:
         table_data.append([
             Paragraph("<b>TOTAL EN PESOS (ARS):</b>", style_total_label),
-            "", "", "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount)
+            "", "",
+            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount),
+            "", ""
         ])
         table_data.append([
             Paragraph("<b>TOTAL EN DÓLARES (USD):</b>", style_total_label),
-            "", "", "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount)
+            "", "",
+            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount),
+            "", ""
         ])
     elif total_usd > 0:
         table_data.append([
             Paragraph("<b>TOTAL EN DÓLARES (USD):</b>", style_total_label),
-            "", "", "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount)
+            "", "",
+            Paragraph(f"<b>{formatear_monto_moneda(total_usd, 'USD')}</b>", style_total_amount),
+            "", ""
         ])
     else:
         table_data.append([
             Paragraph("<b>TOTAL EN PESOS (ARS):</b>", style_total_label),
-            "", "", "", "",
-            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount)
+            "", "",
+            Paragraph(f"<b>{formatear_monto_moneda(total_ars, 'ARS')}</b>", style_total_amount),
+            "", ""
         ])
         
-    t_items = Table(table_data, colWidths=[70, 275, 35, 70, 25, 65])
+    t_items = Table(table_data, colWidths=[65, 270, 35, 70, 25, 75])
     
     table_styles = [
         ('BACKGROUND', (0,0), (-1,0), color_primario),
@@ -680,15 +684,16 @@ def generar_pdf_presupuesto(
         bg_col = colors.white if r % 2 != 0 else colors.HexColor('#F8FAFC')
         table_styles.append(('BACKGROUND', (0, r), (-1, r), bg_col))
         
-    # Estilos y SPAN para las filas de totales
+    # Estilos y SPAN para las filas de totales (garantiza 1 sola línea para montos en ARS y USD)
     first_total_row = num_items + 1
     total_rows_count = 2 if (total_ars > 0 and total_usd > 0) else 1
     
     for tr in range(first_total_row, first_total_row + total_rows_count):
-        table_styles.append(('SPAN', (0, tr), (4, tr)))
+        table_styles.append(('SPAN', (0, tr), (2, tr)))
+        table_styles.append(('SPAN', (3, tr), (5, tr)))
         table_styles.append(('BACKGROUND', (0, tr), (-1, tr), colors.HexColor('#F8FAFC')))
-        table_styles.append(('ALIGN', (0, tr), (4, tr), 'RIGHT'))
-        table_styles.append(('ALIGN', (5, tr), (5, tr), 'RIGHT'))
+        table_styles.append(('ALIGN', (0, tr), (2, tr), 'RIGHT'))
+        table_styles.append(('ALIGN', (3, tr), (5, tr), 'RIGHT'))
         table_styles.append(('TOPPADDING', (0, tr), (-1, tr), 6))
         table_styles.append(('BOTTOMPADDING', (0, tr), (-1, tr), 6))
         table_styles.append(('LINEABOVE', (0, tr), (-1, tr), 1.0, color_primario if tr == first_total_row else colors.HexColor('#E2E8F0')))

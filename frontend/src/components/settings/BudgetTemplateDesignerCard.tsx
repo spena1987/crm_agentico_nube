@@ -682,14 +682,14 @@ export default function BudgetTemplateDesignerCard() {
                   </tbody>
                   <tfoot className="border-t-2" style={{ borderColor: config.color_primario }}>
                     <tr className="bg-slate-50 font-bold">
-                      <td colSpan={4} className="py-1.5 px-2 text-right">TOTAL ARS:</td>
-                      <td colSpan={2} className="py-1.5 px-2 text-right font-mono text-xs" style={{ color: config.color_primario }}>
+                      <td colSpan={3} className="py-1.5 px-2 text-right whitespace-nowrap text-slate-700">TOTAL EN PESOS (ARS):</td>
+                      <td colSpan={3} className="py-1.5 px-2 text-right font-mono text-xs whitespace-nowrap" style={{ color: config.color_primario }}>
                         $ 30.500,00
                       </td>
                     </tr>
                     <tr className="bg-slate-50 font-bold">
-                      <td colSpan={4} className="py-1.5 px-2 text-right">TOTAL USD:</td>
-                      <td colSpan={2} className="py-1.5 px-2 text-right font-mono text-xs text-amber-700">
+                      <td colSpan={3} className="py-1.5 px-2 text-right whitespace-nowrap text-slate-700">TOTAL EN DÓLARES (USD):</td>
+                      <td colSpan={3} className="py-1.5 px-2 text-right font-mono text-xs text-amber-700 whitespace-nowrap">
                         USD 1.500,00
                       </td>
                     </tr>
