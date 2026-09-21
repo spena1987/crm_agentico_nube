@@ -525,9 +525,9 @@ export default function ModalHistorialPresupuestosPaciente({
 
                         {/* Acciones */}
                         <div className="flex items-center gap-1">
-                          {p.pdf_url && (
+                          {(p.id || p.pdf_url) && (
                             <a
-                              href={p.pdf_url}
+                              href={p.id ? `${BACKEND_URL}/api/presupuestos/${p.id}/pdf` : p.pdf_url}
                               target="_blank"
                               rel="noreferrer"
                               className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-blue-300 border border-gray-700 rounded-lg text-xs font-bold transition-all"

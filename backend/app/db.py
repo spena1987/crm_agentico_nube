@@ -3512,9 +3512,9 @@ def enviar_presupuesto_por_whatsapp(
         
     mensaje_final = mensaje_custom or generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
     
-    # 3. Regenerar y asegurar archivo PDF con la plantilla institucional vigente
-    from app.services.pdf_service import generar_pdf_presupuesto, PDF_DIR
-    pdf_filename = generar_pdf_presupuesto(presupuesto, paciente, items)
+    # 3. Regenerar y asegurar archivo PDF con la plantilla institucional vigente y función canónica
+    from app.services.pdf_service import asegurar_pdf_presupuesto_canonica, PDF_DIR
+    pdf_filename = asegurar_pdf_presupuesto_canonica(presupuesto_id, forzar_regeneracion=True)
     pdf_path = os.path.join(PDF_DIR, pdf_filename)
         
     # 4. Obtener o crear conversación en Supabase
@@ -6059,27 +6059,77 @@ def eliminar_item_catalogo_maestro(item_id: str, fisico: bool = False) -> bool:
 # TRAZABILIDAD QUIRÚRGICA INEQUÍVOCA Y PULSERAS TÉRMICAS QR
 # ====================================================================
 
+def normalizar_distorsion_teclado_escaner(raw_input: str) -> str:
+    """
+    Normaliza y sanitiza cadenas leídas por lectores de códigos de barras / QR (modo USB HID)
+    cuando el escáner emite scancodes en distribución de EE.UU. (US layout)
+    pero el sistema operativo de la computadora tiene la distribución en Español (Latinoamérica / España).
+
+    Ejemplos de distorsión resueltos:
+    - Dos puntos ":" (Shift + ;) interpretados como "Ñ" o "ñ" -> MEDCRMÑQXÑ... -> MEDCRM:QX:...
+    - Guiones "-" interpretados como apóstrofe "'" en UUIDs -> a0f831d4'9e29'4fcf... -> a0f831d4-9e29-4fcf...
+    - Paréntesis de DataMatrix GS1: ")01=" -> "(01)", ")17=" -> "(17)", etc.
+    """
+    if not raw_input or not isinstance(raw_input, str):
+        return ""
+    import re
+    s = raw_input.strip()
+
+    # 1. Prefijo institucional MEDCRM:QX: (cuando ":" fue tipeado como "Ñ", "ñ" o "_")
+    s = re.sub(r"MEDCRM[Ññ_]QX[Ññ_]", "MEDCRM:QX:", s, flags=re.IGNORECASE)
+    s = re.sub(r"^QX[Ññ_]", "QX:", s, flags=re.IGNORECASE)
+
+    # 2. Normalizar UUIDs distorsionados con comillas simples en vez de guiones
+    s = re.sub(
+        r"([0-9a-fA-F]{8})[']([0-9a-fA-F]{4})[']([0-9a-fA-F]{4})[']([0-9a-fA-F]{4})[']([0-9a-fA-F]{12})",
+        r"\1-\2-\3-\4-\5",
+        s
+    )
+
+    # 3. Normalizar paréntesis GS1 distorsionados
+    s = s.replace(")01=", "(01)")
+    s = s.replace(")17=", "(17)")
+    s = s.replace(")10=", "(10)")
+    s = s.replace(")21=", "(21)")
+    s = s.replace(")00=", "(00)")
+    s = s.replace(")02=", "(02)")
+    s = s.replace(")30=", "(30)")
+
+    return s
+
+def es_uuid_valido(val: str) -> bool:
+    if not val or not isinstance(val, str):
+        return False
+    import re
+    return bool(re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", val.strip()))
+
 def extraer_turno_id_de_qr(codigo_qr: str) -> Optional[str]:
     """
     Decodifica de forma flexible el ID de turno desde múltiples formatos de QR:
-    - 'MEDCRM:QX:<uuid>'
-    - 'QX-<uuid>'
+    - 'MEDCRM:QX:<uuid>' o 'MEDCRMÑQXÑ<uuid-distorsionado>'
+    - 'QX-<uuid>' o 'QX:<uuid>'
     - 'https://...?t=<uuid>'
     - '<uuid>'
+    - 'QX-26-XXXX' / 'QX-26-XXXX-OD'
     """
     if not codigo_qr:
         return None
-    raw = codigo_qr.strip()
+    raw = normalizar_distorsion_teclado_escaner(codigo_qr)
     
     # 1. Prefijo institucional MEDCRM:QX:
     if raw.upper().startswith("MEDCRM:QX:"):
         partes = raw.split(":")
-        if len(partes) >= 3:
+        if len(partes) >= 3 and partes[2].strip():
             return partes[2].strip()
             
-    # 2. Formato simple QX-
-    if raw.upper().startswith("QX-"):
+    # 2. Formato simple QX: o QX-
+    if raw.upper().startswith("QX:"):
         return raw[3:].strip()
+    if raw.upper().startswith("QX-"):
+        candidato = raw[3:].strip()
+        if es_uuid_valido(candidato):
+            return candidato
+        return raw
         
     # 3. URL con query param ?t= o ?turno_id=
     if "http" in raw and ("?t=" in raw or "?turno_id=" in raw):
@@ -6091,8 +6141,8 @@ def extraer_turno_id_de_qr(codigo_qr: str) -> Optional[str]:
         if "turno_id" in qs and qs["turno_id"]:
             return qs["turno_id"][0].strip()
             
-    # 4. Asumir UUID directo si coincide con longitud de UUID (36 chars)
-    if len(raw) == 36 and raw.count("-") == 4:
+    # 4. Asumir UUID directo si coincide con formato de UUID
+    if es_uuid_valido(raw):
         return raw
         
     return raw
@@ -6105,16 +6155,40 @@ def obtener_datos_pulsera_turno(turno_id: str) -> Dict[str, Any]:
     if not supabase or not turno_id:
         return {"success": False, "error": "Sin conexión o ID de turno inválido."}
     try:
-        resp = supabase.table("turnos_quirofano").select(
-            "*, pacientes(*), quirofanos(nombre, codigo), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo)"
-        ).eq("id", turno_id).limit(1).execute()
-        
-        if not resp.data or len(resp.data) == 0:
+        identificador = extraer_turno_id_de_qr(turno_id)
+        id_str = identificador.strip() if identificador else turno_id.strip()
+        turno = None
+
+        if es_uuid_valido(id_str):
+            resp = supabase.table("turnos_quirofano").select(
+                "*, pacientes(*), quirofanos(nombre, codigo), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
+            ).eq("id", id_str).limit(1).execute()
+            if resp.data and len(resp.data) > 0:
+                turno = resp.data[0]
+
+        if not turno:
+            resp_cod = supabase.table("turnos_quirofano").select(
+                "*, pacientes(*), quirofanos(nombre, codigo), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
+            ).ilike("codigo_turno", f"%{id_str}%").limit(1).execute()
+            if resp_cod.data and len(resp_cod.data) > 0:
+                turno = resp_cod.data[0]
+
+        if not turno:
             return {"success": False, "error": f"Turno {turno_id} no encontrado."}
             
-        turno = resp.data[0]
         pac = turno.get("pacientes") or {}
         asesoria = turno.get("asesorias_quirurgicas") or {}
+        ojo = turno.get("ojo") or "OD"
+
+        # Garantizar persistencia de codigo_turno si estaba nulo
+        if not turno.get("codigo_turno"):
+            cod_caso = asesoria.get("codigo_caso") or f"QX-26-{str(turno['id'])[:4].upper()}"
+            cod_derivado = f"{cod_caso}-{ojo}"
+            try:
+                supabase.table("turnos_quirofano").update({"codigo_turno": cod_derivado}).eq("id", turno["id"]).execute()
+                turno["codigo_turno"] = cod_derivado
+            except Exception:
+                pass
         
         # Calcular edad si tiene fecha de nacimiento
         edad_str = ""
@@ -6129,7 +6203,6 @@ def obtener_datos_pulsera_turno(turno_id: str) -> Dict[str, Any]:
             except Exception:
                 pass
                 
-        ojo = turno.get("ojo") or "OD"
         ojo_texto = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
         
         practica_nombre = turno.get("practica_nombre") or asesoria.get("practica_nombre") or "Cirugía Oftalmológica"
@@ -6153,6 +6226,7 @@ def obtener_datos_pulsera_turno(turno_id: str) -> Dict[str, Any]:
                 "alergias": pac.get("alergias") or "Sin alergias declaradas"
             },
             "cirugia": {
+                "codigo_turno": turno.get("codigo_turno"),
                 "fecha": turno.get("fecha_cirugia"),
                 "hora": str(turno.get("hora_inicio") or "")[:5],
                 "ojo": ojo,
@@ -6219,25 +6293,77 @@ def procesar_escaneo_qr_turno(
     """
     Procesa un escaneo de pulsera QR para la identificación inequívoca y
     el avance automático seguro de estadios quirúrgicos según la estación física.
+    Soporta resolución polimórfica (UUID, código de turno, código de caso o DNI)
+    y normaliza distorsiones de escáneres con distribución de teclado de EE.UU. en Windows Español.
     """
     if not supabase or not codigo_qr:
         return {"success": False, "error": "Código QR no proporcionado o base de datos no disponible."}
         
-    turno_id = extraer_turno_id_de_qr(codigo_qr)
-    if not turno_id:
-        return {"success": False, "error": "No se pudo extraer el ID del turno desde el código QR."}
+    identificador = extraer_turno_id_de_qr(codigo_qr)
+    if not identificador:
+        return {"success": False, "error": "No se pudo extraer el identificador desde el código QR."}
         
     try:
-        resp = supabase.table("turnos_quirofano").select(
-            "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo)"
-        ).eq("id", turno_id).limit(1).execute()
-        
-        if not resp.data or len(resp.data) == 0:
-            return {"success": False, "error": f"No se encontró ningún turno quirúrgico con el ID {turno_id}."}
+        turno = None
+        id_str = identificador.strip()
+
+        # 1. Búsqueda por UUID primario
+        if es_uuid_valido(id_str):
+            resp = supabase.table("turnos_quirofano").select(
+                "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
+            ).eq("id", id_str).limit(1).execute()
+            if resp.data and len(resp.data) > 0:
+                turno = resp.data[0]
+
+        # 2. Búsqueda por codigo_turno (ej. 'QX-26-0001-OD' o 'QX-26-0012-OD')
+        if not turno:
+            resp_cod = supabase.table("turnos_quirofano").select(
+                "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
+            ).ilike("codigo_turno", f"%{id_str}%").limit(1).execute()
+            if resp_cod.data and len(resp_cod.data) > 0:
+                turno = resp_cod.data[0]
+
+        # 3. Búsqueda a través de asesorias_quirurgicas.codigo_caso (ej. 'QX-26-0001' o 'QX-26-0012')
+        if not turno:
+            cod_limpio = id_str.replace("QX-", "").replace("qx-", "").replace("-OD", "").replace("-OI", "").replace("-od", "").replace("-oi", "").strip()
+            as_resp = supabase.table("asesorias_quirurgicas").select("id").ilike("codigo_caso", f"%{cod_limpio}%").limit(1).execute()
+            if as_resp.data and len(as_resp.data) > 0:
+                as_id = as_resp.data[0]["id"]
+                resp_as = supabase.table("turnos_quirofano").select(
+                    "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
+                ).eq("asesoria_id", as_id).neq("estado", "cancelado").order("fecha_cirugia", desc=True).limit(1).execute()
+                if resp_as.data and len(resp_as.data) > 0:
+                    turno = resp_as.data[0]
+
+        # 4. Si es numérico (DNI de paciente)
+        if not turno and id_str.isdigit():
+            pac_resp = supabase.table("pacientes").select("id").eq("dni", id_str).limit(1).execute()
+            if pac_resp.data and len(pac_resp.data) > 0:
+                pac_id = pac_resp.data[0]["id"]
+                resp_pac = supabase.table("turnos_quirofano").select(
+                    "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
+                ).eq("paciente_id", pac_id).neq("estado", "cancelado").order("fecha_cirugia", desc=True).limit(1).execute()
+                if resp_pac.data and len(resp_pac.data) > 0:
+                    turno = resp_pac.data[0]
+
+        if not turno:
+            return {"success": False, "error": f"No se encontró ningún turno quirúrgico activo para '{identificador}'."}
             
-        turno = resp.data[0]
+        turno_id = turno["id"]
         estado_anterior = turno.get("estado") or "programado"
         pac = turno.get("pacientes") or {}
+        asesoria = turno.get("asesorias_quirurgicas") or {}
+
+        # Sincronizar codigo_turno si está nulo
+        if not turno.get("codigo_turno"):
+            cod_caso = asesoria.get("codigo_caso") or f"QX-26-{str(turno['id'])[:4].upper()}"
+            ojo_t = turno.get("ojo") or "OD"
+            cod_gen = f"{cod_caso}-{ojo_t}"
+            try:
+                supabase.table("turnos_quirofano").update({"codigo_turno": cod_gen}).eq("id", turno["id"]).execute()
+                turno["codigo_turno"] = cod_gen
+            except Exception:
+                pass
         
         est_norm = (estacion or "general").lower()
 

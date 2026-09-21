@@ -325,21 +325,10 @@ def servir_archivo_estatico(filename: str):
         if safe_filename.startswith("presupuesto_") and safe_filename.endswith(".pdf"):
             presupuesto_id = safe_filename.replace("presupuesto_", "").replace(".pdf", "")
             try:
-                if supabase:
-                    pres_resp = supabase.table("presupuestos") \
-                        .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*)), asesorias_quirurgicas!presupuestos_asesoria_id_fkey(*)") \
-                        .eq("id", presupuesto_id) \
-                        .execute()
-                        
-                    if pres_resp.data:
-                        p_data = pres_resp.data[0]
-                        paciente = p_data.get("pacientes") or {}
-                        items_db = p_data.get("items_presupuesto") or []
-                        
-                        from app.services.pdf_service import generar_pdf_presupuesto
-                        generar_pdf_presupuesto(p_data, paciente, items_db)
+                from app.services.pdf_service import asegurar_pdf_presupuesto_canonica
+                asegurar_pdf_presupuesto_canonica(presupuesto_id, forzar_regeneracion=False)
             except Exception as e:
-                logger.error(f"Error regenerando PDF de presupuesto on-demand ({safe_filename}): {e}")
+                logger.error(f"Error regenerando PDF de presupuesto canónico on-demand ({safe_filename}): {e}")
         elif safe_filename.startswith("consentimiento_") and safe_filename.endswith(".pdf"):
             turno_id = safe_filename.replace("consentimiento_", "").replace(".pdf", "")
             try:
@@ -2005,41 +1994,18 @@ def preview_plantilla_presupuesto():
 @app.get("/api/presupuestos/{presupuesto_id}/regenerar-pdf")
 def regenerar_pdf_presupuesto_endpoint(presupuesto_id: str):
     """
-    Fuerza la regeneración del PDF de un presupuesto existente utilizando la plantilla institucional vigente de Supabase.
+    Fuerza la regeneración del PDF de un presupuesto existente utilizando la plantilla institucional vigente de Supabase y función canónica.
     """
     try:
         from app.db import supabase
-        from app.services.pdf_service import generar_pdf_presupuesto
+        from app.services.pdf_service import asegurar_pdf_presupuesto_canonica
         
-        p_resp = supabase.table("presupuestos")\
-            .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
-            .eq("id", presupuesto_id)\
-            .execute()
-            
-        if not p_resp.data:
-            raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
-            
-        p = p_resp.data[0]
-        paciente = p.get("pacientes") or {}
-        items_raw = p.get("items_presupuesto") or []
-        
-        items = []
-        for it in items_raw:
-            srv = it.get("servicios_precios") or {}
-            items.append({
-                "codigo": srv.get("codigo") or it.get("codigo") or "",
-                "nombre": srv.get("nombre_prestacion") or it.get("nombre") or "Prestación Médica",
-                "precio_unitario": float(it.get("precio_unitario") or 0.0),
-                "cantidad": int(it.get("cantidad") or 1),
-                "subtotal": float(it.get("subtotal") or 0.0),
-                "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper()
-            })
-            
-        filename = generar_pdf_presupuesto(p, paciente, items)
+        filename = asegurar_pdf_presupuesto_canonica(presupuesto_id, forzar_regeneracion=True)
         pdf_rel_url = f"/static/{filename}"
         
-        supabase.table("presupuestos").update({"pdf_url": pdf_rel_url}).eq("id", presupuesto_id).execute()
-        
+        if supabase:
+            supabase.table("presupuestos").update({"pdf_url": pdf_rel_url}).eq("id", presupuesto_id).execute()
+            
         return {
             "success": True,
             "mensaje": "PDF regenerado exitosamente con el membrete institucional vigente.",
@@ -3712,11 +3678,17 @@ def enviar_presupuesto_whatsapp_api(presupuesto_id: str, payload: Dict[str, Any]
 @app.get("/api/presupuestos/{presupuesto_id}/pdf")
 @app.get("/api/presupuestos/pdf/{presupuesto_id}")
 @app.get("/static/presupuesto/{presupuesto_id}")
-def obtener_pdf_presupuesto(presupuesto_id: str):
+def obtener_pdf_presupuesto(presupuesto_id: str, forzar: bool = False):
     """
     Sirve el archivo PDF membretado oficial de un presupuesto directamente como stream / descarga.
-    Compatible con los botones de URL dinámica {{1}} de Meta WhatsApp Cloud API.
+    Garantiza que el PDF canónico esté generado con la plantilla institucional vigente y los datos normalizados.
+    Compatible con los botones de URL dinámica {{1}} de Meta WhatsApp Cloud API y descarga en CRM.
     """
+    try:
+        from app.services.pdf_service import asegurar_pdf_presupuesto_canonica
+        asegurar_pdf_presupuesto_canonica(presupuesto_id, forzar_regeneracion=forzar)
+    except Exception as e:
+        logger.error(f"Error asegurando PDF canónico para presupuesto {presupuesto_id}: {e}")
     return servir_archivo_estatico(f"presupuesto_{presupuesto_id}.pdf")
 
 # ====================================================================

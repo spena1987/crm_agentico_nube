@@ -1460,9 +1460,9 @@ export default function CasoFormularioActivo({
 
                           {/* Botones de acción por presupuesto */}
                           <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
-                            {p.pdf_url && (
+                            {(p.id || p.pdf_url) && (
                               <a
-                                href={p.pdf_url}
+                                href={p.id ? `${BACKEND_URL}/api/presupuestos/${p.id}/pdf` : (p.pdf_url || undefined)}
                                 target="_blank"
                                 rel="noreferrer"
                                 className="p-1.5 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded-lg text-xs font-bold transition-all"
@@ -1584,8 +1584,14 @@ export default function CasoFormularioActivo({
                             </div>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
-                            {op.pdf_url && (
-                              <a href={op.pdf_url} target="_blank" rel="noreferrer" className="p-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded text-xs" title="Ver PDF">
+                            {(op.id || op.pdf_url) && (
+                              <a
+                                href={op.id ? `${BACKEND_URL}/api/presupuestos/${op.id}/pdf` : (op.pdf_url || undefined)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-1 bg-neutral-800 hover:bg-neutral-700 text-blue-300 rounded text-xs"
+                                title="Ver PDF"
+                              >
                                 <Download size={12} />
                               </a>
                             )}

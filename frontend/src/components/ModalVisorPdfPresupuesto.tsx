@@ -36,9 +36,11 @@ export default function ModalVisorPdfPresupuesto({
 
   if (!isOpen || !pdfUrl) return null
 
-  const fullPdfUrl = pdfUrl.startsWith('http')
-    ? pdfUrl
-    : `${BACKEND_URL}${pdfUrl.startsWith('/') ? '' : '/'}${pdfUrl}`
+  const fullPdfUrl = presupuestoId
+    ? `${BACKEND_URL}/api/presupuestos/${presupuestoId}/pdf`
+    : (pdfUrl.startsWith('http')
+      ? pdfUrl
+      : `${BACKEND_URL}${pdfUrl.startsWith('/') ? '' : '/'}${pdfUrl}`)
 
   const handlePrint = () => {
     const iframe = document.getElementById('pdf-preview-frame') as HTMLIFrameElement

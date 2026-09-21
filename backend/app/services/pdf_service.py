@@ -595,9 +595,10 @@ def generar_pdf_presupuesto(
     total_usd = 0.0
     
     for item in items:
-        codigo = str(item.get("codigo") or item.get("codigo_servicio") or "PRAC").strip().upper()
-        nombre = str(item.get("nombre_prestacion") or item.get("nombre") or f"Práctica {codigo}").strip()
-        moneda_item = str(item.get("moneda") or "ARS").strip().upper()
+        srv = item.get("servicios_precios") or {}
+        codigo = str(item.get("codigo") or item.get("codigo_servicio") or srv.get("codigo") or "PRAC").strip().upper()
+        nombre = str(item.get("nombre_prestacion") or item.get("nombre") or srv.get("nombre_prestacion") or f"Práctica {codigo}").strip()
+        moneda_item = str(item.get("moneda") or srv.get("moneda") or "ARS").strip().upper()
         cantidad = int(item.get("cantidad", 1))
         p_unit = float(item.get("precio_unitario", 0.0))
         subtotal = float(item.get("subtotal") or (p_unit * cantidad))
@@ -754,6 +755,82 @@ def generar_pdf_presupuesto(
     doc.build(story)
     
     return pdf_filename
+
+
+def asegurar_pdf_presupuesto_canonica(presupuesto_id: str, forzar_regeneracion: bool = False) -> str:
+    """
+    Función única y canónica para garantizar la existencia y calidad del PDF oficial de un presupuesto.
+    Consulta la base de datos Supabase con todas sus relaciones, normaliza los ítems (códigos, descripciones y monedas),
+    y genera/reutiliza el PDF oficial con diseño membretado de alta fidelidad.
+    """
+    from app.db import supabase
+    
+    pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
+    pdf_path = os.path.join(PDF_DIR, pdf_filename)
+    
+    if not forzar_regeneracion and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 1000:
+        return pdf_filename
+        
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+        
+    p_resp = supabase.table("presupuestos")\
+        .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*)), asesorias_quirurgicas!presupuestos_asesoria_id_fkey(*)")\
+        .eq("id", presupuesto_id)\
+        .limit(1)\
+        .execute()
+        
+    if not p_resp.data:
+        raise ValueError(f"Presupuesto {presupuesto_id} no encontrado en la base de datos.")
+        
+    presupuesto = p_resp.data[0]
+    paciente = presupuesto.get("pacientes") or {}
+    items_raw = presupuesto.get("items_presupuesto") or []
+    items_normalizados = []
+    
+    for it in items_raw:
+        srv = it.get("servicios_precios") or {}
+        srv_cod = str(it.get("codigo") or it.get("codigo_servicio") or srv.get("codigo") or "").strip().upper()
+        srv_nom = str(it.get("nombre_prestacion") or it.get("nombre") or srv.get("nombre_prestacion") or "").strip()
+        it_moneda = it.get("moneda") or srv.get("moneda")
+        
+        # Fallback a nomenclador si aún faltara
+        if (not srv_nom or not srv_cod or not it_moneda) and srv_cod:
+            try:
+                p_find = supabase.table("nomenclador_practicas").select("nombre, categoria, nomencladores(moneda_default)").eq("codigo", srv_cod).limit(1).execute()
+                if p_find.data:
+                    row = p_find.data[0]
+                    if not srv_nom:
+                        srv_nom = row.get("nombre") or ""
+                    if not it_moneda:
+                        it_moneda = (row.get("nomencladores") or {}).get("moneda_default")
+            except Exception:
+                pass
+                
+        if not srv_nom:
+            srv_nom = f"Práctica {srv_cod}" if srv_cod else "Prestación Médica"
+        if not srv_cod:
+            srv_cod = "PRAC"
+        if not it_moneda:
+            total_usd = float(presupuesto.get("total_usd") or 0.0)
+            pu = float(it.get("precio_unitario") or 0.0)
+            it_moneda = "USD" if (total_usd > 0 and pu <= total_usd) else "ARS"
+            
+        pu = float(it.get("precio_unitario") or 0.0)
+        cant = int(it.get("cantidad") or 1)
+        sub = float(it.get("subtotal") or (pu * cant))
+        
+        items_normalizados.append({
+            "codigo": srv_cod,
+            "nombre": srv_nom,
+            "nombre_prestacion": srv_nom,
+            "precio_unitario": pu,
+            "cantidad": cant,
+            "subtotal": sub,
+            "moneda": str(it_moneda).upper()
+        })
+        
+    return generar_pdf_presupuesto(presupuesto, paciente, items_normalizados)
 
 
 def generar_html_consentimiento(
