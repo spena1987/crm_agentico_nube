@@ -7,6 +7,7 @@ import Navigation from '@/components/Navigation'
 import IdleTimeoutManager from '@/components/auth/IdleTimeoutManager'
 import ModuleRouteGuard from '@/components/auth/ModuleRouteGuard'
 import { PermissionsProvider } from '@/context/PermissionsContext'
+import UrgentSurgeryGlobalBanner from '@/components/notifications/UrgentSurgeryGlobalBanner'
 import { Loader2 } from 'lucide-react'
 
 export default function AppLayoutWrapper({
@@ -57,17 +58,20 @@ export default function AppLayoutWrapper({
     return null
   }
 
-  // Usuario autenticado en el CRM con monitor de inactividad activo
+  // Usuario autenticado en el CRM con monitor de inactividad activo y banner global de urgencias
   return (
     <PermissionsProvider>
-      <div className="flex h-[100dvh] w-full max-w-full overflow-hidden bg-[var(--background)] min-w-0">
-        <IdleTimeoutManager />
-        <Navigation />
-        <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
-          <ModuleRouteGuard>
-            {children}
-          </ModuleRouteGuard>
-        </main>
+      <div className="flex flex-col h-[100dvh] w-full max-w-full overflow-hidden bg-[var(--background)] min-w-0">
+        <UrgentSurgeryGlobalBanner />
+        <div className="flex flex-1 w-full max-w-full overflow-hidden min-w-0 min-h-0">
+          <IdleTimeoutManager />
+          <Navigation />
+          <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-y-auto overflow-x-hidden relative panel-scroll">
+            <ModuleRouteGuard>
+              {children}
+            </ModuleRouteGuard>
+          </main>
+        </div>
       </div>
     </PermissionsProvider>
   )

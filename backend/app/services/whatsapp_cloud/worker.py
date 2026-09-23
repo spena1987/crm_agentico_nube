@@ -636,6 +636,47 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                             bot_cfg = settings.get("bot", {})
                             handover_cfg = bot_cfg.get("handover", {})
 
+                            # 0. Fast-Path Prioritario: Urgencias Postquirúrgicas y Signos de Alarma Oftalmológicos
+                            from app.services.urgencias_service import contiene_signo_de_alarma, procesar_urgencia_postquirurgica
+                            es_urgencia, motivo_alarma = contiene_signo_de_alarma(text_content)
+                            if es_urgencia:
+                                logger.warning(f"[Fast-Path Urgencia QX] Signo de alarma detectado ('{motivo_alarma}') en paciente {paciente_id}")
+                                res_urg = await procesar_urgencia_postquirurgica(
+                                    conversacion_id=crm_conv_id,
+                                    paciente_id=paciente_id,
+                                    texto_mensaje=text_content,
+                                    motivo_detectado=motivo_alarma
+                                )
+                                msg_paciente = res_urg.get("mensaje_paciente")
+                                if msg_paciente:
+                                    phone_id, token = get_whatsapp_cloud_credentials()
+                                    if phone_id and token:
+                                        wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+                                        send_res = await wa_client.send_free_text(normalized_phone, msg_paciente)
+                                        bot_wamid = send_res.get("wamid")
+                                        await wa_client.close()
+
+                                        if crm_conv_id:
+                                            supabase.table("mensajes").insert({
+                                                "conversacion_id": crm_conv_id,
+                                                "emisor": "bot",
+                                                "contenido": msg_paciente,
+                                                "metadata_json": {
+                                                    "wamid": bot_wamid,
+                                                    "tipo": "text",
+                                                    "delivery_status": "enviado",
+                                                    "provider": "meta_cloud_api",
+                                                    "urgencia_postquirurgica": True,
+                                                    "motivo_alarma": motivo_alarma
+                                                }
+                                            }).execute()
+
+                                            supabase.table("conversaciones").update({
+                                                "ultimo_mensaje": msg_paciente,
+                                                "updated_at": datetime.now(timezone.utc).isoformat()
+                                            }).eq("id", crm_conv_id).execute()
+                                return
+
                             # 1. Fast-Path: Detección Determinística Inmediata de Escape Humano
                             if handover_cfg.get("auto_escalamiento_activo", True):
                                 kw_list = handover_cfg.get("palabras_clave_escape") or bot_cfg.get("human_escalation_keywords") or []

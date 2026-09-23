@@ -799,6 +799,49 @@ def finalizar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = B
         raise HTTPException(status_code=404, detail="No se pudo finalizar la conversación.")
     return {"success": True, "conversacion": res}
 
+@app.post("/api/conversaciones/{conversacion_id}/resolver-urgencia")
+def resolver_urgencia_postquirurgica_api(conversacion_id: str, payload: Dict[str, Any] = Body(default={})):
+    """
+    Marca la alerta de urgencia postquirúrgica como atendida por el médico/operador,
+    limpia el estado de alta prioridad y registra la auditoría clínica en los mensajes.
+    """
+    try:
+        usuario_nombre = payload.get("usuario_nombre") or "Médico Cirujano"
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        
+        # Leer metadata actual
+        c_res = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).single().execute()
+        meta = (c_res.data.get("metadata_json") or {}) if c_res.data else {}
+        meta["urgencia_resuelta"] = True
+        meta["urgencia_resuelta_at"] = ahora_iso
+        meta["urgencia_resuelta_por"] = usuario_nombre
+        meta["urgencia_postquirurgica"] = False
+        
+        # Actualizar estado_gestion a EN_GESTION
+        up_res = supabase.table("conversaciones").update({
+            "estado_gestion": "EN_GESTION",
+            "metadata_json": meta,
+            "updated_at": ahora_iso
+        }).eq("id", conversacion_id).execute()
+        
+        # Registrar nota interna
+        supabase.table("mensajes").insert({
+            "conversacion_id": conversacion_id,
+            "emisor": "sistema",
+            "contenido": f"✅ [URGENCIA POSTQUIRÚRGICA ATENDIDA / RESUELTA]\nEl caso fue evaluado y atendido por {usuario_nombre}. La alerta prioritaria ha sido desactivada.",
+            "metadata_json": {
+                "tipo": "resolucion_urgencia_postquirurgica",
+                "resuelta_por": usuario_nombre,
+                "resuelta_at": ahora_iso
+            }
+        }).execute()
+        
+        return {"success": True, "conversacion": up_res.data[0] if up_res.data else {}}
+    except Exception as e:
+        logger.error(f"Error resolviendo urgencia {conversacion_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/conversaciones/{conversacion_id}/archivar")
 def archivar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):
     """
@@ -3807,6 +3850,102 @@ def obtener_pipeline():
         return {"success": True, **data}
     except Exception as e:
         logger.error(f"Error al obtener pipeline quirúrgico: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: ASESORÍAS, BITÁCORA Y PRÓXIMA ACCIÓN PROGRAMADA
+# ====================================================================
+
+@app.get("/api/asesorias-quirurgicas/{asesoria_id}/evoluciones")
+def listar_evoluciones_asesoria_api(asesoria_id: str):
+    """
+    Lista la bitácora cronológica de evoluciones de un caso quirúrgico.
+    """
+    try:
+        evs = get_evoluciones_by_asesoria(asesoria_id)
+        return {"success": True, "evoluciones": evs}
+    except Exception as e:
+        logger.error(f"Error al listar evoluciones: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/evoluciones")
+def crear_evolucion_asesoria_api(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Asienta una nueva evolución o contacto en la bitácora del paciente.
+    """
+    try:
+        payload["asesoria_id"] = asesoria_id
+        ev = crear_evolucion_asesoria(payload)
+        return {"success": True, "evolucion": ev, "mensaje": "Evolución registrada correctamente."}
+    except Exception as e:
+        logger.error(f"Error al registrar evolución: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/completar-proxima-accion")
+def completar_proxima_accion_api(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Marca como realizada la próxima acción programada de una asesoría quirúrgica:
+    1. Registra un hito de evolución en la Bitácora con la conclusión del contacto.
+    2. Limpia proxima_accion_fecha y proxima_accion_texto en la asesoría.
+    3. Actualiza ultimo_contacto_at a now().
+    """
+    try:
+        if not supabase:
+            raise RuntimeError("Supabase no está conectado.")
+            
+        # 1. Obtener la asesoría actual
+        q_caso = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+        if not q_caso.data:
+            raise HTTPException(status_code=404, detail="Caso quirúrgico no encontrado.")
+            
+        caso = q_caso.data[0]
+        fecha_pautada = caso.get("proxima_accion_fecha") or "Sin fecha específica"
+        texto_pautado = caso.get("proxima_accion_texto") or "Contacto de seguimiento programado"
+        resultado_contacto = (payload.get("resultado") or "").strip()
+        usuario_nombre = payload.get("usuario_nombre") or "Asesora Quirúrgica"
+        tipo_contacto = payload.get("tipo_contacto") or "llamada"
+        
+        contenido_evolucion = (
+            f"✅ ACCIÓN PROGRAMADA CUMPLIDA:\n"
+            f"• Tarea pautada: {texto_pautado} (Pautada para: {fecha_pautada})\n"
+            f"• Conclusión: {resultado_contacto or 'Realizada con éxito.'}"
+        )
+        
+        # 2. Registrar en la Bitácora
+        ev_data = {
+            "asesoria_id": asesoria_id,
+            "paciente_id": caso.get("paciente_id"),
+            "usuario_id": payload.get("usuario_id"),
+            "usuario_nombre": usuario_nombre,
+            "tipo_contacto": tipo_contacto,
+            "contenido": contenido_evolucion,
+            "fecha_contacto": "now()"
+        }
+        res_ev = supabase.table("asesoria_evoluciones").insert(ev_data).execute()
+        nueva_evolucion = res_ev.data[0] if res_ev.data else None
+        
+        # 3. Limpiar próxima acción en el caso
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        res_upd = supabase.table("asesorias_quirurgicas").update({
+            "proxima_accion_fecha": None,
+            "proxima_accion_texto": None,
+            "ultimo_contacto_at": ahora_iso,
+            "updated_at": ahora_iso
+        }).eq("id", asesoria_id).execute()
+        
+        caso_actualizado = res_upd.data[0] if res_upd.data else caso
+        
+        return {
+            "success": True,
+            "mensaje": "Acción programada completada y registrada en la bitácora exitosamente.",
+            "caso": caso_actualizado,
+            "evolucion": nueva_evolucion
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al completar próxima acción para asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

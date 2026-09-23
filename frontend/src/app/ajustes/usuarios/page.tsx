@@ -21,8 +21,12 @@ import {
   Users,
   Stethoscope,
   ChevronDown,
-  X
+  X,
+  Phone,
+  AlertTriangle,
+  MessageSquare
 } from 'lucide-react'
+import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 
 interface Role {
   id: string
@@ -38,6 +42,7 @@ interface UserItem {
   nombre_completo: string
   rol_id: string | null
   activo: boolean
+  telefono?: string | null
   geclisa_pre_id?: number | null
   geclisa_matricula?: string | null
   geclisa_prestador_nombre?: string | null
@@ -75,6 +80,7 @@ export default function UsuariosPage() {
   const [createPassword, setCreatePassword] = useState('')
   const [createRolId, setCreateRolId] = useState('')
   const [createActivo, setCreateActivo] = useState(true)
+  const [createTelefono, setCreateTelefono] = useState('')
   const [createPreId, setCreatePreId] = useState<number | null>(null)
   const [createMatricula, setCreateMatricula] = useState('')
   const [createPrestadorNombre, setCreatePrestadorNombre] = useState('')
@@ -85,6 +91,7 @@ export default function UsuariosPage() {
   const [editNombre, setEditNombre] = useState('')
   const [editRolId, setEditRolId] = useState('')
   const [editActivo, setEditActivo] = useState(true)
+  const [editTelefono, setEditTelefono] = useState('')
   const [editPassword, setEditPassword] = useState('')
   const [editPreId, setEditPreId] = useState<number | null>(null)
   const [editMatricula, setEditMatricula] = useState('')
@@ -195,6 +202,7 @@ export default function UsuariosPage() {
           password: createPassword,
           rol_id: createRolId || null,
           activo: createActivo,
+          telefono: createTelefono.trim() ? normalizePhoneNumber(createTelefono) : null,
           geclisa_pre_id: createPreId,
           geclisa_matricula: createMatricula,
           geclisa_prestador_nombre: createPrestadorNombre,
@@ -216,6 +224,7 @@ export default function UsuariosPage() {
       setCreateNombre('')
       setCreateEmail('')
       setCreatePassword('')
+      setCreateTelefono('')
       setCreatePreId(null)
       setCreateMatricula('')
       setCreatePrestadorNombre('')
@@ -234,6 +243,7 @@ export default function UsuariosPage() {
     setEditNombre(user.nombre_completo)
     setEditRolId(user.rol_id || '')
     setEditActivo(user.activo)
+    setEditTelefono(user.telefono || '')
     setEditPassword('')
     setEditPreId(user.geclisa_pre_id || null)
     setEditMatricula(user.geclisa_matricula || '')
@@ -255,6 +265,7 @@ export default function UsuariosPage() {
         nombre_completo: editNombre,
         rol_id: editRolId || null,
         activo: editActivo,
+        telefono: editTelefono.trim() ? normalizePhoneNumber(editTelefono) : null,
         geclisa_pre_id: editPreId,
         geclisa_matricula: editMatricula,
         geclisa_prestador_nombre: editPrestadorNombre,
@@ -465,6 +476,7 @@ export default function UsuariosPage() {
                   <th className="py-3 px-4">Email</th>
                   <th className="py-3 px-4">Rol / Permisos</th>
                   <th className="py-3 px-4">Prestador Geclisa</th>
+                  <th className="py-3 px-4">WhatsApp / Guardia</th>
                   <th className="py-3 px-4">Estado</th>
                   <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
@@ -508,6 +520,22 @@ export default function UsuariosPage() {
                         </div>
                       ) : (
                         <span className="text-slate-400 italic text-[11px]">Acceso General</span>
+                      )}
+                    </td>
+
+                    <td className="py-3 px-4">
+                      {u.telefono ? (
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-mono">
+                          <Phone size={12} className="text-emerald-600 shrink-0" />
+                          <span>{formatPhoneDisplay(u.telefono)}</span>
+                        </div>
+                      ) : u.roles?.codigo === 'medico' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-300 dark:border-amber-800" title="Sin teléfono de guardia: No podrá recibir avisos de urgencia postquirúrgica por WhatsApp">
+                          <AlertTriangle size={11} className="text-amber-600 shrink-0" />
+                          <span>Sin WhatsApp de guardia</span>
+                        </span>
+                      ) : (
+                        <span className="text-slate-400 italic text-[11px]">No configurado</span>
                       )}
                     </td>
 
@@ -651,6 +679,57 @@ export default function UsuariosPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Teléfono Móvil / WhatsApp de Alertas Quirúrgicas */}
+              {(() => {
+                const selectedRole = roles.find((r) => r.id === createRolId)
+                const isMedico = selectedRole?.codigo === 'medico'
+                return (
+                  <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+                    isMedico 
+                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800' 
+                      : 'bg-slate-50/60 dark:bg-slate-800/40 border-[var(--border)]'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <label className={`block text-xs font-bold uppercase flex items-center gap-1.5 ${
+                        isMedico ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'
+                      }`}>
+                        <Phone size={14} className={isMedico ? 'text-emerald-600' : 'text-slate-400'} />
+                        <span>Teléfono Móvil (WhatsApp)</span>
+                        {isMedico && (
+                          <span className="ml-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-600 text-white tracking-wide">
+                            GUARDIA QX
+                          </span>
+                        )}
+                      </label>
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="Ej: +54 9 261 555-1234 o 5492615551234"
+                      value={createTelefono}
+                      onChange={(e) => setCreateTelefono(e.target.value)}
+                      className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                    />
+
+                    {createTelefono.trim() ? (
+                      <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
+                        <CheckCircle2 size={12} />
+                        <span>WhatsApp: <strong>{formatPhoneDisplay(createTelefono)}</strong> ({normalizePhoneNumber(createTelefono)})</span>
+                      </p>
+                    ) : isMedico ? (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                        <AlertTriangle size={12} className="shrink-0" />
+                        <span>Recomendado: El bot enviará alertas automáticas por WhatsApp a este número ante signos de alarma de sus pacientes.</span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-slate-400">
+                        Número con código de país para notificaciones WhatsApp (opcional).
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
 
               {/* Selector Buscable de Prestador Geclisa */}
               <div className="p-3.5 bg-blue-50/40 dark:bg-slate-800/60 border border-blue-200/60 dark:border-slate-700 rounded-xl space-y-2 relative">
@@ -964,6 +1043,57 @@ export default function UsuariosPage() {
                   </select>
                 </div>
               </div>
+
+              {/* Teléfono Móvil / WhatsApp de Alertas Quirúrgicas */}
+              {(() => {
+                const selectedRole = roles.find((r) => r.id === editRolId)
+                const isMedico = selectedRole?.codigo === 'medico'
+                return (
+                  <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+                    isMedico 
+                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800' 
+                      : 'bg-slate-50/60 dark:bg-slate-800/40 border-[var(--border)]'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <label className={`block text-xs font-bold uppercase flex items-center gap-1.5 ${
+                        isMedico ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'
+                      }`}>
+                        <Phone size={14} className={isMedico ? 'text-emerald-600' : 'text-slate-400'} />
+                        <span>Teléfono Móvil (WhatsApp)</span>
+                        {isMedico && (
+                          <span className="ml-1 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-600 text-white tracking-wide">
+                            GUARDIA QX
+                          </span>
+                        )}
+                      </label>
+                    </div>
+
+                    <input
+                      type="text"
+                      placeholder="Ej: +54 9 261 555-1234 o 5492615551234"
+                      value={editTelefono}
+                      onChange={(e) => setEditTelefono(e.target.value)}
+                      className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                    />
+
+                    {editTelefono.trim() ? (
+                      <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
+                        <CheckCircle2 size={12} />
+                        <span>WhatsApp: <strong>{formatPhoneDisplay(editTelefono)}</strong> ({normalizePhoneNumber(editTelefono)})</span>
+                      </p>
+                    ) : isMedico ? (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                        <AlertTriangle size={12} className="shrink-0" />
+                        <span>Recomendado: El bot enviará alertas automáticas por WhatsApp a este número ante signos de alarma de sus pacientes.</span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-slate-400">
+                        Número con código de país para notificaciones WhatsApp (opcional).
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
 
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">

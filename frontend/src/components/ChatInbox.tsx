@@ -47,7 +47,8 @@ import {
   Eye,
   ArrowRightLeft,
   ArrowLeft,
-  MoreVertical
+  MoreVertical,
+  AlertTriangle
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
@@ -56,6 +57,7 @@ import ChatMediaViewer, { DeliveryStatusIcon } from './chat/ChatMediaViewer'
 import WhatsAppFormattedText from './chat/WhatsAppFormattedText'
 import ChatFloatingFormatToolbar from './chat/ChatFloatingFormatToolbar'
 import ChatPatientSidebar from './chat/ChatPatientSidebar'
+import ChatUrgentSurgeryBanner from './chat/ChatUrgentSurgeryBanner'
 import ChatQuickRepliesMenu from './chat/ChatQuickRepliesMenu'
 import ChatEmojiPicker from './chat/ChatEmojiPicker'
 import ChatMessageContextMenu from './chat/ChatMessageContextMenu'
@@ -381,6 +383,7 @@ export default function ChatInbox() {
   }
 
   const searchParams = useSearchParams()
+  const paramConvId = searchParams ? (searchParams.get('conv') || searchParams.get('id')) : null
   const paramPacienteId = searchParams ? searchParams.get('pacienteId') : null
   const paramTelefono = searchParams ? searchParams.get('telefono') : null
 
@@ -428,6 +431,29 @@ export default function ChatInbox() {
         setConversaciones(convs.map((c) => (c.id === activeId ? { ...c, unread_count: 0 } : c)))
       }
       
+      if (paramConvId && !selectedConvIdRef.current) {
+        const target = convs.find((c) => c.id === paramConvId)
+        if (target) {
+          setSelectedConvId(target.id)
+          return
+        } else {
+          try {
+            const { data: convData } = await supabase
+              .from('conversaciones')
+              .select('*, pacientes(*), asignado_a:usuarios_perfil!conversaciones_asignado_a_usuario_id_fkey(*)')
+              .eq('id', paramConvId)
+              .maybeSingle()
+            if (convData) {
+              setConversaciones((prev) => [convData as any, ...prev])
+              setSelectedConvId(convData.id)
+              return
+            }
+          } catch (errConv) {
+            console.error('Error cargando conversación por deep link:', errConv)
+          }
+        }
+      }
+
       if (paramPacienteId && convs.length > 0 && !selectedConvIdRef.current) {
         const target = convs.find((c) => {
           const p = getPatient(c)
@@ -981,6 +1007,43 @@ export default function ChatInbox() {
       console.error('Error al finalizar caso:', err)
     } finally {
       setFinalizandoCaso(false)
+    }
+  }
+
+  const handleResolverUrgencia = async () => {
+    if (!selectedConvId) return
+    try {
+      const userName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Médico Cirujano'
+      const res = await apiFetch(`/api/conversaciones/${selectedConvId}/resolver-urgencia`, {
+        method: 'POST',
+        body: JSON.stringify({
+          usuario_nombre: userName
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setConversaciones((prev) =>
+          prev.map((c) =>
+            c.id === selectedConvId
+              ? {
+                  ...c,
+                  estado_gestion: 'EN_GESTION',
+                  metadata_json: {
+                    ...(c.metadata_json || {}),
+                    urgencia_resuelta: true,
+                    urgencia_postquirurgica: false
+                  }
+                }
+              : c
+          )
+        )
+        fetchMensajes(selectedConvId)
+      } else {
+        alert(data.detail || 'No se pudo resolver la urgencia.')
+      }
+    } catch (err) {
+      console.error('Error al resolver urgencia:', err)
+      alert('Error de conexión al resolver la urgencia.')
     }
   }
 
@@ -1640,13 +1703,13 @@ export default function ChatInbox() {
       const isArchived = Boolean(conv.archivada) || conv.estado_gestion === 'RESUELTO'
 
       if (activeTab === 'mis_chats') {
-        return !isArchived && conv.asignado_a_usuario_id === currentUserId
+        return !isArchived && (conv.asignado_a_usuario_id === currentUserId || (conv.estado_gestion === 'URGENCIA_POSTQUIRURGICA' && !conv.asignado_a_usuario_id))
       }
       if (activeTab === 'sin_asignar') {
-        return (!isArchived && !conv.asignado_a_usuario_id && (conv.bot_disabled || conv.estado_gestion === 'SIN_ASIGNAR')) || conv.id === selectedConvId
+        return (!isArchived && !conv.asignado_a_usuario_id && (conv.bot_disabled || conv.estado_gestion === 'SIN_ASIGNAR' || conv.estado_gestion === 'URGENCIA_POSTQUIRURGICA')) || conv.id === selectedConvId
       }
       if (activeTab === 'bot') {
-        return !isArchived && !conv.bot_disabled
+        return !isArchived && !conv.bot_disabled && conv.estado_gestion !== 'URGENCIA_POSTQUIRURGICA'
       }
       if (activeTab === 'todos') {
         if (isArchived) return false
@@ -1664,6 +1727,13 @@ export default function ChatInbox() {
       return !isArchived
     })
     .sort((a, b) => {
+      // 1. Urgencia postquirúrgica siempre máxima prioridad absoluta
+      const aUrgent = a.estado_gestion === 'URGENCIA_POSTQUIRURGICA'
+      const bUrgent = b.estado_gestion === 'URGENCIA_POSTQUIRURGICA'
+      if (aUrgent && !bUrgent) return -1
+      if (!aUrgent && bUrgent) return 1
+
+      // 2. Fijados / Pinned
       const aPinned = Boolean(a.metadata_json?.is_pinned)
       const bPinned = Boolean(b.metadata_json?.is_pinned)
       if (aPinned && !bPinned) return -1
@@ -1943,6 +2013,7 @@ export default function ChatInbox() {
               const initials = getInitials(paciente?.nombre)
               const formattedTime = formatTimestamp(conv.updated_at)
               const snippet = formatMessageSnippet(conv.ultimo_mensaje)
+              const isUrgenciaQx = conv.estado_gestion === 'URGENCIA_POSTQUIRURGICA'
               const isDerivado = Boolean(conv.bot_disabled)
               const isArchivada = Boolean(conv.archivada)
               const isPinned = Boolean(conv.metadata_json?.is_pinned)
@@ -1960,7 +2031,9 @@ export default function ChatInbox() {
                     setSelectedConvId(conv.id)
                   }}
                   className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 group ${
-                    active 
+                    isUrgenciaQx
+                      ? 'bg-red-950/40 hover:bg-red-950/60 border-l-red-500 shadow-inner ring-1 ring-red-500/20'
+                      : active 
                       ? 'bg-[#162547] border-l-blue-500 shadow-xs' 
                       : hasUnread
                       ? 'bg-[#0f1d38]/80 hover:bg-[#142345] border-l-emerald-500 shadow-inner'
@@ -1972,7 +2045,9 @@ export default function ChatInbox() {
                   {/* Avatar con Iniciales y Estado */}
                   <div className="relative shrink-0 mt-0.5">
                     <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shadow-sm border ${
-                      isDerivado 
+                      isUrgenciaQx
+                        ? 'bg-red-950 text-red-200 border-red-500 animate-pulse'
+                        : isDerivado 
                         ? 'bg-rose-950 text-rose-300 border-rose-700/60' 
                         : 'bg-blue-950 text-blue-300 border-blue-700/60'
                     }`}>
@@ -1982,6 +2057,8 @@ export default function ChatInbox() {
                     <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0d1527] ${
                       isArchivada
                         ? 'bg-slate-500'
+                        : isUrgenciaQx
+                        ? 'bg-red-500 ring-2 ring-red-700 animate-ping'
                         : isDerivado
                         ? 'bg-rose-500 ring-2 ring-rose-900 animate-pulse'
                         : hasUnread
@@ -1994,7 +2071,9 @@ export default function ChatInbox() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1">
                       <p className={`text-xs truncate ${
-                        active 
+                        isUrgenciaQx
+                          ? 'font-black text-red-200'
+                          : active 
                           ? 'font-bold text-blue-200' 
                           : hasUnread 
                           ? 'font-extrabold text-white' 
@@ -2009,7 +2088,7 @@ export default function ChatInbox() {
                             <Pin size={11} className="text-blue-400 shrink-0" />
                           </span>
                         )}
-                        <span className={`text-[10px] font-medium ${hasUnread ? 'text-emerald-400 font-bold' : 'text-slate-400'}`}>
+                        <span className={`text-[10px] font-medium ${isUrgenciaQx ? 'text-red-400 font-bold' : hasUnread ? 'text-emerald-400 font-bold' : 'text-slate-400'}`}>
                           {formattedTime}
                         </span>
                       </div>
@@ -2023,6 +2102,11 @@ export default function ChatInbox() {
 
                       {/* Badges de Triage y Operador */}
                       <div className="flex items-center gap-1 shrink-0">
+                        {isUrgenciaQx && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white flex items-center gap-0.5 shadow-sm animate-pulse" title="Urgencia Postquirúrgica Detectada">
+                            <AlertTriangle size={9} className="shrink-0 fill-white" /> URGENCIA QX
+                          </span>
+                        )}
                         {conv.asignado_a ? (
                           <span className="text-[9px] font-medium px-1.5 py-0.2 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-700/60 flex items-center gap-1 max-w-[95px] truncate" title={`Asignado a: ${conv.asignado_a.nombre_completo}`}>
                             <UserCheck size={9} className="shrink-0 text-indigo-400" />
@@ -2331,6 +2415,16 @@ export default function ChatInbox() {
                 </div>
               </div>
             </div>
+
+            {/* Banner Clínico de Alerta Quirúrgica */}
+            {selectedConv.estado_gestion === 'URGENCIA_POSTQUIRURGICA' && (
+              <ChatUrgentSurgeryBanner
+                conversacion={selectedConv}
+                paciente={currentPaciente}
+                onResolverUrgencia={handleResolverUrgencia}
+                onOpenHistoriaClinica={() => currentPaciente && setSelectedPacienteHistoriaClinica(currentPaciente)}
+              />
+            )}
 
             {/* Historial de Mensajes con Contenedor Relativo y Botón Flotante */}
             <div className="flex-1 relative overflow-hidden flex flex-col">

@@ -106,6 +106,41 @@ export default function CasoAcordeonHeader({
                 🏥 Quirófano Agendado
               </span>
             )}
+            {/* Badge de Próxima Acción Programada */}
+            {Boolean(caso.proxima_accion_fecha) && (() => {
+              let labelFecha = ''
+              let esHoy = false
+              let esVencida = false
+              const partes = caso.proxima_accion_fecha!.split('-')
+              if (partes.length === 3) labelFecha = `${partes[2]}/${partes[1]}`
+              else labelFecha = caso.proxima_accion_fecha!
+
+              const hoy = new Date()
+              hoy.setHours(0, 0, 0, 0)
+              const fechaObj = new Date(`${caso.proxima_accion_fecha}T00:00:00`)
+              if (!isNaN(fechaObj.getTime())) {
+                const diffMs = fechaObj.getTime() - hoy.getTime()
+                const diffD = Math.round(diffMs / (1000 * 60 * 60 * 24))
+                if (diffD === 0) esHoy = true
+                else if (diffD < 0) esVencida = true
+              }
+
+              const badgeClass = esVencida
+                ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                : esHoy
+                ? 'bg-amber-500/30 text-amber-300 border-amber-500/50 animate-pulse'
+                : 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+
+              return (
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${badgeClass}`}
+                  title={caso.proxima_accion_texto ? `Próxima acción: ${caso.proxima_accion_texto}` : 'Acción programada'}
+                >
+                  <Clock size={11} />
+                  <span>{esHoy ? 'Acción: HOY' : esVencida ? `Acción Vencida (${labelFecha})` : `Próx. Acción: ${labelFecha}`}</span>
+                </span>
+              )
+            })()}
             {/* Badge de Progreso Bilateral */}
             {((caso.checklist_prequirurgico as any)?._progreso_bilateral?.es_bilateral &&
               !(caso.checklist_prequirurgico as any)?._progreso_bilateral?.ambos_operados &&

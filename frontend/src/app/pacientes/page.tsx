@@ -121,7 +121,7 @@ export default function PacientesPage() {
       setLoading(true)
       const { data, error } = await supabase
         .from('pacientes')
-        .select('*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, ultimo_contacto_at, created_at, updated_at)')
+        .select('*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, proxima_accion_fecha, proxima_accion_texto, ultimo_contacto_at, created_at, updated_at)')
         .order('nombre')
 
       if (error) throw error

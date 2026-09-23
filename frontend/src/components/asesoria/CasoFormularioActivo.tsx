@@ -35,7 +35,8 @@ import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQu
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 import CasoPagosWidget from './CasoPagosWidget'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch, BACKEND_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
 interface PrestadorGeclisa {
   pre_id: number
@@ -218,6 +219,82 @@ export default function CasoFormularioActivo({
   const [proximaAccionTexto, setProximaAccionTexto] = useState(caso.proxima_accion_texto || '')
   const [situacionPaciente, setSituacionPaciente] = useState(caso.situacion_paciente || '')
   const [avisoValidacion, setAvisoValidacion] = useState<string | null>(null)
+
+  // Estados interactivos para Próxima Acción Programada
+  const [mostrandoCompletarAccion, setMostrandoCompletarAccion] = useState(false)
+  const [conclusionAccion, setConclusionAccion] = useState('')
+  const [completandoAccion, setCompletandoAccion] = useState(false)
+  const [editandoProximaAccion, setEditandoProximaAccion] = useState(false)
+
+  const aplicarPresetFecha = (dias: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + dias)
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    setProximaAccionFecha(`${yyyy}-${mm}-${dd}`)
+  }
+
+  const handleConfirmarCompletarAccion = async () => {
+    try {
+      setCompletandoAccion(true)
+      const payload = {
+        resultado: conclusionAccion.trim() || 'Acción completada con éxito.',
+        usuario_nombre: 'Asesora Quirúrgica',
+        tipo_contacto: 'llamada'
+      }
+
+      let completado = false
+      try {
+        const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/completar-proxima-accion`, {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.success) {
+            completado = true
+          }
+        }
+      } catch (e) {
+        console.warn('Backend endpoint no disponible, completando por Supabase fallback:', e)
+      }
+
+      if (!completado) {
+        const fechaPautada = caso.proxima_accion_fecha || 'Sin fecha'
+        const textoPautado = caso.proxima_accion_texto || 'Contacto de seguimiento'
+        await supabase.from('asesoria_evoluciones').insert({
+          asesoria_id: caso.id,
+          paciente_id: pacienteId,
+          usuario_nombre: 'Asesora Quirúrgica',
+          tipo_contacto: 'llamada',
+          contenido: `✅ ACCIÓN PROGRAMADA CUMPLIDA:\n• Tarea pautada: ${textoPautado} (${fechaPautada})\n• Conclusión: ${conclusionAccion.trim() || 'Realizada con éxito.'}`,
+          fecha_contacto: new Date().toISOString()
+        })
+        await supabase.from('asesorias_quirurgicas').update({
+          proxima_accion_fecha: null,
+          proxima_accion_texto: null,
+          ultimo_contacto_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }).eq('id', caso.id)
+      }
+
+      setProximaAccionFecha('')
+      setProximaAccionTexto('')
+      setMostrandoCompletarAccion(false)
+      setConclusionAccion('')
+      setEditandoProximaAccion(false)
+
+      await onGuardar({
+        proxima_accion_fecha: null,
+        proxima_accion_texto: null
+      })
+    } catch (err: any) {
+      console.error('Error al completar próxima acción:', err)
+    } finally {
+      setCompletandoAccion(false)
+    }
+  }
 
   // Turnos activos en Quirófano
   const turnosActivos = useMemo(() => {
@@ -1660,7 +1737,7 @@ export default function CasoFormularioActivo({
                   Próxima Acción Programada
                 </div>
                 <p className="text-[10.5px] text-gray-400 mt-0.5">
-                  Recordatorio interno de seguimiento del paciente
+                  Recordatorio interno de seguimiento y contacto del paciente
                 </p>
               </div>
               
@@ -1675,53 +1752,247 @@ export default function CasoFormularioActivo({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <div className="sm:col-span-1">
-                <input
-                  type="date"
-                  value={proximaAccionFecha}
-                  onChange={(e) => setProximaAccionFecha(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono"
-                  title="Fecha para la próxima acción de contacto"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <input
-                  type="text"
-                  value={proximaAccionTexto}
-                  placeholder="Ej: Llamar para confirmar fecha / Solicitar estudios..."
-                  onChange={(e) => setProximaAccionTexto(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white placeholder-gray-500"
-                />
-              </div>
-            </div>
-
-            {/* Estado de persistencia / Guardado inmediato del recordatorio */}
-            <div className="flex items-center justify-between text-[11px] pt-0.5">
-              {(proximaAccionFecha !== (caso.proxima_accion_fecha || '') || proximaAccionTexto !== (caso.proxima_accion_texto || '')) ? (
-                <div className="flex items-center justify-between w-full">
-                  <span className="text-amber-400 text-[10.5px] flex items-center gap-1">
-                    <Clock size={11} /> Recordatorio modificado (sin guardar)
+            {/* CASO A: Diálogo para Registrar Cumplimiento y Pasar a Bitácora */}
+            {mostrandoCompletarAccion && (
+              <div className="p-3 bg-neutral-900 border border-emerald-500/40 rounded-xl space-y-2.5 animate-fade-in shadow-md">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                    <CheckCircle2 size={14} /> Registrar Cumplimiento de la Acción
                   </span>
                   <button
                     type="button"
-                    disabled={guardando}
-                    onClick={() => handleGuardarCambios()}
-                    className="px-2.5 py-0.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-md text-[10.5px] transition-colors shadow-xs cursor-pointer"
+                    onClick={() => setMostrandoCompletarAccion(false)}
+                    className="text-gray-400 hover:text-white p-0.5"
                   >
-                    Guardar Recordatorio
+                    <X size={14} />
                   </button>
                 </div>
-              ) : (caso.proxima_accion_fecha || caso.proxima_accion_texto) ? (
-                <span className="text-emerald-400/90 text-[10.5px] flex items-center gap-1">
-                  <CheckCircle2 size={11} /> Recordatorio agendado y guardado en el caso
-                </span>
-              ) : (
-                <span className="text-gray-500 text-[10.5px]">
-                  Define una fecha y tarea para recordar el seguimiento comercial
-                </span>
-              )}
-            </div>
+                <p className="text-[11px] text-gray-300">
+                  Se registrará en la <strong>Bitácora del Paciente</strong> que la acción fue cumplida y se liberará el recordatorio del caso.
+                </p>
+                <textarea
+                  rows={2}
+                  value={conclusionAccion}
+                  onChange={(e) => setConclusionAccion(e.target.value)}
+                  placeholder="Escribe la conclusión del contacto (ej: Hablé con el paciente, confirmó que presentará los estudios prequirúrgicos el martes)..."
+                  className="w-full px-2.5 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500"
+                />
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setMostrandoCompletarAccion(false)}
+                    className="px-2.5 py-1 text-xs text-gray-400 hover:text-white transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={completandoAccion}
+                    onClick={handleConfirmarCompletarAccion}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {completandoAccion ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+                    <span>Confirmar y Guardar en Bitácora</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* CASO B: Tarjeta Activa de Recordatorio Guardado */}
+            {!mostrandoCompletarAccion && Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) && !editandoProximaAccion && (() => {
+              let labelFecha = ''
+              let diasDiferencia: number | null = null
+              let esHoy = false
+              let esVencida = false
+
+              if (caso.proxima_accion_fecha) {
+                const partes = caso.proxima_accion_fecha.split('-')
+                if (partes.length === 3) {
+                  labelFecha = `${partes[2]}/${partes[1]}/${partes[0]}`
+                } else {
+                  labelFecha = caso.proxima_accion_fecha
+                }
+
+                const hoy = new Date()
+                hoy.setHours(0, 0, 0, 0)
+                const fechaObj = new Date(`${caso.proxima_accion_fecha}T00:00:00`)
+                if (!isNaN(fechaObj.getTime())) {
+                  const diffMs = fechaObj.getTime() - hoy.getTime()
+                  diasDiferencia = Math.round(diffMs / (1000 * 60 * 60 * 24))
+                  if (diasDiferencia === 0) esHoy = true
+                  else if (diasDiferencia < 0) esVencida = true
+                }
+              }
+
+              const borderClase = esVencida
+                ? 'border-red-500/50 bg-red-950/20'
+                : esHoy
+                ? 'border-amber-500/50 bg-amber-950/30 ring-1 ring-amber-500/30'
+                : 'border-blue-500/40 bg-blue-950/20'
+
+              const badgeClase = esVencida
+                ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                : esHoy
+                ? 'bg-amber-500/30 text-amber-200 border-amber-500/50 animate-pulse'
+                : 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+
+              return (
+                <div className={`p-3 rounded-xl border ${borderClase} space-y-2.5`}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border font-mono flex items-center gap-1.5 ${badgeClase}`}>
+                      <Clock size={12} />
+                      {esHoy
+                        ? '¡ACCIÓN PROGRAMADA PARA HOY!'
+                        : esVencida
+                        ? `VENCIDA (debía realizarse el ${labelFecha})`
+                        : `PROGRAMADA: ${labelFecha} (en ${diasDiferencia} días)`}
+                    </span>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setMostrandoCompletarAccion(true)}
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 shadow-sm transition-all cursor-pointer"
+                        title="Marcar como cumplida y pasar a la bitácora"
+                      >
+                        <CheckCircle2 size={13} />
+                        <span>Marcar como Realizada</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditandoProximaAccion(true)}
+                        className="px-2.5 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium border border-[var(--border)] transition-colors cursor-pointer"
+                        title="Cambiar fecha o texto del recordatorio"
+                      >
+                        Editar
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-neutral-900/90 rounded-lg border border-white/5 text-xs text-white">
+                    <p className="font-semibold text-gray-100">
+                      {caso.proxima_accion_texto || 'Contacto de seguimiento pautado'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[10.5px] text-gray-400 pt-0.5">
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <CheckCircle2 size={11} /> Acción activa sincronizada con el Pipeline Quirúrgico
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProximaAccionFecha('')
+                        setProximaAccionTexto('')
+                        handleGuardarCambios()
+                      }}
+                      className="text-red-400 hover:text-red-300 hover:underline text-[10.5px] transition-colors"
+                    >
+                      Eliminar recordatorio
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* CASO C: Formulario de Carga / Edición de Acción Programada */}
+            {(!Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) || editandoProximaAccion) && !mostrandoCompletarAccion && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="sm:col-span-1">
+                    <input
+                      type="date"
+                      value={proximaAccionFecha}
+                      onChange={(e) => setProximaAccionFecha(e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono"
+                      title="Fecha para la próxima acción de contacto"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <input
+                      type="text"
+                      value={proximaAccionTexto}
+                      placeholder="Ej: Llamar para saber cómo está / Confirmar fecha..."
+                      onChange={(e) => setProximaAccionTexto(e.target.value)}
+                      className="w-full px-2.5 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white placeholder-gray-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Accesos Rápidos de Intervalo de Seguimiento */}
+                <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-gray-400">
+                  <span className="font-semibold text-gray-400">Sugerir fecha:</span>
+                  <button
+                    type="button"
+                    onClick={() => aplicarPresetFecha(3)}
+                    className="px-2 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-purple-300 border border-purple-500/20 transition-colors"
+                  >
+                    +3 días
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => aplicarPresetFecha(7)}
+                    className="px-2 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-purple-300 border border-purple-500/20 transition-colors"
+                  >
+                    +7 días
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => aplicarPresetFecha(15)}
+                    className="px-2 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-purple-300 border border-purple-500/20 transition-colors"
+                  >
+                    +15 días
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => aplicarPresetFecha(30)}
+                    className="px-2 py-0.5 rounded bg-neutral-900 hover:bg-neutral-800 text-purple-300 border border-purple-500/20 transition-colors"
+                  >
+                    +30 días
+                  </button>
+
+                  {editandoProximaAccion && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProximaAccionFecha(caso.proxima_accion_fecha || '')
+                        setProximaAccionTexto(caso.proxima_accion_texto || '')
+                        setEditandoProximaAccion(false)
+                      }}
+                      className="ml-auto text-gray-400 hover:text-white underline text-[10.5px]"
+                    >
+                      Cancelar edición
+                    </button>
+                  )}
+                </div>
+
+                {/* Estado de persistencia / Guardado inmediato del recordatorio */}
+                <div className="flex items-center justify-between text-[11px] pt-1">
+                  {(proximaAccionFecha !== (caso.proxima_accion_fecha || '') || proximaAccionTexto !== (caso.proxima_accion_texto || '')) ? (
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-amber-400 text-[10.5px] flex items-center gap-1 font-medium">
+                        <Clock size={11} /> Acción modificada (sin guardar)
+                      </span>
+                      <button
+                        type="button"
+                        disabled={guardando}
+                        onClick={() => {
+                          handleGuardarCambios()
+                          setEditandoProximaAccion(false)
+                        }}
+                        className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg text-xs transition-colors shadow cursor-pointer"
+                      >
+                        Guardar Acción Programada
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-gray-500 text-[10.5px]">
+                      Define una fecha y motivo para recordar el seguimiento comercial en el Pipeline
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Card: Bitácora Cronológica de Evoluciones en Vivo */}

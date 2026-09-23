@@ -20,6 +20,7 @@ export async function PATCH(
       rol_id, 
       activo, 
       password,
+      telefono,
       geclisa_pre_id,
       geclisa_matricula,
       geclisa_prestador_nombre
@@ -58,6 +59,7 @@ export async function PATCH(
     if (nombre_completo !== undefined) updateFields.nombre_completo = nombre_completo.trim()
     if (rol_id !== undefined) updateFields.rol_id = rol_id || null
     if (activo !== undefined) updateFields.activo = activo
+    if (telefono !== undefined) updateFields.telefono = telefono ? String(telefono).trim() : null
     if (geclisa_pre_id !== undefined) updateFields.geclisa_pre_id = geclisa_pre_id ? parseInt(String(geclisa_pre_id)) : null
     if (geclisa_matricula !== undefined) updateFields.geclisa_matricula = geclisa_matricula ? String(geclisa_matricula).trim() : null
     if (geclisa_prestador_nombre !== undefined) updateFields.geclisa_prestador_nombre = geclisa_prestador_nombre ? String(geclisa_prestador_nombre).trim() : null
@@ -72,6 +74,8 @@ export async function PATCH(
         nombre_completo,
         rol_id,
         activo,
+        avatar_url,
+        telefono,
         geclisa_pre_id,
         geclisa_matricula,
         geclisa_prestador_nombre,

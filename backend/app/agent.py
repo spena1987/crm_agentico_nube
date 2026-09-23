@@ -143,6 +143,18 @@ def bind_tools_to_context(
         finalizar_y_cerrar_consulta.__doc__ = fn.__doc__ or finalizar_y_cerrar_consulta.__doc__
         return finalizar_y_cerrar_consulta
 
+    def _build_reportar_urgencia(fn):
+        def reportar_urgencia_postquirurgica(sintomas: str, ojo: Optional[str] = None) -> dict:
+            """
+            Activa inmediatamente el protocolo médico de urgencia postquirúrgica cuando un paciente
+            operado reporta dolor fuerte/agudo, pérdida brusca de visión, secreción, fotopsias o traumatismo ocular.
+            Silencia al bot, notifica al cirujano tratante por WhatsApp y deriva la conversación en el CRM.
+            """
+            record_call("reportar_urgencia_postquirurgica")
+            return fn(sintomas=sintomas, ojo=ojo, conversacion_id=conversacion_id, paciente_id=paciente_id)
+        reportar_urgencia_postquirurgica.__doc__ = fn.__doc__ or reportar_urgencia_postquirurgica.__doc__
+        return reportar_urgencia_postquirurgica
+
     def _build_generic(fn_name: str, fn_callable: Any):
         def generic_tool_wrapper(*args, **kwargs):
             record_call(fn_name)
@@ -160,6 +172,7 @@ def bind_tools_to_context(
         "consultar_preparacion_cirugia": _build_consultar_preparacion,
         "escalar_a_operador_humano": _build_escalar_humano,
         "finalizar_y_cerrar_consulta": _build_finalizar_consulta,
+        "reportar_urgencia_postquirurgica": _build_reportar_urgencia,
     }
 
     for name in enabled_names:

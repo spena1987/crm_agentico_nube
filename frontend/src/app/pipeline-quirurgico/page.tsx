@@ -1188,13 +1188,73 @@ export default function PipelineQuirurgicoPage() {
                               )}
                             </div>
 
-                            {/* Próxima Acción */}
-                            {caso.proxima_accion_texto && (
-                              <div className="p-1.5 rounded-lg bg-blue-950/30 border border-blue-500/20 text-[10px] text-blue-300 flex items-start gap-1">
-                                <Clock size={11} className="shrink-0 mt-0.5 text-blue-400" />
-                                <span className="truncate">{caso.proxima_accion_texto}</span>
-                              </div>
-                            )}
+                            {/* Próxima Acción Programada con Fecha y Semáforo */}
+                            {Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) && (() => {
+                              let labelFecha = ''
+                              let diasDiferencia: number | null = null
+                              let esHoy = false
+                              let esVencida = false
+
+                              if (caso.proxima_accion_fecha) {
+                                const partes = caso.proxima_accion_fecha.split('-')
+                                if (partes.length === 3) {
+                                  labelFecha = `${partes[2]}/${partes[1]}`
+                                } else {
+                                  labelFecha = caso.proxima_accion_fecha
+                                }
+
+                                const hoy = new Date()
+                                hoy.setHours(0, 0, 0, 0)
+                                const fechaObj = new Date(`${caso.proxima_accion_fecha}T00:00:00`)
+                                if (!isNaN(fechaObj.getTime())) {
+                                  const diffMs = fechaObj.getTime() - hoy.getTime()
+                                  diasDiferencia = Math.round(diffMs / (1000 * 60 * 60 * 24))
+                                  if (diasDiferencia === 0) esHoy = true
+                                  else if (diasDiferencia < 0) esVencida = true
+                                }
+                              }
+
+                              const colorClases = esVencida
+                                ? 'bg-red-950/40 border-red-500/40 text-red-200'
+                                : esHoy
+                                ? 'bg-amber-950/50 border-amber-500/50 text-amber-200 ring-1 ring-amber-500/30'
+                                : 'bg-blue-950/40 border-blue-500/30 text-blue-200'
+
+                              const iconoColor = esVencida ? 'text-red-400' : esHoy ? 'text-amber-400' : 'text-blue-400'
+
+                              return (
+                                <div
+                                  className={`p-1.5 rounded-lg border text-[10px] flex items-start gap-1.5 ${colorClases}`}
+                                  title={caso.proxima_accion_fecha ? `Acción pautada para el ${caso.proxima_accion_fecha}` : 'Acción de seguimiento'}
+                                >
+                                  <Clock size={12} className={`shrink-0 mt-0.5 ${iconoColor}`} />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      {caso.proxima_accion_fecha && (
+                                        <span
+                                          className={`font-mono font-bold px-1.5 py-0.2 rounded text-[9.5px] ${
+                                            esVencida
+                                              ? 'bg-red-500/20 text-red-300'
+                                              : esHoy
+                                              ? 'bg-amber-500/30 text-amber-300'
+                                              : 'bg-blue-500/20 text-blue-300'
+                                          }`}
+                                        >
+                                          {esHoy
+                                            ? 'HOY'
+                                            : esVencida
+                                            ? `Vencida (${labelFecha})`
+                                            : `${labelFecha} (en ${diasDiferencia}d)`}
+                                        </span>
+                                      )}
+                                      {caso.proxima_accion_texto && (
+                                        <span className="truncate font-medium">{caso.proxima_accion_texto}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })()}
 
                             {/* Botones de Acción Rápida (WhatsApp + Contacto Hoy) */}
                             <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-1.5">

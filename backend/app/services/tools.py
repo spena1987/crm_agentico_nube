@@ -853,5 +853,76 @@ def consultar_preparacion_cirugia(paciente_id: Optional[str] = None) -> dict:
         logger.error(f"Error en consultar_preparacion_cirugia: {e}")
         return {"error": f"Error consultando preparación quirúrgica: {str(e)}"}
 
+def reportar_urgencia_postquirurgica(
+    sintomas: str, 
+    ojo: Optional[str] = None, 
+    conversacion_id: Optional[str] = None, 
+    paciente_id: Optional[str] = None,
+    **kwargs
+) -> dict:
+    """
+    Activa inmediatamente el protocolo médico de urgencia postquirúrgica cuando un paciente
+    operado reporta dolor fuerte/agudo, disminución brusca o pérdida de visión, secreción purulenta,
+    fotopsias, telón oscuro o traumatismo ocular. Silencia al bot, notifica al cirujano tratante
+    por WhatsApp y deriva la conversación en el CRM con máxima prioridad.
+
+    Args:
+        sintomas: Descripción textual del síntoma, dolor o complicación manifestada por el paciente.
+        ojo: Ojo afectado reportado por el paciente (OD, OI, AO o no especificado).
+        conversacion_id: ID de la conversación activa en el CRM.
+        paciente_id: ID del paciente que consulta.
+
+    Returns:
+        Dict con estado del escalamiento y mensaje empático obligatorio de contención.
+    """
+    import asyncio
+    logger.warning(f"Herramienta: reportar_urgencia_postquirurgica invocada para paciente {paciente_id}, síntomas: {sintomas}")
+    try:
+        from app.services.urgencias_service import procesar_urgencia_postquirurgica
+        
+        loop = None
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                res = pool.submit(
+                    asyncio.run,
+                    procesar_urgencia_postquirurgica(
+                        conversacion_id=conversacion_id,
+                        paciente_id=paciente_id,
+                        texto_mensaje=sintomas,
+                        motivo_detectado=sintomas
+                    )
+                ).result(timeout=15.0)
+        else:
+            res = asyncio.run(
+                procesar_urgencia_postquirurgica(
+                    conversacion_id=conversacion_id,
+                    paciente_id=paciente_id,
+                    texto_mensaje=sintomas,
+                    motivo_detectado=sintomas
+                )
+            )
+
+        return {
+            "success": True,
+            "cirujano_notificado": res.get("cirujano_notificado"),
+            "telefono_notificado": res.get("telefono_notificado"),
+            "es_guardia_central": res.get("es_guardia_central"),
+            "mensaje_directo_paciente": res.get("mensaje_paciente"),
+            "instruccion_inviolable": (
+                "IMPORTANTE: El protocolo de urgencia médica fue activado exitosamente en el sistema. "
+                "Responde inmediatamente al paciente utilizando el contenido empático y claro indicado en mensaje_directo_paciente. "
+                "No des diagnósticos ni recomiendes medicamentos. Refuerza que ante cualquier empeoramiento debe acudir a la guardia física o llamar al teléfono indicado."
+            )
+        }
+    except Exception as e:
+        logger.error(f"Error ejecutando reportar_urgencia_postquirurgica: {e}", exc_info=True)
+        return {"error": f"Error activando protocolo de urgencia: {str(e)}"}
+
 
 

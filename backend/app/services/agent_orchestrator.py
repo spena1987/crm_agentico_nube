@@ -12,7 +12,8 @@ from app.services.tools import (
     desestimar_presupuesto,
     consultar_presupuestos_paciente,
     vincular_paciente_geclisa,
-    consultar_preparacion_cirugia
+    consultar_preparacion_cirugia,
+    reportar_urgencia_postquirurgica
 )
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,8 @@ AVAILABLE_TOOLS_MAP = {
     "desestimar_presupuesto": desestimar_presupuesto,
     "consultar_presupuestos_paciente": consultar_presupuestos_paciente,
     "vincular_paciente_geclisa": vincular_paciente_geclisa,
-    "consultar_preparacion_cirugia": consultar_preparacion_cirugia
+    "consultar_preparacion_cirugia": consultar_preparacion_cirugia,
+    "reportar_urgencia_postquirurgica": reportar_urgencia_postquirurgica
 }
 
 # Fallbacks predeterminados en memoria por si Supabase no responde
@@ -61,8 +63,10 @@ DEFAULT_GLOBAL_DIRECTIVES = {
     "tono_general": "Profesional, empático, claro y resolutivo en todo momento.",
     "guardrails_medicos": (
         "PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. "
-        "Si el paciente consulta sobre síntomas complejos o requiere atención médica urgente, explícale con calma que lo derivarás con un profesional "
-        "y utiliza de inmediato la herramienta escalar_a_operador_humano."
+        "NUNCA minimices las molestias o dolores de un paciente operado (jamás digas 'es normal'). "
+        "Si un paciente operado reporta dolor fuerte/agudo, disminución o pérdida de visión, secreción, fotopsias, telón oscuro o traumatismo, "
+        "INVOCA INMEDIATAMENTE la herramienta 'reportar_urgencia_postquirurgica' para alertar a su cirujano tratante por WhatsApp y derivarlo en el CRM. "
+        "Para otras dudas generales no operadas que requieran atención humana, utiliza 'escalar_a_operador_humano'."
     ),
     "politica_escalamiento": (
         "Si el paciente solicita hablar con un humano, persona o secretaria, o presenta dudas clínicas fuera de tu comprensión, "
@@ -85,8 +89,8 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Atención General y Orientación",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre Centrovisión Oftalmología Integral, horarios de atención, ubicación física (Mitre 540, Mendoza) y consultas oftalmológicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información general sobre Centrovisión Oftalmología Integral, horarios de atención, ubicación física (Mitre 540, Mendoza) y consultas oftalmológicas disponibles. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente operado refiere dolor o síntomas de alarma, usa reportar_urgencia_postquirurgica. Si el paciente concluyó su trámite o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
@@ -101,8 +105,8 @@ DEFAULT_AGENTS = {
         "codigo": "QUIRURGICO_EMPATICO",
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
-        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si pregunta sobre pautas de preparación prequirúrgica, ayuno o indicaciones de su cirugía, usa de inmediato consultar_preparacion_cirugia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si manifiesta que no se operará o desestima la cotización, indaga el motivo con respeto y usa desestimar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si pregunta sobre pautas de preparación prequirúrgica, ayuno o indicaciones de su cirugía, usa de inmediato consultar_preparacion_cirugia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si manifiesta dolor postoperatorio o signos de alarma, usa inmediatamente reportar_urgencia_postquirurgica. Si manifiesta que no se operará o desestima la cotización, indaga el motivo con respeto y usa desestimar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta. Si requiere valoración médica clínica general, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {
@@ -117,8 +121,8 @@ DEFAULT_AGENTS = {
         "codigo": "POST_OPERATORIO",
         "nombre": "Seguimiento y Control Post-Quirúrgico",
         "temperatura": 0.2,
-        "directiva_particular": "El paciente ha sido intervenido recientemente. Pregunta amablemente cómo se siente. Si menciona síntomas de alarma o dolor no manejable, usa de inmediato escalar_a_operador_humano con motivo urgente. Si todo está bien y concluye el control, usa finalizar_y_cerrar_consulta.",
-        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente ha sido intervenido recientemente. Pregunta amablemente cómo se siente. Si menciona síntomas de alarma, dolor no manejable, pérdida de visión, secreción o traumatismo, usa de inmediato la herramienta reportar_urgencia_postquirurgica para alertar a su cirujano tratante por WhatsApp y derivarlo a la guardia médica 24h. Si todo está bien y concluye el control, usa finalizar_y_cerrar_consulta.",
+        "herramientas_habilitadas": ["buscar_disponibilidad_turnos", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     }
 }

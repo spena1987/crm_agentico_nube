@@ -309,6 +309,10 @@ create table if not exists public.usuarios_perfil (
     rol_id uuid references public.roles(id) on delete set null,
     activo boolean default true not null,
     avatar_url varchar,
+    telefono varchar,
+    geclisa_pre_id integer,
+    geclisa_matricula text,
+    geclisa_prestador_nombre text,
     created_at timestamp with time zone default timezone('utc'::text, now()) not null,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
