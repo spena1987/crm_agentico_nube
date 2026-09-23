@@ -33,7 +33,9 @@
         "hablar con alguien",
         "urgencia",
         "reclamo"
-      ]
+      ],
+      "auto_reactivacion_inactividad": true,
+      "tiempo_inactividad_horas": 24
     }
   },
   "clinica": {

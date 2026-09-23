@@ -503,7 +503,52 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                         "unread_count": current_unread + 1
                     }
-                    # Si el bot estaba deshabilitado y entra un mensaje en caso cerrado/archivado,
+
+                    # Verificación de Auto-Reactivación por Inactividad Humana
+                    # Si el bot estaba pausado pero ha transcurrido el tiempo límite de inactividad
+                    # configurado en Ajustes (ej. 24h), reactivar el Asistente IA automáticamente.
+                    try:
+                        from app.services.config_service import load_settings
+                        settings = load_settings()
+                        handover_cfg = settings.get("bot", {}).get("handover", {})
+                        auto_reactivar = handover_cfg.get("auto_reactivacion_inactividad", True)
+                        horas_limite = float(handover_cfg.get("tiempo_inactividad_horas", 24))
+                        segundos_limite = max(horas_limite * 3600.0, 60.0)
+
+                        ahora = time.time()
+                        tiempo_referencia = float(ultimo_humano or 0)
+                        if tiempo_referencia == 0 and conv_crm_res.data[0].get("updated_at"):
+                            try:
+                                dt_upd = datetime.fromisoformat(str(conv_crm_res.data[0]["updated_at"]).replace("Z", "+00:00"))
+                                tiempo_referencia = dt_upd.timestamp()
+                            except Exception:
+                                tiempo_referencia = 0
+
+                        if bot_disabled and auto_reactivar and tiempo_referencia > 0 and (ahora - tiempo_referencia >= segundos_limite):
+                            bot_disabled = False
+                            c_meta["ultimo_mensaje_humano_at"] = 0
+                            c_meta["fallback_strikes"] = 0
+                            c_meta["auto_reactivado_at"] = datetime.now(timezone.utc).isoformat()
+                            upd_payload["bot_disabled"] = False
+                            upd_payload["metadata_json"] = c_meta
+                            logger.info(f"[Auto-Reactivación Inactividad] Bot reactivado automáticamente para conv {crm_conv_id} tras {(ahora - tiempo_referencia)/3600:.1f}h de inactividad humana.")
+                            try:
+                                supabase.table("mensajes").insert({
+                                    "conversacion_id": crm_conv_id,
+                                    "emisor": "bot",
+                                    "contenido": f"🤖 Asistente Virtual Gemini reactivado automáticamente tras superar {horas_limite:g}h sin intervención humana. Atendiendo nueva consulta.",
+                                    "metadata_json": {
+                                        "es_nota_interna": True,
+                                        "sistema": True,
+                                        "evento": "auto_reactivacion_inactividad"
+                                    }
+                                }).execute()
+                            except Exception as n_err:
+                                logger.warning(f"Error registrando nota de auto-reactivación: {n_err}")
+                    except Exception as ar_err:
+                        logger.warning(f"Error en chequeo de auto-reactivación por inactividad: {ar_err}")
+
+                    # Si el bot seguía deshabilitado y entra un mensaje en caso cerrado/archivado,
                     # reabrir automáticamente hacia la pestaña 'Espera' (SIN_ASIGNAR)
                     if bot_disabled and (conv_estado == "RESUELTO" or conv_archivada):
                         upd_payload["archivada"] = False

@@ -35,6 +35,8 @@ export interface HandoverSettings {
   mensaje_derivacion: string
   mensaje_post_dni: string
   palabras_clave_escape: string[]
+  auto_reactivacion_inactividad?: boolean
+  tiempo_inactividad_horas?: number
 }
 
 interface GlobalDirectives {
@@ -94,7 +96,9 @@ export default function BotSettingsCard() {
       'humano', 'operador', 'persona', 'asesor', 'asesora',
       'asesora quirurgica', 'secretaria', 'doctor directo',
       'hablar con alguien', 'urgencia', 'reclamo'
-    ]
+    ],
+    auto_reactivacion_inactividad: true,
+    tiempo_inactividad_horas: 24
   })
   const [newKeyword, setNewKeyword] = useState('')
 
@@ -154,6 +158,8 @@ export default function BotSettingsCard() {
           setHandover(prev => ({
             ...prev,
             ...bot.handover,
+            auto_reactivacion_inactividad: bot.handover.auto_reactivacion_inactividad ?? true,
+            tiempo_inactividad_horas: bot.handover.tiempo_inactividad_horas ?? 24,
             palabras_clave_escape: Array.isArray(bot.handover.palabras_clave_escape)
               ? bot.handover.palabras_clave_escape
               : prev.palabras_clave_escape
@@ -1125,6 +1131,75 @@ export default function BotSettingsCard() {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* TARJETA 4: Auto-Reactivación por Inactividad (Gestor WhatsApp) */}
+          <div className="p-5 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-900/30 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h5 className="font-bold text-sm flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                  <Clock size={16} />
+                  <span>Auto-Reactivación del Bot por Inactividad Humana</span>
+                </h5>
+                <p className="text-xs text-[var(--secondary)] mt-0.5">
+                  Si un operador intervino pero no cerró la conversación, y el paciente vuelve a escribir tras este período, el Asistente IA retoma la atención automáticamente.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHandover(prev => ({ ...prev, auto_reactivacion_inactividad: !prev.auto_reactivacion_inactividad }))}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                  handover.auto_reactivacion_inactividad ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    handover.auto_reactivacion_inactividad ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            {handover.auto_reactivacion_inactividad && (
+              <div className="space-y-3 pt-2 border-t border-[var(--border)]">
+                <div>
+                  <label className="block font-bold text-xs mb-1.5">
+                    Tiempo de Inactividad del Operador antes de Auto-Reactivar:
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {[
+                      { horas: 2, label: '2 Horas' },
+                      { horas: 6, label: '6 Horas' },
+                      { horas: 24, label: '24 Horas ⭐ (Recomendado)', desc: 'Fin de ventana oficial Meta' },
+                      { horas: 48, label: '48 Horas' }
+                    ].map((opt) => (
+                      <button
+                        key={opt.horas}
+                        type="button"
+                        onClick={() => setHandover(prev => ({ ...prev, tiempo_inactividad_horas: opt.horas }))}
+                        className={`p-2.5 rounded-xl border text-left transition-all ${
+                          (handover.tiempo_inactividad_horas ?? 24) === opt.horas
+                            ? 'border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-900 dark:text-emerald-200 font-bold shadow-sm'
+                            : 'border-[var(--border)] bg-[var(--card)] hover:border-slate-400 text-xs'
+                        }`}
+                      >
+                        <div className="text-xs font-bold">{opt.label}</div>
+                        {opt.desc && <div className="text-[10px] text-[var(--secondary)] font-normal">{opt.desc}</div>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/20 text-[11px] text-[var(--secondary)] space-y-1">
+                  <p className="font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                    <span>💡 ¿Cómo funciona en el CRM?</span>
+                  </p>
+                  <p>
+                    Cuando un operador humano responde en el chat, el bot se pausa (<code>bot_disabled = true</code>). Si el paciente vuelve a escribir transcurridas más de <strong>{handover.tiempo_inactividad_horas ?? 24} horas</strong> sin intervención humana, el sistema reactivará el Asistente IA automáticamente (<code>bot_disabled = false</code>) y atenderá la nueva consulta sin demoras.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

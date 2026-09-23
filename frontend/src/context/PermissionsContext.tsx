@@ -174,6 +174,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   // Función para verificar si tiene una acción específica en un módulo
   const can = useCallback((modulo: string, accion: string = 'ver'): boolean => {
     if (isAdmin) return true
+    if (modulo === 'ayuda') return true // Centro de Ayuda y Manual accesible para todo el personal
     const perm = permissions.find(
       (p) => p.modulo_codigo === modulo && p.accion === accion
     )

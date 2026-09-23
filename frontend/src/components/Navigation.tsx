@@ -25,7 +25,8 @@ import {
   Calendar,
   Building2,
   UserCheck,
-  Eye
+  Eye,
+  HelpCircle
 } from 'lucide-react'
 
 import { apiFetch, BACKEND_URL } from '@/lib/api'
@@ -75,6 +76,7 @@ const allNavItems: NavItem[] = [
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },
   { code: 'ajustes', label: 'Ajustes', href: '/ajustes', icon: Settings },
+  { code: 'ayuda', label: 'Centro de Ayuda', href: '/ayuda', icon: HelpCircle },
 ]
 
 export default function Navigation() {
@@ -423,13 +425,23 @@ export default function Navigation() {
           </div>
 
           {!isCollapsed && (
-            <button 
-              onClick={handleLogout}
-              className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors shrink-0"
-              title="Cerrar sesión"
-            >
-              <LogOut size={16} />
-            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <Link
+                href="/ayuda"
+                onClick={() => setMobileOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg transition-colors"
+                title="Centro de Ayuda y Manuales"
+              >
+                <HelpCircle size={16} />
+              </Link>
+              <button 
+                onClick={handleLogout}
+                className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors"
+                title="Cerrar sesión"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
           )}
         </div>
       </div>

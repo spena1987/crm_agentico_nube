@@ -189,6 +189,16 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
       { code: 'ver_roles', label: 'Ver Perfiles & Permisos (RBAC)', description: 'Acceso a la sub-página /ajustes/roles' },
     ],
   },
+  {
+    code: 'ayuda',
+    name: 'Centro de Ayuda & Base de Conocimientos',
+    description: 'Manual interactivo de usuario, guías operativas, diccionario de campos y resolución de incidencias.',
+    icon: 'HelpCircle',
+    order: 13,
+    actions: [
+      { code: 'ver', label: 'Ver Centro de Ayuda', description: 'Consultar manuales, cómo hacer y preguntas frecuentes' },
+    ],
+  },
 ]
 
 export interface LandingPageOption {
@@ -212,4 +222,5 @@ export const LANDING_PAGE_OPTIONS: LandingPageOption[] = [
   { route: '/ajustes', label: 'Ajustes & Administración', moduleCode: 'ajustes' },
   { route: '/ajustes?tab=lios', label: 'Ajustes: Lentes Intraoculares (LIO)', moduleCode: 'ajustes' },
   { route: '/ajustes?tab=nomenclador', label: 'Ajustes: Nomencladores & Aranceles', moduleCode: 'ajustes' },
+  { route: '/ayuda', label: 'Centro de Ayuda & Manual', moduleCode: 'ayuda' },
 ]

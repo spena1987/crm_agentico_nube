@@ -29,7 +29,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
                 "humano", "operador", "persona", "asesor", "asesora", 
                 "asesora quirurgica", "secretaria", "doctor directo", 
                 "hablar con alguien", "urgencia", "reclamo"
-            ]
+            ],
+            "auto_reactivacion_inactividad": True,
+            "tiempo_inactividad_horas": 24
         }
     },
     "clinica": {

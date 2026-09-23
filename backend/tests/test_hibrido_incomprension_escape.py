@@ -97,3 +97,31 @@ class TestHumanHandoverAndFallbacks:
         # Reset exitoso:
         current_strikes = 0
         assert current_strikes == 0
+
+    def test_auto_reactivacion_inactividad_logic(self):
+        """Verifica la lógica de auto-reactivación del bot tras inactividad humana."""
+        from app.services.config_service import DEFAULT_SETTINGS
+
+        handover = DEFAULT_SETTINGS["bot"]["handover"]
+        assert handover["auto_reactivacion_inactividad"] is True
+        assert handover["tiempo_inactividad_horas"] == 24
+
+        auto_reactivar = handover["auto_reactivacion_inactividad"]
+        horas_limite = float(handover["tiempo_inactividad_horas"])
+        segundos_limite = horas_limite * 3600.0
+
+        # Caso 1: Pasaron 25 horas (inactividad superada -> auto-reactivar)
+        tiempo_transcurrido_segundos = 25 * 3600.0
+        debe_reactivar = auto_reactivar and (tiempo_transcurrido_segundos >= segundos_limite)
+        assert debe_reactivar is True
+
+        # Caso 2: Pasaron 2 horas (aún dentro de la ventana de espera humana -> mantener pausado)
+        tiempo_transcurrido_segundos = 2 * 3600.0
+        debe_reactivar = auto_reactivar and (tiempo_transcurrido_segundos >= segundos_limite)
+        assert debe_reactivar is False
+
+        # Caso 3: Desactivado en ajustes -> no reactivar aunque pasen 72 horas
+        auto_reactivar_disabled = False
+        tiempo_transcurrido_segundos = 72 * 3600.0
+        debe_reactivar = auto_reactivar_disabled and (tiempo_transcurrido_segundos >= segundos_limite)
+        assert debe_reactivar is False

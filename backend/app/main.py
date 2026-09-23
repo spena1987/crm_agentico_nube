@@ -1,6 +1,7 @@
 import os
 import re
 import time
+from datetime import datetime, timezone
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -588,14 +589,42 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
         # 1. Comprobar bloqueo y período de gracia (15 minutos desde el último mensaje de operador humano)
         if conversacion_id and supabase:
             try:
-                c_res = supabase.table("conversaciones").select("metadata_json, bot_disabled").eq("id", conversacion_id).execute()
+                c_res = supabase.table("conversaciones").select("metadata_json, bot_disabled, updated_at").eq("id", conversacion_id).execute()
                 if c_res.data:
                     c_row = c_res.data[0]
-                    if c_row.get("bot_disabled"):
-                        logger.info(f"Bot IA desactivado manualmente para conversación {conversacion_id}. Omitiendo respuesta.")
-                        return
                     c_meta = c_row.get("metadata_json") or {}
                     last_human = c_meta.get("ultimo_mensaje_humano_at")
+
+                    # Verificación de Auto-Reactivación por Inactividad
+                    from app.services.config_service import load_settings
+                    settings = load_settings()
+                    handover_cfg = settings.get("bot", {}).get("handover", {})
+                    auto_reactivar = handover_cfg.get("auto_reactivacion_inactividad", True)
+                    horas_limite = float(handover_cfg.get("tiempo_inactividad_horas", 24))
+                    segundos_limite = max(horas_limite * 3600.0, 60.0)
+
+                    tiempo_ref = float(last_human or 0)
+                    if tiempo_ref == 0 and c_row.get("updated_at"):
+                        try:
+                            dt_upd = datetime.fromisoformat(str(c_row["updated_at"]).replace("Z", "+00:00"))
+                            tiempo_ref = dt_upd.timestamp()
+                        except Exception:
+                            tiempo_ref = 0
+
+                    if c_row.get("bot_disabled"):
+                        if auto_reactivar and tiempo_ref > 0 and (time.time() - tiempo_ref >= segundos_limite):
+                            logger.info(f"Auto-reactivando bot por inactividad para conversación {conversacion_id} tras {(time.time() - tiempo_ref)/3600:.1f}h.")
+                            c_meta["ultimo_mensaje_humano_at"] = 0
+                            c_meta["fallback_strikes"] = 0
+                            c_meta["auto_reactivado_at"] = datetime.now(timezone.utc).isoformat()
+                            supabase.table("conversaciones").update({
+                                "bot_disabled": False,
+                                "metadata_json": c_meta
+                            }).eq("id", conversacion_id).execute()
+                        else:
+                            logger.info(f"Bot IA desactivado manualmente para conversación {conversacion_id}. Omitiendo respuesta.")
+                            return
+
                     if last_human and (time.time() - float(last_human) < 900):
                         logger.info(f"Conversación {conversacion_id} en período de gracia de operador humano ({int(time.time() - float(last_human))}s < 900s). Omitiendo respuesta de IA.")
                         return
