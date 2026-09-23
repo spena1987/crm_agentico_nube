@@ -4273,8 +4273,12 @@ async def enviar_consentimiento_whatsapp(turno_id: str):
             token = secrets.token_urlsafe(24)
             actualizar_turno_quirofano(turno_id, {"consentimiento_token": token})
             
-        # Determinar base URL pública o del frontend (Vercel en producción)
-        base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or os.getenv("FRONTEND_URL") or "https://crm-agentico-nube-tn4d.vercel.app"
+        # Determinar base URL pública o del frontend (Vercel en producción o configurada en Ajustes)
+        try:
+            from app.services.urgencias_service import obtener_base_crm_url
+            base_app_url = obtener_base_crm_url()
+        except Exception:
+            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or os.getenv("FRONTEND_URL") or "https://crm-agentico-nube.vercel.app"
         enlace_firma = f"{base_app_url}/consentimiento/{token}"
         
         ojo = turno.get("ojo") or "OD"

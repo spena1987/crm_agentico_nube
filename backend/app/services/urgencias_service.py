@@ -197,6 +197,35 @@ def _buscar_usuario_medico(geclisa_pre_id: Optional[int], matricula: Optional[st
     return None
 
 
+def obtener_base_crm_url() -> str:
+    """
+    Obtiene la URL base del CRM para deep links a chats y urgencias.
+    Prioridad:
+    1. Base de datos: ajustes_crm -> clinica -> url_crm (o ajustes_crm -> url_crm)
+    2. Variables de entorno: NEXT_PUBLIC_APP_URL, APP_URL, FRONTEND_URL
+    3. Dominio de producción oficial en Vercel: https://crm-agentico-nube.vercel.app
+    """
+    try:
+        from app.services.config_service import obtener_ajustes_crm
+        ajustes = obtener_ajustes_crm()
+        clinica = ajustes.get("clinica", {}) if isinstance(ajustes, dict) else {}
+        url_cfg = clinica.get("url_crm") or ajustes.get("url_crm")
+        if url_cfg and isinstance(url_cfg, str) and url_cfg.strip():
+            return url_cfg.strip().rstrip("/")
+    except Exception as e:
+        logger.warning(f"[UrgenciasService] No se pudo leer url_crm de configuracion_sistema: {e}")
+
+    env_url = (
+        os.getenv("NEXT_PUBLIC_APP_URL") 
+        or os.getenv("APP_URL") 
+        or os.getenv("FRONTEND_URL")
+    )
+    if env_url and env_url.strip():
+        return env_url.strip().rstrip("/")
+
+    return "https://crm-agentico-nube.vercel.app"
+
+
 # =========================================================================
 # 3. NOTIFICACIÓN DE ALERTA POR WHATSAPP AL CIRUJANO (O GUARDIA CENTRAL)
 # =========================================================================
@@ -225,7 +254,7 @@ async def despachar_alerta_whatsapp_cirujano(
     fecha_qx = datos_alerta.get("fecha_cirugia", "Reciente")
     dias_postop = datos_alerta.get("dias_postop", "pocos")
     sintoma = datos_alerta.get("sintoma_reportado", "Molestias severas")
-    enlace_chat = datos_alerta.get("enlace_chat", "https://crm.centrovision.com.ar/chat")
+    enlace_chat = datos_alerta.get("enlace_chat") or f"{obtener_base_crm_url()}/chat"
 
     cuerpo_alerta = (
         f"🚨 *ALERTA MÉDICA POSTQUIRÚRGICA - CENTROVISIÓN*\n\n"
@@ -321,8 +350,8 @@ async def procesar_urgencia_postquirurgica(
     cirujano_telefono = cirujano.get("telefono") if cirujano else None
 
     # Base URL del frontend para deep link
-    base_crm_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm.centrovision.com.ar"
-    enlace_chat = f"{base_crm_url.rstrip('/')}/chat?conv={conversacion_id}"
+    base_crm_url = obtener_base_crm_url()
+    enlace_chat = f"{base_crm_url}/chat?conv={conversacion_id}"
 
     # 3. Silenciar bot y auto-asignar conversación
     ahora_iso = datetime.now(timezone.utc).isoformat()

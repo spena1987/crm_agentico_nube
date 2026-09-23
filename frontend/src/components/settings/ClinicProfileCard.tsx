@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { Building2, MapPin, Phone, Mail, Clock, MessageSquare, Save, CheckCircle2, Upload, Image as ImageIcon, Trash2, Loader2, AlertCircle, RotateCw } from 'lucide-react'
+import { Building2, MapPin, Phone, Mail, Clock, MessageSquare, Save, CheckCircle2, Upload, Image as ImageIcon, Trash2, Loader2, AlertCircle, RotateCw, Globe } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
@@ -14,6 +14,7 @@ export default function ClinicProfileCard() {
   const [direccion, setDireccion] = useState('Mitre 540, Ciudad de Mendoza, Mendoza')
   const [telefonoGuardia, setTelefonoGuardia] = useState('0800-222-4040')
   const [email, setEmail] = useState('info@centrovision.com.ar')
+  const [urlCrm, setUrlCrm] = useState('https://crm-agentico-nube.vercel.app')
   const [horarios, setHorarios] = useState('Lunes a Viernes de 08:00 a 19:00 hs. Sábados de 09:00 a 13:00 hs.')
   const [mensajeBienvenida, setMensajeBienvenida] = useState('¡Hola! Gracias por comunicarte con Centrovisión Oftalmología Integral. ¿En qué podemos ayudarte hoy?')
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
@@ -57,6 +58,7 @@ export default function ClinicProfileCard() {
         setDireccion(clinica.direccion || '')
         setTelefonoGuardia(clinica.telefono_guardia || '')
         setEmail(clinica.email_contacto || '')
+        setUrlCrm(clinica.url_crm || 'https://crm-agentico-nube.vercel.app')
         setHorarios(clinica.horarios_atencion || '')
         setMensajeBienvenida(clinica.mensaje_bienvenida || '')
         setLogoUrl(clinica.logo_url || null)
@@ -317,6 +319,7 @@ export default function ClinicProfileCard() {
         direccion,
         telefono_guardia: telefonoGuardia,
         email_contacto: email,
+        url_crm: urlCrm.trim(),
         horarios_atencion: horarios,
         mensaje_bienvenida: mensajeBienvenida,
         logo_url: logoUrl
@@ -555,6 +558,26 @@ export default function ClinicProfileCard() {
               />
               <Mail size={16} className="absolute left-3 top-3 text-slate-400" />
             </div>
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
+              URL Pública Oficial del CRM (Para enlaces en WhatsApp y Urgencias)
+            </label>
+            <div className="relative">
+              <input 
+                type="url"
+                value={urlCrm}
+                onChange={(e) => setUrlCrm(e.target.value)}
+                placeholder="https://crm-agentico-nube.vercel.app"
+                className="w-full px-3.5 py-2.5 pl-9 rounded-xl text-sm bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                required
+              />
+              <Globe size={16} className="absolute left-3 top-3 text-slate-400" />
+            </div>
+            <p className="text-[11px] text-[var(--secondary)] mt-1">
+              Dirección web donde los médicos y colaboradores acceden al CRM (ej: <span className="font-mono text-blue-500 font-medium">https://crm-agentico-nube.vercel.app</span>). Los avisos por WhatsApp a los cirujanos usarán esta dirección.
+            </p>
           </div>
         </div>
 
