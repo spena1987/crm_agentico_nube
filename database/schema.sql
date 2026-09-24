@@ -996,5 +996,26 @@ CREATE TABLE IF NOT EXISTS public.pedidos_estudios_oftalmo (
 CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_paciente ON public.pedidos_estudios_oftalmo(paciente_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_lote ON public.pedidos_estudios_oftalmo(lote_id);
 
+-- =========================================================================
+-- TABLA: urgencias_tokens_acceso (Tokens de Acceso Rápido Seguro / OTET)
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS public.urgencias_tokens_acceso (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash varchar(64) NOT NULL UNIQUE,
+    usuario_id uuid NOT NULL REFERENCES public.usuarios_perfil(id) ON DELETE CASCADE,
+    conversacion_id uuid NOT NULL REFERENCES public.conversaciones(id) ON DELETE CASCADE,
+    paciente_id uuid REFERENCES public.pacientes(id) ON DELETE SET NULL,
+    usado boolean NOT NULL DEFAULT false,
+    usado_at timestamptz,
+    usado_ip varchar(64),
+    usado_user_agent text,
+    expires_at timestamptz NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_urgencias_tokens_hash ON public.urgencias_tokens_acceso(token_hash);
+CREATE INDEX IF NOT EXISTS idx_urgencias_tokens_usuario ON public.urgencias_tokens_acceso(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_urgencias_tokens_conversacion ON public.urgencias_tokens_acceso(conversacion_id);
+
 
 

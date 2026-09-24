@@ -12,8 +12,10 @@ Funcionalidades:
 
 import os
 import re
+import secrets
+import hashlib
 import logging
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, Any, Optional, Tuple, List
 
 from app.db import supabase
@@ -226,6 +228,41 @@ def obtener_base_crm_url() -> str:
     return "https://crm-agentico-nube.vercel.app"
 
 
+def generar_token_acceso_urgencia(
+    usuario_id: str,
+    conversacion_id: str,
+    paciente_id: Optional[str] = None,
+    ttl_minutos: int = 30
+) -> Optional[str]:
+    """
+    Genera un token criptoseguro de un solo uso (One-Time Emergency Access Token - OTET)
+    para acceso directo del médico desde WhatsApp al chat del paciente.
+    Almacena el hash SHA-256 en la base de datos con expiración acotada (30 min).
+    Retorna el raw_token para ser incluido en la URL enviada por WhatsApp.
+    """
+    try:
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        ahora = datetime.now(timezone.utc)
+        expires_at = (ahora + timedelta(minutes=ttl_minutos)).isoformat()
+
+        supabase.table("urgencias_tokens_acceso").insert({
+            "token_hash": token_hash,
+            "usuario_id": usuario_id,
+            "conversacion_id": conversacion_id,
+            "paciente_id": paciente_id,
+            "usado": False,
+            "expires_at": expires_at,
+            "created_at": ahora.isoformat()
+        }).execute()
+
+        logger.info(f"[UrgenciasService] Token de acceso rápido generado para usuario {usuario_id} (conv {conversacion_id}, expira {expires_at})")
+        return raw_token
+    except Exception as e:
+        logger.error(f"[UrgenciasService] Error generando token de acceso rápido: {e}", exc_info=True)
+        return None
+
+
 # =========================================================================
 # 3. NOTIFICACIÓN DE ALERTA POR WHATSAPP AL CIRUJANO (O GUARDIA CENTRAL)
 # =========================================================================
@@ -351,7 +388,21 @@ async def procesar_urgencia_postquirurgica(
 
     # Base URL del frontend para deep link
     base_crm_url = obtener_base_crm_url()
-    enlace_chat = f"{base_crm_url}/chat?conv={conversacion_id}"
+
+    # Generar Token Criptográfico de Acceso Rápido (OTET) si el cirujano está registrado
+    raw_token = None
+    if cirujano_id:
+        raw_token = generar_token_acceso_urgencia(
+            usuario_id=cirujano_id,
+            conversacion_id=conversacion_id,
+            paciente_id=paciente_id,
+            ttl_minutos=30
+        )
+
+    if raw_token:
+        enlace_chat = f"{base_crm_url}/auth/acceso-urgencia?token={raw_token}"
+    else:
+        enlace_chat = f"{base_crm_url}/chat?conv={conversacion_id}"
 
     # 3. Silenciar bot y auto-asignar conversación
     ahora_iso = datetime.now(timezone.utc).isoformat()

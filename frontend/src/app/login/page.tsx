@@ -17,13 +17,15 @@ function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isInactiveReason = searchParams.get('reason') === 'inactivity'
+  const isTokenExpiredReason = searchParams.get('reason') === 'token_expired'
+  const returnUrl = searchParams.get('returnUrl')
 
   useEffect(() => {
-    // Si ya está autenticado, redirigir al dashboard principal
+    // Si ya está autenticado, redirigir a returnUrl o al dashboard
     if (!loading && user) {
-      router.push('/')
+      router.push(returnUrl || '/')
     }
-  }, [user, loading, router])
+  }, [user, loading, router, returnUrl])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -48,7 +50,7 @@ function LoginForm() {
         }
         setIsSubmitting(false)
       } else {
-        router.push('/')
+        router.push(returnUrl || '/')
       }
     } catch (err: any) {
       setErrorMsg('Ocurrió un error inesperado al conectar con el servidor de autenticación.')
@@ -95,6 +97,19 @@ function LoginForm() {
               <p className="font-bold">Sesión cerrada por seguridad</p>
               <p className="text-amber-700 dark:text-amber-400">
                 Tu sesión anterior se cerró automáticamente por inactividad para proteger la confidencialidad médica. Por favor, ingresa nuevamente.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Aviso de Enlace de Urgencia Caducado o Utilizado */}
+        {isTokenExpiredReason && (
+          <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-start gap-3 text-red-800 dark:text-red-300 text-xs">
+            <ShieldCheck size={18} className="shrink-0 mt-0.5 text-red-600 dark:text-red-400" />
+            <div className="space-y-0.5">
+              <p className="font-bold">Enlace de urgencia caducado o ya utilizado</p>
+              <p className="text-red-700 dark:text-red-400 leading-relaxed">
+                Por motivos de seguridad médica y confidencialidad clínica, el enlace directo expiró. Al iniciar sesión serás derivado directamente al caso del paciente.
               </p>
             </div>
           </div>

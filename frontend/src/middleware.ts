@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server'
 // Rutas públicas que no requieren sesión activa
 const PUBLIC_PATHS = [
   '/login',
+  '/auth/acceso-urgencia',
   '/consentimiento',
   '/politica-privacidad',
   '/privacy-policy',
