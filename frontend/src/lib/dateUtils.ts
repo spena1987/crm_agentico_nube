@@ -41,3 +41,103 @@ export const calcularMinutosTranscurridos = (inicioIso?: string | null, finIso?:
     return 0
   }
 }
+
+/**
+ * Compara si dos fechas corresponden al mismo día del calendario local
+ */
+export const isSameCalendarDay = (d1: Date, d2: Date): boolean => {
+  return (
+    d1.getFullYear() === d2.getFullYear() &&
+    d1.getMonth() === d2.getMonth() &&
+    d1.getDate() === d2.getDate()
+  )
+}
+
+/**
+ * Formatea la píldora/separador de fecha en el timeline de mensajes (Estilo WhatsApp Web)
+ * - Hoy -> "HOY"
+ * - Ayer -> "AYER"
+ * - Últimos 7 días -> Nombre del día (ej: "LUNES", "MIÉRCOLES")
+ * - Mismo año -> "24 DE SEPTIEMBRE"
+ * - Distinto año -> "24 DE SEPTIEMBRE DE 2025"
+ */
+export const formatDateBadge = (isoStr?: string | null): string => {
+  if (!isoStr) return ''
+  try {
+    const d = new Date(isoStr)
+    if (isNaN(d.getTime())) return ''
+
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24))
+
+    if (diffDays === 0) return 'HOY'
+    if (diffDays === 1) return 'AYER'
+    if (diffDays > 1 && diffDays < 7) {
+      const weekday = d.toLocaleDateString('es-AR', { weekday: 'long' })
+      return weekday.toUpperCase()
+    }
+
+    if (d.getFullYear() === now.getFullYear()) {
+      return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'long' }).toUpperCase()
+    }
+
+    return d.toLocaleDateString('es-AR', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()
+  } catch (e) {
+    return ''
+  }
+}
+
+/**
+ * Formatea el timestamp para la tarjeta de conversación en la lista lateral (Estilo WhatsApp Web)
+ * - Hoy -> "15:45"
+ * - Ayer -> "Ayer"
+ * - Últimos 7 días -> "Miércoles"
+ * - Anterior -> "24/09/2026"
+ */
+export const formatWhatsAppListDate = (isoStr?: string | null): string => {
+  if (!isoStr) return ''
+  try {
+    const d = new Date(isoStr)
+    if (isNaN(d.getTime())) return ''
+
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    const diffDays = Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24))
+
+    if (diffDays === 0) {
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+    if (diffDays === 1) {
+      return 'Ayer'
+    }
+    if (diffDays > 1 && diffDays < 7) {
+      const weekday = d.toLocaleDateString('es-AR', { weekday: 'long' })
+      return weekday.charAt(0).toUpperCase() + weekday.slice(1)
+    }
+
+    return d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  } catch (e) {
+    return ''
+  }
+}
+
+/**
+ * Tooltip accesible para ver fecha y hora completa en cualquier mensaje
+ * Ej: "Jueves, 24 de septiembre de 2026, 18:33 hs"
+ */
+export const formatFullDateTimeTooltip = (isoStr?: string | null): string => {
+  if (!isoStr) return ''
+  try {
+    const d = new Date(isoStr)
+    if (isNaN(d.getTime())) return ''
+    const fecha = d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    const hora = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const capFecha = fecha.charAt(0).toUpperCase() + fecha.slice(1)
+    return `${capFecha}, ${hora} hs`
+  } catch (e) {
+    return ''
+  }
+}

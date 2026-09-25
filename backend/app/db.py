@@ -531,8 +531,12 @@ def guardar_mensaje(
         # Insertar mensaje en Supabase
         response = supabase.table("mensajes").insert(data).execute()
         
-        # Actualizar el último mensaje en la conversación
-        supabase.table("conversaciones").update({"ultimo_mensaje": final_contenido}).eq("id", conversacion_id).execute()
+        # Actualizar el último mensaje e interacción en la conversación
+        msg_interaction_at = created_at or datetime.now(timezone.utc).isoformat()
+        supabase.table("conversaciones").update({
+            "ultimo_mensaje": final_contenido,
+            "ultimo_mensaje_at": msg_interaction_at
+        }).eq("id", conversacion_id).execute()
         
         if response.data:
             return response.data[0]
@@ -634,20 +638,20 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
     try:
         try:
             query = supabase.table("conversaciones").select(
-                "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, asignado_a_usuario_id, estado_gestion, ultimo_mensaje, updated_at, unread_count, metadata_json, pacientes(*)"
+                "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, asignado_a_usuario_id, estado_gestion, ultimo_mensaje, ultimo_mensaje_at, updated_at, unread_count, metadata_json, pacientes(*)"
             )
             if not incluir_archivadas:
                 query = query.eq("archivada", False)
-            response = query.order("updated_at", desc=True).execute()
+            response = query.order("ultimo_mensaje_at", desc=True).execute()
             convs = response.data or []
         except Exception as sel_err:
             logger.warning(f"Fallback a campos base en conversaciones: {sel_err}")
             query = supabase.table("conversaciones").select(
-                "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, updated_at, unread_count, metadata_json, pacientes(*)"
+                "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, ultimo_mensaje, ultimo_mensaje_at, updated_at, unread_count, metadata_json, pacientes(*)"
             )
             if not incluir_archivadas:
                 query = query.eq("archivada", False)
-            response = query.order("updated_at", desc=True).execute()
+            response = query.order("ultimo_mensaje_at", desc=True).execute()
             convs = response.data or []
 
         # Enriquecer con datos del operador asignado desde usuarios_perfil
@@ -1050,12 +1054,14 @@ def marcar_mensajes_conversacion_leidos(conversacion_id: str):
                 c_meta = json.loads(c_meta)
             except Exception:
                 c_meta = {}
-        c_meta["manual_unread"] = False
-
-        supabase.table("conversaciones").update({
-            "unread_count": 0,
-            "metadata_json": c_meta
-        }).eq("id", conversacion_id).execute()
+        current_unread = conv.get("unread_count", 0) or 0
+        manual_unread = bool(c_meta.get("manual_unread", False))
+        if current_unread > 0 or manual_unread:
+            c_meta["manual_unread"] = False
+            supabase.table("conversaciones").update({
+                "unread_count": 0,
+                "metadata_json": c_meta
+            }).eq("id", conversacion_id).execute()
 
         # 3. Marcar mensajes no leídos del paciente
         msg_res = supabase.table("mensajes").select("id, metadata_json").eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()

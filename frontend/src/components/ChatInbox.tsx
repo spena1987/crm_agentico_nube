@@ -66,6 +66,12 @@ import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
 import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
+import { 
+  isSameCalendarDay, 
+  formatDateBadge, 
+  formatWhatsAppListDate, 
+  formatFullDateTimeTooltip 
+} from '@/lib/dateUtils'
 
 export interface OperadorAsignado {
   id: string
@@ -105,6 +111,7 @@ interface Conversacion {
   estado_gestion?: 'SIN_ASIGNAR' | 'EN_GESTION' | 'RESUELTO' | string | null
   asignado_a?: OperadorAsignado | null
   ultimo_mensaje: string | null
+  ultimo_mensaje_at?: string | null
   updated_at: string
   unread_count?: number
   metadata_json?: any
@@ -149,18 +156,7 @@ const getInitials = (name?: string): string => {
 }
 
 const formatTimestamp = (dateString?: string): string => {
-  if (!dateString) return ''
-  try {
-    const d = new Date(dateString)
-    const now = new Date()
-    const isToday = d.toDateString() === now.toDateString()
-    if (isToday) {
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    }
-    return d.toLocaleDateString([], { day: '2-digit', month: 'short' })
-  } catch (e) {
-    return ''
-  }
+  return formatWhatsAppListDate(dateString)
 }
 
 const formatMessageSnippet = (content?: string | null): string => {
@@ -414,12 +410,13 @@ export default function ChatInbox() {
             archivada,
             agente_asignado_codigo,
             ultimo_mensaje,
+            ultimo_mensaje_at,
             updated_at,
             unread_count,
             metadata_json,
             pacientes (*)
           `)
-          .order('updated_at', { ascending: false })
+          .order('ultimo_mensaje_at', { ascending: false, nullsFirst: false })
         
         if (!error && data) {
           convs = (data as unknown as Conversacion[]) || []
@@ -488,6 +485,7 @@ export default function ChatInbox() {
         setMensajes(cached)
         setCargandoMensajes(false)
       } else {
+        setMensajes([])
         setCargandoMensajes(true)
       }
 
@@ -525,6 +523,11 @@ export default function ChatInbox() {
         messagesCacheRef.current[convId] = finalMsgs
         if (selectedConvIdRef.current === convId) {
           setMensajes(finalMsgs)
+        }
+      } else {
+        messagesCacheRef.current[convId] = []
+        if (selectedConvIdRef.current === convId) {
+          setMensajes([])
         }
       }
     } catch (err) {
@@ -596,13 +599,24 @@ export default function ChatInbox() {
     setShowScrollBottom(false)
     setUnreadNewCount(0)
 
+    // Limpieza o carga instantánea desde caché para evitar que persistan mensajes de la conversación anterior
+    const cached = messagesCacheRef.current[selectedConvId]
+    setMensajes(cached || [])
+
     // Reset optimista instantáneo del unread_count en la conversación seleccionada
+    const currentConv = conversacionesRef.current.find((c) => c.id === selectedConvId)
+    const hadUnread = Boolean(currentConv && (currentConv.unread_count || 0) > 0)
+
     setConversaciones((prev) =>
       prev.map((c) => (c.id === selectedConvId ? { ...c, unread_count: 0 } : c))
     )
 
     fetchMensajes(selectedConvId)
-    apiFetch(`/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
+
+    // Solo invocar /leer si efectivamente había mensajes no leídos (evita UPDATEs redundantes y reordenamientos)
+    if (hadUnread) {
+      apiFetch(`/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
+    }
 
     const intervalMsgs = setInterval(() => {
       if (!selectedConvId) return
@@ -632,6 +646,11 @@ export default function ChatInbox() {
               }
               return newArr
             })
+          } else if (data && data.length === 0) {
+            if (selectedConvIdRef.current === selectedConvId) {
+              messagesCacheRef.current[selectedConvId] = []
+              setMensajes([])
+            }
           }
         })
     }, 25000)
@@ -705,12 +724,13 @@ export default function ChatInbox() {
                 return {
                   ...conv,
                   ultimo_mensaje: newMsg.contenido,
+                  ultimo_mensaje_at: newMsg.created_at,
                   updated_at: newMsg.created_at,
                   unread_count: isCurrentActive ? 0 : (conv.unread_count || 0) + unreadDelta
                 }
               }
               return conv
-            }).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+            }).sort((a, b) => new Date(b.ultimo_mensaje_at || b.updated_at).getTime() - new Date(a.ultimo_mensaje_at || a.updated_at).getTime())
           )
         }
       )
@@ -746,7 +766,8 @@ export default function ChatInbox() {
                   archivada: updatedConv.archivada,
                   asignado_a_usuario_id: updatedConv.asignado_a_usuario_id,
                   estado_gestion: updatedConv.estado_gestion,
-                  ultimo_mensaje: updatedConv.ultimo_mensaje,
+                  ultimo_mensaje: updatedConv.ultimo_mensaje !== undefined ? updatedConv.ultimo_mensaje : conv.ultimo_mensaje,
+                  ultimo_mensaje_at: updatedConv.ultimo_mensaje_at || conv.ultimo_mensaje_at,
                   updated_at: updatedConv.updated_at,
                   unread_count: isCurrentActive ? 0 : (updatedConv.unread_count !== undefined ? updatedConv.unread_count : conv.unread_count)
                 }
@@ -1738,7 +1759,9 @@ export default function ChatInbox() {
       const bPinned = Boolean(b.metadata_json?.is_pinned)
       if (aPinned && !bPinned) return -1
       if (!aPinned && bPinned) return 1
-      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      const timeA = new Date(a.ultimo_mensaje_at || a.updated_at).getTime() || 0
+      const timeB = new Date(b.ultimo_mensaje_at || b.updated_at).getTime() || 0
+      return timeB - timeA
     })
 
   const isWaConnected = waStatus?.is_logged_in || waStatus?.status === 'CONNECTED'
@@ -2011,7 +2034,7 @@ export default function ChatInbox() {
               const active = conv.id === selectedConvId
               const paciente = getPatient(conv)
               const initials = getInitials(paciente?.nombre)
-              const formattedTime = formatTimestamp(conv.updated_at)
+              const formattedTime = formatWhatsAppListDate(conv.ultimo_mensaje_at || conv.updated_at)
               const snippet = formatMessageSnippet(conv.ultimo_mensaje)
               const isUrgenciaQx = conv.estado_gestion === 'URGENCIA_POSTQUIRURGICA'
               const isDerivado = Boolean(conv.bot_disabled)
@@ -2028,6 +2051,8 @@ export default function ChatInbox() {
                     setConversaciones((prev) =>
                       prev.map((c) => (c.id === conv.id ? { ...c, unread_count: 0 } : c))
                     )
+                    const cached = messagesCacheRef.current[conv.id]
+                    setMensajes(cached || [])
                     setSelectedConvId(conv.id)
                   }}
                   className={`p-3.5 cursor-pointer transition-all flex items-start gap-3 relative border-l-4 group ${
@@ -2447,19 +2472,35 @@ export default function ChatInbox() {
                     <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
                   </div>
                 ) : (
-                  mensajes.map((msg) => {
+                  mensajes.map((msg, index) => {
                     const isOperator = msg.emisor === 'operador'
                     const isBot = msg.emisor === 'bot'
                     const isSystem = msg.metadata_json?.sistema === true
                     const isInternal = Boolean(msg.metadata_json?.is_internal_note || msg.metadata_json?.tipo === 'nota_interna')
                     
+                    const showDateDivider = index === 0 || !isSameCalendarDay(
+                      new Date(msg.created_at), 
+                      new Date(mensajes[index - 1].created_at)
+                    )
+                    const dateBadgeText = formatDateBadge(msg.created_at)
+                    const fullDateTooltip = formatFullDateTimeTooltip(msg.created_at)
+
                     if (isSystem) {
                       return (
-                        <div key={msg.id} className="flex justify-center my-2">
-                          <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs">
-                            {msg.contenido}
+                        <React.Fragment key={msg.id}>
+                          {showDateDivider && dateBadgeText && (
+                            <div className="flex justify-center my-3.5 select-none sticky top-2 z-10 pointer-events-none">
+                              <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
+                                {dateBadgeText}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-center my-2">
+                            <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs" title={fullDateTooltip}>
+                              {msg.contenido}
+                            </div>
                           </div>
-                        </div>
+                        </React.Fragment>
                       )
                     }
 
@@ -2469,38 +2510,46 @@ export default function ChatInbox() {
                       const urgencia = (msg.metadata_json?.urgencia || 'ALTA').toUpperCase()
 
                       return (
-                        <div 
-                          key={msg.id} 
-                          onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                          className="flex justify-center my-2.5 group relative px-2"
-                        >
-                          <div className={`max-w-md w-full rounded-2xl p-3.5 shadow-md text-xs relative ${
-                            isDerivacion 
-                              ? 'bg-[#2a1306] border-2 border-rose-500/80 text-rose-100 ring-2 ring-rose-500/20' 
-                              : 'bg-[#241a06] border border-amber-500/60 text-amber-200'
-                          }`}>
-                            {/* Botón flotante Hover para menú */}
-                            <button
-                              type="button"
-                              onClick={(e) => handleOpenContextMenu(e, msg)}
-                              className="absolute top-2 right-2 p-1 rounded-full bg-black/60 hover:bg-black/90 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
-                              title="Menú de nota interna"
-                            >
-                              <ChevronDown size={14} />
-                            </button>
-
-                            <div className="flex items-center justify-between gap-1 text-[10px] font-extrabold mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
-                              <span className={`flex items-center gap-1.5 ${isDerivacion ? 'text-rose-400 font-black' : 'text-amber-400'}`}>
-                                <Lock size={12} className={isDerivacion ? 'text-rose-400' : 'text-amber-400'} />
-                                {isDerivacion ? `🚨 DERIVACIÓN A ATENCIÓN HUMANA (${urgencia})` : '🔒 NOTA INTERNA (Privado del Equipo Médico)'}
-                              </span>
-                              <span className="text-[9px] opacity-75 font-mono">
-                                {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        <React.Fragment key={msg.id}>
+                          {showDateDivider && dateBadgeText && (
+                            <div className="flex justify-center my-3.5 select-none sticky top-2 z-10 pointer-events-none">
+                              <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
+                                {dateBadgeText}
                               </span>
                             </div>
-                            <WhatsAppFormattedText text={msg.contenido} className={`leading-relaxed ${isDerivacion ? 'text-rose-100 font-medium' : 'text-amber-100'}`} />
+                          )}
+                          <div 
+                            onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                            className="flex justify-center my-2.5 group relative px-2"
+                          >
+                            <div className={`max-w-md w-full rounded-2xl p-3.5 shadow-md text-xs relative ${
+                              isDerivacion 
+                                ? 'bg-[#2a1306] border-2 border-rose-500/80 text-rose-100 ring-2 ring-rose-500/20' 
+                                : 'bg-[#241a06] border border-amber-500/60 text-amber-200'
+                            }`}>
+                              {/* Botón flotante Hover para menú */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleOpenContextMenu(e, msg)}
+                                className="absolute top-2 right-2 p-1 rounded-full bg-black/60 hover:bg-black/90 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                                title="Menú de nota interna"
+                              >
+                                <ChevronDown size={14} />
+                              </button>
+
+                              <div className="flex items-center justify-between gap-1 text-[10px] font-extrabold mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
+                                <span className={`flex items-center gap-1.5 ${isDerivacion ? 'text-rose-400 font-black' : 'text-amber-400'}`}>
+                                  <Lock size={12} className={isDerivacion ? 'text-rose-400' : 'text-amber-400'} />
+                                  {isDerivacion ? `🚨 DERIVACIÓN A ATENCIÓN HUMANA (${urgencia})` : '🔒 NOTA INTERNA (Privado del Equipo Médico)'}
+                                </span>
+                                <span className="text-[9px] opacity-75 font-mono cursor-help" title={fullDateTooltip}>
+                                  {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <WhatsAppFormattedText text={msg.contenido} className={`leading-relaxed ${isDerivacion ? 'text-rose-100 font-medium' : 'text-amber-100'}`} />
+                            </div>
                           </div>
-                        </div>
+                        </React.Fragment>
                       )
                     }
 
@@ -2529,150 +2578,40 @@ export default function ChatInbox() {
                     )
 
                     return (
-                      <div
-                        key={msg.id}
-                        onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                        className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
-                      >
-                        {isSticker ? (
-                          <div className="relative group p-1 max-w-[140px]">
-                            {/* Botón flotante Hover para Menú Contextual */}
-                            <button
-                              type="button"
-                              onClick={(e) => handleOpenContextMenu(e, msg)}
-                              className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-black/80 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
-                              title="Opciones del sticker"
-                            >
-                              <ChevronDown size={14} />
-                            </button>
-
-                            <div className="relative inline-block">
-                              <ChatMediaViewer 
-                                metadata={msg.metadata_json} 
-                                isOperator={isOperator} 
-                                mensajeId={msg.id}
-                              />
-
-                              {/* Micro-badge translúcido en la esquina inferior del sticker */}
-                              <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-white text-[9.5px] flex items-center gap-1 shadow-sm select-none">
-                                <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                {isOperator || isBot ? (
-                                  <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
-                                ) : (
-                                  <DeliveryStatusIcon 
-                                    status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
-                                    isPatientMessage={true} 
-                                  />
-                                )}
-                              </div>
-                            </div>
+                      <React.Fragment key={msg.id}>
+                        {showDateDivider && dateBadgeText && (
+                          <div className="flex justify-center my-3.5 select-none sticky top-2 z-10 pointer-events-none">
+                            <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
+                              {dateBadgeText}
+                            </span>
                           </div>
-                        ) : (
-                          <div
-                            className={`max-w-[80%] sm:max-w-[70%] rounded-xl px-3 py-1.5 shadow-sm text-[13px] leading-snug relative ${
-                              isFailed
-                                ? 'bg-rose-950/90 border-2 border-rose-500 text-rose-100 rounded-tr-none shadow-rose-950/50 ring-1 ring-rose-500/40'
-                                : isOperator
-                                ? isTemplate
-                                  ? 'bg-[#182642] border border-blue-400/30 text-white rounded-tr-none shadow-blue-950/40'
-                                  : 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
-                                : isBot
-                                ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
-                                : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
-                            }`}
-                          >
-                            {/* Botón flotante Hover para Menú Contextual (Estilo WhatsApp Web) */}
-                            <button
-                              type="button"
-                              onClick={(e) => handleOpenContextMenu(e, msg)}
-                              className="absolute top-1 right-1.5 p-0.5 rounded-full bg-black/40 hover:bg-black/70 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
-                              title="Opciones del mensaje"
-                            >
-                              <ChevronDown size={13} />
-                            </button>
+                        )}
+                        <div
+                          onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                          className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
+                        >
+                          {isSticker ? (
+                            <div className="relative group p-1 max-w-[140px]">
+                              {/* Botón flotante Hover para Menú Contextual */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleOpenContextMenu(e, msg)}
+                                className="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-black/80 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                                title="Opciones del sticker"
+                              >
+                                <ChevronDown size={14} />
+                              </button>
 
-                            {/* Renderizado de Mensaje Citado (Reply preview dentro de la burbuja) */}
-                            {msg.metadata_json?.quoted_message && (
-                              <div className="mb-1.5 p-1.5 rounded-lg bg-black/30 border-l-4 border-blue-400 text-[11px] select-none flex flex-col gap-0.5">
-                                <span className="font-bold text-blue-300 text-[9.5px]">
-                                  {msg.metadata_json.quoted_message.nombre || (msg.metadata_json.quoted_message.emisor === 'paciente' ? (currentPaciente?.nombre || 'Paciente') : 'Operador Humano')}
-                                </span>
-                                <span className="text-slate-200 line-clamp-2 italic opacity-90">
-                                  {msg.metadata_json.quoted_message.contenido}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* Badge del emisor: Nombre del paciente registrado o Tú (Operador) / Bot */}
-                            <div className="flex items-center gap-1 text-[11px] font-bold mb-0.5 tracking-tight pr-5">
-                              {isOperator ? (
-                                <span className="text-blue-200">Tú (Operador)</span>
-                              ) : isBot ? (
-                                <span className="text-teal-400 flex items-center gap-1 font-semibold">
-                                  <Bot size={11} /> Bot Gemini
-                                </span>
-                              ) : (
-                                <span className="text-emerald-400 font-bold">
-                                  {currentPaciente?.nombre || 'Paciente'}
-                                </span>
-                              )}
-                            </div>
-                            
-                            {/* Visualizador Multimedia (si tiene imagen, video, documento, audio) */}
-                            {hasMedia && (
-                              <div className="relative mb-1">
+                              <div className="relative inline-block">
                                 <ChatMediaViewer 
                                   metadata={msg.metadata_json} 
                                   isOperator={isOperator} 
                                   mensajeId={msg.id}
-                                  onTranscribeSuccess={(mId, transcript) => {
-                                    setMensajes((prev) =>
-                                      prev.map((m) =>
-                                        m.id === mId
-                                          ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
-                                          : m
-                                      )
-                                    )
-                                  }}
                                 />
-                                {/* Si es media puro sin texto adicional, colocar badge flotante sobre la media */}
-                                {!hasText && (
-                                  <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-white text-[9.5px] flex items-center gap-1 shadow-sm select-none">
-                                    <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                    {isOperator || isBot ? (
-                                      <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
-                                    ) : (
-                                      <DeliveryStatusIcon 
-                                        status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
-                                        isPatientMessage={true} 
-                                      />
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
 
-                            {/* Contenido textual con Hora y Tildes en el MISMO renglón (WhatsApp Web Nativo) */}
-                            {hasText && (
-                              <div className="text-[13px] leading-snug break-words">
-                                {isButton ? (
-                                  <div className="inline-flex items-center gap-1.5 py-1 px-2.5 my-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-medium text-xs shadow-xs select-none">
-                                    <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">Botón Clickeado</span>
-                                    <span>{msg.contenido === '[BUTTON] Mensaje recibido' ? 'Recibir Presupuesto PDF' : msg.contenido.replace(/^🔘\s*/, '')}</span>
-                                  </div>
-                                ) : isTemplate ? (
-                                  <div className="space-y-1.5 pt-0.5">
-                                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded w-fit select-none">
-                                      <FileText size={11} className="text-amber-400" />
-                                      <span>PLANTILLA OFICIAL META</span>
-                                    </div>
-                                    <WhatsAppFormattedText text={msg.contenido} className="block whitespace-pre-wrap leading-relaxed" />
-                                  </div>
-                                ) : (
-                                  <WhatsAppFormattedText text={msg.contenido} className="inline" />
-                                )}
-                                <span className="inline-flex items-center gap-1 float-right ml-2.5 mt-0.5 select-none align-bottom text-[10px] opacity-85 leading-none">
-                                  <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                {/* Micro-badge translúcido en la esquina inferior del sticker */}
+                                <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-white text-[9.5px] flex items-center gap-1 shadow-sm select-none">
+                                  <span title={fullDateTooltip} className="cursor-help">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                   {isOperator || isBot ? (
                                     <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
                                   ) : (
@@ -2681,53 +2620,171 @@ export default function ChatInbox() {
                                       isPatientMessage={true} 
                                     />
                                   )}
-                                </span>
+                                </div>
                               </div>
-                            )}
+                            </div>
+                          ) : (
+                            <div
+                              className={`max-w-[80%] sm:max-w-[70%] rounded-xl px-3 py-1.5 shadow-sm text-[13px] leading-snug relative ${
+                                isFailed
+                                  ? 'bg-rose-950/90 border-2 border-rose-500 text-rose-100 rounded-tr-none shadow-rose-950/50 ring-1 ring-rose-500/40'
+                                  : isOperator
+                                  ? isTemplate
+                                    ? 'bg-[#182642] border border-blue-400/30 text-white rounded-tr-none shadow-blue-950/40'
+                                    : 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                                  : isBot
+                                  ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
+                                  : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
+                              }`}
+                            >
+                              {/* Botón flotante Hover para Menú Contextual (Estilo WhatsApp Web) */}
+                              <button
+                                type="button"
+                                onClick={(e) => handleOpenContextMenu(e, msg)}
+                                className="absolute top-1 right-1.5 p-0.5 rounded-full bg-black/40 hover:bg-black/70 text-slate-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                                title="Opciones del mensaje"
+                              >
+                                <ChevronDown size={13} />
+                              </button>
 
-                            {/* Alerta interactiva ante fallo de entrega en WhatsApp */}
-                            {isFailed && (
-                              <div className="mt-2 pt-2 border-t border-rose-800/70 flex flex-col gap-1.5 text-xs select-none">
-                                <div className="flex items-center gap-1.5 text-rose-300 font-bold text-[11px]">
-                                  <AlertCircle size={13} className="text-rose-400 shrink-0" />
-                                  <span>No entregado: {msg.metadata_json?.error_message || 'Error de entrega en Meta'}</span>
+                              {/* Renderizado de Mensaje Citado (Reply preview dentro de la burbuja) */}
+                              {msg.metadata_json?.quoted_message && (
+                                <div className="mb-1.5 p-1.5 rounded-lg bg-black/30 border-l-4 border-blue-400 text-[11px] select-none flex flex-col gap-0.5">
+                                  <span className="font-bold text-blue-300 text-[9.5px]">
+                                    {msg.metadata_json.quoted_message.nombre || (msg.metadata_json.quoted_message.emisor === 'paciente' ? (currentPaciente?.nombre || 'Paciente') : 'Operador Humano')}
+                                  </span>
+                                  <span className="text-slate-200 line-clamp-2 italic opacity-90">
+                                    {msg.metadata_json.quoted_message.contenido}
+                                  </span>
                                 </div>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  {isWindowClosedError ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowTemplateModal(true)}
-                                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10.5px] font-black rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
-                                    >
-                                      <FileText size={12} />
-                                      <span>Enviar Plantilla Oficial de Meta</span>
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setNuevoMensaje(msg.contenido)
-                                        setMensajes((prev) => prev.filter((m) => m.id !== msg.id))
-                                      }}
-                                      className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-bold rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
-                                    >
-                                      <RefreshCw size={11} />
-                                      <span>Reintentar</span>
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => setMensajes((prev) => prev.filter((m) => m.id !== msg.id))}
-                                    className="px-2 py-0.5 text-slate-400 hover:text-white text-[10.5px] transition cursor-pointer"
-                                  >
-                                    Descartar
-                                  </button>
-                                </div>
+                              )}
+
+                              {/* Badge del emisor: Nombre del paciente registrado o Tú (Operador) / Bot */}
+                              <div className="flex items-center gap-1 text-[11px] font-bold mb-0.5 tracking-tight pr-5">
+                                {isOperator ? (
+                                  <span className="text-blue-200">Tú (Operador)</span>
+                                ) : isBot ? (
+                                  <span className="text-teal-400 flex items-center gap-1 font-semibold">
+                                    <Bot size={11} /> Bot Gemini
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-400 font-bold">
+                                    {currentPaciente?.nombre || 'Paciente'}
+                                  </span>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+                              
+                              {/* Visualizador Multimedia (si tiene imagen, video, documento, audio) */}
+                              {hasMedia && (
+                                <div className="relative mb-1">
+                                  <ChatMediaViewer 
+                                    metadata={msg.metadata_json} 
+                                    isOperator={isOperator} 
+                                    mensajeId={msg.id}
+                                    onTranscribeSuccess={(mId, transcript) => {
+                                      setMensajes((prev) =>
+                                        prev.map((m) =>
+                                          m.id === mId
+                                            ? { ...m, metadata_json: { ...(m.metadata_json || {}), transcripcion: transcript } }
+                                            : m
+                                        )
+                                      )
+                                    }}
+                                  />
+                                  {/* Si es media puro sin texto adicional, colocar badge flotante sobre la media */}
+                                  {!hasText && (
+                                    <div className="absolute bottom-1.5 right-1.5 z-10 px-1.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-white text-[9.5px] flex items-center gap-1 shadow-sm select-none">
+                                      <span title={fullDateTooltip} className="cursor-help">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                      {isOperator || isBot ? (
+                                        <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                                      ) : (
+                                        <DeliveryStatusIcon 
+                                          status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                          isPatientMessage={true} 
+                                        />
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Contenido textual con Hora y Tildes en el MISMO renglón (WhatsApp Web Nativo) */}
+                              {hasText && (
+                                <div className="text-[13px] leading-snug break-words">
+                                  {isButton ? (
+                                    <div className="inline-flex items-center gap-1.5 py-1 px-2.5 my-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-medium text-xs shadow-xs select-none">
+                                      <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">Botón Clickeado</span>
+                                      <span>{msg.contenido === '[BUTTON] Mensaje recibido' ? 'Recibir Presupuesto PDF' : msg.contenido.replace(/^🔘\s*/, '')}</span>
+                                    </div>
+                                  ) : isTemplate ? (
+                                    <div className="space-y-1.5 pt-0.5">
+                                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded w-fit select-none">
+                                        <FileText size={11} className="text-amber-400" />
+                                        <span>PLANTILLA OFICIAL META</span>
+                                      </div>
+                                      <WhatsAppFormattedText text={msg.contenido} className="block whitespace-pre-wrap leading-relaxed" />
+                                    </div>
+                                  ) : (
+                                    <WhatsAppFormattedText text={msg.contenido} className="inline" />
+                                  )}
+                                  <span className="inline-flex items-center gap-1 float-right ml-2.5 mt-0.5 select-none align-bottom text-[10px] opacity-85 leading-none">
+                                    <span title={fullDateTooltip} className="cursor-help">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                    {isOperator || isBot ? (
+                                      <DeliveryStatusIcon status={msg.metadata_json?.delivery_status || 'enviado'} />
+                                    ) : (
+                                      <DeliveryStatusIcon 
+                                        status={msg.metadata_json?.leido_por_operador ? 'leido' : 'entregado'} 
+                                        isPatientMessage={true} 
+                                      />
+                                    )}
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Alerta interactiva ante fallo de entrega en WhatsApp */}
+                              {isFailed && (
+                                <div className="mt-2 pt-2 border-t border-rose-800/70 flex flex-col gap-1.5 text-xs select-none">
+                                  <div className="flex items-center gap-1.5 text-rose-300 font-bold text-[11px]">
+                                    <AlertCircle size={13} className="text-rose-400 shrink-0" />
+                                    <span>No entregado: {msg.metadata_json?.error_message || 'Error de entrega en Meta'}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    {isWindowClosedError ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setShowTemplateModal(true)}
+                                        className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10.5px] font-black rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <FileText size={12} />
+                                        <span>Enviar Plantilla Oficial de Meta</span>
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setNuevoMensaje(msg.contenido)
+                                          setMensajes((prev) => prev.filter((m) => m.id !== msg.id))
+                                        }}
+                                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10.5px] font-bold rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <RefreshCw size={11} />
+                                        <span>Reintentar</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => setMensajes((prev) => prev.filter((m) => m.id !== msg.id))}
+                                      className="px-2 py-0.5 text-slate-400 hover:text-white text-[10.5px] transition cursor-pointer"
+                                    >
+                                      Descartar
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </React.Fragment>
                     )
                   })
                 )}

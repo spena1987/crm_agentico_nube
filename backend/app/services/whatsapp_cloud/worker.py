@@ -498,9 +498,11 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                             bot_disabled = True
                             logger.info(f"[Bot Handoff] Operador intervino recientemente ({time.time() - float(ultimo_humano):.0f}s atrás). Bot pausado para conv {crm_conv_id}.")
 
+                    inbound_now = datetime.now(timezone.utc).isoformat()
                     upd_payload = {
                         "ultimo_mensaje": text_content,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                        "ultimo_mensaje_at": inbound_now,
+                        "updated_at": inbound_now,
                         "unread_count": current_unread + 1
                     }
 
@@ -557,10 +559,12 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                     supabase.table("conversaciones").update(upd_payload).eq("id", crm_conv_id).execute()
                 else:
+                    inbound_now = datetime.now(timezone.utc).isoformat()
                     new_crm_conv = supabase.table("conversaciones").insert({
                         "paciente_id": paciente_id,
                         "bot_disabled": False,
                         "ultimo_mensaje": text_content,
+                        "ultimo_mensaje_at": inbound_now,
                         "unread_count": 1
                     }).execute()
                     if new_crm_conv.data:
