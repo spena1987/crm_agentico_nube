@@ -32,6 +32,8 @@ interface ItemPresupuestoForm {
   precio_unitario: number
   subtotal: number
   moneda: 'ARS' | 'USD'
+  en_convenio?: boolean
+  precio_original?: number
 }
 
 interface PracticaNomenclador {
@@ -246,14 +248,17 @@ export default function ModalCrearPresupuestoPaciente({
             const mon = (it.moneda || it.servicios_precios?.moneda || 'ARS') as 'ARS' | 'USD'
             const pu = Number(it.precio_unitario || 0)
             const cant = Number(it.cantidad || 1)
+            const enConv = Boolean(it.en_convenio)
             itemsCargados.push({
               servicio_id: it.servicio_id || it.servicios_precios?.id,
               codigo: cod,
               nombre: nom,
               cantidad: cant,
-              precio_unitario: pu,
-              subtotal: Number(it.subtotal || (pu * cant)),
-              moneda: mon
+              precio_unitario: enConv ? 0 : pu,
+              subtotal: enConv ? 0 : Number(it.subtotal || (pu * cant)),
+              moneda: mon,
+              en_convenio: enConv,
+              precio_original: pu > 0 ? pu : Number(it.servicios_precios?.precio || 0)
             })
           })
         }
@@ -486,9 +491,32 @@ export default function ModalCrearPresupuestoPaciente({
     setItems((prev) => prev.filter((_, i) => i !== index))
   }
 
-  // Totales independientes por moneda
-  const totalARS = items.filter((it) => it.moneda === 'ARS').reduce((acc, it) => acc + (it.subtotal || 0), 0)
-  const totalUSD = items.filter((it) => it.moneda === 'USD').reduce((acc, it) => acc + (it.subtotal || 0), 0)
+  // Alternar si una práctica está cubierta en convenio por la Obra Social
+  const handleToggleConvenio = (index: number) => {
+    setItems((prev) => {
+      const copy = [...prev]
+      const target = { ...copy[index] }
+      const nuevoEstado = !target.en_convenio
+      target.en_convenio = nuevoEstado
+      if (nuevoEstado) {
+        if (!target.precio_original && target.precio_unitario > 0) {
+          target.precio_original = target.precio_unitario
+        }
+        target.precio_unitario = 0
+        target.subtotal = 0
+      } else {
+        const restaurado = target.precio_original || 0
+        target.precio_unitario = restaurado
+        target.subtotal = restaurado * (target.cantidad || 1)
+      }
+      copy[index] = target
+      return copy
+    })
+  }
+
+  // Totales independientes por moneda (los ítems en convenio no suman importe a abonar)
+  const totalARS = items.filter((it) => it.moneda === 'ARS' && !it.en_convenio).reduce((acc, it) => acc + (it.subtotal || 0), 0)
+  const totalUSD = items.filter((it) => it.moneda === 'USD' && !it.en_convenio).reduce((acc, it) => acc + (it.subtotal || 0), 0)
 
   // Emitir Presupuesto y Generar PDF
   const handleEmitir = async (e: React.FormEvent) => {
@@ -511,8 +539,9 @@ export default function ModalCrearPresupuestoPaciente({
         codigo: it.codigo || null,
         nombre: it.nombre,
         cantidad: it.cantidad,
-        precio_unitario: it.precio_unitario,
-        moneda: it.moneda || 'ARS'
+        precio_unitario: it.en_convenio ? 0 : it.precio_unitario,
+        moneda: it.moneda || 'ARS',
+        en_convenio: !!it.en_convenio
       }))
     }
 
@@ -968,8 +997,9 @@ export default function ModalCrearPresupuestoPaciente({
               <div className="border border-[var(--border)] rounded-xl overflow-hidden divide-y divide-[var(--border)]">
                 {/* Header de columnas */}
                 <div className="bg-neutral-950/80 px-3 py-2 text-[10px] font-bold text-gray-400 grid grid-cols-12 gap-2 uppercase">
-                  <div className="col-span-5">Descripción de la Prestación / Concepto</div>
-                  <div className="col-span-2 text-center">Moneda</div>
+                  <div className="col-span-4">Descripción de la Prestación / Concepto</div>
+                  <div className="col-span-2 text-center">Convenio OS</div>
+                  <div className="col-span-1 text-center">Moneda</div>
                   <div className="col-span-1 text-center">Cant.</div>
                   <div className="col-span-2 text-right">Precio Unit.</div>
                   <div className="col-span-2 text-right">Subtotal</div>
@@ -978,7 +1008,7 @@ export default function ModalCrearPresupuestoPaciente({
                 {/* Filas */}
                 {items.map((item, idx) => (
                   <div key={idx} className="p-2.5 bg-neutral-900/60 grid grid-cols-12 gap-2 items-center text-xs">
-                    <div className="col-span-5 flex items-center gap-2">
+                    <div className="col-span-4 flex items-center gap-2">
                       <button
                         type="button"
                         onClick={() => handleEliminarItem(idx)}
@@ -995,19 +1025,48 @@ export default function ModalCrearPresupuestoPaciente({
                       />
                     </div>
 
-                    {/* Selector de Moneda por Fila */}
+                    {/* Checkbox / Botón de Convenio Obra Social */}
                     <div className="col-span-2 flex items-center justify-center">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleConvenio(idx)}
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold transition-all border flex items-center gap-1.5 cursor-pointer ${
+                          item.en_convenio
+                            ? 'bg-emerald-950 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-900/40'
+                            : 'bg-neutral-950 text-gray-400 border-neutral-800 hover:border-gray-700 hover:text-gray-300'
+                        }`}
+                        title={item.en_convenio ? 'Prestación cubierta al 100% por Obra Social (clic para desmarcar)' : 'Marcar si la prestación está cubierta por convenio de Obra Social'}
+                      >
+                        {item.en_convenio ? (
+                          <>
+                            <CheckSquare size={13} className="text-emerald-400 shrink-0" />
+                            <span>En convenio</span>
+                          </>
+                        ) : (
+                          <>
+                            <Square size={13} className="text-gray-500 shrink-0" />
+                            <span>Particular</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Selector de Moneda por Fila */}
+                    <div className="col-span-1 flex items-center justify-center">
                       <select
                         value={item.moneda || 'ARS'}
+                        disabled={item.en_convenio}
                         onChange={(e) => handleUpdateItem(idx, 'moneda', e.target.value)}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-extrabold border outline-none ${
-                          item.moneda === 'USD'
+                        className={`w-full py-1 text-[10px] font-extrabold rounded-lg border outline-none text-center ${
+                          item.en_convenio
+                            ? 'bg-neutral-900 border-neutral-800 text-gray-500 cursor-not-allowed'
+                            : item.moneda === 'USD'
                             ? 'bg-amber-950/60 border-amber-600 text-amber-300'
                             : 'bg-emerald-950/60 border-emerald-600 text-emerald-300'
                         }`}
                       >
-                        <option value="ARS">🇦🇷 ARS ($)</option>
-                        <option value="USD">🇺🇸 USD ($)</option>
+                        <option value="ARS">ARS</option>
+                        <option value="USD">USD</option>
                       </select>
                     </div>
 
@@ -1021,22 +1080,36 @@ export default function ModalCrearPresupuestoPaciente({
                       />
                     </div>
 
+                    {/* Precio Unitario */}
                     <div className="col-span-2">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.precio_unitario}
-                        onChange={(e) => handleUpdateItem(idx, 'precio_unitario', e.target.value)}
-                        className="w-full px-2 py-1 bg-neutral-950 border border-[var(--border)] rounded-lg text-right font-mono text-xs text-white focus:outline-none focus:border-blue-500"
-                      />
+                      {item.en_convenio ? (
+                        <div className="w-full py-1 text-center font-bold text-[10.5px] text-emerald-400 bg-emerald-950/40 border border-emerald-500/20 rounded-lg">
+                          En convenio
+                        </div>
+                      ) : (
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.precio_unitario}
+                          onChange={(e) => handleUpdateItem(idx, 'precio_unitario', e.target.value)}
+                          className="w-full px-2 py-1 bg-neutral-950 border border-[var(--border)] rounded-lg text-right font-mono text-xs text-white focus:outline-none focus:border-blue-500"
+                        />
+                      )}
                     </div>
 
+                    {/* Subtotal */}
                     <div className="col-span-2 text-right font-mono font-bold">
-                      <span className={item.moneda === 'USD' ? 'text-amber-400' : 'text-emerald-400'}>
-                        {item.moneda === 'USD' ? 'USD ' : '$ '}
-                        {item.subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
+                      {item.en_convenio ? (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 text-[10.5px] font-extrabold inline-block shadow-sm">
+                          En convenio
+                        </span>
+                      ) : (
+                        <span className={item.moneda === 'USD' ? 'text-amber-400' : 'text-emerald-400'}>
+                          {item.moneda === 'USD' ? 'USD ' : '$ '}
+                          {item.subtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))}

@@ -1838,10 +1838,16 @@ export default function CasoFormularioActivo({
                                           </span>
                                         )}
                                       </div>
-                                      <span className="text-gray-200 font-mono text-[10.5px] font-semibold shrink-0">
-                                        {monedaItem === 'USD' ? 'USD ' : '$ '}
-                                        {subtotalNum.toLocaleString('es-AR')}
-                                      </span>
+                                      {it.en_convenio ? (
+                                        <span className="text-emerald-400 font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-500/30 shrink-0">
+                                          En convenio
+                                        </span>
+                                      ) : (
+                                        <span className="text-gray-200 font-mono text-[10.5px] font-semibold shrink-0">
+                                          {monedaItem === 'USD' ? 'USD ' : '$ '}
+                                          {subtotalNum.toLocaleString('es-AR')}
+                                        </span>
+                                      )}
                                     </div>
                                   )
                                 })}

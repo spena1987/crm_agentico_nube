@@ -3381,15 +3381,17 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         items_para_pdf = []
         
         for idx, item in enumerate(items_in):
+            en_conv = bool(item.get("en_convenio", False))
             cant = int(item.get("cantidad", 1))
-            pu = float(item.get("precio_unitario", 0.0))
-            sub = cant * pu
+            pu = 0.0 if en_conv else float(item.get("precio_unitario", 0.0))
+            sub = 0.0 if en_conv else (cant * pu)
             item_moneda = str(item.get("moneda") or moneda).upper()
             
-            if item_moneda == "USD":
-                total_usd += sub
-            else:
-                total_ars += sub
+            if not en_conv:
+                if item_moneda == "USD":
+                    total_usd += sub
+                else:
+                    total_ars += sub
             
             nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
             codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or f"PRACT-{idx+1}").strip().upper()
@@ -3414,7 +3416,8 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
-                "moneda": item_moneda
+                "moneda": item_moneda,
+                "en_convenio": en_conv
             })
             
             items_para_pdf.append({
@@ -3424,7 +3427,8 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
-                "moneda": item_moneda
+                "moneda": item_moneda,
+                "en_convenio": en_conv
             })
             
         presupuesto_id = str(uuid.uuid4())
@@ -3552,15 +3556,17 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
         items_para_pdf = []
 
         for idx, item in enumerate(items_in):
+            en_conv = bool(item.get("en_convenio", False))
             cant = int(item.get("cantidad", 1))
-            pu = float(item.get("precio_unitario", 0.0))
-            sub = cant * pu
+            pu = 0.0 if en_conv else float(item.get("precio_unitario", 0.0))
+            sub = 0.0 if en_conv else (cant * pu)
             item_moneda = str(item.get("moneda") or moneda_base).upper()
 
-            if item_moneda == "USD":
-                total_usd += sub
-            else:
-                total_ars += sub
+            if not en_conv:
+                if item_moneda == "USD":
+                    total_usd += sub
+                else:
+                    total_ars += sub
 
             nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
             codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or f"PRACT-{idx+1}").strip().upper()
@@ -3584,7 +3590,8 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
-                "moneda": item_moneda
+                "moneda": item_moneda,
+                "en_convenio": en_conv
             })
 
             items_para_pdf.append({
@@ -3594,7 +3601,8 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
-                "moneda": item_moneda
+                "moneda": item_moneda,
+                "en_convenio": en_conv
             })
 
         total_escalar = total_ars if total_ars > 0 else total_usd
@@ -3701,8 +3709,12 @@ def generar_mensaje_ameno_presupuesto(
         nom = it.get("nombre") or it.get("nombre_prestacion") or "Prestación Médica"
         cod = it.get("codigo") or it.get("codigo_servicio") or ""
         mon = str(it.get("moneda") or "ARS").upper()
-        sub = float(it.get("subtotal") or 0.0)
-        sub_str = f"USD {sub:,.2f}" if mon == "USD" else f"${sub:,.2f}"
+        en_conv = bool(it.get("en_convenio", False))
+        if en_conv:
+            sub_str = "✅ *En convenio* (Cubierto por Cobertura Médica)"
+        else:
+            sub_str = f"USD {sub:,.2f}" if mon == "USD" else f"${sub:,.2f}"
+
         if cod:
             lineas_items.append(f"• *[{cod}]* {nom}: {sub_str}")
         else:

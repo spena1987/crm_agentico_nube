@@ -603,13 +603,26 @@ def generar_pdf_presupuesto(
         p_unit = float(item.get("precio_unitario", 0.0))
         subtotal = float(item.get("subtotal") or (p_unit * cantidad))
         
-        if moneda_item == "USD":
-            total_usd += subtotal
+        en_conv = bool(item.get("en_convenio", False))
+        if en_conv:
+            p_unit = 0.0
+            subtotal = 0.0
+            p_unit_str = "En convenio"
+            subtotal_str = "En convenio"
+            style_num_cell = ParagraphStyle('NumCellConv', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=1, textColor=colors.HexColor('#059669'))
+            style_num_bold = ParagraphStyle('NumBoldConv', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=7.5, leading=9.5, alignment=1, textColor=colors.HexColor('#059669'))
+            moneda_display = Paragraph("<b>OS</b>", style_moneda_tag)
         else:
-            total_ars += subtotal
-            
-        p_unit_str = formatear_monto_moneda(p_unit, moneda_item)
-        subtotal_str = formatear_monto_moneda(subtotal, moneda_item)
+            if moneda_item == "USD":
+                total_usd += subtotal
+            else:
+                total_ars += subtotal
+                
+            p_unit_str = formatear_monto_moneda(p_unit, moneda_item)
+            subtotal_str = formatear_monto_moneda(subtotal, moneda_item)
+            style_num_cell = ParagraphStyle('NumCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#334155'))
+            style_num_bold = ParagraphStyle('NumBoldCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#0F172A'))
+            moneda_display = Paragraph(f"<b>{moneda_item}</b>", style_moneda_tag)
         
         # Tipografía auto-fit para código (evita wrapping de códigos de 9-12 chars como ANESTESIA1)
         if len(codigo) > 7:
@@ -623,14 +636,12 @@ def generar_pdf_presupuesto(
         else:
             style_item_nom = ParagraphStyle('ItemNomN', parent=styles['Normal'], fontName='Helvetica', fontSize=8.2, leading=10.5, textColor=colors.HexColor('#334155'))
             
-        style_num_cell = ParagraphStyle('NumCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#334155'))
-        style_num_bold = ParagraphStyle('NumBoldCell', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.0, leading=10, alignment=2, textColor=colors.HexColor('#0F172A'))
         style_cant_cell = ParagraphStyle('CantCell', parent=styles['Normal'], fontName='Helvetica', fontSize=8.0, leading=10, alignment=1, textColor=colors.HexColor('#334155'))
 
         table_data.append([
             Paragraph(f"<b>{codigo}</b>", style_item_cod),
             Paragraph(nombre, style_item_nom),
-            Paragraph(f"<b>{moneda_item}</b>", style_moneda_tag),
+            moneda_display,
             Paragraph(p_unit_str, style_num_cell),
             Paragraph(str(cantidad), style_cant_cell),
             Paragraph(f"<b>{subtotal_str}</b>", style_num_bold)
