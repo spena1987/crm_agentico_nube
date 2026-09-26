@@ -74,3 +74,19 @@ def test_authenticated_request_with_valid_jwt_passes():
     )
     # Debe ser 200 OK
     assert response.status_code == 200
+
+def test_public_presupuesto_pdf_accessible_without_auth():
+    """Verifica que las rutas de streaming de PDFs de presupuestos no exijan token Bearer (HTTP 401)."""
+    # Prueba con ruta estándar /api/presupuestos/{id}/pdf
+    response1 = client.get("/api/presupuestos/bab55874-bc1d-4317-84e6-4e09f3a5de06/pdf")
+    assert response1.status_code != 401
+
+    # Prueba con ruta alternativa de WhatsApp Cloud /api/presupuestos/pdf/{id}
+    response2 = client.get("/api/presupuestos/pdf/bab55874-bc1d-4317-84e6-4e09f3a5de06")
+    assert response2.status_code != 401
+
+def test_protected_presupuesto_mutations_still_require_auth():
+    """Verifica que las mutaciones de presupuestos (POST/PUT/DELETE) continúen exigiendo token Bearer."""
+    response = client.post("/api/presupuestos/crear-rapido", json={})
+    assert response.status_code == 401
+    assert "no autorizado" in response.json().get("detail", "").lower()

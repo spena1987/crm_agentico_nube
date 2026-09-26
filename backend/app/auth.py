@@ -191,6 +191,13 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
         if path.startswith("/api/geclisa/archivos/") and ("/ver" in path or "/descargar" in path):
             return await call_next(request)
 
+        # Rutas de visualización y streaming directo de PDFs de presupuestos y documentos clínicos (Capability URLs por UUID para navegador, iframes y WhatsApp)
+        if method == "GET":
+            if (path.startswith("/api/presupuestos/") and path.endswith("/pdf")) or path.startswith("/api/presupuestos/pdf/"):
+                return await call_next(request)
+            if path.startswith("/api/turnos-quirofano/") and (path.endswith("/consentimiento-pdf") or path.endswith("/parte-quirurgico")):
+                return await call_next(request)
+
         # Si no empieza con /api/, permitir libremente (ej: root / healthchecks)
         if not path.startswith("/api/"):
             return await call_next(request)
