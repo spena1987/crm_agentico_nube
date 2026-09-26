@@ -31,7 +31,9 @@ import {
   Tag,
   Eye,
   X,
-  Info
+  Info,
+  Printer,
+  FileSignature
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -239,6 +241,15 @@ export default function CasoFormularioActivo({
   const [situacionPaciente, setSituacionPaciente] = useState(caso.situacion_paciente || '')
   const [avisoValidacion, setAvisoValidacion] = useState<string | null>(null)
 
+  // Consentimiento Informado (Dual: WhatsApp Digital & Impresión en Papel)
+  const [consentimiento, setConsentimiento] = useState<any>(null)
+  const [cargandoConsentimiento, setCargandoConsentimiento] = useState(false)
+  const [enviandoConsentimientoWa, setEnviandoConsentimientoWa] = useState(false)
+  const [mostrandoModalFirmaPapel, setMostrandoModalFirmaPapel] = useState(false)
+  const [obsFirmaPapel, setObsFirmaPapel] = useState('')
+  const [guardandoFirmaPapel, setGuardandoFirmaPapel] = useState(false)
+  const [feedbackConsentimiento, setFeedbackConsentimiento] = useState<{ tipo: 'ok' | 'err'; mensaje: string } | null>(null)
+
   // Estados interactivos para Próxima Acción Programada
   const [mostrandoCompletarAccion, setMostrandoCompletarAccion] = useState(false)
   const [conclusionAccion, setConclusionAccion] = useState('')
@@ -313,6 +324,93 @@ export default function CasoFormularioActivo({
     } finally {
       setCompletandoAccion(false)
     }
+  }
+
+  // Handlers para Consentimiento Informado Quirúrgico
+  const fetchConsentimientoCaso = async () => {
+    if (!caso?.id) return
+    try {
+      setCargandoConsentimiento(true)
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/consentimiento`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data?.ok && data.consentimiento) {
+          setConsentimiento(data.consentimiento)
+        }
+      }
+    } catch (err: any) {
+      console.warn('No se pudo cargar consentimiento:', err?.message)
+    } finally {
+      setCargandoConsentimiento(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchConsentimientoCaso()
+  }, [caso?.id])
+
+  const handleEnviarConsentimientoWA = async () => {
+    if (!caso?.id) return
+    try {
+      setEnviandoConsentimientoWa(true)
+      setFeedbackConsentimiento(null)
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/enviar-consentimiento-wa`, {
+        method: 'POST'
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data?.ok) {
+        setFeedbackConsentimiento({ tipo: 'ok', mensaje: 'Consentimiento enviado por WhatsApp con éxito.' })
+        await fetchConsentimientoCaso()
+      } else {
+        setFeedbackConsentimiento({ tipo: 'err', mensaje: data?.detail || 'Error al enviar por WhatsApp.' })
+      }
+    } catch (err: any) {
+      setFeedbackConsentimiento({ tipo: 'err', mensaje: err?.message || 'Error de conexión al enviar WhatsApp.' })
+    } finally {
+      setEnviandoConsentimientoWa(false)
+    }
+  }
+
+  const handleRegistrarFirmaPapel = async () => {
+    if (!caso?.id) return
+    try {
+      setGuardandoFirmaPapel(true)
+      setFeedbackConsentimiento(null)
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/registrar-firma-papel`, {
+        method: 'POST',
+        body: JSON.stringify({ observaciones: obsFirmaPapel.trim() })
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data?.ok) {
+        setFeedbackConsentimiento({ tipo: 'ok', mensaje: 'Firma en papel registrada y sincronizada con Quirófano.' })
+        setMostrandoModalFirmaPapel(false)
+        setObsFirmaPapel('')
+        setChecklist((prev: any) => ({
+          ...(prev || {}),
+          consentimiento_firmado: true,
+          _consentimiento_modo: 'papel'
+        }))
+        await fetchConsentimientoCaso()
+      } else {
+        setFeedbackConsentimiento({ tipo: 'err', mensaje: data?.detail || 'Error al registrar firma en papel.' })
+      }
+    } catch (err: any) {
+      setFeedbackConsentimiento({ tipo: 'err', mensaje: err?.message || 'Error de conexión al registrar firma.' })
+    } finally {
+      setGuardandoFirmaPapel(false)
+    }
+  }
+
+  const handleImprimirConsentimientoPapel = () => {
+    const backendUrl = BACKEND_URL || ''
+    const url = `${backendUrl}/api/asesorias-quirurgicas/${caso.id}/consentimiento-pdf?modo=papel`
+    window.open(url, '_blank')
+  }
+
+  const handleVerConsentimientoFirmado = () => {
+    const backendUrl = BACKEND_URL || ''
+    const url = `${backendUrl}/api/asesorias-quirurgicas/${caso.id}/consentimiento-pdf`
+    window.open(url, '_blank')
   }
 
   // Turnos activos en Quirófano
@@ -2098,6 +2196,174 @@ export default function CasoFormularioActivo({
             disabled={guardando}
             onChange={(nuevoChecklist) => setChecklist(nuevoChecklist)}
           />
+
+          {/* Card: Consentimiento Informado Quirúrgico (Dual: Digital WhatsApp / Papel Físico) */}
+          <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                  <FileSignature size={16} />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                    Consentimiento Informado
+                    {cargandoConsentimiento && <Loader2 size={12} className="animate-spin text-gray-400" />}
+                  </div>
+                  <p className="text-[10px] text-gray-400">
+                    Firma digital anticipada por WhatsApp o impresión en papel
+                  </p>
+                </div>
+              </div>
+
+              {/* Badge de Estado del Consentimiento */}
+              {consentimiento?.firmado ? (
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 border ${
+                  consentimiento.modo_firma === 'papel'
+                    ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                    : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                }`}>
+                  <CheckCircle2 size={11} />
+                  {consentimiento.modo_firma === 'papel' ? 'Firmado en Papel' : 'Firmado Digitalmente'}
+                </span>
+              ) : consentimiento?.estado === 'enviado_wa' ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                  <Clock size={11} />
+                  Enviado WhatsApp (Pendiente)
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-neutral-800 border border-neutral-700 text-gray-400">
+                  Pendiente
+                </span>
+              )}
+            </div>
+
+            {/* Mensajes de feedback */}
+            {feedbackConsentimiento && (
+              <div className={`p-2 rounded-lg text-[11px] flex items-center justify-between ${
+                feedbackConsentimiento.tipo === 'ok'
+                  ? 'bg-emerald-950/40 border border-emerald-500/30 text-emerald-300'
+                  : 'bg-rose-950/40 border border-rose-500/30 text-rose-300'
+              }`}>
+                <span>{feedbackConsentimiento.mensaje}</span>
+                <button
+                  type="button"
+                  onClick={() => setFeedbackConsentimiento(null)}
+                  className="text-gray-400 hover:text-white ml-2 text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Acciones Rápidas de Consentimiento */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={handleEnviarConsentimientoWA}
+                disabled={enviandoConsentimientoWa || guardando}
+                className="px-2.5 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-emerald-500/30 cursor-pointer shadow-sm"
+                title="Enviar link al portal de firma digital por WhatsApp al paciente"
+              >
+                {enviandoConsentimientoWa ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <Send size={12} />
+                )}
+                <span>{consentimiento?.estado === 'enviado_wa' ? 'Reenviar WhatsApp' : 'Enviar por WhatsApp'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleImprimirConsentimientoPapel}
+                disabled={guardando}
+                className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-neutral-700 cursor-pointer"
+                title="Abrir e imprimir el consentimiento oficial en blanco para firma manuscrita"
+              >
+                <Printer size={12} className="text-gray-300" />
+                <span>Imprimir p/ Papel</span>
+              </button>
+            </div>
+
+            {/* Acciones Secundarias: Registrar Firma Papel o Ver PDF Firmado */}
+            <div className="pt-1 flex items-center justify-between text-[11px] gap-2">
+              {!consentimiento?.firmado ? (
+                <button
+                  type="button"
+                  onClick={() => setMostrandoModalFirmaPapel(!mostrandoModalFirmaPapel)}
+                  className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <CheckCircle2 size={12} />
+                  <span>¿Firmó en papel en clínica? Asentar aquí</span>
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleVerConsentimientoFirmado}
+                    className="text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Download size={12} />
+                    <span>Ver PDF Oficial Firmado</span>
+                  </button>
+                  {consentimiento.modo_firma === 'papel' && (
+                    <span className="text-[10px] text-gray-400 italic">
+                      ({consentimiento.observaciones_papel || 'Firma física manuscrita'})
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Panel Desplegable para Asentar Firma en Papel */}
+            {mostrandoModalFirmaPapel && !consentimiento?.firmado && (
+              <div className="p-3 bg-neutral-950 border border-blue-500/40 rounded-lg space-y-2.5 animate-fade-in shadow-inner">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
+                    <CheckCircle2 size={13} /> Asentar Consentimiento Firmado en Papel
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMostrandoModalFirmaPapel(false)}
+                    className="text-gray-400 hover:text-white p-0.5"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <p className="text-[10.5px] text-gray-300">
+                  Esta acción registrará que el paciente firmó físicamente el documento impreso, marcará el ítem en el Checklist Prequirúrgico y actualizará Quirófano.
+                </p>
+                <input
+                  type="text"
+                  value={obsFirmaPapel}
+                  onChange={(e) => setObsFirmaPapel(e.target.value)}
+                  placeholder="Detalle opcional (ej: Firmado en recepción ante secretaria)..."
+                  className="w-full px-2.5 py-1 text-xs bg-neutral-900 border border-[var(--border)] rounded text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMostrandoModalFirmaPapel(false)}
+                    className="px-2.5 py-1 text-[11px] text-gray-400 hover:text-white"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRegistrarFirmaPapel}
+                    disabled={guardandoFirmaPapel}
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-bold flex items-center gap-1"
+                  >
+                    {guardandoFirmaPapel ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Check size={12} />
+                    )}
+                    <span>Confirmar Firma en Papel</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Card: Próxima Acción de Seguimiento & WhatsApp Rápido */}
           <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">

@@ -210,6 +210,70 @@ async def cron_limpieza_diaria_media():
         # Esperar 24 horas para la siguiente ejecución
         await asyncio.sleep(24 * 3600)
 
+async def cron_envio_automatico_consentimientos_anticipados():
+    """
+    Tarea periódica (cada 6 horas): Revisa cirugías programadas a 2 o 3 días vista y envía
+    automáticamente el consentimiento informado por WhatsApp a los pacientes que aún no lo recibieron.
+    """
+    while True:
+        try:
+            await asyncio.sleep(120) # 2 minutos tras arranque
+            logger.info("Verificando envíos anticipados automáticos de Consentimiento Informado (D-3 a D-2)...")
+            await ejecutar_envio_automatico_consentimientos_anticipados()
+        except Exception as e:
+            logger.error(f"Error en cron de consentimiento anticipado: {e}")
+            
+        await asyncio.sleep(6 * 3600)
+
+async def ejecutar_envio_automatico_consentimientos_anticipados() -> int:
+    """
+    Ejecuta el escaneo y envío automático anticipado para cirugías en los próximos 1 a 3 días.
+    """
+    if not supabase:
+        return 0
+    try:
+        from datetime import date, timedelta
+        hoy = date.today()
+        dias_objetivo = [(hoy + timedelta(days=i)).isoformat() for i in range(1, 4)]
+        
+        resp = supabase.table("turnos_quirofano") \
+            .select("id, asesoria_id, paciente_id, fecha_cirugia, consentimiento_estado, pacientes(nombre, telefono)") \
+            .in_("fecha_cirugia", dias_objetivo) \
+            .neq("estado", "cancelado") \
+            .execute()
+            
+        turnos = resp.data or []
+        enviados = 0
+        for t in turnos:
+            c_est = t.get("consentimiento_estado")
+            if c_est in ["enviado_whatsapp", "firmado_digital", "firmado_papel"]:
+                continue
+                
+            pac = t.get("pacientes") or {}
+            tel = pac.get("telefono")
+            if not tel:
+                continue
+                
+            as_id = t.get("asesoria_id")
+            if as_id:
+                try:
+                    await enviar_consentimiento_asesoria_whatsapp(as_id)
+                    enviados += 1
+                except Exception as e_env:
+                    logger.warning(f"Aviso en cron automático enviando consentimiento a asesoría {as_id}: {e_env}")
+            else:
+                try:
+                    await enviar_consentimiento_whatsapp(t["id"])
+                    enviados += 1
+                except Exception as e_env:
+                    logger.warning(f"Aviso en cron automático enviando consentimiento a turno {t['id']}: {e_env}")
+                    
+        return enviados
+    except Exception as e:
+        logger.error(f"Error en ejecutar_envio_automatico_consentimientos_anticipados: {e}")
+        return 0
+
+
 # Modelos de validación Pydantic
 class SimuladorMensaje(BaseModel):
     telefono: str
@@ -268,6 +332,7 @@ async def lifespan(app: FastAPI):
     logger.info("Iniciando aplicación CRM Médico + WhatsApp Baileys Gateway...")
     iniciar_daemon_whatsapp()
     asyncio.create_task(cron_limpieza_diaria_media())
+    asyncio.create_task(cron_envio_automatico_consentimientos_anticipados())
     yield
     logger.info("Deteniendo aplicación CRM Médico...")
 
@@ -4904,15 +4969,15 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
     if not supabase:
         return {"success": False, "consentimiento": None}
     try:
-        resp = supabase.table("turnos_quirofano").select("*, pacientes(*)").eq("asesoria_id", asesoria_id).order("created_at", desc=True).limit(1).execute()
-        if not resp.data:
+        from app.db import asegurar_turno_para_consentimiento_asesoria
+        t = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+        if not t:
             return {"success": False, "consentimiento": None}
-        t = resp.data[0]
         return {
             "success": True,
             "consentimiento": {
                 "turno_id": t.get("id"),
-                "estado": t.get("consentimiento_estado"),
+                "estado": t.get("consentimiento_estado") or "pendiente_envio",
                 "token": t.get("consentimiento_token"),
                 "pdf_url": t.get("consentimiento_pdf_url"),
                 "firmado_at": t.get("consentimiento_firmado_at"),
@@ -4926,6 +4991,134 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
     except Exception as e:
         logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
         return {"success": False, "error": str(e)}
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/enviar-consentimiento-wa")
+async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
+    """
+    Envía el consentimiento informado por WhatsApp directamente desde el caso de asesoría quirúrgica.
+    """
+    try:
+        from app.db import asegurar_turno_para_consentimiento_asesoria, actualizar_turno_quirofano, crear_evolucion_asesoria
+        from app.services.quirofano_service import get_configuracion_quirofano
+        from app.services.whatsapp_baileys import whatsapp_manager
+        
+        turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+        if not turno:
+            raise HTTPException(status_code=404, detail="No se pudo resolver el caso quirúrgico.")
+            
+        paciente = turno.get("pacientes") or {}
+        telefono = paciente.get("telefono")
+        if not telefono:
+            raise HTTPException(status_code=400, detail="El paciente no tiene número de teléfono registrado.")
+            
+        token = turno.get("consentimiento_token")
+        
+        try:
+            from app.services.urgencias_service import obtener_base_crm_url
+            base_app_url = obtener_base_crm_url()
+        except Exception:
+            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm-agentico-nube.vercel.app"
+        enlace_firma = f"{base_app_url}/consentimiento/{token}"
+        
+        ojo = turno.get("ojo") or "OD"
+        ojo_desc = "Ojo Derecho (OD)" if ojo == "OD" else "Ojo Izquierdo (OI)" if ojo == "OI" else "Ambos Ojos (AO)"
+        
+        config = get_configuracion_quirofano()
+        plantilla_msg = config.get("whatsapp_mensaje_envio") or (
+            "Hola {paciente}! 🩺 Te escribimos de Clínica Médica Nube respecto a tu cirugía de {cirugia} ({ojo_intervenido}) programada para el {fecha_cirugia}. "
+            "Para que puedas leerlo con tranquilidad en familia y firmarlo digitalmente desde tu celular, te compartimos tu Consentimiento Informado oficial: {enlace_firma}\n\n"
+            "Si prefieres firmarlo en papel el día de tu ingreso en la clínica, no hay ningún problema. ¡Quedamos a tu entera disposición!"
+        )
+        
+        mensaje_final = plantilla_msg.format(
+            paciente=paciente.get("nombre") or "Paciente",
+            cirugia=turno.get("practica_nombre") or "Cirugía Oftalmológica",
+            ojo_intervenido=ojo_desc,
+            fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
+            hora_cirugia=str(turno.get("hora_inicio") or "")[:5],
+            cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
+            enlace_firma=enlace_firma
+        )
+        
+        jid = telefono if "@" in telefono else f"{telefono}@s.whatsapp.net"
+        res_wa = whatsapp_manager.enviar_mensaje(jid, mensaje_final)
+        
+        # Actualizar estado de consentimiento
+        actualizar_turno_quirofano(turno["id"], {
+            "consentimiento_estado": "enviado_whatsapp",
+            "consentimiento_enviado_at": "now()"
+        })
+        
+        # Asentar hito en la bitácora del paciente
+        from datetime import datetime, timezone, timedelta
+        now_art_str = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M")
+        crear_evolucion_asesoria({
+            "asesoria_id": asesoria_id,
+            "paciente_id": paciente.get("id"),
+            "tipo": "contacto",
+            "canal": "whatsapp",
+            "contenido": f"📲 Consentimiento Informado enviado por WhatsApp al paciente ({now_art_str}). Enlace de firma: {enlace_firma}",
+            "autor": "Asesoría Quirúrgica",
+            "fecha": now_art_str[:10]
+        })
+        
+        return {
+            "success": True,
+            "mensaje": "Consentimiento Informado enviado por WhatsApp exitosamente.",
+            "enlace_firma": enlace_firma,
+            "estado": "enviado_whatsapp",
+            "resultado_wa": res_wa
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al enviar consentimiento de asesoría {asesoria_id} por WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/asesorias-quirurgicas/{asesoria_id}/consentimiento-pdf")
+def descargar_consentimiento_asesoria_pdf(asesoria_id: str, modo: Optional[str] = None):
+    """
+    Sirve el PDF oficial de consentimiento informado:
+    - Si está firmado digitalmente, sirve el PDF certificado con firma, hash y QR.
+    - Si no está firmado (o si modo='papel'), genera y sirve el PDF en blanco para firma manuscrita en papel.
+    """
+    try:
+        from app.db import asegurar_turno_para_consentimiento_asesoria, generar_pdf_consentimiento_papel
+        turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+        if not turno:
+            raise HTTPException(status_code=404, detail="Caso quirúrgico no encontrado.")
+            
+        turno_id = turno["id"]
+        estado_c = turno.get("consentimiento_estado")
+        
+        # Si ya está firmado digitalmente y no se pide explícitamente papel en blanco
+        if estado_c == "firmado_digital" and modo != "papel":
+            return servir_archivo_estatico(f"consentimiento_{turno_id}.pdf")
+            
+        # Si no está firmado o es para papel, generar PDF en blanco
+        filename_papel = generar_pdf_consentimiento_papel(turno)
+        return servir_archivo_estatico(filename_papel)
+    except Exception as e:
+        logger.error(f"Error al servir PDF de consentimiento para asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/registrar-firma-papel")
+def registrar_firma_papel_endpoint(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Registra que el paciente firmó el consentimiento informado en formato físico/papel en la clínica.
+    """
+    try:
+        from app.db import registrar_firma_papel_asesoria
+        obs = payload.get("observaciones") or payload.get("notas") or ""
+        res = registrar_firma_papel_asesoria(asesoria_id, observaciones=obs)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al registrar firma en papel.")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al registrar firma en papel en asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/turnos-quirofano/{turno_id}/consentimiento-pdf")
 def descargar_consentimiento_pdf_endpoint(turno_id: str):

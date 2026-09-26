@@ -5385,6 +5385,206 @@ def registrar_firma_consentimiento(
         return {"success": False, "error": str(e)}
 
 
+def asegurar_turno_para_consentimiento_asesoria(asesoria_id: str) -> Dict[str, Any]:
+    """
+    Garantiza que exista un registro de procedimiento en turnos_quirofano vinculado a la asesoría,
+    con su token seguro de consentimiento, paciente y práctica resueltos.
+    Si ya existe un turno activo, lo reutiliza sin duplicar.
+    Si no existe, crea un registro de procedimiento en estado 'solicitado'.
+    """
+    if not supabase or not asesoria_id:
+        return {}
+    try:
+        import secrets
+        from datetime import date
+        
+        # 1. Buscar turno existente no cancelado
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").order("created_at", desc=True).limit(1).execute()
+        if resp.data and len(resp.data) > 0:
+            turno = resp.data[0]
+            if not turno.get("consentimiento_token"):
+                tok = secrets.token_urlsafe(24)
+                supabase.table("turnos_quirofano").update({"consentimiento_token": tok, "updated_at": "now()"}).eq("id", turno["id"]).execute()
+                turno["consentimiento_token"] = tok
+            return turno
+
+        # 2. Si no existe, leer datos de la asesoría
+        res_a = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("id", asesoria_id).limit(1).execute()
+        if not res_a.data or len(res_a.data) == 0:
+            raise ValueError(f"Asesoría quirúrgica {asesoria_id} no encontrada.")
+            
+        as_data = res_a.data[0]
+        pac = as_data.get("pacientes") or {}
+        pac_id = as_data.get("paciente_id") or pac.get("id")
+        
+        # Obtener un quirófano disponible o el primero activo
+        q_resp = supabase.table("quirofanos").select("id, nombre, codigo").eq("activo", True).limit(1).execute()
+        if not q_resp.data:
+            q_resp = supabase.table("quirofanos").select("id, nombre, codigo").limit(1).execute()
+        quirofano_id = q_resp.data[0]["id"] if q_resp.data else None
+        if not quirofano_id:
+            raise ValueError("No hay quirófanos configurados en la clínica.")
+
+        fecha_cx = as_data.get("fecha_definitiva_cirugia") or as_data.get("fecha_probable_cirugia") or date.today().isoformat()
+        ojo_val = as_data.get("ojo") or "OD"
+        if ojo_val == "AO":
+            ojo_val = "OD"
+            
+        tok = secrets.token_urlsafe(24)
+        nuevo_turno_payload = {
+            "asesoria_id": asesoria_id,
+            "paciente_id": pac_id,
+            "quirofano_id": quirofano_id,
+            "fecha_cirugia": str(fecha_cx),
+            "hora_inicio": "08:00:00",
+            "duracion_minutos": 30,
+            "ojo": ojo_val,
+            "cirujano_id": as_data.get("medico_cirujano_id") or None,
+            "cirujano_nombre": as_data.get("medico_cirujano_nombre") or "Médico Cirujano",
+            "medico_derivador_nombre": as_data.get("medico_derivador_nombre") or None,
+            "practica_codigo": as_data.get("practica_codigo") or None,
+            "practica_nombre": as_data.get("practica_nombre") or "Cirugía Oftalmológica",
+            "obra_social": as_data.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
+            "plan_obra_social": pac.get("plan_cobertura") or None,
+            "estado": "solicitado",
+            "consentimiento_estado": "pendiente_envio",
+            "consentimiento_token": tok,
+            "created_at": "now()",
+            "updated_at": "now()"
+        }
+        
+        ins = supabase.table("turnos_quirofano").insert(nuevo_turno_payload).execute()
+        if ins.data and len(ins.data) > 0:
+            turno_creado = ins.data[0]
+            turno_creado["pacientes"] = pac
+            turno_creado["quirofanos"] = q_resp.data[0] if q_resp.data else {}
+            return turno_creado
+        raise RuntimeError("No se pudo instanciar el turno para consentimiento.")
+    except Exception as e:
+        logger.error(f"Error en asegurar_turno_para_consentimiento_asesoria ({asesoria_id}): {e}")
+        raise
+
+
+def registrar_firma_papel_asesoria(asesoria_id: str, observaciones: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Registra que el paciente firmó el consentimiento informado en formato físico/papel en la clínica.
+    Actualiza el turno en Quirófano, marca el checklist prequirúrgico y asienta el hito en la bitácora.
+    """
+    if not supabase or not asesoria_id:
+        return {"success": False, "error": "Datos inválidos"}
+    try:
+        from datetime import datetime, timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        now_art = now_utc.astimezone(timezone(timedelta(hours=-3)))
+        now_art_str = now_art.strftime("%d/%m/%Y %H:%M")
+        
+        turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+        turno_id = turno["id"]
+        
+        # 1. Actualizar turnos_quirofano
+        upd_turno = {
+            "consentimiento_estado": "firmado_papel",
+            "consentimiento_firmado_at": now_utc.isoformat(),
+            "observaciones": (f"{turno.get('observaciones') or ''}\n[Firma en Papel]: {observaciones}").strip() if observaciones else turno.get("observaciones"),
+            "updated_at": "now()"
+        }
+        supabase.table("turnos_quirofano").update(upd_turno).eq("id", turno_id).execute()
+        
+        # 2. Sincronizar checklist prequirúrgico en asesorias_quirurgicas
+        res_a = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico, paciente_id").eq("id", asesoria_id).limit(1).execute()
+        if res_a.data:
+            chk = res_a.data[0].get("checklist_prequirurgico") or {}
+            if not isinstance(chk, dict):
+                chk = {}
+            chk["consentimiento_firmado"] = True
+            chk["_consentimiento_firmado_at"] = now_utc.isoformat()
+            chk["_consentimiento_tipo"] = "papel"
+            supabase.table("asesorias_quirurgicas").update({
+                "checklist_prequirurgico": chk,
+                "updated_at": "now()"
+            }).eq("id", asesoria_id).execute()
+            
+            # 3. Asentar nota en la bitácora
+            crear_evolucion_asesoria({
+                "asesoria_id": asesoria_id,
+                "paciente_id": res_a.data[0].get("paciente_id"),
+                "tipo": "hito_clinico",
+                "contenido": f"📝 Consentimiento Informado Quirúrgico firmado en formato físico/papel en clínica ({now_art_str}).{f' Observaciones: {observaciones}' if observaciones else ''}",
+                "autor": "Asesoría Quirúrgica",
+                "fecha": now_art_str[:10]
+            })
+            
+        return {
+            "success": True,
+            "mensaje": "Consentimiento en papel registrado exitosamente.",
+            "estado": "firmado_papel",
+            "firmado_at": now_art_str
+        }
+    except Exception as e:
+        logger.error(f"Error al registrar firma en papel para asesoría {asesoria_id}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def generar_pdf_consentimiento_papel(turno_o_asesoria: Dict[str, Any]) -> str:
+    """
+    Genera el PDF del consentimiento informado en modo 'Para Firma Manuscrita en Papel'
+    (sin firma digital, con líneas punteadas para paciente y cirujano).
+    """
+    from app.services.pdf_service import generar_pdf_consentimiento_informado
+    from app.services.nomenclador_multidimensional import get_practica_resumen_operativo, render_consent_template
+    from app.services.quirofano_service import get_configuracion_quirofano
+    
+    turno = turno_o_asesoria
+    paciente = turno.get("pacientes") or {}
+    
+    # Resolver texto de la plantilla
+    practica_cod = turno.get("practica_codigo") or ""
+    practica_id = turno.get("practica_id") or ""
+    practica_nombre = turno.get("practica_nombre") or ""
+    
+    cuerpo_template = None
+    resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+    if resumen_practica and resumen_practica.get("habilitar_consentimiento") and resumen_practica.get("texto_consentimiento"):
+        cuerpo_template = resumen_practica["texto_consentimiento"]
+        
+    if not cuerpo_template:
+        config = get_configuracion_quirofano()
+        plantillas = config.get("plantillas_consentimiento") or []
+        cuerpo_template = plantillas[0]["cuerpo"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
+        
+    ojo = turno.get("ojo") or "OD"
+    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    
+    cuerpo_final = render_consent_template(
+        cuerpo_template,
+        {
+            "paciente": paciente.get("nombre") or "Paciente",
+            "dni": paciente.get("dni") or "-",
+            "cirujano": turno.get("cirujano_nombre") or "Médico Cirujano",
+            "medico": turno.get("cirujano_nombre") or "Médico Cirujano",
+            "practica": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+            "cirugia": turno.get("practica_nombre") or "Cirugía Oftalmológica",
+            "ojo_intervenido": ojo_desc,
+            "ojo": ojo_desc,
+            "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
+            "fecha": str(turno.get("fecha_cirugia") or ""),
+            "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
+            "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
+            "hora_inicio": str(turno.get("hora_inicio") or "")[:5]
+        }
+    )
+    
+    # Generar PDF pasando firma_img_base64=None para que use el bloque de firma manuscrita en papel
+    pdf_filename = generar_pdf_consentimiento_informado(
+        turno=turno,
+        paciente=paciente,
+        texto_consentimiento=cuerpo_final,
+        firma_img_base64=None,
+        firma_metadata=None
+    )
+    return pdf_filename
+
+
 
 
 

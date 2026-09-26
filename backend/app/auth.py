@@ -195,7 +195,7 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
         if method == "GET":
             if (path.startswith("/api/presupuestos/") and path.endswith("/pdf")) or path.startswith("/api/presupuestos/pdf/"):
                 return await call_next(request)
-            if path.startswith("/api/turnos-quirofano/") and (path.endswith("/consentimiento-pdf") or path.endswith("/parte-quirurgico")):
+            if (path.startswith("/api/asesorias-quirurgicas/") or path.startswith("/api/turnos-quirofano/")) and (path.endswith("/consentimiento-pdf") or path.endswith("/parte-quirurgico")):
                 return await call_next(request)
 
         # Si no empieza con /api/, permitir libremente (ej: root / healthchecks)
