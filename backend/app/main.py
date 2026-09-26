@@ -80,6 +80,9 @@ from app.db import (
     listar_catalogo_completo_crm,
     buscar_practicas_presupuesto,
     obtener_lios_comerciales,
+    actualizar_arancel_lio_rapido,
+    crear_lio_comercial_rapido,
+    guardar_lios_habilitados_practica,
     eliminar_practica_crm,
     get_practicas_relacionadas,
     guardar_practicas_relacionadas,
@@ -2738,14 +2741,14 @@ def buscar_presupuesto_api(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/nomenclador/lios-comerciales")
-def get_lios_comerciales_api(fecha: Optional[str] = None):
+def get_lios_comerciales_api(fecha: Optional[str] = None, practica_id: Optional[str] = None):
     """
     Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
-    con sus precios y monedas resueltas desde el nomenclador para el creador de presupuestos
-    y para la tarjeta de lateralidad del expediente.
+    con sus precios y monedas resueltas desde el nomenclador para el creador de presupuestos,
+    ajustes de nomenclador y para la tarjeta de lateralidad del expediente.
     """
     try:
-        lios = obtener_lios_comerciales(fecha_consulta=fecha)
+        lios = obtener_lios_comerciales(fecha_consulta=fecha, practica_id=practica_id)
         return {
             "success": True,
             "total": len(lios),
@@ -2753,6 +2756,68 @@ def get_lios_comerciales_api(fecha: Optional[str] = None):
         }
     except Exception as e:
         logger.error(f"Error en get_lios_comerciales_api: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ActualizarArancelLioRequest(BaseModel):
+    codigo: str
+    precio: float
+    moneda: Optional[str] = "USD"
+
+@app.post("/api/nomenclador/actualizar-arancel-lio")
+def actualizar_arancel_lio_api(payload: ActualizarArancelLioRequest):
+    """
+    Actualiza el precio/arancel de un LIO puntual en tiempo real.
+    """
+    try:
+        res = actualizar_arancel_lio_rapido(codigo=payload.codigo, precio=payload.precio, moneda=payload.moneda or "USD")
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error actualizando arancel del LIO"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en actualizar_arancel_lio_api: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class CrearLioRapidoRequest(BaseModel):
+    codigo: str
+    nombre: str
+    precio: float
+    moneda: Optional[str] = "USD"
+
+@app.post("/api/nomenclador/crear-lio-rapido")
+def crear_lio_rapido_api(payload: CrearLioRapidoRequest):
+    """
+    Da de alta un nuevo modelo de LIO comercial en el nomenclador con su arancel inicial.
+    """
+    try:
+        res = crear_lio_comercial_rapido(codigo=payload.codigo, nombre=payload.nombre, precio=payload.precio, moneda=payload.moneda or "USD")
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error creando nuevo LIO"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en crear_lio_rapido_api: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class GuardarLiosHabilitadosRequest(BaseModel):
+    lios_habilitados: List[str]
+
+@app.post("/api/nomenclador/practicas/{practica_id}/lios-habilitados")
+def guardar_lios_habilitados_api(practica_id: str, payload: GuardarLiosHabilitadosRequest):
+    """
+    Guarda la lista de códigos de LIOs habilitados para una práctica específica.
+    """
+    try:
+        res = guardar_lios_habilitados_practica(practica_id=practica_id, lios_habilitados=payload.lios_habilitados)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error guardando LIOs habilitados"))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en guardar_lios_habilitados_api: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/nomenclador/practicas-configuradas/{practica_id}")

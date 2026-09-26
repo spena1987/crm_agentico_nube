@@ -65,3 +65,32 @@ def test_guardar_practica_integral_requiere_lente():
     assert res.get("success") is True
     practica = res.get("practica") or {}
     assert practica.get("requiere_lente") is True
+
+def test_actualizar_arancel_lio_endpoint():
+    token = generate_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    res = client.post("/api/nomenclador/actualizar-arancel-lio", json={
+        "codigo": "CLAREON",
+        "precio": 520.0,
+        "moneda": "USD"
+    }, headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data.get("success") is True
+    assert data.get("precio") == 520.0
+    assert data.get("moneda") == "USD"
+
+def test_guardar_lios_habilitados_endpoint():
+    token = generate_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    # Obtener id de práctica 34031
+    resumen = get_practica_resumen_operativo("34031")
+    assert resumen is not None
+    pid = resumen["id"]
+    res = client.post(f"/api/nomenclador/practicas/{pid}/lios-habilitados", json={
+        "lios_habilitados": ["CLAREON", "CLAREONT", "TRIFOCAL"]
+    }, headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data.get("success") is True
+    assert data.get("lios_habilitados") == ["CLAREON", "CLAREONT", "TRIFOCAL"]

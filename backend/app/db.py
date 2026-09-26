@@ -1578,9 +1578,9 @@ def listar_catalogo_completo_crm(
         
     try:
         query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
+            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
             .eq("activo", True)
-            
+
         term = (q or "").strip().upper()
         if term:
             query = query.or_(f"codigo.ilike.%{term}%,nombre.ilike.%{term}%,categoria.ilike.%{term}%")
@@ -1638,6 +1638,7 @@ def listar_catalogo_completo_crm(
                 "descripcion": desc.replace("[ORIGEN:MANUAL]", "").replace("[ORIGEN:GECLISA]", "").strip(),
                 "origen": origen,
                 "requiere_lente": bool(p.get("requiere_lente", False)),
+                "lios_habilitados": p.get("lios_habilitados"),
                 "habilitar_arancel": p.get("habilitar_arancel", True),
                 "habilitar_preparacion": p.get("habilitar_preparacion", False),
                 "preparacion_plantilla_id": p.get("preparacion_plantilla_id"),
@@ -1686,7 +1687,7 @@ def buscar_practicas_presupuesto(
     
     try:
         query_builder = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, requiere_lente, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
+            .select("id, codigo, nombre, categoria, descripcion, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
             .eq("activo", True)
             
         if term:
@@ -1772,6 +1773,7 @@ def buscar_practicas_presupuesto(
                 "nomenclador_nombre": nom_info.get("nombre") or "Nomenclador CRM",
                 "nomenclador_codigo": nom_info.get("codigo") or "CRM",
                 "requiere_lente": bool(p.get("requiere_lente", False)),
+                "lios_habilitados": p.get("lios_habilitados"),
                 "habilitar_arancel": hab_arancel,
                 "habilitar_preparacion": p.get("habilitar_preparacion", False),
                 "habilitar_consentimiento": p.get("habilitar_consentimiento", False),
@@ -2252,6 +2254,9 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
             "activo": True
         }
         
+        if "lios_habilitados" in payload:
+            p_data["lios_habilitados"] = payload.get("lios_habilitados")
+        
         if practica_id:
             # Actualizar existente
             p_resp = supabase.table("nomenclador_practicas").update(p_data).eq("id", practica_id).execute()
@@ -2479,6 +2484,7 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
             "ojo_defecto": ojo_def,
             "duracion_estimada_minutos": duracion_def,
             "requiere_lente": bool(practica.get("requiere_lente", False)),
+            "lios_habilitados": practica.get("lios_habilitados"),
             "habilitar_arancel": practica.get("habilitar_arancel", True),
             "precio": float(ar_vigente.get("precio", 0.0)) if ar_vigente else 0.0,
             "moneda": ar_vigente.get("moneda", "ARS") if ar_vigente else "ARS",
@@ -2498,11 +2504,12 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
         return None
 
 
-def obtener_lios_comerciales(fecha_consulta: Optional[str] = None) -> List[Dict[str, Any]]:
+def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
     con sus aranceles vigentes desde nomenclador_practicas / nomenclador_aranceles.
-    Consumido por presupuestos y por el expediente en la tarjeta de Lateralidad.
+    Consumido por presupuestos, ajustes y por el expediente en la tarjeta de Lateralidad.
+    Si se provee practica_id, añade el flag habilitado_en_practica según lios_habilitados.
     """
     if not supabase:
         return []
@@ -2511,6 +2518,18 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None) -> List[Dict[
     fecha_ref = fecha_consulta or date.today().isoformat()
     
     try:
+        # Si se consulta para una práctica específica, leer qué LIOs tiene habilitados
+        lios_hab_set = None
+        if practica_id:
+            try:
+                p_res = supabase.table("nomenclador_practicas").select("lios_habilitados").eq("id", practica_id).execute()
+                if p_res.data and p_res.data[0].get("lios_habilitados") is not None:
+                    hab_list = p_res.data[0]["lios_habilitados"]
+                    if isinstance(hab_list, list):
+                        lios_hab_set = set(str(c).upper().strip() for c in hab_list)
+            except Exception as p_err:
+                logger.warning(f"Error leyendo lios_habilitados de práctica {practica_id}: {p_err}")
+
         res = supabase.table("nomenclador_practicas")\
             .select("id, codigo, nombre, categoria, descripcion, activo, requiere_lente")\
             .eq("activo", True)\
@@ -2557,6 +2576,7 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None) -> List[Dict[
             
             nom_low = (p.get("nombre") or "").lower()
             cod_low = (p.get("codigo") or "").lower()
+            cod_up = (p.get("codigo") or "").upper().strip()
             es_torico = "toric" in nom_low or "tóric" in nom_low or "toric" in cod_low or cod_low.endswith("t")
             
             tipo_vision = "Estándar"
@@ -2569,6 +2589,10 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None) -> List[Dict[
             elif "icl" in nom_low or "faquico" in nom_low:
                 tipo_vision = "Fáquico (ICL)"
 
+            habilitado_en_practica = True
+            if lios_hab_set is not None:
+                habilitado_en_practica = cod_up in lios_hab_set
+
             resultados.append({
                 "id": p["id"],
                 "codigo": p["codigo"],
@@ -2579,13 +2603,141 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None) -> List[Dict[
                 "vigencia_desde": ar.get("vigencia_desde") if ar else None,
                 "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
                 "es_torico": es_torico,
-                "tipo_vision": tipo_vision
+                "tipo_vision": tipo_vision,
+                "habilitado_en_practica": habilitado_en_practica
             })
             
         return resultados
     except Exception as e:
         logger.error(f"Error en obtener_lios_comerciales: {e}")
         return []
+
+
+def actualizar_arancel_lio_rapido(codigo: str, precio: float, moneda: str = "USD") -> Dict[str, Any]:
+    """
+    Actualiza o crea el arancel vigente de un LIO de forma inmediata por su código.
+    """
+    if not supabase:
+        return {"success": False, "error": "No database client"}
+    try:
+        cod_clean = codigo.strip().upper()
+        p_res = supabase.table("nomenclador_practicas").select("id, codigo, nombre").eq("codigo", cod_clean).execute()
+        if not p_res.data:
+            p_res = supabase.table("nomenclador_practicas").select("id, codigo, nombre").ilike("codigo", cod_clean).execute()
+        if not p_res.data:
+            return {"success": False, "error": f"No se encontró el LIO con código {codigo}"}
+            
+        practica = p_res.data[0]
+        pid = practica["id"]
+        from datetime import date
+        today_str = date.today().isoformat()
+        
+        ar_exist = supabase.table("nomenclador_aranceles")\
+            .select("id")\
+            .eq("practica_id", pid)\
+            .eq("activo", True)\
+            .order("vigencia_desde", desc=True)\
+            .limit(1)\
+            .execute()
+            
+        if ar_exist.data:
+            ar_id = ar_exist.data[0]["id"]
+            supabase.table("nomenclador_aranceles").update({
+                "precio": float(precio),
+                "moneda": moneda.upper(),
+                "vigencia_desde": today_str
+            }).eq("id", ar_id).execute()
+        else:
+            supabase.table("nomenclador_aranceles").insert({
+                "practica_id": pid,
+                "precio": float(precio),
+                "moneda": moneda.upper(),
+                "vigencia_desde": today_str,
+                "activo": True
+            }).execute()
+            
+        return {
+            "success": True,
+            "codigo": practica["codigo"],
+            "nombre": practica["nombre"],
+            "precio": float(precio),
+            "moneda": moneda.upper()
+        }
+    except Exception as e:
+        logger.error(f"Error en actualizar_arancel_lio_rapido: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def crear_lio_comercial_rapido(codigo: str, nombre: str, precio: float, moneda: str = "USD") -> Dict[str, Any]:
+    """
+    Da de alta un nuevo modelo de LIO en nomenclador_practicas y le asigna su arancel inicial.
+    """
+    if not supabase:
+        return {"success": False, "error": "No database client"}
+    try:
+        cod = codigo.strip().upper()
+        from datetime import date
+        today_str = date.today().isoformat()
+        
+        nom_cod = "NOM_USD" if moneda.upper() == "USD" else "NOM_ARS"
+        nom_res = supabase.table("nomencladores").select("id").eq("codigo", nom_cod).limit(1).execute()
+        nom_id = nom_res.data[0]["id"] if nom_res.data else None
+        
+        # Verificar si ya existe
+        exist = supabase.table("nomenclador_practicas").select("id").eq("codigo", cod).execute()
+        if exist.data:
+            return {"success": False, "error": f"Ya existe una práctica o LIO con el código {cod}"}
+            
+        p_ins = supabase.table("nomenclador_practicas").insert({
+            "nomenclador_id": nom_id,
+            "codigo": cod,
+            "nombre": nombre.strip().upper(),
+            "categoria": "Lentes Intraoculares",
+            "descripcion": "[ORIGEN:MANUAL] Lente Intraocular comercial/genérico",
+            "activo": True,
+            "habilitar_arancel": True,
+            "requiere_lente": False
+        }).execute()
+        
+        if not p_ins.data:
+            return {"success": False, "error": "Error al insertar práctica LIO"}
+            
+        pid = p_ins.data[0]["id"]
+        supabase.table("nomenclador_aranceles").insert({
+            "practica_id": pid,
+            "precio": float(precio),
+            "moneda": moneda.upper(),
+            "vigencia_desde": today_str,
+            "activo": True
+        }).execute()
+        
+        return {
+            "success": True,
+            "id": pid,
+            "codigo": cod,
+            "nombre": nombre.strip().upper(),
+            "precio": float(precio),
+            "moneda": moneda.upper()
+        }
+    except Exception as e:
+        logger.error(f"Error en crear_lio_comercial_rapido: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def guardar_lios_habilitados_practica(practica_id: str, lios_habilitados: List[str]) -> Dict[str, Any]:
+    """
+    Actualiza la lista de LIOs habilitados para una práctica específica.
+    """
+    if not supabase:
+        return {"success": False, "error": "No database client"}
+    try:
+        supabase.table("nomenclador_practicas").update({
+            "lios_habilitados": lios_habilitados
+        }).eq("id", practica_id).execute()
+        return {"success": True, "practica_id": practica_id, "lios_habilitados": lios_habilitados}
+    except Exception as e:
+        logger.error(f"Error en guardar_lios_habilitados_practica: {e}")
+        return {"success": False, "error": str(e)}
 
 
 

@@ -169,6 +169,16 @@ export default function ModalCrearPresupuestoPaciente({
                 const sugerido = data.resultados[0]
                 if (sugerido.requiere_lente || esCatarata) {
                   setPracticaRequiereLente(true)
+                  if (sugerido.id) {
+                    fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${sugerido.id}`)
+                      .then((r) => r.json())
+                      .then((ld) => {
+                        if (ld.success && ld.lios) {
+                          setLiosDisponibles(ld.lios.filter((l: any) => l.habilitado_en_practica !== false))
+                        }
+                      })
+                      .catch(() => {})
+                  }
                 }
                 if (pPrecio === 0 && sugerido.precio && sugerido.precio > 0) {
                   setItems([{

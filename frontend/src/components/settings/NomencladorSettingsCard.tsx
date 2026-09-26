@@ -23,10 +23,27 @@ import {
   ClipboardList,
   PenTool,
   Link2,
-  Save
+  Save,
+  ArrowRight,
+  Sparkles,
+  PlusCircle
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 import { RichConsentEditor } from './RichConsentEditor'
+
+interface LioConfigItem {
+  id: string
+  codigo: string
+  nombre: string
+  categoria?: string
+  precio: number
+  moneda: 'ARS' | 'USD'
+  vigencia_desde?: string | null
+  vigencia_hasta?: string | null
+  es_torico?: boolean
+  tipo_vision?: string
+  habilitado_en_practica?: boolean
+}
 
 interface GeclisaTipoNomenclador {
   nomId: number
@@ -56,6 +73,7 @@ interface CrmPracticaConfigurada {
   descripcion: string
   origen: 'GECLISA' | 'MANUAL'
   requiere_lente?: boolean
+  lios_habilitados?: string[] | null
   habilitar_arancel: boolean
   habilitar_preparacion: boolean
   preparacion_plantilla_id?: string | null
@@ -142,7 +160,7 @@ export default function NomencladorSettingsCard() {
   const [loadingPlantillas, setLoadingPlantillas] = useState(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [modalSubTab, setModalSubTab] = useState<'general' | 'aranceles' | 'preparacion' | 'consentimiento' | 'relacionadas'>('general')
+  const [modalSubTab, setModalSubTab] = useState<'general' | 'aranceles' | 'preparacion' | 'consentimiento' | 'relacionadas' | 'lios'>('general')
   const [modalMode, setModalMode] = useState<'geclisa' | 'manual' | 'edit'>('geclisa')
   const [savingModal, setSavingModal] = useState(false)
   const [historialAranceles, setHistorialAranceles] = useState<ArancelHistorial[]>([])
@@ -157,6 +175,20 @@ export default function NomencladorSettingsCard() {
   const [relEsObligatoria, setRelEsObligatoria] = useState(true)
   const [relCantidad, setRelCantidad] = useState(1)
   const [relNotas, setRelNotas] = useState('')
+
+  // Estados para Gestión Integral de Lentes Intraoculares (Opción A)
+  const [listaLiosModal, setListaLiosModal] = useState<LioConfigItem[]>([])
+  const [loadingLiosModal, setLoadingLiosModal] = useState(false)
+  const [savingLioCodigo, setSavingLioCodigo] = useState<string | null>(null)
+  const [feedbackLio, setFeedbackLio] = useState<{ codigo: string; texto: string; tipo: 'success' | 'error' } | null>(null)
+  const [mostrarNuevoLioModal, setMostrarNuevoLioModal] = useState(false)
+  const [nuevoLioForm, setNuevoLioForm] = useState({
+    codigo: '',
+    nombre: '',
+    precio: 0,
+    moneda: 'USD' as 'ARS' | 'USD'
+  })
+  const [creandoLio, setCreandoLio] = useState(false)
 
   const [formData, setFormData] = useState({
     id: '',
@@ -174,6 +206,7 @@ export default function NomencladorSettingsCard() {
     arancel_id: '',
     habilitar_preparacion: false,
     requiere_lente: false,
+    lios_habilitados: [] as string[],
     modo_preparacion: 'plantilla' as 'plantilla' | 'custom',
     preparacion_plantilla_id: '',
     preparacion_custom_texto: '',
@@ -370,6 +403,94 @@ export default function NomencladorSettingsCard() {
     }
   }
 
+  const loadLiosPractica = async (practicaId?: string) => {
+    try {
+      setLoadingLiosModal(true)
+      const url = practicaId 
+        ? `${API_BASE_URL}/api/nomenclador/lios-comerciales?practica_id=${practicaId}`
+        : `${API_BASE_URL}/api/nomenclador/lios-comerciales`
+      const res = await fetch(url)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.lios) {
+          setListaLiosModal(data.lios)
+        }
+      }
+    } catch (err) {
+      console.error('Error cargando LIOs comerciales:', err)
+    } finally {
+      setLoadingLiosModal(false)
+    }
+  }
+
+  const handleGuardarPrecioLio = async (codigo: string, precio: number, moneda: 'ARS' | 'USD') => {
+    try {
+      setSavingLioCodigo(codigo)
+      setFeedbackLio(null)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/actualizar-arancel-lio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ codigo, precio, moneda })
+      })
+      if (res.ok) {
+        setFeedbackLio({ codigo, texto: 'Tarifa guardada ✓', tipo: 'success' })
+        setTimeout(() => setFeedbackLio(null), 3000)
+        setListaLiosModal((prev) =>
+          prev.map((l) => (l.codigo === codigo ? { ...l, precio, moneda } : l))
+        )
+      } else {
+        const err = await res.json()
+        setFeedbackLio({ codigo, texto: err.detail || 'Error al guardar', tipo: 'error' })
+      }
+    } catch (err) {
+      setFeedbackLio({ codigo, texto: 'Error de conexión', tipo: 'error' })
+    } finally {
+      setSavingLioCodigo(null)
+    }
+  }
+
+  const handleToggleLioHabilitado = (codigo: string) => {
+    setListaLiosModal((prev) => {
+      const updated = prev.map((l) =>
+        l.codigo === codigo ? { ...l, habilitado_en_practica: !l.habilitado_en_practica } : l
+      )
+      const habCodigos = updated.filter((l) => l.habilitado_en_practica).map((l) => l.codigo)
+      setFormData((f) => ({ ...f, lios_habilitados: habCodigos }))
+      return updated
+    })
+  }
+
+  const handleCrearNuevoLio = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!nuevoLioForm.codigo.trim() || !nuevoLioForm.nombre.trim()) return
+    try {
+      setCreandoLio(true)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/crear-lio-rapido`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          codigo: nuevoLioForm.codigo.trim().toUpperCase(),
+          nombre: nuevoLioForm.nombre.trim().toUpperCase(),
+          precio: Number(nuevoLioForm.precio) || 0,
+          moneda: nuevoLioForm.moneda
+        })
+      })
+      if (res.ok) {
+        setMostrarNuevoLioModal(false)
+        setNuevoLioForm({ codigo: '', nombre: '', precio: 0, moneda: 'USD' })
+        await loadLiosPractica(formData.id)
+        setFeedback({ tipo: 'success', texto: 'Nuevo LIO registrado correctamente en el catálogo.' })
+      } else {
+        const err = await res.json()
+        setFeedback({ tipo: 'error', texto: err.detail || 'Error al crear LIO.' })
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'error', texto: 'Error de conexión.' })
+    } finally {
+      setCreandoLio(false)
+    }
+  }
+
   const handleSearchGeclisa = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     try {
@@ -415,7 +536,8 @@ export default function NomencladorSettingsCard() {
       vigencia_hasta: item.vigencia_hasta || '',
       arancel_id: '',
       habilitar_preparacion: false,
-    requiere_lente: false,
+      requiere_lente: false,
+      lios_habilitados: [],
       modo_preparacion: 'plantilla',
       preparacion_plantilla_id: plantillasPrep[0]?.id || '',
       preparacion_custom_texto: '',
@@ -423,16 +545,18 @@ export default function NomencladorSettingsCard() {
       modo_consentimiento: 'plantilla',
       consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
       consentimiento_custom_texto: '',
-    modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
-    ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
-    duracion_estimada_minutos: 20
+      modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
+      ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
+      duracion_estimada_minutos: 20
     })
     if (item.crm_practica_id) {
       loadHistorialAranceles(item.crm_practica_id)
       loadPracticasRelacionadas(item.crm_practica_id)
+      loadLiosPractica(item.crm_practica_id)
     } else {
       setHistorialAranceles([])
       setPracticasRelacionadas([])
+      loadLiosPractica()
     }
     setIsModalOpen(true)
   }
@@ -456,7 +580,8 @@ export default function NomencladorSettingsCard() {
       vigencia_hasta: '',
       arancel_id: '',
       habilitar_preparacion: false,
-    requiere_lente: false,
+      requiere_lente: false,
+      lios_habilitados: [],
       modo_preparacion: 'plantilla',
       preparacion_plantilla_id: plantillasPrep[0]?.id || '',
       preparacion_custom_texto: '',
@@ -464,12 +589,13 @@ export default function NomencladorSettingsCard() {
       modo_consentimiento: 'plantilla',
       consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
       consentimiento_custom_texto: '',
-    modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
-    ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
-    duracion_estimada_minutos: 20
+      modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
+      ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
+      duracion_estimada_minutos: 20
     })
     setHistorialAranceles([])
     setPracticasRelacionadas([])
+    loadLiosPractica()
     setIsModalOpen(true)
   }
 
@@ -496,6 +622,7 @@ export default function NomencladorSettingsCard() {
       arancel_id: item.arancel_id || '',
       habilitar_preparacion: item.habilitar_preparacion || false,
       requiere_lente: item.requiere_lente || false,
+      lios_habilitados: item.lios_habilitados || [],
       modo_preparacion: item.preparacion_custom_texto ? 'custom' : 'plantilla',
       preparacion_plantilla_id: item.preparacion_plantilla_id || plantillasPrep[0]?.id || '',
       preparacion_custom_texto: item.preparacion_custom_texto || '',
@@ -506,6 +633,7 @@ export default function NomencladorSettingsCard() {
     })
     loadHistorialAranceles(item.id)
     loadPracticasRelacionadas(item.id)
+    loadLiosPractica(item.id)
     setIsModalOpen(true)
   }
 
@@ -530,6 +658,7 @@ export default function NomencladorSettingsCard() {
         arancel_id: formData.arancel_id || undefined,
         habilitar_preparacion: formData.habilitar_preparacion,
         requiere_lente: !!formData.requiere_lente,
+        lios_habilitados: formData.lios_habilitados,
         preparacion_plantilla_id:
           formData.habilitar_preparacion && formData.modo_preparacion === 'plantilla'
             ? formData.preparacion_plantilla_id
@@ -1457,6 +1586,25 @@ export default function NomencladorSettingsCard() {
                   </span>
                 )}
               </button>
+
+              {formData.requiere_lente && (
+                <button
+                  type="button"
+                  onClick={() => setModalSubTab('lios')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 ${
+                    modalSubTab === 'lios'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/40 bg-amber-500/10'
+                  }`}
+                >
+                  <span>💎 6. LIOs & Precios</span>
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-200 dark:bg-amber-900 text-amber-800 dark:text-amber-200 font-extrabold">
+                    {listaLiosModal.length > 0
+                      ? listaLiosModal.filter((l) => l.habilitado_en_practica !== false).length
+                      : '6'}
+                  </span>
+                </button>
+              )}
             </div>
 
             {/* Contenido scrolleable del formulario */}
@@ -1592,6 +1740,21 @@ export default function NomencladorSettingsCard() {
                       <p className="text-[11px] text-amber-700 dark:text-amber-300">
                         Habilita la elección del LIO en la Lateralidad del caso (Cataratas) y sugiere los lentes comerciales con precio al crear presupuestos.
                       </p>
+                      {formData.requiere_lente && (
+                        <div className="pt-2 mt-1 border-t border-amber-300/40 dark:border-amber-700/40 flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                            ¿Deseas configurar qué lentes aplican y sus aranceles vigentes?
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setModalSubTab('lios')}
+                            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
+                          >
+                            <span>Configurar LIOs & Precios</span>
+                            <ArrowRight size={13} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer shrink-0">
                       <input
@@ -2166,6 +2329,266 @@ export default function NomencladorSettingsCard() {
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* SUB-PESTAÑA 6: LENTES INTRAOCULARES (LIOS) & ARANCELES */}
+              {modalSubTab === 'lios' && (
+                <div className="space-y-4">
+                  {/* Banner Explicativo con acción de nuevo LIO */}
+                  <div className="p-3.5 bg-amber-50/80 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-800 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200 text-xs">
+                        <span>💎</span>
+                        <span>Lentes Intraoculares (LIOs) Disponibles para Presupuestar</span>
+                      </div>
+                      <p className="text-[11px] text-amber-800/90 dark:text-amber-300/80 leading-relaxed">
+                        Selecciona qué lentes aplican a esta cirugía de catarata y actualiza sus precios vigentes in-situ. Al crear presupuestos desde el expediente, la asesora podrá agregarlos con 1 solo clic.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setMostrarNuevoLioModal(!mostrarNuevoLioModal)}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-xs transition shrink-0 cursor-pointer"
+                    >
+                      <PlusCircle size={14} />
+                      <span>Nuevo Modelo LIO</span>
+                    </button>
+                  </div>
+
+                  {/* Formulario Desplegable para Agregar Nuevo LIO */}
+                  {mostrarNuevoLioModal && (
+                    <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 border border-amber-300/60 dark:border-amber-700/60 rounded-xl space-y-3 animate-in fade-in duration-150">
+                      <span className="font-bold text-slate-700 dark:text-slate-200 text-xs flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-amber-500" />
+                        Registrar Nuevo Lente Comercial en el Nomenclador
+                      </span>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                        <div className="sm:col-span-3">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                            Código *
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="ej: TECNIS, PANOPTIX"
+                            value={nuevoLioForm.codigo}
+                            onChange={(e) => setNuevoLioForm({ ...nuevoLioForm, codigo: e.target.value.toUpperCase() })}
+                            className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-mono font-bold uppercase outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-4">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                            Nombre Comercial *
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="ej: LENTE TECNIS SYNERGY"
+                            value={nuevoLioForm.nombre}
+                            onChange={(e) => setNuevoLioForm({ ...nuevoLioForm, nombre: e.target.value })}
+                            className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-medium outline-none focus:ring-2 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div className="sm:col-span-2">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                            Moneda
+                          </label>
+                          <select
+                            value={nuevoLioForm.moneda}
+                            onChange={(e) => setNuevoLioForm({ ...nuevoLioForm, moneda: e.target.value as 'ARS' | 'USD' })}
+                            className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-bold outline-none focus:ring-2 focus:ring-amber-500"
+                          >
+                            <option value="USD">USD ($)</option>
+                            <option value="ARS">ARS ($)</option>
+                          </select>
+                        </div>
+
+                        <div className="sm:col-span-3 flex gap-2">
+                          <div className="flex-1">
+                            <label className="text-[10px] font-bold text-slate-500 uppercase block mb-1">
+                              Precio Inicial
+                            </label>
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={nuevoLioForm.precio}
+                              onChange={(e) => setNuevoLioForm({ ...nuevoLioForm, precio: parseFloat(e.target.value) || 0 })}
+                              className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] text-xs font-bold text-right outline-none focus:ring-2 focus:ring-amber-500"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleCrearNuevoLio}
+                            disabled={creandoLio || !nuevoLioForm.codigo.trim() || !nuevoLioForm.nombre.trim()}
+                            className="py-2 px-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs self-end flex items-center gap-1 shadow-xs transition cursor-pointer"
+                          >
+                            {creandoLio ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                            <span>Guardar</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Feedback específico para LIOs */}
+                  {feedbackLio && (
+                    <div
+                      className={`p-2.5 rounded-xl border text-xs font-medium flex items-center gap-2 ${
+                        feedbackLio.tipo === 'success'
+                          ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                          : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950/40 dark:text-red-300'
+                      }`}
+                    >
+                      {feedbackLio.tipo === 'success' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                      <span>{feedbackLio.texto}</span>
+                    </div>
+                  )}
+
+                  {/* Tabla / Tarjetas de LIOs */}
+                  {loadingLiosModal ? (
+                    <div className="p-8 text-center text-slate-400 text-xs flex items-center justify-center gap-2">
+                      <Loader2 size={16} className="animate-spin text-amber-600" />
+                      <span>Cargando catálogo de LIOs...</span>
+                    </div>
+                  ) : listaLiosModal.length === 0 ? (
+                    <div className="p-8 text-center border-2 border-dashed border-[var(--border)] rounded-xl text-slate-400 text-xs space-y-2">
+                      <p>No se encontraron lentes intraoculares en el catálogo.</p>
+                      <button
+                        type="button"
+                        onClick={() => setMostrarNuevoLioModal(true)}
+                        className="px-3 py-1.5 bg-amber-600 text-white rounded-lg font-bold text-xs inline-flex items-center gap-1"
+                      >
+                        <Plus size={13} />
+                        <span>Crear Primer LIO</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--card)]">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-[var(--border)] text-[10px] text-slate-400 uppercase font-bold">
+                          <tr>
+                            <th className="py-2.5 px-3 text-center w-24">Aplica a QX</th>
+                            <th className="py-2.5 px-3">Modelo / LIO Comercial</th>
+                            <th className="py-2.5 px-3">Tecnología Óptica</th>
+                            <th className="py-2.5 px-3 text-right">Moneda</th>
+                            <th className="py-2.5 px-3 text-right w-36">Arancel Vigente</th>
+                            <th className="py-2.5 px-3 text-center w-28">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[var(--border)]">
+                          {listaLiosModal.map((lio) => {
+                            const isEnabled = lio.habilitado_en_practica !== false
+                            const isSavingThis = savingLioCodigo === lio.codigo
+                            return (
+                              <tr
+                                key={lio.id || lio.codigo}
+                                className={`transition ${
+                                  isEnabled
+                                    ? 'hover:bg-slate-50/50 dark:hover:bg-slate-900/30'
+                                    : 'bg-slate-100/50 dark:bg-slate-900/40 opacity-60'
+                                }`}
+                              >
+                                <td className="py-2.5 px-3 text-center">
+                                  <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={isEnabled}
+                                      onChange={() => handleToggleLioHabilitado(lio.codigo)}
+                                      className="sr-only peer"
+                                    />
+                                    <div className="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-amber-600"></div>
+                                  </label>
+                                </td>
+
+                                <td className="py-2.5 px-3">
+                                  <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                                    <span className="font-mono text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded text-[11px] border border-amber-200 dark:border-amber-800">
+                                      {lio.codigo}
+                                    </span>
+                                    <span>{lio.nombre}</span>
+                                  </div>
+                                </td>
+
+                                <td className="py-2.5 px-3">
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                        lio.tipo_vision?.includes('Trifocal')
+                                          ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300'
+                                          : lio.tipo_vision?.includes('EDOF')
+                                          ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300'
+                                          : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                      }`}
+                                    >
+                                      {lio.tipo_vision || 'Monofocal'}
+                                    </span>
+                                    {lio.es_torico && (
+                                      <span className="px-1.5 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-300/60">
+                                        🎯 TÓRICO
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-2.5 px-3 text-right">
+                                  <select
+                                    value={lio.moneda || 'USD'}
+                                    onChange={(e) => {
+                                      const newMon = e.target.value as 'ARS' | 'USD'
+                                      setListaLiosModal((prev) =>
+                                        prev.map((l) => (l.codigo === lio.codigo ? { ...l, moneda: newMon } : l))
+                                      )
+                                    }}
+                                    className="p-1 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs font-bold outline-none cursor-pointer"
+                                  >
+                                    <option value="USD">USD ($)</option>
+                                    <option value="ARS">ARS ($)</option>
+                                  </select>
+                                </td>
+
+                                <td className="py-2.5 px-3 text-right">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                    value={lio.precio}
+                                    onChange={(e) => {
+                                      const newP = parseFloat(e.target.value) || 0
+                                      setListaLiosModal((prev) =>
+                                        prev.map((l) => (l.codigo === lio.codigo ? { ...l, precio: newP } : l))
+                                      )
+                                    }}
+                                    className="w-full p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs font-mono font-bold text-right outline-none focus:ring-2 focus:ring-amber-500"
+                                  />
+                                </td>
+
+                                <td className="py-2.5 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    disabled={isSavingThis}
+                                    onClick={() => handleGuardarPrecioLio(lio.codigo, lio.precio, lio.moneda)}
+                                    className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-lg font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs transition cursor-pointer disabled:opacity-50 mx-auto"
+                                    title="Guardar tarifa para este LIO"
+                                  >
+                                    {isSavingThis ? (
+                                      <Loader2 size={12} className="animate-spin" />
+                                    ) : (
+                                      <Save size={12} />
+                                    )}
+                                    <span>Guardar</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
 
