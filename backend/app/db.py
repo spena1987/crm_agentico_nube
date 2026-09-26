@@ -3504,6 +3504,7 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                 
         return {
             "id": presupuesto_id,
+            "numero_presupuesto": presupuesto_db.get("numero_presupuesto"),
             "paciente_id": paciente_id,
             "asesoria_id": asesoria_id,
             "estado": pres_data["estado"],
@@ -3511,7 +3512,8 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             "total_ars": total_ars,
             "total_usd": total_usd,
             "pdf_url": pdf_url,
-            "items": items_para_pdf
+            "items": items_para_pdf,
+            "items_presupuesto": items_para_pdf
         }
     except Exception as e:
         logger.error(f"Error al crear presupuesto rápido: {e}")
@@ -3675,7 +3677,8 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
             "total_ars": total_ars,
             "total_usd": total_usd,
             "pdf_url": pdf_url,
-            "items": items_para_pdf
+            "items": items_para_pdf,
+            "items_presupuesto": items_para_pdf
         }
     except Exception as e:
         logger.error(f"Error al actualizar presupuesto rápido {presupuesto_id}: {e}")

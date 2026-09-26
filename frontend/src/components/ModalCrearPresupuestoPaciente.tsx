@@ -240,11 +240,16 @@ export default function ModalCrearPresupuestoPaciente({
         if (presupuestoAEditar.estado) {
           setEmitirEstado(presupuestoAEditar.estado as any)
         }
-        const itemsCargados: ItemPresupuestoForm[] = []
-        if (presupuestoAEditar.items_presupuesto && presupuestoAEditar.items_presupuesto.length > 0) {
-          presupuestoAEditar.items_presupuesto.forEach((it: any) => {
-            const nom = it.servicios_precios?.nombre_prestacion || it.nombre || it.descripcion || 'Prestación Médica'
-            const cod = it.servicios_precios?.codigo || it.codigo || ''
+
+        const rawItems = (presupuestoAEditar.items_presupuesto && presupuestoAEditar.items_presupuesto.length > 0)
+          ? presupuestoAEditar.items_presupuesto
+          : ((presupuestoAEditar as any).items || [])
+
+        const procesarListaItems = (lista: any[]) => {
+          const itemsCargados: ItemPresupuestoForm[] = []
+          lista.forEach((it: any) => {
+            const nom = it.nombre || it.nombre_prestacion || it.servicios_precios?.nombre_prestacion || it.descripcion || 'Prestación Médica'
+            const cod = it.codigo || it.codigo_servicio || it.servicios_precios?.codigo || ''
             const mon = (it.moneda || it.servicios_precios?.moneda || 'ARS') as 'ARS' | 'USD'
             const pu = Number(it.precio_unitario || 0)
             const cant = Number(it.cantidad || 1)
@@ -261,28 +266,47 @@ export default function ModalCrearPresupuestoPaciente({
               precio_original: pu > 0 ? pu : Number(it.servicios_precios?.precio || 0)
             })
           })
-        }
-        setItems(itemsCargados)
-        if (Number(presupuestoAEditar.total_usd || 0) > 0 && Number(presupuestoAEditar.total_ars || 0) === 0) {
-          setMonedaDefault('USD')
-        } else {
-          setMonedaDefault('ARS')
+          setItems(itemsCargados)
+
+          if (Number(presupuestoAEditar.total_usd || 0) > 0 && Number(presupuestoAEditar.total_ars || 0) === 0) {
+            setMonedaDefault('USD')
+          } else {
+            setMonedaDefault('ARS')
+          }
+
+          const primer = itemsCargados[0]
+          if (primer) {
+            const nomLow = primer.nombre.toLowerCase()
+            const codLow = (primer.codigo || '').toLowerCase()
+            const esCatarata = nomLow.includes('catarata') || nomLow.includes('faco') || codLow.includes('34031') || nomLow.includes('lio')
+            setPracticaRequiereLente(esCatarata)
+            const targetCod = primer.codigo || primer.nombre
+            if (esCatarata && targetCod) {
+              cargarLiosParaPractica(targetCod)
+            }
+            if (targetCod) {
+              consultarRelaciones(targetCod, primer.nombre, primer.codigo)
+            }
+          }
         }
 
-        const primer = itemsCargados[0]
-        if (primer) {
-          const nomLow = primer.nombre.toLowerCase()
-          const codLow = (primer.codigo || '').toLowerCase()
-          const esCatarata = nomLow.includes('catarata') || nomLow.includes('faco') || codLow.includes('34031') || nomLow.includes('lio')
-          setPracticaRequiereLente(esCatarata)
-          const targetCod = primer.codigo || primer.nombre
-          if (esCatarata && targetCod) {
-            cargarLiosParaPractica(targetCod)
-          }
-          if (targetCod) {
-            consultarRelaciones(targetCod, primer.nombre, primer.codigo)
-          }
+        if (rawItems.length > 0) {
+          procesarListaItems(rawItems)
+        } else if (presupuestoAEditar.id) {
+          // Si el objeto en memoria no incluía los ítems detallados, buscarlos directamente en la API
+          fetch(`${BACKEND_URL}/api/presupuestos/${presupuestoAEditar.id}`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.success && data.presupuesto) {
+                const dbItems = data.presupuesto.items_presupuesto || data.presupuesto.items || []
+                if (dbItems.length > 0) {
+                  procesarListaItems(dbItems)
+                }
+              }
+            })
+            .catch((e) => console.error('Error cargando ítems del presupuesto desde API:', e))
         }
+
         buscarPracticasCatalogo('')
         return
       }

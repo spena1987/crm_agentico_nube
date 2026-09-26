@@ -3627,6 +3627,25 @@ def actualizar_presupuesto_endpoint(presupuesto_id: str, payload: Dict[str, Any]
         logger.error(f"Error al actualizar presupuesto {presupuesto_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/presupuestos/{presupuesto_id}")
+def obtener_presupuesto_detalle_api(presupuesto_id: str):
+    """
+    Retorna el presupuesto completo con sus ítems, datos de servicios_precios y estado.
+    """
+    try:
+        p_resp = supabase.table("presupuestos")\
+            .select("*, pacientes(*), items_presupuesto(*, servicios_precios(*))")\
+            .eq("id", presupuesto_id)\
+            .execute()
+        if not p_resp.data:
+            raise HTTPException(status_code=404, detail="Presupuesto no encontrado.")
+        return {"success": True, "presupuesto": p_resp.data[0]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al obtener detalle del presupuesto {presupuesto_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/presupuestos/{presupuesto_id}")
 def eliminar_presupuesto_endpoint(presupuesto_id: str):
     """
