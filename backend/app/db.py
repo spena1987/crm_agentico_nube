@@ -1822,9 +1822,17 @@ def get_practicas_relacionadas(
     fecha_ref = fecha_consulta or date.today().isoformat()
     
     try:
+        orig_id = str(practica_id).strip()
+        if not is_valid_uuid(orig_id):
+            p_find = supabase.table("nomenclador_practicas").select("id").eq("codigo", orig_id.upper()).limit(1).execute()
+            if p_find.data:
+                orig_id = p_find.data[0]["id"]
+            else:
+                return []
+
         rel_resp = supabase.table("nomenclador_practicas_relacionadas")\
             .select("*, practica_relacionada:nomenclador_practicas!practica_relacionada_id(id, codigo, nombre, categoria, activo, nomencladores(id, nombre, codigo, moneda_default))")\
-            .eq("practica_origen_id", practica_id)\
+            .eq("practica_origen_id", orig_id)\
             .order("orden")\
             .execute()
             

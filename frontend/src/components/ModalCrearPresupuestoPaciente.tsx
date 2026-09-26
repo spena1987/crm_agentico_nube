@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react'
 import {
   X,
   Plus,
+  Minus,
   Trash2,
   FileText,
   Search,
@@ -11,14 +12,17 @@ import {
   DollarSign,
   Receipt,
   AlertCircle,
-  FileCheck2
+  FileCheck2,
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  CheckSquare,
+  Square
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
-import ModalSmartBundleSugerencias, {
-  RelacionPracticaPresupuesto,
-  ItemSeleccionadoBundle
-} from './ModalSmartBundleSugerencias'
+import type { RelacionPracticaPresupuesto } from './ModalSmartBundleSugerencias'
 
 interface ItemPresupuestoForm {
   servicio_id?: string
@@ -97,12 +101,13 @@ export default function ModalCrearPresupuestoPaciente({
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Prácticas Vinculadas (Smart Bundle)
+  // Prácticas Vinculadas (Smart Bundle - Banner Colapsable Inline)
   const [bundlePracticaPrincipal, setBundlePracticaPrincipal] = useState<{ codigo?: string; nombre: string } | null>(null)
   const [bundleRelaciones, setBundleRelaciones] = useState<RelacionPracticaPresupuesto[]>([])
-  const [mostrarBundleModal, setMostrarBundleModal] = useState(false)
+  const [bundleExpandido, setBundleExpandido] = useState(false)
+  const [bundleConfig, setBundleConfig] = useState<Record<string, { seleccionada: boolean; cantidad: number; precio: number }>>({})
 
-  // Consultar y abrir modal de prácticas conexas / Smart Bundle
+  // Consultar prácticas conexas / Smart Bundle
   const consultarRelaciones = async (practicaId: string, practicaNombre: string, practicaCodigo?: string) => {
     if (!practicaId) return
     try {
@@ -112,12 +117,82 @@ export default function ModalCrearPresupuestoPaciente({
         if (data.success && data.relaciones && data.relaciones.length > 0) {
           setBundlePracticaPrincipal({ codigo: practicaCodigo, nombre: practicaNombre })
           setBundleRelaciones(data.relaciones)
-          setMostrarBundleModal(true)
+          const initConfig: Record<string, { seleccionada: boolean; cantidad: number; precio: number }> = {}
+          data.relaciones.forEach((r: RelacionPracticaPresupuesto) => {
+            initConfig[r.id] = {
+              seleccionada: r.es_obligatoria !== false,
+              cantidad: r.cantidad_default || 1,
+              precio: Number(r.precio) || 0
+            }
+          })
+          setBundleConfig(initConfig)
+        } else {
+          setBundleRelaciones([])
+          setBundleConfig({})
         }
       }
     } catch (err) {
       console.error('Error al consultar prácticas vinculadas:', err)
     }
+  }
+
+  // Cálculos reactivos de conexos
+  const conexosSeleccionados = bundleRelaciones.filter((r) => bundleConfig[r.id]?.seleccionada)
+  const conexosPendientes = conexosSeleccionados.filter(
+    (r) => !items.some((it) => it.servicio_id === r.id || it.codigo === r.codigo)
+  )
+  const todosConexosAgregados = conexosSeleccionados.length > 0 && conexosPendientes.length === 0
+  const montoTotalConexos = conexosSeleccionados.reduce((acc, r) => {
+    const cant = bundleConfig[r.id]?.cantidad || 1
+    const prec = bundleConfig[r.id]?.precio ?? (Number(r.precio) || 0)
+    return acc + cant * prec
+  }, 0)
+  const monedaConexos = bundleRelaciones[0]?.moneda || 'ARS'
+
+  // Agregar conexos pendientes en 1 solo clic
+  const handleAgregarConexosRapido = () => {
+    const nuevos: ItemPresupuestoForm[] = []
+    conexosPendientes.forEach((r) => {
+      const cfg = bundleConfig[r.id]
+      const cant = cfg?.cantidad || r.cantidad_default || 1
+      const pu = cfg?.precio ?? (Number(r.precio) || 0)
+      nuevos.push({
+        servicio_id: r.id,
+        codigo: r.codigo,
+        nombre: r.nombre,
+        cantidad: cant,
+        precio_unitario: pu,
+        subtotal: cant * pu,
+        moneda: r.moneda || 'ARS'
+      })
+    })
+    if (nuevos.length > 0) {
+      setItems((prev) => [...prev, ...nuevos])
+    }
+  }
+
+  const toggleSeleccionConexo = (id: string) => {
+    setBundleConfig((prev) => ({
+      ...prev,
+      [id]: {
+        ...prev[id],
+        seleccionada: !prev[id]?.seleccionada
+      }
+    }))
+  }
+
+  const handleCantidadConexo = (id: string, delta: number) => {
+    setBundleConfig((prev) => {
+      const curr = prev[id] || { seleccionada: true, cantidad: 1, precio: 0 }
+      const nueva = Math.max(1, (curr.cantidad || 1) + delta)
+      return {
+        ...prev,
+        [id]: {
+          ...curr,
+          cantidad: nueva
+        }
+      }
+    })
   }
 
   // Cargar LIOs habilitados para una práctica específica
@@ -153,8 +228,12 @@ export default function ModalCrearPresupuestoPaciente({
         const esCatarata = nomLow.includes('catarata') || nomLow.includes('faco') || codLow.includes('34031') || nomLow.includes('lio')
         setPracticaRequiereLente(esCatarata)
 
-        if (esCatarata && (pCodigo || pNombre)) {
-          cargarLiosParaPractica(pCodigo || pNombre)
+        const targetCod = pCodigo || pNombre
+        if (esCatarata && targetCod) {
+          cargarLiosParaPractica(targetCod)
+        }
+        if (targetCod && targetCod !== 'QUIR-01') {
+          consultarRelaciones(targetCod, pNombre, pCodigo)
         }
 
         listaInicial.push({
@@ -193,9 +272,9 @@ export default function ModalCrearPresupuestoPaciente({
                   }])
                   if (sugerido.moneda === 'USD') setMonedaDefault('USD')
                 }
-                // Si la práctica tiene ID, verificar si posee prácticas vinculadas (Anestesia, Quirófano, Insumos)
-                if (sugerido.id) {
-                  consultarRelaciones(sugerido.id, sugerido.nombre || pNombre, sugerido.codigo || pCodigo)
+                // Si la práctica tiene ID o código, verificar si posee prácticas vinculadas (Anestesia, Quirófano, Insumos)
+                if (sugerido.id || sugerido.codigo) {
+                  consultarRelaciones(sugerido.id || sugerido.codigo, sugerido.nombre || pNombre, sugerido.codigo || pCodigo)
                 }
               }
             })
@@ -204,6 +283,8 @@ export default function ModalCrearPresupuestoPaciente({
       } else {
         setPracticaRequiereLente(false)
         setLiosDisponibles([])
+        setBundleRelaciones([])
+        setBundleConfig({})
       }
 
       setItems(listaInicial)
@@ -293,21 +374,6 @@ export default function ModalCrearPresupuestoPaciente({
     if (lio.moneda === 'USD' && items.every((it) => it.moneda === 'USD' || it.precio_unitario === 0)) {
       setMonedaDefault('USD')
     }
-  }
-
-  // Confirmar y agregar selección de prácticas vinculadas (Smart Bundle)
-  const handleConfirmarBundle = (seleccionadas: ItemSeleccionadoBundle[]) => {
-    if (!seleccionadas || seleccionadas.length === 0) return
-    const nuevosItems: ItemPresupuestoForm[] = seleccionadas.map((s) => ({
-      servicio_id: s.id,
-      codigo: s.codigo,
-      nombre: s.nombre,
-      cantidad: s.cantidad,
-      precio_unitario: s.precio_unitario,
-      subtotal: s.cantidad * s.precio_unitario,
-      moneda: s.moneda
-    }))
-    setItems((prev) => [...prev, ...nuevosItems])
   }
 
   // Agregar ítem manual o personalizado
@@ -502,6 +568,163 @@ export default function ModalCrearPresupuestoPaciente({
               </select>
             </div>
           </div>
+
+          {/* Banner Colapsable Inteligente: Prácticas y Costos Conexos Vinculados (Smart Bundle) */}
+          {bundleRelaciones.length > 0 && (
+            <div className="rounded-xl border border-purple-500/30 bg-gradient-to-r from-purple-950/40 via-purple-900/20 to-neutral-950 overflow-hidden transition-all shadow-md">
+              {/* Fila Principal Compacta */}
+              <div className="p-3 sm:px-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-300 shrink-0">
+                    <Sparkles size={16} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-xs font-bold text-purple-200">
+                        Prácticas Conexas Sugeridas (Smart Bundle)
+                      </h4>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                        {bundleRelaciones.length} recomendada{bundleRelaciones.length > 1 ? 's' : ''}
+                      </span>
+                      {montoTotalConexos > 0 && (
+                        <span className="text-[11px] font-mono font-bold text-purple-300">
+                          +{monedaConexos === 'USD' ? 'USD ' : '$ '}
+                          {montoTotalConexos.toLocaleString('es-AR', { minimumFractionDigits: monedaConexos === 'USD' ? 0 : 2 })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-purple-300/70 truncate">
+                      {bundlePracticaPrincipal?.nombre ? `Para: ${bundlePracticaPrincipal.nombre}` : 'Costos conexos recomendados para esta cirugía'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  {todosConexosAgregados ? (
+                    <span className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                      <Check size={14} className="stroke-[3]" />
+                      Conexos incluidos
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleAgregarConexosRapido}
+                      className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold transition shadow flex items-center gap-1.5"
+                    >
+                      <Sparkles size={13} />
+                      + Agregar Conexos ({conexosPendientes.length})
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setBundleExpandido(!bundleExpandido)}
+                    className="p-1.5 rounded-lg border border-purple-500/30 bg-neutral-900/80 hover:bg-neutral-800 text-purple-300 hover:text-white transition flex items-center gap-1 text-[11px] font-semibold"
+                    title={bundleExpandido ? 'Ocultar detalles' : 'Ver y personalizar conexos'}
+                  >
+                    <span>{bundleExpandido ? 'Ocultar' : 'Detalles'}</span>
+                    {bundleExpandido ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Acordeón Desplegable de Detalles */}
+              {bundleExpandido && (
+                <div className="border-t border-purple-500/20 bg-neutral-950/60 p-3 space-y-2 text-xs animate-in slide-in-from-top-1 duration-150">
+                  <div className="divide-y divide-purple-500/10">
+                    {bundleRelaciones.map((r) => {
+                      const cfg = bundleConfig[r.id] || { seleccionada: true, cantidad: 1, precio: Number(r.precio) || 0 }
+                      const yaCotizado = items.some((it) => it.servicio_id === r.id || it.codigo === r.codigo)
+                      return (
+                        <div key={r.id} className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <button
+                              type="button"
+                              onClick={() => toggleSeleccionConexo(r.id)}
+                              className="text-purple-400 hover:text-purple-200 transition"
+                            >
+                              {cfg.seleccionada ? <CheckSquare size={16} /> : <Square size={16} />}
+                            </button>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-gray-200 text-xs truncate">{r.nombre}</span>
+                                <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                  {r.tipo_relacion || 'Conexo'}
+                                </span>
+                                {r.es_obligatoria && (
+                                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-red-950/70 text-red-300 border border-red-500/30 font-bold">
+                                    Obligatoria
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-gray-400 font-mono">Cód: {r.codigo}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
+                            {/* Selector de cantidad */}
+                            <div className="flex items-center border border-neutral-700 rounded-lg overflow-hidden bg-neutral-900">
+                              <button
+                                type="button"
+                                onClick={() => handleCantidadConexo(r.id, -1)}
+                                className="px-2 py-0.5 hover:bg-neutral-800 text-gray-300"
+                              >
+                                <Minus size={11} />
+                              </button>
+                              <span className="px-2 py-0.5 text-xs font-mono font-bold text-white min-w-[20px] text-center">
+                                {cfg.cantidad}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCantidadConexo(r.id, 1)}
+                                className="px-2 py-0.5 hover:bg-neutral-800 text-gray-300"
+                              >
+                                <Plus size={11} />
+                              </button>
+                            </div>
+
+                            {/* Subtotal */}
+                            <span className="font-mono font-bold text-purple-200 text-xs w-24 text-right">
+                              {r.moneda === 'USD' ? 'USD ' : '$ '}
+                              {(cfg.cantidad * cfg.precio).toLocaleString('es-AR', { minimumFractionDigits: r.moneda === 'USD' ? 0 : 2 })}
+                            </span>
+
+                            {/* Estado / Acción individual */}
+                            {yaCotizado ? (
+                              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-bold px-2 py-1 rounded-md border border-emerald-500/30">
+                                ✓ Cotizado
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setItems((prev) => [
+                                    ...prev,
+                                    {
+                                      servicio_id: r.id,
+                                      codigo: r.codigo,
+                                      nombre: r.nombre,
+                                      cantidad: cfg.cantidad,
+                                      precio_unitario: cfg.precio,
+                                      subtotal: cfg.cantidad * cfg.precio,
+                                      moneda: r.moneda || 'ARS'
+                                    }
+                                  ])
+                                }}
+                                className="text-[10px] bg-purple-600 hover:bg-purple-500 text-white font-bold px-2.5 py-1 rounded-md transition"
+                              >
+                                + Agregar
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Panel Inteligente de LIOs Disponibles (Inserción en 1 Clic) */}
           {practicaRequiereLente && liosDisponibles.length > 0 && (
@@ -795,17 +1018,6 @@ export default function ModalCrearPresupuestoPaciente({
         </form>
 
       </div>
-
-      {/* Modal Sugerencias Smart Bundle (Prácticas y Costos Conexos) */}
-      {mostrarBundleModal && bundlePracticaPrincipal && bundleRelaciones.length > 0 && (
-        <ModalSmartBundleSugerencias
-          isOpen={mostrarBundleModal}
-          onClose={() => setMostrarBundleModal(false)}
-          practicaPrincipal={bundlePracticaPrincipal}
-          relaciones={bundleRelaciones}
-          onConfirmar={handleConfirmarBundle}
-        />
-      )}
     </div>
   )
 }
