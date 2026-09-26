@@ -37,6 +37,18 @@ interface PracticaNomenclador {
   categoria?: string
   precio?: number
   moneda?: string
+  requiere_lente?: boolean
+}
+
+export interface LioComercial {
+  id: string
+  codigo: string
+  nombre: string
+  categoria: string
+  precio: number
+  moneda: 'ARS' | 'USD'
+  es_torico: boolean
+  tipo_vision: string
 }
 
 interface ModalCrearPresupuestoPacienteProps {
@@ -77,6 +89,10 @@ export default function ModalCrearPresupuestoPaciente({
   const [buscando, setBuscando] = useState(false)
   const [mostrarDropdown, setMostrarDropdown] = useState(false)
 
+  // LIOs Comerciales (1-Clic)
+  const [liosDisponibles, setLiosDisponibles] = useState<LioComercial[]>([])
+  const [practicaRequiereLente, setPracticaRequiereLente] = useState(false)
+
   const [emitirEstado, setEmitirEstado] = useState<'enviado' | 'borrador' | 'aprobado'>('enviado')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -104,17 +120,32 @@ export default function ModalCrearPresupuestoPaciente({
     }
   }
 
-  // Al abrir el modal, inicializar ítems y estados
+  // Al abrir el modal, inicializar ítems, LIOs y estados
   useEffect(() => {
     if (isOpen) {
       setError(null)
       const listaInicial: ItemPresupuestoForm[] = []
+
+      // Cargar LIOs comerciales con aranceles vigentes
+      fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && data.lios) {
+            setLiosDisponibles(data.lios)
+          }
+        })
+        .catch((err) => console.error('Error cargando LIOs comerciales:', err))
       
       if (practicaInicial && practicaInicial.nombre) {
         const pPrecio = Number(practicaInicial.precio) || 0
         const pMoneda = (practicaInicial.moneda === 'USD' ? 'USD' : 'ARS') as 'ARS' | 'USD'
         const pCodigo = practicaInicial.codigo || 'QUIR-01'
         const pNombre = practicaInicial.nombre
+
+        const nomLow = pNombre.toLowerCase()
+        const codLow = (pCodigo || '').toLowerCase()
+        const esCatarata = nomLow.includes('catarata') || nomLow.includes('faco') || codLow.includes('34031') || nomLow.includes('lio')
+        setPracticaRequiereLente(esCatarata)
 
         listaInicial.push({
           codigo: pCodigo,
@@ -136,6 +167,9 @@ export default function ModalCrearPresupuestoPaciente({
             .then((data) => {
               if (data.success && data.resultados && data.resultados.length > 0) {
                 const sugerido = data.resultados[0]
+                if (sugerido.requiere_lente || esCatarata) {
+                  setPracticaRequiereLente(true)
+                }
                 if (pPrecio === 0 && sugerido.precio && sugerido.precio > 0) {
                   setItems([{
                     servicio_id: sugerido.id,
@@ -156,6 +190,8 @@ export default function ModalCrearPresupuestoPaciente({
             })
             .catch(() => {})
         }
+      } else {
+        setPracticaRequiereLente(false)
       }
 
       setItems(listaInicial)
@@ -217,9 +253,32 @@ export default function ModalCrearPresupuestoPaciente({
     setBusqueda('')
     setMostrarDropdown(false)
 
+    // Si la práctica requiere LIO, activar panel rápido de sugerencias de LIOs
+    if (p.requiere_lente || (p.nombre && (p.nombre.toLowerCase().includes('catarata') || p.nombre.toLowerCase().includes('faco') || p.codigo === '34031'))) {
+      setPracticaRequiereLente(true)
+    }
+
     // Si tiene ID, consultar prácticas vinculadas (Anestesia, Quirófano, Insumos)
     if (p.id) {
       consultarRelaciones(p.id, p.nombre, p.codigo)
+    }
+  }
+
+  // Agregar LIO comercial al presupuesto en 1-clic
+  const handleAgregarLio = (lio: LioComercial) => {
+    const precio = Number(lio.precio) || 0
+    const nuevo: ItemPresupuestoForm = {
+      servicio_id: lio.id,
+      codigo: lio.codigo,
+      nombre: lio.nombre,
+      cantidad: 1,
+      precio_unitario: precio,
+      subtotal: precio,
+      moneda: lio.moneda
+    }
+    setItems((prev) => [...prev, nuevo])
+    if (lio.moneda === 'USD' && items.every((it) => it.moneda === 'USD' || it.precio_unitario === 0)) {
+      setMonedaDefault('USD')
     }
   }
 
@@ -430,6 +489,66 @@ export default function ModalCrearPresupuestoPaciente({
               </select>
             </div>
           </div>
+
+          {/* Panel Inteligente de LIOs Disponibles (Inserción en 1 Clic) */}
+          {practicaRequiereLente && liosDisponibles.length > 0 && (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/40 via-amber-900/20 to-neutral-950 border border-amber-500/30 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">💎</span>
+                  <div>
+                    <h4 className="text-xs font-bold text-amber-200">
+                      Lentes Intraoculares Disponibles (Opciones Comerciales con Precio)
+                    </h4>
+                    <p className="text-[11px] text-amber-300/80">
+                      Esta cirugía incluye implante de LIO. Haz clic en las opciones para agregarlas al presupuesto y permitir que el paciente evalúe alternativas:
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  1-Clic
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                {liosDisponibles.map((lio) => {
+                  const yaAgregado = items.some((it) => it.servicio_id === lio.id || it.codigo === lio.codigo || it.nombre === lio.nombre)
+                  return (
+                    <button
+                      key={lio.id || lio.codigo}
+                      type="button"
+                      onClick={() => handleAgregarLio(lio)}
+                      className={`p-2.5 rounded-xl border text-left transition-all flex flex-col justify-between gap-1.5 group ${
+                        yaAgregado
+                          ? 'bg-amber-500/15 border-amber-400/50 text-white ring-1 ring-amber-400/30'
+                          : 'bg-neutral-900/90 border-neutral-700/80 hover:border-amber-400/60 hover:bg-neutral-800 text-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs font-bold leading-tight group-hover:text-amber-300 transition-colors">
+                          {lio.nombre}
+                        </span>
+                        {yaAgregado && (
+                          <span className="text-[9px] bg-amber-500/30 text-amber-200 font-bold px-1.5 py-0.5 rounded shrink-0">
+                            ✓ Cotizado
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] pt-1 border-t border-white/5">
+                        <span className="text-gray-400 text-[10px] font-medium">
+                          {lio.tipo_vision || (lio.es_torico ? 'Tórico' : 'Estándar')}
+                        </span>
+                        <span className="font-mono font-bold text-amber-300">
+                          {lio.moneda === 'USD' ? 'USD ' : '$ '}
+                          {lio.precio.toLocaleString('es-AR', { minimumFractionDigits: lio.moneda === 'USD' ? 0 : 2 })}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Buscador de Prestaciones en el Nomenclador */}
           <div className="space-y-2 relative">

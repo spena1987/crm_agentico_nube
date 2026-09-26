@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -67,7 +67,7 @@ import ModalEditarPaciente from './ModalEditarPaciente'
 import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { 
-  isSameCalendarDay, 
+  getCalendarDayKey,
   formatDateBadge, 
   formatWhatsAppListDate, 
   formatFullDateTimeTooltip 
@@ -324,6 +324,33 @@ export default function ChatInbox() {
   }
 
   const metaWindow = getMeta24hStatus()
+
+  interface MessageDayGroup {
+    dateKey: string
+    badgeText: string
+    messages: Mensaje[]
+  }
+
+  const messageDayGroups = useMemo<MessageDayGroup[]>(() => {
+    const groups: MessageDayGroup[] = []
+    let currentGroup: MessageDayGroup | null = null
+
+    for (const msg of mensajes) {
+      const dayKey = getCalendarDayKey(msg.created_at)
+      if (!currentGroup || currentGroup.dateKey !== dayKey) {
+        currentGroup = {
+          dateKey: dayKey,
+          badgeText: formatDateBadge(msg.created_at),
+          messages: [msg]
+        }
+        groups.push(currentGroup)
+      } else {
+        currentGroup.messages.push(msg)
+      }
+    }
+
+    return groups
+  }, [mensajes])
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const lastPresenceSentRef = useRef<number>(0)
 
@@ -604,19 +631,14 @@ export default function ChatInbox() {
     setMensajes(cached || [])
 
     // Reset optimista instantáneo del unread_count en la conversación seleccionada
-    const currentConv = conversacionesRef.current.find((c) => c.id === selectedConvId)
-    const hadUnread = Boolean(currentConv && (currentConv.unread_count || 0) > 0)
-
     setConversaciones((prev) =>
       prev.map((c) => (c.id === selectedConvId ? { ...c, unread_count: 0 } : c))
     )
 
     fetchMensajes(selectedConvId)
 
-    // Solo invocar /leer si efectivamente había mensajes no leídos (evita UPDATEs redundantes y reordenamientos)
-    if (hadUnread) {
-      apiFetch(`/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
-    }
+    // Sincronizar lectura con backend (el backend verifica si unread_count > 0 antes de persistir)
+    apiFetch(`/api/conversaciones/${selectedConvId}/leer`, { method: 'POST' }).catch(() => {})
 
     const intervalMsgs = setInterval(() => {
       if (!selectedConvId) return
@@ -2456,7 +2478,7 @@ export default function ChatInbox() {
               <div 
                 ref={messagesContainerRef}
                 onScroll={handleScroll}
-                className="flex-1 overflow-y-auto p-4 space-y-1.5 bg-[#090e1a] panel-scroll"
+                className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#090e1a] panel-scroll"
               >
                 {cargandoMensajes ? (
                   <div className="text-center text-xs text-slate-400 py-8 flex flex-col items-center gap-2">
@@ -2472,86 +2494,75 @@ export default function ChatInbox() {
                     <p className="text-[11px] text-slate-400">Escribe un mensaje abajo para iniciar el chat con el paciente</p>
                   </div>
                 ) : (
-                  mensajes.map((msg, index) => {
-                    const isOperator = msg.emisor === 'operador'
-                    const isBot = msg.emisor === 'bot'
-                    const isSystem = msg.metadata_json?.sistema === true
-                    const isInternal = Boolean(msg.metadata_json?.is_internal_note || msg.metadata_json?.tipo === 'nota_interna')
-                    
-                    const showDateDivider = index === 0 || !isSameCalendarDay(
-                      new Date(msg.created_at), 
-                      new Date(mensajes[index - 1].created_at)
-                    )
-                    const dateBadgeText = formatDateBadge(msg.created_at)
-                    const fullDateTooltip = formatFullDateTimeTooltip(msg.created_at)
+                  messageDayGroups.map((group) => (
+                    <div key={group.dateKey} className="relative day-group pb-1">
+                      {/* Píldora de fecha Sticky: Acotada estrictamente al bloque de este día para el efecto push nativo */}
+                      {group.badgeText && (
+                        <div className="sticky top-2 z-20 flex justify-center py-1 select-none pointer-events-none mb-3">
+                          <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
+                            {group.badgeText}
+                          </span>
+                        </div>
+                      )}
 
-                    if (isSystem) {
-                      return (
-                        <React.Fragment key={msg.id}>
-                          {showDateDivider && dateBadgeText && (
-                            <div className="flex justify-center my-3.5 select-none sticky top-2 z-10 pointer-events-none">
-                              <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
-                                {dateBadgeText}
-                              </span>
-                            </div>
-                          )}
-                          <div className="flex justify-center my-2">
-                            <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs" title={fullDateTooltip}>
-                              {msg.contenido}
-                            </div>
-                          </div>
-                        </React.Fragment>
-                      )
-                    }
+                      <div className="space-y-1.5">
+                        {group.messages.map((msg) => {
+                          const isOperator = msg.emisor === 'operador'
+                          const isBot = msg.emisor === 'bot'
+                          const isSystem = msg.metadata_json?.sistema === true
+                          const isInternal = Boolean(msg.metadata_json?.is_internal_note || msg.metadata_json?.tipo === 'nota_interna')
+                          const fullDateTooltip = formatFullDateTimeTooltip(msg.created_at)
 
-                    // 1. NOTA INTERNA PRIVADA (ÁMBAR / DORADO / ALERTA DERIVACIÓN)
-                    if (isInternal) {
-                      const isDerivacion = msg.metadata_json?.evento === 'escalado_humano' || msg.contenido?.includes('DERIVACIÓN A ATENCIÓN HUMANA')
-                      const urgencia = (msg.metadata_json?.urgencia || 'ALTA').toUpperCase()
-
-                      return (
-                        <React.Fragment key={msg.id}>
-                          {showDateDivider && dateBadgeText && (
-                            <div className="flex justify-center my-3.5 select-none sticky top-2 z-10 pointer-events-none">
-                              <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
-                                {dateBadgeText}
-                              </span>
-                            </div>
-                          )}
-                          <div 
-                            onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                            className="flex justify-center my-2.5 group relative px-2"
-                          >
-                            <div className={`max-w-md w-full rounded-2xl p-3.5 shadow-md text-xs relative ${
-                              isDerivacion 
-                                ? 'bg-[#2a1306] border-2 border-rose-500/80 text-rose-100 ring-2 ring-rose-500/20' 
-                                : 'bg-[#241a06] border border-amber-500/60 text-amber-200'
-                            }`}>
-                              {/* Botón flotante Hover para menú */}
-                              <button
-                                type="button"
-                                onClick={(e) => handleOpenContextMenu(e, msg)}
-                                className="absolute top-2 right-2 p-1 rounded-full bg-black/60 hover:bg-black/90 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
-                                title="Menú de nota interna"
-                              >
-                                <ChevronDown size={14} />
-                              </button>
-
-                              <div className="flex items-center justify-between gap-1 text-[10px] font-extrabold mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
-                                <span className={`flex items-center gap-1.5 ${isDerivacion ? 'text-rose-400 font-black' : 'text-amber-400'}`}>
-                                  <Lock size={12} className={isDerivacion ? 'text-rose-400' : 'text-amber-400'} />
-                                  {isDerivacion ? `🚨 DERIVACIÓN A ATENCIÓN HUMANA (${urgencia})` : '🔒 NOTA INTERNA (Privado del Equipo Médico)'}
-                                </span>
-                                <span className="text-[9px] opacity-75 font-mono cursor-help" title={fullDateTooltip}>
-                                  {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </span>
+                          if (isSystem) {
+                            return (
+                              <div key={msg.id} className="flex justify-center my-2">
+                                <div className="bg-amber-950/40 text-amber-300 text-[10px] font-bold px-3 py-1 rounded-full border border-amber-800/50 shadow-xs" title={fullDateTooltip}>
+                                  {msg.contenido}
+                                </div>
                               </div>
-                              <WhatsAppFormattedText text={msg.contenido} className={`leading-relaxed ${isDerivacion ? 'text-rose-100 font-medium' : 'text-amber-100'}`} />
-                            </div>
-                          </div>
-                        </React.Fragment>
-                      )
-                    }
+                            )
+                          }
+
+                          // 1. NOTA INTERNA PRIVADA (ÁMBAR / DORADO / ALERTA DERIVACIÓN)
+                          if (isInternal) {
+                            const isDerivacion = msg.metadata_json?.evento === 'escalado_humano' || msg.contenido?.includes('DERIVACIÓN A ATENCIÓN HUMANA')
+                            const urgencia = (msg.metadata_json?.urgencia || 'ALTA').toUpperCase()
+
+                            return (
+                              <div 
+                                key={msg.id}
+                                onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                                className="flex justify-center my-2.5 group relative px-2"
+                              >
+                                <div className={`max-w-md w-full rounded-2xl p-3.5 shadow-md text-xs relative ${
+                                  isDerivacion 
+                                    ? 'bg-[#2a1306] border-2 border-rose-500/80 text-rose-100 ring-2 ring-rose-500/20' 
+                                    : 'bg-[#241a06] border border-amber-500/60 text-amber-200'
+                                }`}>
+                                  {/* Botón flotante Hover para menú */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleOpenContextMenu(e, msg)}
+                                    className="absolute top-2 right-2 p-1 rounded-full bg-black/60 hover:bg-black/90 text-amber-300 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity duration-150 shadow-md cursor-pointer z-10"
+                                    title="Menú de nota interna"
+                                  >
+                                    <ChevronDown size={14} />
+                                  </button>
+
+                                  <div className="flex items-center justify-between gap-1 text-[10px] font-extrabold mb-1.5 pb-1 border-b border-amber-800/40 pr-6">
+                                    <span className={`flex items-center gap-1.5 ${isDerivacion ? 'text-rose-400 font-black' : 'text-amber-400'}`}>
+                                      <Lock size={12} className={isDerivacion ? 'text-rose-400' : 'text-amber-400'} />
+                                      {isDerivacion ? `🚨 DERIVACIÓN A ATENCIÓN HUMANA (${urgencia})` : '🔒 NOTA INTERNA (Privado del Equipo Médico)'}
+                                    </span>
+                                    <span className="text-[9px] opacity-75 font-mono cursor-help" title={fullDateTooltip}>
+                                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  <WhatsAppFormattedText text={msg.contenido} className={`leading-relaxed ${isDerivacion ? 'text-rose-100 font-medium' : 'text-amber-100'}`} />
+                                </div>
+                              </div>
+                            )
+                          }
 
                     // 2. MENSAJE NORMAL DE WHATSAPP O STICKER
                     const isSticker = msg.metadata_json?.tipo === 'sticker'
@@ -2577,19 +2588,12 @@ export default function ChatInbox() {
                       msg.metadata_json?.tipo !== 'template'
                     )
 
-                    return (
-                      <React.Fragment key={msg.id}>
-                        {showDateDivider && dateBadgeText && (
-                          <div className="flex justify-center my-3.5 select-none sticky top-2 z-10 pointer-events-none">
-                            <span className="px-3.5 py-1 rounded-lg bg-[#142036]/95 backdrop-blur-md text-slate-300 text-[11px] font-bold tracking-wider shadow-md border border-slate-700/60 uppercase">
-                              {dateBadgeText}
-                            </span>
-                          </div>
-                        )}
-                        <div
-                          onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                          className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
-                        >
+                          return (
+                            <div
+                              key={msg.id}
+                              onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                              className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
+                            >
                           {isSticker ? (
                             <div className="relative group p-1 max-w-[140px]">
                               {/* Botón flotante Hover para Menú Contextual */}
@@ -2784,11 +2788,13 @@ export default function ChatInbox() {
                             </div>
                           )}
                         </div>
-                      </React.Fragment>
-                    )
-                  })
-                )}
-                <div ref={messagesEndRef} />
+                      )
+                    })}
+                  </div>
+                </div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
               </div>
 
               {/* Botón flotante para scroll al fondo (Estilo WhatsApp Web) */}

@@ -54,6 +54,23 @@ export const isSameCalendarDay = (d1: Date, d2: Date): boolean => {
 }
 
 /**
+ * Retorna una clave única de día calendario (YYYY-MM-DD) para agrupar mensajes en secciones delimitadas
+ */
+export const getCalendarDayKey = (isoStr?: string | null): string => {
+  if (!isoStr) return 'sin-fecha'
+  try {
+    const d = new Date(isoStr)
+    if (isNaN(d.getTime())) return 'sin-fecha'
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  } catch {
+    return 'sin-fecha'
+  }
+}
+
+/**
  * Formatea la píldora/separador de fecha en el timeline de mensajes (Estilo WhatsApp Web)
  * - Hoy -> "HOY"
  * - Ayer -> "AYER"

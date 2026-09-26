@@ -1154,6 +1154,15 @@ export default function NomencladorSettingsCard() {
                                   <PenTool size={10} /> Consent
                                 </span>
                               ) : null}
+
+                              {p.requiere_lente ? (
+                                <span
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200"
+                                  title="Requiere selección de Lente Intraocular (LIO)"
+                                >
+                                  💎 LIO
+                                </span>
+                              ) : null}
                             </div>
                           </td>
                           <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 dark:text-slate-100">
@@ -1569,6 +1578,30 @@ export default function NomencladorSettingsCard() {
                       />
                       <span className="text-[11px] text-slate-400">minutos</span>
                     </div>
+                  </div>
+
+                  {/* Requiere Selección de Lente Intraocular (LIO) */}
+                  <div className="flex items-center justify-between p-3.5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                    <div className="space-y-0.5 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">💎</span>
+                        <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                          Requiere Selección de Lente Intraocular (LIO)
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                        Habilita la elección del LIO en la Lateralidad del caso (Cataratas) y sugiere los lentes comerciales con precio al crear presupuestos.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={formData.requiere_lente || false}
+                        onChange={(e) => setFormData({ ...formData, requiere_lente: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-amber-600"></div>
+                    </label>
                   </div>
 
                   {/* Resumen de Módulos Activos */}

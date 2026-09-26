@@ -208,6 +208,19 @@ export default function CasoFormularioActivo({
   const [fechaDefinitiva2doOjo, setFechaDefinitiva2doOjo] = useState<string>(
     metaBilateralInicial.fecha_definitiva_2do_ojo || (caso as any).fecha_definitiva_2do_ojo || ''
   )
+  // Selección de LIO Comercial / Genérico en Lateralidad
+  const lioSeleccionInicial = ((caso.checklist_prequirurgico as any)?._lio_seleccion) || {
+    estado: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo) ? 'confirmado' : 'a_definir',
+    lente_nombre: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
+    modalidad_bilateral: 'mismo_lente',
+    lente_od: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
+    lente_oi: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
+    observaciones: ''
+  }
+  const [lioSeleccion, setLioSeleccion] = useState<any>(lioSeleccionInicial)
+  const [catalogoLios, setCatalogoLios] = useState<any[]>([])
+  const [practicaRequiereLente, setPracticaRequiereLente] = useState(false)
+  const [adoptandoLio, setAdoptandoLio] = useState(false)
 
   // Fechas
   const [fechaProbable, setFechaProbable] = useState(caso.fecha_probable_cirugia || '')
@@ -557,6 +570,15 @@ export default function CasoFormularioActivo({
       setProximaAccionFecha(caso.proxima_accion_fecha || '')
       setProximaAccionTexto(caso.proxima_accion_texto || '')
       setSituacionPaciente(caso.situacion_paciente || '')
+      const lioSync = ((caso.checklist_prequirurgico as any)?._lio_seleccion) || {
+        estado: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo) ? 'confirmado' : 'a_definir',
+        lente_nombre: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
+        modalidad_bilateral: 'mismo_lente',
+        lente_od: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
+        lente_oi: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
+        observaciones: ''
+      }
+      setLioSeleccion(lioSync)
     } else {
       // Si el usuario está editando pero el servidor actualizó el presupuesto o práctica desde un modal
       if (caso.presupuesto_id && caso.presupuesto_id !== presupuestoId) {
@@ -621,6 +643,105 @@ export default function CasoFormularioActivo({
     }
   }, [presupuestoVinculado, montoExtra, monedaExtra])
 
+  // Detección de práctica que requiere LIO y catálogo comercial
+  useEffect(() => {
+    const pNom = (practicaNombre || caso.practica_nombre || '').toLowerCase()
+    const pCod = (practicaCodigo || caso.practica_codigo || '').toLowerCase()
+    const esCatarata = pNom.includes('catarata') || pNom.includes('faco') || pCod.includes('34031') || pNom.includes('lio')
+
+    const targetCod = practicaCodigo || caso.practica_codigo
+    if (targetCod) {
+      fetch(`${BACKEND_URL}/api/nomenclador/resumen-operativo/${encodeURIComponent(targetCod)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && data.resumen) {
+            setPracticaRequiereLente(!!data.resumen.requiere_lente || esCatarata)
+          } else {
+            setPracticaRequiereLente(esCatarata)
+          }
+        })
+        .catch(() => setPracticaRequiereLente(esCatarata))
+    } else {
+      setPracticaRequiereLente(esCatarata)
+    }
+
+    fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.lios) {
+          setCatalogoLios(data.lios)
+        }
+      })
+      .catch((err) => console.error('Error cargando catálogo LIOs:', err))
+  }, [practicaCodigo, practicaNombre, caso.practica_codigo, caso.practica_nombre])
+
+  // Atajo para adoptar el LIO cotizado en el presupuesto del paciente
+  const handleAdoptarLioDelPresupuesto = async () => {
+    try {
+      setAdoptandoLio(true)
+      let pId = presupuestoId || caso.presupuesto_id
+      let presData: any = null
+
+      if (pId) {
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${pId}`)
+        if (res.ok) {
+          const d = await res.json()
+          presData = d.presupuesto || d
+        }
+      }
+
+      if (!presData && caso.paciente_id) {
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/paciente/${caso.paciente_id}`)
+        if (res.ok) {
+          const d = await res.json()
+          const lista = d.presupuestos || []
+          if (lista.length > 0) {
+            presData = lista[0]
+          }
+        }
+      }
+
+      if (presData && presData.items) {
+        const itemLio = presData.items.find((it: any) => {
+          const n = (it.nombre || '').toLowerCase()
+          const c = (it.codigo || '').toLowerCase()
+          return (
+            n.includes('lente') ||
+            n.includes('lio') ||
+            c.includes('lio') ||
+            c.includes('clareon') ||
+            c.includes('trifocal') ||
+            c.includes('vivity')
+          )
+        })
+
+        if (itemLio) {
+          setLioSeleccion((prev: any) => ({
+            ...prev,
+            estado: presData.estado === 'aprobado' ? 'confirmado' : 'tentativo',
+            lente_id: itemLio.servicio_id || prev.lente_id,
+            lente_nombre: itemLio.nombre,
+            lente_codigo: itemLio.codigo,
+            precio: itemLio.precio_unitario,
+            moneda: itemLio.moneda,
+            lente_od: itemLio.nombre,
+            lente_oi: itemLio.nombre
+          }))
+          setAvisoValidacion(`✓ Se adoptó "${itemLio.nombre}" desde el Presupuesto #${presData.numero_presupuesto || ''} (${presData.estado === 'aprobado' ? 'Confirmado' : 'Tentativo'}).`)
+          setTimeout(() => setAvisoValidacion(null), 4500)
+          return
+        }
+      }
+
+      setAvisoValidacion('No se encontró ningún ítem de Lente Intraocular cotizado en los presupuestos del paciente.')
+      setTimeout(() => setAvisoValidacion(null), 4500)
+    } catch (err) {
+      console.error('Error al adoptar LIO del presupuesto:', err)
+    } finally {
+      setAdoptandoLio(false)
+    }
+  }
+
   // Guardar Cambios
   // Handler para emitir presupuesto guardando automáticamente el formulario previo
   const handleEmitirPresupuesto = () => {
@@ -667,7 +788,20 @@ export default function CasoFormularioActivo({
           orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
           fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
           fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
-        }
+        },
+        _lio_seleccion: {
+          estado: lioSeleccion.estado || 'a_definir',
+          lente_id: lioSeleccion.lente_id || null,
+          lente_nombre: lioSeleccion.lente_nombre || null,
+          lente_codigo: lioSeleccion.lente_codigo || null,
+          precio: lioSeleccion.precio || null,
+          moneda: lioSeleccion.moneda || null,
+          modalidad_bilateral: ojo === 'AO' ? lioSeleccion.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
+          lente_od: lioSeleccion.lente_od || lioSeleccion.lente_nombre || null,
+          lente_oi: lioSeleccion.lente_oi || lioSeleccion.lente_nombre || null,
+          observaciones: lioSeleccion.observaciones || null
+        },
+        lente_tipo: lioSeleccion.lente_nombre || null
       },
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
@@ -727,7 +861,20 @@ export default function CasoFormularioActivo({
           orden: ojo === 'AO' && modalidadBilateral === 'escalonada' ? ordenOjos : null,
           fecha_probable_2do_ojo: ojo === 'AO' ? fechaProbable2doOjo || null : null,
           fecha_definitiva_2do_ojo: ojo === 'AO' ? fechaDefinitiva2doOjo || null : null
-        }
+        },
+        _lio_seleccion: {
+          estado: lioSeleccion.estado || 'a_definir',
+          lente_id: lioSeleccion.lente_id || null,
+          lente_nombre: lioSeleccion.lente_nombre || null,
+          lente_codigo: lioSeleccion.lente_codigo || null,
+          precio: lioSeleccion.precio || null,
+          moneda: lioSeleccion.moneda || null,
+          modalidad_bilateral: ojo === 'AO' ? lioSeleccion.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
+          lente_od: lioSeleccion.lente_od || lioSeleccion.lente_nombre || null,
+          lente_oi: lioSeleccion.lente_oi || lioSeleccion.lente_nombre || null,
+          observaciones: lioSeleccion.observaciones || null
+        },
+        lente_tipo: lioSeleccion.lente_nombre || null
       },
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
@@ -1206,6 +1353,176 @@ export default function CasoFormularioActivo({
                           }
                         })()}
                       </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-bloque LIO Comercial Acordado / Propuesto */}
+              {practicaRequiereLente && (
+                <div className="pt-3 border-t border-gray-800 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">💎</span>
+                      <div>
+                        <span className="text-xs font-bold text-amber-200 block">
+                          Lente Intraocular (LIO) Comercial / Propuesto
+                        </span>
+                        <span className="text-[10px] text-gray-400">
+                          Tecnología elegida por el paciente (independiente de la dioptría biométrica)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Botón de atajo para adoptar del presupuesto */}
+                    <button
+                      type="button"
+                      onClick={handleAdoptarLioDelPresupuesto}
+                      disabled={adoptandoLio}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1.5 transition disabled:opacity-50"
+                      title="Busca y pre-selecciona el LIO cotizado en el presupuesto del paciente"
+                    >
+                      <Sparkles size={11} className="text-amber-400" />
+                      <span>{adoptandoLio ? 'Buscando...' : '💡 Adoptar LIO del Presupuesto'}</span>
+                    </button>
+                  </div>
+
+                  {/* Selector de Estado: Tentativo vs Confirmado vs A definir */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                      Momento / Estado de la Elección:
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setLioSeleccion((prev: any) => ({ ...prev, estado: 'tentativo' }))}
+                        className={`p-2 rounded-xl text-xs font-bold transition flex flex-col items-center justify-center gap-0.5 border ${
+                          lioSeleccion.estado === 'tentativo'
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-sm'
+                            : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <span>🟡 Tentativo</span>
+                        <span className="text-[9px] opacity-75">En evaluación</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setLioSeleccion((prev: any) => ({ ...prev, estado: 'confirmado' }))}
+                        className={`p-2 rounded-xl text-xs font-bold transition flex flex-col items-center justify-center gap-0.5 border ${
+                          lioSeleccion.estado === 'confirmado'
+                            ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-sm'
+                            : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        <span>🟢 Confirmado</span>
+                        <span className="text-[9px] opacity-75">Decisión tomada</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setLioSeleccion((prev: any) => ({ ...prev, estado: 'a_definir' }))}
+                        className={`p-2 rounded-xl text-xs font-bold transition flex flex-col items-center justify-center gap-0.5 border ${
+                          lioSeleccion.estado === 'a_definir'
+                            ? 'bg-neutral-800 border-gray-500 text-gray-200 shadow-sm'
+                            : 'bg-neutral-900 border-[var(--border)] text-gray-500 hover:text-white'
+                        }`}
+                      >
+                        <span>⚪ A Definir</span>
+                        <span className="text-[9px] opacity-75">Sin elección aún</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Selector del Lente */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                      Lente Intraocular Acordado:
+                    </label>
+                    <select
+                      value={lioSeleccion.lente_nombre || ''}
+                      onChange={(e) => {
+                        const lioNom = e.target.value
+                        const lioEncontrado = catalogoLios.find((l) => l.nombre === lioNom)
+                        setLioSeleccion((prev: any) => ({
+                          ...prev,
+                          lente_nombre: lioNom,
+                          lente_id: lioEncontrado?.id || prev.lente_id,
+                          lente_codigo: lioEncontrado?.codigo || prev.lente_codigo,
+                          precio: lioEncontrado?.precio ?? prev.precio,
+                          moneda: lioEncontrado?.moneda ?? prev.moneda,
+                          lente_od: lioNom,
+                          lente_oi: lioNom
+                        }))
+                      }}
+                      className="w-full p-2.5 rounded-xl bg-neutral-900 border border-amber-500/30 text-xs text-amber-200 font-bold outline-none focus:border-amber-400"
+                    >
+                      <option value="">-- Seleccionar Lente Comercial --</option>
+                      {catalogoLios.map((lio) => (
+                        <option key={lio.id || lio.codigo} value={lio.nombre}>
+                          {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Si es AO (Ambos Ojos), permitir diferenciar por ojo si es Monovisión / Blend */}
+                  {ojo === 'AO' && lioSeleccion.lente_nombre && (
+                    <div className="p-2.5 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-purple-300">
+                          Modalidad para Ambos Ojos:
+                        </span>
+                        <div className="flex gap-1.5 text-[10px]">
+                          <button
+                            type="button"
+                            onClick={() => setLioSeleccion((prev: any) => ({ ...prev, modalidad_bilateral: 'mismo_lente', lente_oi: prev.lente_od || prev.lente_nombre }))}
+                            className={`px-2 py-0.5 rounded font-bold transition ${
+                              lioSeleccion.modalidad_bilateral !== 'diferenciado'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-neutral-900 text-gray-400 border border-purple-500/30'
+                            }`}
+                          >
+                            Mismo LIO en AO
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLioSeleccion((prev: any) => ({ ...prev, modalidad_bilateral: 'diferenciado' }))}
+                            className={`px-2 py-0.5 rounded font-bold transition ${
+                              lioSeleccion.modalidad_bilateral === 'diferenciado'
+                                ? 'bg-purple-600 text-white'
+                                : 'bg-neutral-900 text-gray-400 border border-purple-500/30'
+                            }`}
+                          >
+                            Monovisión / Blend
+                          </button>
+                        </div>
+                      </div>
+
+                      {lioSeleccion.modalidad_bilateral === 'diferenciado' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
+                          <div>
+                            <span className="text-[10px] text-blue-300 font-bold block mb-1">LIO Ojo Derecho (OD):</span>
+                            <input
+                              type="text"
+                              value={lioSeleccion.lente_od || ''}
+                              onChange={(e) => setLioSeleccion((prev: any) => ({ ...prev, lente_od: e.target.value }))}
+                              placeholder="ej: Monofocal Plus"
+                              className="w-full p-1.5 rounded-lg bg-neutral-900 border border-blue-500/40 text-xs text-white outline-none"
+                            />
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-emerald-300 font-bold block mb-1">LIO Ojo Izquierdo (OI):</span>
+                            <input
+                              type="text"
+                              value={lioSeleccion.lente_oi || ''}
+                              onChange={(e) => setLioSeleccion((prev: any) => ({ ...prev, lente_oi: e.target.value }))}
+                              placeholder="ej: Monofocal Estándar"
+                              className="w-full p-1.5 rounded-lg bg-neutral-900 border border-emerald-500/40 text-xs text-white outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

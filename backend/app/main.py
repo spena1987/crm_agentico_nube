@@ -79,6 +79,7 @@ from app.db import (
     guardar_practica_crm_integral,
     listar_catalogo_completo_crm,
     buscar_practicas_presupuesto,
+    obtener_lios_comerciales,
     eliminar_practica_crm,
     get_practicas_relacionadas,
     guardar_practicas_relacionadas,
@@ -2734,6 +2735,24 @@ def buscar_presupuesto_api(
         }
     except Exception as e:
         logger.error(f"Error en buscar_presupuesto_api: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/nomenclador/lios-comerciales")
+def get_lios_comerciales_api(fecha: Optional[str] = None):
+    """
+    Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
+    con sus precios y monedas resueltas desde el nomenclador para el creador de presupuestos
+    y para la tarjeta de lateralidad del expediente.
+    """
+    try:
+        lios = obtener_lios_comerciales(fecha_consulta=fecha)
+        return {
+            "success": True,
+            "total": len(lios),
+            "lios": lios
+        }
+    except Exception as e:
+        logger.error(f"Error en get_lios_comerciales_api: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/nomenclador/practicas-configuradas/{practica_id}")

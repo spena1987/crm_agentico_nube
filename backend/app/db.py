@@ -533,10 +533,14 @@ def guardar_mensaje(
         
         # Actualizar el último mensaje e interacción en la conversación
         msg_interaction_at = created_at or datetime.now(timezone.utc).isoformat()
-        supabase.table("conversaciones").update({
+        upd_conv = {
             "ultimo_mensaje": final_contenido,
             "ultimo_mensaje_at": msg_interaction_at
-        }).eq("id", conversacion_id).execute()
+        }
+        if final_emisor == "operador":
+            upd_conv["unread_count"] = 0
+
+        supabase.table("conversaciones").update(upd_conv).eq("id", conversacion_id).execute()
         
         if response.data:
             return response.data[0]
@@ -1040,7 +1044,7 @@ def marcar_mensajes_conversacion_leidos(conversacion_id: str):
         import json
 
         # 1. Obtener conversación y teléfono del paciente
-        conv_res = supabase.table("conversaciones").select("id, paciente_id, metadata_json, pacientes(telefono)").eq("id", conversacion_id).execute()
+        conv_res = supabase.table("conversaciones").select("id, paciente_id, unread_count, metadata_json, pacientes(telefono)").eq("id", conversacion_id).execute()
         if not conv_res.data:
             return {"whatsapp_message_ids": [], "telefono": None}
         
@@ -1054,7 +1058,7 @@ def marcar_mensajes_conversacion_leidos(conversacion_id: str):
                 c_meta = json.loads(c_meta)
             except Exception:
                 c_meta = {}
-        current_unread = conv.get("unread_count", 0) or 0
+        current_unread = int(conv.get("unread_count") or 0)
         manual_unread = bool(c_meta.get("manual_unread", False))
         if current_unread > 0 or manual_unread:
             c_meta["manual_unread"] = False
@@ -1574,7 +1578,7 @@ def listar_catalogo_completo_crm(
         
     try:
         query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
+            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
             .eq("activo", True)
             
         term = (q or "").strip().upper()
@@ -1633,6 +1637,7 @@ def listar_catalogo_completo_crm(
                 "categoria": p.get("categoria", "General"),
                 "descripcion": desc.replace("[ORIGEN:MANUAL]", "").replace("[ORIGEN:GECLISA]", "").strip(),
                 "origen": origen,
+                "requiere_lente": bool(p.get("requiere_lente", False)),
                 "habilitar_arancel": p.get("habilitar_arancel", True),
                 "habilitar_preparacion": p.get("habilitar_preparacion", False),
                 "preparacion_plantilla_id": p.get("preparacion_plantilla_id"),
@@ -1681,7 +1686,7 @@ def buscar_practicas_presupuesto(
     
     try:
         query_builder = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
+            .select("id, codigo, nombre, categoria, descripcion, requiere_lente, habilitar_arancel, habilitar_preparacion, habilitar_consentimiento, nomenclador_id, nomencladores(id, nombre, codigo, moneda_default)")\
             .eq("activo", True)
             
         if term:
@@ -1766,6 +1771,7 @@ def buscar_practicas_presupuesto(
                 "nomenclador_id": p.get("nomenclador_id") or nom_info.get("id") or "crm",
                 "nomenclador_nombre": nom_info.get("nombre") or "Nomenclador CRM",
                 "nomenclador_codigo": nom_info.get("codigo") or "CRM",
+                "requiere_lente": bool(p.get("requiere_lente", False)),
                 "habilitar_arancel": hab_arancel,
                 "habilitar_preparacion": p.get("habilitar_preparacion", False),
                 "habilitar_consentimiento": p.get("habilitar_consentimiento", False),
@@ -2190,6 +2196,7 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
         origen = str(payload.get("origen") or "GECLISA").upper()
         
         # Flags y Reglas
+        requiere_lente = bool(payload.get("requiere_lente", False))
         habilitar_arancel = bool(payload.get("habilitar_arancel", True))
         habilitar_preparacion = bool(payload.get("habilitar_preparacion", False))
         preparacion_plantilla_id = payload.get("preparacion_plantilla_id") or None
@@ -2234,6 +2241,7 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
             "nombre": nombre,
             "categoria": categoria,
             "descripcion": full_desc,
+            "requiere_lente": requiere_lente,
             "habilitar_arancel": habilitar_arancel,
             "habilitar_preparacion": habilitar_preparacion,
             "preparacion_plantilla_id": preparacion_plantilla_id,
@@ -2470,6 +2478,7 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
             "modalidad_lateralidad_defecto": modalidad_def,
             "ojo_defecto": ojo_def,
             "duracion_estimada_minutos": duracion_def,
+            "requiere_lente": bool(practica.get("requiere_lente", False)),
             "habilitar_arancel": practica.get("habilitar_arancel", True),
             "precio": float(ar_vigente.get("precio", 0.0)) if ar_vigente else 0.0,
             "moneda": ar_vigente.get("moneda", "ARS") if ar_vigente else "ARS",
@@ -2487,6 +2496,96 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
     except Exception as e:
         logger.error(f"Error al obtener resumen operativo de la práctica {practica_id_or_codigo}: {e}")
         return None
+
+
+def obtener_lios_comerciales(fecha_consulta: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
+    con sus aranceles vigentes desde nomenclador_practicas / nomenclador_aranceles.
+    Consumido por presupuestos y por el expediente en la tarjeta de Lateralidad.
+    """
+    if not supabase:
+        return []
+        
+    from datetime import date
+    fecha_ref = fecha_consulta or date.today().isoformat()
+    
+    try:
+        res = supabase.table("nomenclador_practicas")\
+            .select("id, codigo, nombre, categoria, descripcion, activo, requiere_lente")\
+            .eq("activo", True)\
+            .or_("categoria.ilike.%lente%,categoria.ilike.%lio%,codigo.in.(CLAREON,CLAREONT,TRIFOCAL,TRIFOCALT,VIVTY,VIVTYT),codigo.ilike.LIO-%,nombre.ilike.%lente %")\
+            .order("nombre")\
+            .execute()
+            
+        practicas = res.data or []
+        # Excluir cirugías principales (como 34031 Catarata) que no son el lente en sí
+        practicas = [p for p in practicas if str(p.get("codigo") or "").strip() != "34031" and "catarata con faco" not in (p.get("nombre") or "").lower()]
+        
+        if not practicas:
+            return []
+            
+        p_ids = [p["id"] for p in practicas]
+        
+        ar_resp = supabase.table("nomenclador_aranceles")\
+            .select("*")\
+            .in_("practica_id", p_ids)\
+            .order("vigencia_desde", desc=True)\
+            .execute()
+            
+        ar_data = ar_resp.data or []
+        ar_map = {}
+        for ar in ar_data:
+            pid = ar["practica_id"]
+            if pid in ar_map:
+                continue
+            v_desde = ar.get("vigencia_desde") or ""
+            v_hasta = ar.get("vigencia_hasta")
+            if v_desde <= fecha_ref and (not v_hasta or v_hasta >= fecha_ref):
+                ar_map[pid] = ar
+                
+        for ar in ar_data:
+            pid = ar["practica_id"]
+            if pid not in ar_map:
+                ar_map[pid] = ar
+                
+        resultados = []
+        for p in practicas:
+            ar = ar_map.get(p["id"])
+            precio = float(ar.get("precio", 0.0)) if ar else 0.0
+            moneda = (ar.get("moneda") or "USD") if ar else "USD"
+            
+            nom_low = (p.get("nombre") or "").lower()
+            cod_low = (p.get("codigo") or "").lower()
+            es_torico = "toric" in nom_low or "tóric" in nom_low or "toric" in cod_low or cod_low.endswith("t")
+            
+            tipo_vision = "Estándar"
+            if "trifocal" in nom_low or "panoptix" in nom_low:
+                tipo_vision = "Trifocal (Visión Total)"
+            elif "vivity" in nom_low or "edof" in nom_low:
+                tipo_vision = "EDOF (Rango Extendido)"
+            elif "clareon" in nom_low or "monofocal" in nom_low:
+                tipo_vision = "Monofocal"
+            elif "icl" in nom_low or "faquico" in nom_low:
+                tipo_vision = "Fáquico (ICL)"
+
+            resultados.append({
+                "id": p["id"],
+                "codigo": p["codigo"],
+                "nombre": p["nombre"],
+                "categoria": p.get("categoria") or "Lentes Intraoculares",
+                "precio": precio,
+                "moneda": moneda,
+                "vigencia_desde": ar.get("vigencia_desde") if ar else None,
+                "vigencia_hasta": ar.get("vigencia_hasta") if ar else None,
+                "es_torico": es_torico,
+                "tipo_vision": tipo_vision
+            })
+            
+        return resultados
+    except Exception as e:
+        logger.error(f"Error en obtener_lios_comerciales: {e}")
+        return []
 
 
 
@@ -3642,9 +3741,12 @@ def enviar_presupuesto_por_whatsapp(
                         "presupuesto_id": presupuesto_id
                     }
                 }).execute()
+                now_iso = datetime.now(timezone.utc).isoformat()
                 supabase.table("conversaciones").update({
                     "ultimo_mensaje": "📄 Presupuesto Médico Disponible (Plantilla)",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "ultimo_mensaje_at": now_iso,
+                    "unread_count": 0,
+                    "updated_at": now_iso
                 }).eq("id", conv_id).execute()
             except Exception as msg_err:
                 logger.warning(f"Error guardando plantilla de presupuesto en mensajes: {msg_err}")
@@ -3684,9 +3786,12 @@ def enviar_presupuesto_por_whatsapp(
                     },
                     "whatsapp_message_id": w_res.get("wamid")
                 }).execute()
+                now_iso = datetime.now(timezone.utc).isoformat()
                 supabase.table("conversaciones").update({
                     "ultimo_mensaje": f"📄 Presupuesto: {mensaje_final[:50]}...",
-                    "updated_at": datetime.now(timezone.utc).isoformat()
+                    "ultimo_mensaje_at": now_iso,
+                    "unread_count": 0,
+                    "updated_at": now_iso
                 }).eq("id", conv_id).execute()
             except Exception as msg_err:
                 logger.warning(f"Error guardando presupuesto de texto libre en mensajes: {msg_err}")

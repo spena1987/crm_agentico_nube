@@ -149,6 +149,29 @@ export default function CasoAcordeonHeader({
                 👁️ 1er Ojo Operado ({(caso.checklist_prequirurgico as any)?._progreso_bilateral?.od_operado ? 'OD' : 'OI'}) • 2do Ojo Pendiente
               </span>
             )}
+            {/* Badge de LIO Seleccionado / Propuesto */}
+            {(() => {
+              const lioSel = (caso.checklist_prequirurgico as any)?._lio_seleccion
+              const lioNombre = lioSel?.lente_nombre || (caso as any).lente_tipo || (caso.checklist_prequirurgico as any)?.lente_tipo
+              if (!lioNombre) return null
+
+              const esConfirmado = lioSel?.estado === 'confirmado'
+
+              return (
+                <span
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                    esConfirmado
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  }`}
+                  title={esConfirmado ? `LIO Confirmado por el paciente: ${lioNombre}` : `LIO Tentativo en evaluación: ${lioNombre}`}
+                >
+                  <span>{esConfirmado ? '💎 LIO:' : '⏳ LIO:'}</span>
+                  <span className="truncate max-w-[150px]">{lioNombre}</span>
+                  <span className="text-[9px] opacity-75">({esConfirmado ? 'Confirmado' : 'Tentativo'})</span>
+                </span>
+              )
+            })()}
             {esCasoCerrado && (
               <span
                 className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
