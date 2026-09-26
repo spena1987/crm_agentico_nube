@@ -30,7 +30,8 @@ import {
   Search,
   Tag,
   Eye,
-  X
+  X,
+  Info
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -1003,10 +1004,17 @@ export default function CasoFormularioActivo({
           
           {/* Card: Práctica Quirúrgica / Nomenclador */}
           <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
-            <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-              <ClipboardList size={14} className="text-indigo-400" />
-              Práctica Quirúrgica (Nomenclador CRM)
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                <ClipboardList size={14} className="text-indigo-400" />
+                Práctica Quirúrgica (Nomenclador CRM)
+              </label>
+              {practicaCodigo && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-semibold">
+                  Cód. {practicaCodigo}
+                </span>
+              )}
+            </div>
 
             <div className="relative">
               <input
@@ -1074,31 +1082,38 @@ export default function CasoFormularioActivo({
                           setPracticaCodigo(p.codigo)
                           setPracticaNombre(p.nombre)
                           setBusquedaPractica(`[${p.codigo}] ${p.nombre}`)
-                          if (p.precio && p.precio > 0) {
-                            setMontoExtra(p.precio)
-                            if (p.moneda) setMonedaExtra(p.moneda)
-                          }
+                          // Desacoplado: No sobreescribir montoExtra ni forzar valor comercial
                           setMostrarDropdownPractica(false)
                         }}
-                        className="w-full text-left p-2.5 hover:bg-indigo-600/20 text-xs transition-colors group flex items-center justify-between"
+                        className="w-full text-left p-2.5 hover:bg-indigo-600/20 text-xs transition-colors group flex items-center justify-between gap-3"
                       >
-                        <div className="flex flex-col pr-2">
-                          <span className="font-bold text-white group-hover:text-indigo-300">
+                        <div className="flex flex-col min-w-0 pr-1">
+                          <span className="font-bold text-white group-hover:text-indigo-300 truncate" title={`[${p.codigo}] ${p.nombre}`}>
                             [{p.codigo}] {p.nombre}
                           </span>
-                          {p.categoria && <span className="text-[10px] text-gray-500">{p.categoria}</span>}
+                          {p.categoria && (
+                            <span className="text-[10px] text-gray-400 truncate">
+                              {p.categoria}
+                            </span>
+                          )}
                         </div>
-                        {p.precio && p.precio > 0 ? (
-                          <span className="text-xs font-mono font-bold text-emerald-400 shrink-0">
-                            {p.moneda === 'USD' ? 'USD ' : '$ '}
-                            {p.precio.toLocaleString('es-AR')}
-                          </span>
-                        ) : null}
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-neutral-800 text-gray-300 border border-neutral-700/60 shrink-0 group-hover:border-indigo-500/30 group-hover:text-indigo-200 transition-colors">
+                          Cirugía
+                        </span>
                       </button>
                     ))
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Micro-nota asistencial informativa */}
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[11px] text-neutral-400 leading-tight">
+              <Info size={12} className="text-indigo-400 shrink-0" />
+              <span>
+                Los aranceles, coberturas por obra social y lentes se gestionan formalmente en{' '}
+                <strong className="text-gray-300 font-semibold">Presupuestos Oficiales del Caso</strong>.
+              </span>
             </div>
 
             {/* 1. Fechas Quirúrgicas (Inmediatamente debajo de la Práctica) */}
