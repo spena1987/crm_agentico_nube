@@ -1484,10 +1484,10 @@ export default function NomencladorSettingsCard() {
       {/* MODAL INTEGRAL DE CONFIGURACIÓN DE PRÁCTICA (MULTI-PESTAÑA) */}
       {/* ==================================================================== */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 animate-scale-in max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-[96vw] max-w-5xl xl:max-w-6xl p-4 sm:p-6 shadow-2xl animate-scale-in max-h-[92vh] flex flex-col overflow-hidden">
             {/* Header del Modal */}
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3 shrink-0">
               <div>
                 <h3 className="text-base font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
                   <SlidersHorizontal className="text-blue-600" size={20} />
@@ -1510,7 +1510,7 @@ export default function NomencladorSettingsCard() {
             </div>
 
             {/* Sub-pestañas internas del Modal */}
-            <div className="flex items-center gap-1 border-b border-[var(--border)] pb-2 text-xs">
+            <div className="flex items-center gap-1.5 border-b border-[var(--border)] pb-2.5 text-xs overflow-x-auto whitespace-nowrap scrollbar-thin shrink-0">
               <button
                 type="button"
                 onClick={() => setModalSubTab('general')}
@@ -1729,8 +1729,8 @@ export default function NomencladorSettingsCard() {
                   </div>
 
                   {/* Requiere Selección de Lente Intraocular (LIO) */}
-                  <div className="flex items-center justify-between p-3.5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
-                    <div className="space-y-0.5 pr-3">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3.5 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                    <div className="space-y-0.5 flex-1 min-w-0 pr-2">
                       <div className="flex items-center gap-2">
                         <span className="text-sm">💎</span>
                         <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
@@ -1740,31 +1740,29 @@ export default function NomencladorSettingsCard() {
                       <p className="text-[11px] text-amber-700 dark:text-amber-300">
                         Habilita la elección del LIO en la Lateralidad del caso (Cataratas) y sugiere los lentes comerciales con precio al crear presupuestos.
                       </p>
-                      {formData.requiere_lente && (
-                        <div className="pt-2 mt-1 border-t border-amber-300/40 dark:border-amber-700/40 flex items-center justify-between gap-2">
-                          <span className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
-                            ¿Deseas configurar qué lentes aplican y sus aranceles vigentes?
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setModalSubTab('lios')}
-                            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-xs transition cursor-pointer shrink-0"
-                          >
-                            <span>Configurar LIOs & Precios</span>
-                            <ArrowRight size={13} />
-                          </button>
-                        </div>
-                      )}
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                      <input
-                        type="checkbox"
-                        checked={formData.requiere_lente || false}
-                        onChange={(e) => setFormData({ ...formData, requiere_lente: e.target.checked })}
-                        className="sr-only peer"
-                      />
-                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-amber-600"></div>
-                    </label>
+
+                    <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+                      {formData.requiere_lente && (
+                        <button
+                          type="button"
+                          onClick={() => setModalSubTab('lios')}
+                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-xs flex items-center gap-1 shadow-xs transition cursor-pointer"
+                        >
+                          <span>Configurar LIOs & Precios</span>
+                          <ArrowRight size={13} />
+                        </button>
+                      )}
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={formData.requiere_lente || false}
+                          onChange={(e) => setFormData({ ...formData, requiere_lente: e.target.checked })}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-amber-600"></div>
+                      </label>
+                    </div>
                   </div>
 
                   {/* Resumen de Módulos Activos */}
@@ -2467,16 +2465,15 @@ export default function NomencladorSettingsCard() {
                       </button>
                     </div>
                   ) : (
-                    <div className="border border-[var(--border)] rounded-xl overflow-hidden bg-[var(--card)]">
-                      <table className="w-full text-left text-xs">
+                    <div className="border border-[var(--border)] rounded-xl overflow-x-auto bg-[var(--card)] shadow-xs">
+                      <table className="w-full text-left text-xs min-w-[760px] border-collapse">
                         <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-[var(--border)] text-[10px] text-slate-400 uppercase font-bold">
                           <tr>
-                            <th className="py-2.5 px-3 text-center w-24">Aplica a QX</th>
+                            <th className="py-2.5 px-3 text-center w-20">Aplica</th>
                             <th className="py-2.5 px-3">Modelo / LIO Comercial</th>
                             <th className="py-2.5 px-3">Tecnología Óptica</th>
-                            <th className="py-2.5 px-3 text-right">Moneda</th>
-                            <th className="py-2.5 px-3 text-right w-36">Arancel Vigente</th>
-                            <th className="py-2.5 px-3 text-center w-28">Acción</th>
+                            <th className="py-2.5 px-3 text-right w-56">Arancel Vigente</th>
+                            <th className="py-2.5 px-3 text-center w-24">Acción</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
@@ -2492,7 +2489,7 @@ export default function NomencladorSettingsCard() {
                                     : 'bg-slate-100/50 dark:bg-slate-900/40 opacity-60'
                                 }`}
                               >
-                                <td className="py-2.5 px-3 text-center">
+                                <td className="py-2.5 px-3 text-center whitespace-nowrap">
                                   <label className="relative inline-flex items-center cursor-pointer">
                                     <input
                                       type="checkbox"
@@ -2504,17 +2501,17 @@ export default function NomencladorSettingsCard() {
                                   </label>
                                 </td>
 
-                                <td className="py-2.5 px-3">
-                                  <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
-                                    <span className="font-mono text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded text-[11px] border border-amber-200 dark:border-amber-800">
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                                    <span className="font-mono text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-1.5 py-0.5 rounded text-[11px] border border-amber-200 dark:border-amber-800 shrink-0 font-bold">
                                       {lio.codigo}
                                     </span>
-                                    <span>{lio.nombre}</span>
+                                    <span className="truncate">{lio.nombre}</span>
                                   </div>
                                 </td>
 
-                                <td className="py-2.5 px-3">
-                                  <div className="flex items-center gap-1 flex-wrap">
+                                <td className="py-2.5 px-3 whitespace-nowrap">
+                                  <div className="flex items-center gap-1.5">
                                     <span
                                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                         lio.tipo_vision?.includes('Trifocal')
@@ -2534,39 +2531,38 @@ export default function NomencladorSettingsCard() {
                                   </div>
                                 </td>
 
-                                <td className="py-2.5 px-3 text-right">
-                                  <select
-                                    value={lio.moneda || 'USD'}
-                                    onChange={(e) => {
-                                      const newMon = e.target.value as 'ARS' | 'USD'
-                                      setListaLiosModal((prev) =>
-                                        prev.map((l) => (l.codigo === lio.codigo ? { ...l, moneda: newMon } : l))
-                                      )
-                                    }}
-                                    className="p-1 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs font-bold outline-none cursor-pointer"
-                                  >
-                                    <option value="USD">USD ($)</option>
-                                    <option value="ARS">ARS ($)</option>
-                                  </select>
+                                <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <select
+                                      value={lio.moneda || 'USD'}
+                                      onChange={(e) => {
+                                        const newMon = e.target.value as 'ARS' | 'USD'
+                                        setListaLiosModal((prev) =>
+                                          prev.map((l) => (l.codigo === lio.codigo ? { ...l, moneda: newMon } : l))
+                                        )
+                                      }}
+                                      className="p-1 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs font-bold outline-none cursor-pointer"
+                                    >
+                                      <option value="USD">USD ($)</option>
+                                      <option value="ARS">ARS ($)</option>
+                                    </select>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="any"
+                                      value={lio.precio}
+                                      onChange={(e) => {
+                                        const newP = parseFloat(e.target.value) || 0
+                                        setListaLiosModal((prev) =>
+                                          prev.map((l) => (l.codigo === lio.codigo ? { ...l, precio: newP } : l))
+                                        )
+                                      }}
+                                      className="w-28 p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs font-mono font-bold text-right outline-none focus:ring-2 focus:ring-amber-500"
+                                    />
+                                  </div>
                                 </td>
 
-                                <td className="py-2.5 px-3 text-right">
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    step="any"
-                                    value={lio.precio}
-                                    onChange={(e) => {
-                                      const newP = parseFloat(e.target.value) || 0
-                                      setListaLiosModal((prev) =>
-                                        prev.map((l) => (l.codigo === lio.codigo ? { ...l, precio: newP } : l))
-                                      )
-                                    }}
-                                    className="w-full p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs font-mono font-bold text-right outline-none focus:ring-2 focus:ring-amber-500"
-                                  />
-                                </td>
-
-                                <td className="py-2.5 px-3 text-center">
+                                <td className="py-2.5 px-3 text-center whitespace-nowrap">
                                   <button
                                     type="button"
                                     disabled={isSavingThis}
@@ -2593,7 +2589,7 @@ export default function NomencladorSettingsCard() {
               )}
 
               {/* Botones del Modal */}
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--border)]">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--border)] shrink-0 mt-auto bg-[var(--card)] z-10">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
