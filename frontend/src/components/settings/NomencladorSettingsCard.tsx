@@ -1606,8 +1606,8 @@ export default function NomencladorSettingsCard() {
 
                   {/* Resumen de Módulos Activos */}
                   <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] rounded-xl space-y-2">
-                    <span className="font-bold text-slate-600 dark:text-slate-300 block">Módulos Habilitados para esta práctica:</span>
-                    <div className="grid grid-cols-3 gap-2 text-center text-[11px]">
+                    <span className="font-bold text-slate-600 dark:text-slate-300 block text-xs">Módulos Habilitados para esta práctica:</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-[11px]">
                       <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_arancel ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>
                         💰 Arancel ({formData.habilitar_arancel ? 'Sí' : 'No'})
                       </div>
@@ -1617,6 +1617,19 @@ export default function NomencladorSettingsCard() {
                       <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_consentimiento ? 'bg-purple-50 border-purple-300 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>
                         ✍️ Consent ({formData.habilitar_consentimiento ? 'Sí' : 'No'})
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, requiere_lente: !formData.requiere_lente })}
+                        className={`p-2 rounded-lg border font-bold transition flex items-center justify-center gap-1 cursor-pointer ${
+                          formData.requiere_lente
+                            ? 'bg-amber-100 border-amber-400 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200 shadow-xs ring-1 ring-amber-400/40'
+                            : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800 hover:border-slate-300'
+                        }`}
+                        title="Clic para activar/desactivar requerimiento de LIO"
+                      >
+                        <span>💎 Requiere LIO</span>
+                        <span className="text-[10px]">({formData.requiere_lente ? 'Sí' : 'No'})</span>
+                      </button>
                     </div>
                   </div>
                 </div>
