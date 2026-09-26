@@ -2504,12 +2504,13 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
         return None
 
 
-def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: Optional[str] = None, solo_habilitados: bool = False) -> List[Dict[str, Any]]:
     """
     Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
     con sus aranceles vigentes desde nomenclador_practicas / nomenclador_aranceles.
     Consumido por presupuestos, ajustes y por el expediente en la tarjeta de Lateralidad.
-    Si se provee practica_id, añade el flag habilitado_en_practica según lios_habilitados.
+    Si se provee practica_id (UUID, código o nombre), añade el flag habilitado_en_practica según lios_habilitados.
+    Si solo_habilitados=True y practica_id está definido, filtra solo los habilitados.
     """
     if not supabase:
         return []
@@ -2522,7 +2523,15 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
         lios_hab_set = None
         if practica_id:
             try:
-                p_res = supabase.table("nomenclador_practicas").select("lios_habilitados").eq("id", practica_id).execute()
+                pid_clean = str(practica_id).strip()
+                p_query = supabase.table("nomenclador_practicas").select("lios_habilitados")
+                if is_valid_uuid(pid_clean):
+                    p_res = p_query.eq("id", pid_clean).execute()
+                else:
+                    p_res = p_query.eq("codigo", pid_clean.upper()).execute()
+                    if not p_res.data:
+                        p_res = p_query.ilike("nombre", f"%{pid_clean}%").execute()
+
                 if p_res.data and p_res.data[0].get("lios_habilitados") is not None:
                     hab_list = p_res.data[0]["lios_habilitados"]
                     if isinstance(hab_list, list):
@@ -2592,6 +2601,9 @@ def obtener_lios_comerciales(fecha_consulta: Optional[str] = None, practica_id: 
             habilitado_en_practica = True
             if lios_hab_set is not None:
                 habilitado_en_practica = cod_up in lios_hab_set
+
+            if solo_habilitados and lios_hab_set is not None and not habilitado_en_practica:
+                continue
 
             resultados.append({
                 "id": p["id"],

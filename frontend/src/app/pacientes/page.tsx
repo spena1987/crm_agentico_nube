@@ -1281,6 +1281,20 @@ export default function PacientesPage() {
               (a: any) => a.estado !== 'operado' && a.estado !== 'cancelado'
             )?.id || null
           }
+          practicaInicial={(() => {
+            const act = pacienteSeleccionado.asesorias_quirurgicas?.find(
+              (a: any) => a.estado !== 'operado' && a.estado !== 'cancelado'
+            ) as any
+            if (act && act.practica_nombre) {
+              return {
+                codigo: act.practica_codigo || '',
+                nombre: act.practica_nombre,
+                precio: Number(act.monto_extra) || 0,
+                moneda: act.moneda_extra || 'ARS'
+              }
+            }
+            return undefined
+          })()}
           onPresupuestoCreado={(nuevoPresupuesto) => {
             setMostrarModalCrearPresupuesto(false)
             if (nuevoPresupuesto) {

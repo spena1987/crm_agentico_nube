@@ -2741,14 +2741,14 @@ def buscar_presupuesto_api(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/nomenclador/lios-comerciales")
-def get_lios_comerciales_api(fecha: Optional[str] = None, practica_id: Optional[str] = None):
+def get_lios_comerciales_api(fecha: Optional[str] = None, practica_id: Optional[str] = None, solo_habilitados: bool = False):
     """
     Retorna el catálogo de Lentes Intraoculares (LIO) comerciales/genéricos
     con sus precios y monedas resueltas desde el nomenclador para el creador de presupuestos,
     ajustes de nomenclador y para la tarjeta de lateralidad del expediente.
     """
     try:
-        lios = obtener_lios_comerciales(fecha_consulta=fecha, practica_id=practica_id)
+        lios = obtener_lios_comerciales(fecha_consulta=fecha, practica_id=practica_id, solo_habilitados=solo_habilitados)
         return {
             "success": True,
             "total": len(lios),

@@ -665,7 +665,11 @@ export default function CasoFormularioActivo({
       setPracticaRequiereLente(esCatarata)
     }
 
-    fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales`)
+    const liosUrl = targetCod
+      ? `${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${encodeURIComponent(targetCod)}`
+      : `${BACKEND_URL}/api/nomenclador/lios-comerciales`
+
+    fetch(liosUrl)
       .then((r) => r.json())
       .then((data) => {
         if (data.success && data.lios) {
@@ -1458,11 +1462,13 @@ export default function CasoFormularioActivo({
                       className="w-full p-2.5 rounded-xl bg-neutral-900 border border-amber-500/30 text-xs text-amber-200 font-bold outline-none focus:border-amber-400"
                     >
                       <option value="">-- Seleccionar Lente Comercial --</option>
-                      {catalogoLios.map((lio) => (
-                        <option key={lio.id || lio.codigo} value={lio.nombre}>
-                          {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
-                        </option>
-                      ))}
+                      {catalogoLios
+                        .filter((lio) => lio.habilitado_en_practica !== false || lio.nombre === lioSeleccion.lente_nombre)
+                        .map((lio) => (
+                          <option key={lio.id || lio.codigo} value={lio.nombre}>
+                            {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
+                          </option>
+                        ))}
                     </select>
                   </div>
 

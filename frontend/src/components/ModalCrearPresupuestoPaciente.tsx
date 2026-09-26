@@ -120,21 +120,27 @@ export default function ModalCrearPresupuestoPaciente({
     }
   }
 
+  // Cargar LIOs habilitados para una práctica específica
+  const cargarLiosParaPractica = async (practicaIdOrCodigo?: string) => {
+    try {
+      const url = practicaIdOrCodigo
+        ? `${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${encodeURIComponent(practicaIdOrCodigo)}&solo_habilitados=true`
+        : `${BACKEND_URL}/api/nomenclador/lios-comerciales`
+      const res = await fetch(url)
+      const data = await res.json()
+      if (data.success && data.lios) {
+        setLiosDisponibles(data.lios.filter((l: any) => l.habilitado_en_practica !== false))
+      }
+    } catch (err) {
+      console.error('Error cargando LIOs comerciales:', err)
+    }
+  }
+
   // Al abrir el modal, inicializar ítems, LIOs y estados
   useEffect(() => {
     if (isOpen) {
       setError(null)
       const listaInicial: ItemPresupuestoForm[] = []
-
-      // Cargar LIOs comerciales con aranceles vigentes
-      fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.success && data.lios) {
-            setLiosDisponibles(data.lios)
-          }
-        })
-        .catch((err) => console.error('Error cargando LIOs comerciales:', err))
       
       if (practicaInicial && practicaInicial.nombre) {
         const pPrecio = Number(practicaInicial.precio) || 0
@@ -146,6 +152,10 @@ export default function ModalCrearPresupuestoPaciente({
         const codLow = (pCodigo || '').toLowerCase()
         const esCatarata = nomLow.includes('catarata') || nomLow.includes('faco') || codLow.includes('34031') || nomLow.includes('lio')
         setPracticaRequiereLente(esCatarata)
+
+        if (esCatarata && (pCodigo || pNombre)) {
+          cargarLiosParaPractica(pCodigo || pNombre)
+        }
 
         listaInicial.push({
           codigo: pCodigo,
@@ -169,16 +179,7 @@ export default function ModalCrearPresupuestoPaciente({
                 const sugerido = data.resultados[0]
                 if (sugerido.requiere_lente || esCatarata) {
                   setPracticaRequiereLente(true)
-                  if (sugerido.id) {
-                    fetch(`${BACKEND_URL}/api/nomenclador/lios-comerciales?practica_id=${sugerido.id}`)
-                      .then((r) => r.json())
-                      .then((ld) => {
-                        if (ld.success && ld.lios) {
-                          setLiosDisponibles(ld.lios.filter((l: any) => l.habilitado_en_practica !== false))
-                        }
-                      })
-                      .catch(() => {})
-                  }
+                  cargarLiosParaPractica(sugerido.id || sugerido.codigo || pCodigo)
                 }
                 if (pPrecio === 0 && sugerido.precio && sugerido.precio > 0) {
                   setItems([{
@@ -202,6 +203,7 @@ export default function ModalCrearPresupuestoPaciente({
         }
       } else {
         setPracticaRequiereLente(false)
+        setLiosDisponibles([])
       }
 
       setItems(listaInicial)
@@ -263,9 +265,10 @@ export default function ModalCrearPresupuestoPaciente({
     setBusqueda('')
     setMostrarDropdown(false)
 
-    // Si la práctica requiere LIO, activar panel rápido de sugerencias de LIOs
+    // Si la práctica requiere LIO, activar panel rápido de sugerencias de LIOs y cargar los habilitados para ella
     if (p.requiere_lente || (p.nombre && (p.nombre.toLowerCase().includes('catarata') || p.nombre.toLowerCase().includes('faco') || p.codigo === '34031'))) {
       setPracticaRequiereLente(true)
+      cargarLiosParaPractica(p.id || p.codigo || p.nombre)
     }
 
     // Si tiene ID, consultar prácticas vinculadas (Anestesia, Quirófano, Insumos)

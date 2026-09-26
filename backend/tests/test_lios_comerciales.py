@@ -94,3 +94,20 @@ def test_guardar_lios_habilitados_endpoint():
     data = res.json()
     assert data.get("success") is True
     assert data.get("lios_habilitados") == ["CLAREON", "CLAREONT", "TRIFOCAL"]
+
+def test_obtener_lios_comerciales_filtrados_por_practica():
+    token = generate_test_jwt()
+    headers = {"Authorization": f"Bearer {token}"}
+    # Por código de práctica
+    res = client.get("/api/nomenclador/lios-comerciales?practica_id=34031&solo_habilitados=true", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data.get("success") is True
+    lios = data.get("lios", [])
+    assert len(lios) == 3
+    codigos = [l["codigo"] for l in lios]
+    assert "CLAREON" in codigos
+    assert "CLAREONT" in codigos
+    assert "TRIFOCAL" in codigos
+    assert "TRIFOCALT" not in codigos
+
