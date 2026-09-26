@@ -17,6 +17,7 @@ import {
   Receipt,
   FileText,
   Download,
+  Pencil,
   Check,
   XCircle,
   ExternalLink,
@@ -83,6 +84,8 @@ interface CasoFormularioActivoProps {
   onDesvincularPresupuesto: () => void
   onVincularPresupuesto?: (presupuesto: PresupuestoPaciente) => void
   onEnviarPresupuestoWhatsApp?: (presupuesto: PresupuestoPaciente) => void
+  onModificarPresupuesto?: (presupuesto: PresupuestoPaciente) => void
+  onEliminarPresupuesto?: (presupuestoId: string) => Promise<void> | void
 }
 
 const sumarDiasFecha = (fechaStr: string, dias: number): string => {
@@ -130,7 +133,9 @@ export default function CasoFormularioActivo({
   onAprobarRechazarPresupuesto,
   onDesvincularPresupuesto,
   onVincularPresupuesto,
-  onEnviarPresupuestoWhatsApp
+  onEnviarPresupuestoWhatsApp,
+  onModificarPresupuesto,
+  onEliminarPresupuesto
 }: CasoFormularioActivoProps) {
   // Estados Locales Editables
   const estadoInicial = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
@@ -1883,6 +1888,17 @@ export default function CasoFormularioActivo({
                               </button>
                             )}
 
+                            {onModificarPresupuesto && (
+                              <button
+                                type="button"
+                                onClick={() => onModificarPresupuesto(p)}
+                                className="p-1.5 bg-neutral-800 hover:bg-amber-950 text-amber-300 hover:text-amber-200 border border-amber-600/30 rounded-lg text-xs font-bold transition-all shadow-sm"
+                                title="Modificar cotización (editar ítems / valores)"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            )}
+
                             {!isPrincipal && onVincularPresupuesto && (
                               <button
                                 type="button"
@@ -1912,6 +1928,17 @@ export default function CasoFormularioActivo({
                                 title="Desvincular presupuesto"
                               >
                                 Desvincular
+                              </button>
+                            )}
+
+                            {onEliminarPresupuesto && (
+                              <button
+                                type="button"
+                                onClick={() => onEliminarPresupuesto(p.id)}
+                                className="p-1.5 bg-neutral-800 hover:bg-red-950 text-gray-400 hover:text-red-400 border border-red-500/20 hover:border-red-500/40 rounded-lg text-xs font-bold transition-all shadow-sm"
+                                title="Eliminar este presupuesto"
+                              >
+                                <Trash2 size={13} />
                               </button>
                             )}
                           </div>

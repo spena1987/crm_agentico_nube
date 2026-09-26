@@ -67,6 +67,7 @@ from app.db import (
     vincular_presupuesto_a_asesoria,
     eliminar_presupuesto,
     crear_presupuesto_rapido,
+    actualizar_presupuesto_rapido,
     get_evoluciones_by_asesoria,
     crear_evolucion_asesoria,
     eliminar_evolucion_asesoria,
@@ -3605,6 +3606,25 @@ def vincular_presupuesto_asesoria_api(presupuesto_id: str, payload: Dict[str, An
         return {"success": True, "mensaje": "Presupuesto vinculado exitosamente al caso quirúrgico.", "presupuesto": presupuesto}
     except Exception as e:
         logger.error(f"Error al vincular presupuesto {presupuesto_id} a asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/presupuestos/{presupuesto_id}")
+def actualizar_presupuesto_endpoint(presupuesto_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Modifica los ítems y totales de un presupuesto existente, regenerando su PDF membretado oficial
+    y actualizando el caso quirúrgico vinculado.
+    """
+    if not payload.get("items") or len(payload["items"]) == 0:
+        raise HTTPException(status_code=400, detail="Debe incluir al menos un ítem o prestación.")
+    try:
+        presupuesto = actualizar_presupuesto_rapido(presupuesto_id, payload)
+        return {
+            "success": True,
+            "mensaje": "Presupuesto médico actualizado y PDF regenerado correctamente.",
+            "presupuesto": presupuesto
+        }
+    except Exception as e:
+        logger.error(f"Error al actualizar presupuesto {presupuesto_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/presupuestos/{presupuesto_id}")

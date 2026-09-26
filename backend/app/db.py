@@ -3513,6 +3513,166 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         logger.error(f"Error al crear presupuesto rápido: {e}")
         raise
 
+def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[str, Any]:
+    """
+    Actualiza los ítems y totales de un presupuesto existente, regenera el PDF oficial con el mismo número correlativo,
+    y sincroniza el monto y moneda en la asesoría quirúrgica vinculada.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    from app.services.pdf_service import generar_pdf_presupuesto
+
+    try:
+        # 1. Obtener presupuesto actual
+        p_curr = supabase.table("presupuestos").select("*").eq("id", presupuesto_id).execute()
+        if not p_curr.data:
+            raise Exception(f"No se encontró el presupuesto con ID {presupuesto_id}.")
+        presupuesto_db = p_curr.data[0]
+
+        paciente_id = payload.get("paciente_id") or presupuesto_db.get("paciente_id")
+        asesoria_id = payload.get("asesoria_id") or presupuesto_db.get("asesoria_id")
+        items_in = payload.get("items", [])
+        moneda_base = payload.get("moneda", "ARS").upper()
+
+        if not items_in:
+            raise ValueError("El presupuesto debe contener al menos una prestación o ítem.")
+
+        # 2. Obtener datos del paciente
+        p_resp = supabase.table("pacientes").select("*").eq("id", paciente_id).execute()
+        paciente = p_resp.data[0] if p_resp.data else {}
+
+        # 3. Servicio base para items
+        servicios_resp = supabase.table("servicios_precios").select("id, nombre_prestacion").limit(1).execute()
+        default_servicio_id = servicios_resp.data[0]["id"] if servicios_resp.data else None
+
+        # 4. Calcular totales independientes por moneda
+        total_ars = 0.0
+        total_usd = 0.0
+        items_db = []
+        items_para_pdf = []
+
+        for idx, item in enumerate(items_in):
+            cant = int(item.get("cantidad", 1))
+            pu = float(item.get("precio_unitario", 0.0))
+            sub = cant * pu
+            item_moneda = str(item.get("moneda") or moneda_base).upper()
+
+            if item_moneda == "USD":
+                total_usd += sub
+            else:
+                total_ars += sub
+
+            nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
+            codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or f"PRACT-{idx+1}").strip().upper()
+
+            srv_id = default_servicio_id
+            try:
+                ins_srv = supabase.table("servicios_precios").upsert({
+                    "codigo": codigo_item,
+                    "nombre_prestacion": nombre_item,
+                    "precio": pu,
+                    "moneda": item_moneda,
+                    "activo": True
+                }, on_conflict="codigo").execute()
+                if ins_srv.data:
+                    srv_id = ins_srv.data[0]["id"]
+            except Exception as srv_err:
+                logger.warning(f"No se pudo registrar servicio {codigo_item}: {srv_err}")
+
+            items_db.append({
+                "servicio_id": srv_id,
+                "cantidad": cant,
+                "precio_unitario": pu,
+                "subtotal": sub,
+                "moneda": item_moneda
+            })
+
+            items_para_pdf.append({
+                "codigo": codigo_item,
+                "nombre": nombre_item,
+                "nombre_prestacion": nombre_item,
+                "cantidad": cant,
+                "precio_unitario": pu,
+                "subtotal": sub,
+                "moneda": item_moneda
+            })
+
+        total_escalar = total_ars if total_ars > 0 else total_usd
+        pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
+        pdf_url = f"/static/{pdf_filename}"
+
+        # 5. Actualizar cabecera de presupuesto
+        update_data = {
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
+            "pdf_url": pdf_url,
+            "updated_at": "now()"
+        }
+        if "estado" in payload and payload["estado"]:
+            update_data["estado"] = payload["estado"]
+        if asesoria_id:
+            update_data["asesoria_id"] = asesoria_id
+
+        p_upd = supabase.table("presupuestos").update(update_data).eq("id", presupuesto_id).execute()
+        if p_upd.data:
+            presupuesto_db = p_upd.data[0]
+
+        # 6. Reemplazar items en items_presupuesto
+        supabase.table("items_presupuesto").delete().eq("presupuesto_id", presupuesto_id).execute()
+        for it in items_db:
+            it["presupuesto_id"] = presupuesto_id
+            if it["servicio_id"]:
+                try:
+                    supabase.table("items_presupuesto").insert(it).execute()
+                except Exception as it_err:
+                    logger.warning(f"No se pudo registrar item {it} en actualización: {it_err}")
+
+        # 7. Regenerar PDF membretado oficial preservando numero correlativo
+        pdf_dict = {
+            "id": presupuesto_id,
+            "numero_presupuesto": presupuesto_db.get("numero_presupuesto"),
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
+            "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
+            "created_at": presupuesto_db.get("created_at") or "now()"
+        }
+        try:
+            generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
+        except Exception as pdf_err:
+            logger.error(f"Error al regenerar PDF de presupuesto {presupuesto_id}: {pdf_err}")
+
+        # 8. Sincronizar montos en la asesoría vinculada si correspondía
+        if asesoria_id:
+            try:
+                supabase.table("asesorias_quirurgicas") \
+                    .update({
+                        "monto_extra": total_escalar,
+                        "moneda_extra": "USD" if total_usd > 0 else "ARS",
+                        "updated_at": "now()"
+                    }) \
+                    .eq("id", asesoria_id) \
+                    .execute()
+            except Exception as e_as:
+                logger.warning(f"Error sincronizando asesoría {asesoria_id} en actualizar_presupuesto_rapido: {e_as}")
+
+        return {
+            "id": presupuesto_id,
+            "numero_presupuesto": presupuesto_db.get("numero_presupuesto"),
+            "paciente_id": paciente_id,
+            "asesoria_id": asesoria_id,
+            "estado": presupuesto_db.get("estado"),
+            "total": total_escalar,
+            "total_ars": total_ars,
+            "total_usd": total_usd,
+            "pdf_url": pdf_url,
+            "items": items_para_pdf
+        }
+    except Exception as e:
+        logger.error(f"Error al actualizar presupuesto rápido {presupuesto_id}: {e}")
+        raise
+
 def generar_mensaje_ameno_presupuesto(
     presupuesto: dict, 
     paciente: dict, 

@@ -15,6 +15,7 @@ import CasoFormularioActivo from '@/components/asesoria/CasoFormularioActivo'
 
 export interface PresupuestoPaciente {
   id: string
+  numero_presupuesto?: number | string | null
   paciente_id: string
   asesoria_id?: string | null
   estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
@@ -212,6 +213,7 @@ export default function ItemCasoQuirurgicoAcordeon({
 
   // Presupuestos vinculados
   const [presupuestos, setPresupuestos] = useState<PresupuestoPaciente[]>([])
+  const [presupuestoAEditar, setPresupuestoAEditar] = useState<PresupuestoPaciente | null>(null)
   const [cargandoPresupuestos, setCargandoPresupuestos] = useState(false)
 
   // Feedback
@@ -450,6 +452,60 @@ export default function ItemCasoQuirurgicoAcordeon({
     setPresupuestoParaEnviarWA(nuevoPresupuesto)
   }
 
+  // Modificar presupuesto existente
+  const handleModificarPresupuesto = (pres: PresupuestoPaciente) => {
+    setPresupuestoAEditar(pres)
+    setMostrarModalPresupuesto(true)
+  }
+
+  // Callback cuando se actualiza un presupuesto existente
+  const handlePresupuestoActualizado = async (presActualizado: any) => {
+    setPresupuestos((prev) =>
+      prev.map((p) => (p.id === presActualizado.id ? { ...p, ...presActualizado } : p))
+    )
+
+    if (caso.presupuesto_id === presActualizado.id) {
+      const moneda = presActualizado.total_usd && Number(presActualizado.total_usd) > 0 ? 'USD' : 'ARS'
+      const monto = moneda === 'USD' ? Number(presActualizado.total_usd) : Number(presActualizado.total_ars || presActualizado.total || 0)
+      await handleGuardarCambios({
+        monto_extra: monto,
+        moneda_extra: moneda
+      })
+    }
+    setMostrarModalPresupuesto(false)
+    setPresupuestoAEditar(null)
+  }
+
+  // Eliminar presupuesto del caso
+  const handleEliminarPresupuesto = async (presupuestoId: string) => {
+    const confirmar = window.confirm(
+      '¿Estás seguro de que deseas eliminar este presupuesto oficial? Esta acción eliminará la cotización, sus ítems y el PDF generado de forma permanente.'
+    )
+    if (!confirmar) return
+
+    try {
+      const res = await apiFetch(`/api/presupuestos/${presupuestoId}`, {
+        method: 'DELETE'
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.detail || 'Error al eliminar presupuesto.')
+      }
+
+      setPresupuestos((prev) => prev.filter((p) => p.id !== presupuestoId))
+
+      if (caso.presupuesto_id === presupuestoId) {
+        await handleGuardarCambios({
+          presupuesto_id: null,
+          monto_extra: 0
+        })
+      }
+    } catch (err: any) {
+      console.error('Error al eliminar presupuesto:', err)
+      alert(err.message || 'Error al eliminar el presupuesto.')
+    }
+  }
+
   const estadoNormalizado = caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado
   let etapaActual = ETAPAS.find((e) => e.id === estadoNormalizado)
   if (!etapaActual) {
@@ -543,6 +599,7 @@ export default function ItemCasoQuirurgicoAcordeon({
               etapas={ETAPAS}
               onGuardar={handleGuardarCambios}
               onAbrirModalPresupuesto={(datos) => {
+                setPresupuestoAEditar(null)
                 if (datos) {
                   setPracticaParaModalPresupuesto(datos)
                 } else {
@@ -560,6 +617,8 @@ export default function ItemCasoQuirurgicoAcordeon({
               onEliminar={handleEliminarCaso}
               onAprobarRechazarPresupuesto={handleAprobarRechazarPresupuesto}
               onDesvincularPresupuesto={() => handleGuardarCambios({ presupuesto_id: null })}
+              onModificarPresupuesto={handleModificarPresupuesto}
+              onEliminarPresupuesto={handleEliminarPresupuesto}
               onVincularPresupuesto={async (pres) => {
                 try {
                   setGuardando(true)
@@ -595,11 +654,14 @@ export default function ItemCasoQuirurgicoAcordeon({
         </>
       )}
 
-      {/* Modal Crear Presupuesto */}
+      {/* Modal Crear / Modificar Presupuesto */}
       {mostrarModalPresupuesto && (
         <ModalCrearPresupuestoPaciente
           isOpen={mostrarModalPresupuesto}
-          onClose={() => setMostrarModalPresupuesto(false)}
+          onClose={() => {
+            setMostrarModalPresupuesto(false)
+            setPresupuestoAEditar(null)
+          }}
           pacienteId={pacienteId}
           asesoriaId={caso.id}
           pacienteNombre={pacienteNombre}
@@ -607,7 +669,9 @@ export default function ItemCasoQuirurgicoAcordeon({
           pacienteTelefono={pacienteTelefono}
           obraSocial={obraSocialDefault}
           practicaInicial={practicaParaModalPresupuesto}
+          presupuestoAEditar={presupuestoAEditar}
           onPresupuestoCreado={handlePresupuestoCreado}
+          onPresupuestoActualizado={handlePresupuestoActualizado}
         />
       )}
 

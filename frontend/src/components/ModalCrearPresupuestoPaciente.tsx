@@ -55,6 +55,19 @@ export interface LioComercial {
   tipo_vision: string
 }
 
+export interface PresupuestoEdicionData {
+  id: string
+  numero_presupuesto?: number | string | null
+  paciente_id: string
+  asesoria_id?: string | null
+  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado' | string
+  total: number
+  total_ars?: number
+  total_usd?: number
+  pdf_url?: string | null
+  items_presupuesto?: Array<any>
+}
+
 interface ModalCrearPresupuestoPacienteProps {
   isOpen: boolean
   onClose: () => void
@@ -70,7 +83,9 @@ interface ModalCrearPresupuestoPacienteProps {
     precio?: number | null
     moneda?: string | null
   } | null
+  presupuestoAEditar?: PresupuestoEdicionData | null
   onPresupuestoCreado: (nuevoPresupuesto: any) => void
+  onPresupuestoActualizado?: (presupuestoActualizado: any) => void
 }
 
 export default function ModalCrearPresupuestoPaciente({
@@ -82,7 +97,9 @@ export default function ModalCrearPresupuestoPaciente({
   obraSocial,
   asesoriaId,
   practicaInicial,
-  onPresupuestoCreado
+  presupuestoAEditar,
+  onPresupuestoCreado,
+  onPresupuestoActualizado
 }: ModalCrearPresupuestoPacienteProps) {
   const [monedaDefault, setMonedaDefault] = useState<'ARS' | 'USD'>('ARS')
   const [items, setItems] = useState<ItemPresupuestoForm[]>([])
@@ -215,6 +232,56 @@ export default function ModalCrearPresupuestoPaciente({
   useEffect(() => {
     if (isOpen) {
       setError(null)
+      
+      // Si estamos en modo de edición de un presupuesto existente
+      if (presupuestoAEditar) {
+        if (presupuestoAEditar.estado) {
+          setEmitirEstado(presupuestoAEditar.estado as any)
+        }
+        const itemsCargados: ItemPresupuestoForm[] = []
+        if (presupuestoAEditar.items_presupuesto && presupuestoAEditar.items_presupuesto.length > 0) {
+          presupuestoAEditar.items_presupuesto.forEach((it: any) => {
+            const nom = it.servicios_precios?.nombre_prestacion || it.nombre || it.descripcion || 'Prestación Médica'
+            const cod = it.servicios_precios?.codigo || it.codigo || ''
+            const mon = (it.moneda || it.servicios_precios?.moneda || 'ARS') as 'ARS' | 'USD'
+            const pu = Number(it.precio_unitario || 0)
+            const cant = Number(it.cantidad || 1)
+            itemsCargados.push({
+              servicio_id: it.servicio_id || it.servicios_precios?.id,
+              codigo: cod,
+              nombre: nom,
+              cantidad: cant,
+              precio_unitario: pu,
+              subtotal: Number(it.subtotal || (pu * cant)),
+              moneda: mon
+            })
+          })
+        }
+        setItems(itemsCargados)
+        if (Number(presupuestoAEditar.total_usd || 0) > 0 && Number(presupuestoAEditar.total_ars || 0) === 0) {
+          setMonedaDefault('USD')
+        } else {
+          setMonedaDefault('ARS')
+        }
+
+        const primer = itemsCargados[0]
+        if (primer) {
+          const nomLow = primer.nombre.toLowerCase()
+          const codLow = (primer.codigo || '').toLowerCase()
+          const esCatarata = nomLow.includes('catarata') || nomLow.includes('faco') || codLow.includes('34031') || nomLow.includes('lio')
+          setPracticaRequiereLente(esCatarata)
+          const targetCod = primer.codigo || primer.nombre
+          if (esCatarata && targetCod) {
+            cargarLiosParaPractica(targetCod)
+          }
+          if (targetCod) {
+            consultarRelaciones(targetCod, primer.nombre, primer.codigo)
+          }
+        }
+        buscarPracticasCatalogo('')
+        return
+      }
+
       const listaInicial: ItemPresupuestoForm[] = []
       
       if (practicaInicial && practicaInicial.nombre) {
@@ -290,7 +357,7 @@ export default function ModalCrearPresupuestoPaciente({
       setItems(listaInicial)
       buscarPracticasCatalogo('')
     }
-  }, [isOpen, practicaInicial?.nombre, practicaInicial?.codigo, practicaInicial?.precio, practicaInicial?.moneda])
+  }, [isOpen, presupuestoAEditar, practicaInicial?.nombre, practicaInicial?.codigo, practicaInicial?.precio, practicaInicial?.moneda])
 
   // Buscar prácticas en el nomenclador
   const buscarPracticasCatalogo = async (query: string) => {
@@ -450,24 +517,45 @@ export default function ModalCrearPresupuestoPaciente({
     }
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/presupuestos/crear-rapido`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
+      if (presupuestoAEditar) {
+        // Modo Edición / Modificación de Presupuesto Existente
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${presupuestoAEditar.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
 
-      const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.detail || data.mensaje || 'Error al emitir presupuesto.')
+        const data = await res.json()
+        if (!res.ok || !data.success) {
+          throw new Error(data.detail || data.mensaje || 'Error al actualizar presupuesto.')
+        }
+
+        const pres = data.presupuesto
+        if (onPresupuestoActualizado) {
+          onPresupuestoActualizado(pres)
+        }
+        onClose()
+      } else {
+        // Modo Creación Nueva
+        const res = await fetch(`${BACKEND_URL}/api/presupuestos/crear-rapido`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+
+        const data = await res.json()
+        if (!res.ok || !data.success) {
+          throw new Error(data.detail || data.mensaje || 'Error al emitir presupuesto.')
+        }
+
+        const pres = data.presupuesto
+        // Notificar al componente padre para que abra de inmediato el ModalEnviarPresupuestoWhatsApp unificado
+        onPresupuestoCreado(pres)
+        onClose()
       }
-
-      const pres = data.presupuesto
-      // Notificar al componente padre para que abra de inmediato el ModalEnviarPresupuestoWhatsApp unificado
-      onPresupuestoCreado(pres)
-      onClose()
     } catch (err: any) {
-      console.error('Error emitiendo presupuesto:', err)
-      setError(err.message || 'Error inesperado al emitir el presupuesto.')
+      console.error('Error procesando presupuesto:', err)
+      setError(err.message || 'Error inesperado al procesar el presupuesto.')
     } finally {
       setGuardando(false)
     }
@@ -488,10 +576,12 @@ export default function ModalCrearPresupuestoPaciente({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-white tracking-tight">
-                  Emitir Presupuesto Médico Oficial
+                  {presupuestoAEditar
+                    ? `Modificar Cotización Oficial #${presupuestoAEditar.numero_presupuesto || presupuestoAEditar.id.slice(0, 8)}`
+                    : 'Emitir Presupuesto Médico Oficial'}
                 </h3>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/40">
-                  PDF Membretado
+                  {presupuestoAEditar ? 'Regenerar PDF' : 'PDF Membretado'}
                 </span>
               </div>
               <p className="text-xs text-[var(--secondary)]">
@@ -1004,12 +1094,12 @@ export default function ModalCrearPresupuestoPaciente({
               {guardando ? (
                 <>
                   <Loader2 size={14} className="animate-spin" />
-                  Generando PDF membretado...
+                  {presupuestoAEditar ? 'Guardando modificaciones y regenerando PDF...' : 'Generando PDF membretado...'}
                 </>
               ) : (
                 <>
-                  <Receipt size={14} />
-                  Emitir Presupuesto & Continuar a WhatsApp
+                  {presupuestoAEditar ? <FileCheck2 size={14} /> : <Receipt size={14} />}
+                  {presupuestoAEditar ? 'Guardar Cambios & Regenerar PDF' : 'Emitir Presupuesto & Continuar a WhatsApp'}
                 </>
               )}
             </button>
