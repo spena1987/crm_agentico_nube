@@ -4029,16 +4029,57 @@ def enviar_presupuesto_por_whatsapp(
         clean_p2 = _clean_meta_param(param_2, 60)
         clean_p3 = _clean_meta_param(param_3, 200)
 
-        components = [
-            {
-                "type": "body",
-                "parameters": [
-                    {"type": "text", "text": clean_p1},
-                    {"type": "text", "text": clean_p2},
-                    {"type": "text", "text": clean_p3}
-                ]
-            }
-        ]
+        # Determinar qué plantilla de presupuesto usar según disponibilidad aprobada en Meta/Supabase
+        # Prioridad 1: 'presupuesto_entrega_pdf' si ya está APPROVED en Meta
+        # Prioridad 2: 'plantilla_presupuesto' (que ya está aprobada en Meta)
+        active_template_name = "plantilla_presupuesto"
+        try:
+            tpl_check = supabase.table("whatsapp_templates")\
+                .select("name, status")\
+                .eq("name", "presupuesto_entrega_pdf")\
+                .limit(1)\
+                .execute()
+            if tpl_check.data and tpl_check.data[0].get("status") == "APPROVED":
+                active_template_name = "presupuesto_entrega_pdf"
+        except Exception as te:
+            logger.debug(f"Error consultando estado de presupuesto_entrega_pdf: {te}")
+
+        # Construir componentes y texto de registro según la plantilla seleccionada
+        if active_template_name == "presupuesto_entrega_pdf":
+            components = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": clean_p1},
+                        {"type": "text", "text": clean_p2},
+                        {"type": "text", "text": clean_p3}
+                    ]
+                }
+            ]
+            rendered_msg = (
+                f"📄 [PLANTILLA OFICIAL: Presupuesto Médico Disponible]\n\n"
+                f"Hola {param_1}, ya se encuentra listo el presupuesto para su procedimiento de {param_2}. "
+                f"El monto total estimado es {param_3}.\n\n"
+                f"Presione el botón inferior si desea recibir el archivo PDF oficial con el membrete directamente en este chat de WhatsApp.\n\n"
+                f"[Botón: Recibir Presupuesto PDF]"
+            )
+        else:
+            # 'plantilla_presupuesto' cuenta con 2 parámetros aprobados en Meta: {{1}} y {{2}}
+            components = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": clean_p1},
+                        {"type": "text", "text": clean_p2}
+                    ]
+                }
+            ]
+            rendered_msg = (
+                f"📄 [PLANTILLA OFICIAL: Presupuesto Médico Disponible]\n\n"
+                f"Presupuesto Médico Disponible\n"
+                f"Hola {param_1}, ya se encuentra listo el presupuesto para su procedimiento de {param_2}. "
+                f"¿Desea que se lo enviemos por este medio?"
+            )
 
         try:
             loop = asyncio.get_event_loop()
@@ -4052,7 +4093,7 @@ def enviar_presupuesto_por_whatsapp(
         tpl_res = loop.run_until_complete(
             client.send_template(
                 to_phone=norm_meta_phone,
-                template_name="presupuesto_entrega_pdf",
+                template_name=active_template_name,
                 language_code="es_AR",
                 components=components
             )
@@ -4062,18 +4103,11 @@ def enviar_presupuesto_por_whatsapp(
             "success": True,
             "wamid": wamid,
             "provider": "meta_cloud_api",
-            "template_name": "presupuesto_entrega_pdf"
+            "template_name": active_template_name
         }
 
         # Guardar en la conversación del CRM
         if conv_id:
-            rendered_msg = (
-                f"📄 [PLANTILLA OFICIAL: Presupuesto Médico Disponible]\n\n"
-                f"Hola {param_1}, ya se encuentra listo el presupuesto para su procedimiento de {param_2}. "
-                f"El monto total estimado es {param_3}.\n\n"
-                f"Presione el botón inferior si desea recibir el archivo PDF oficial con el membrete directamente en este chat de WhatsApp.\n\n"
-                f"[Botón: Recibir Presupuesto PDF]"
-            )
             try:
                 supabase.table("mensajes").insert({
                     "conversacion_id": conv_id,
@@ -4081,7 +4115,7 @@ def enviar_presupuesto_por_whatsapp(
                     "contenido": rendered_msg,
                     "metadata_json": {
                         "tipo": "template",
-                        "template_name": "presupuesto_entrega_pdf",
+                        "template_name": active_template_name,
                         "wamid": wamid,
                         "delivery_status": "enviado",
                         "provider": "meta_cloud_api",

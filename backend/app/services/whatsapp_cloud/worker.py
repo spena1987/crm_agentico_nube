@@ -810,6 +810,26 @@ async def handle_automated_interactive_action(
         "ver presupuesto", "descargar presupuesto"
     ]) or btn_id.startswith("presupuesto_")
 
+    # Si el paciente responde afirmativamente ("si", "sí", "por favor", "dale", "enviámelo") y el último mensaje del bot/operador fue la plantilla de presupuesto
+    if not is_presupuesto and crm_conv_id and any(title_str.strip().lower() == aff for aff in ["si", "sí", "por favor", "porfavor", "si por favor", "sí por favor", "si gracias", "dale", "enviámelo", "enviame", "mandamelo", "mandamela", "ok", "bueno"]):
+        try:
+            last_msg = supabase.table("mensajes")\
+                .select("contenido, metadata_json")\
+                .eq("conversacion_id", crm_conv_id)\
+                .eq("emisor", "operador")\
+                .order("created_at", desc=True)\
+                .limit(1)\
+                .execute()
+            if last_msg.data and len(last_msg.data) > 0:
+                l_row = last_msg.data[0]
+                l_meta = l_row.get("metadata_json") or {}
+                l_cont = str(l_row.get("contenido") or "").lower()
+                if l_meta.get("tipo") == "template" or "presupuesto médico disponible" in l_cont or "plantilla_presupuesto" in str(l_meta):
+                    logger.info(f"[Interactive Auto] Respuesta afirmativa '{title_str}' a plantilla de presupuesto. Despachando PDF.")
+                    is_presupuesto = True
+        except Exception as l_err:
+            logger.debug(f"[Interactive Auto] Error verificando último mensaje: {l_err}")
+
     if is_presupuesto:
         logger.info(f"[Interactive Auto] Intención de Presupuesto PDF para {normalized_phone}")
         paciente_nombre = "Paciente"
