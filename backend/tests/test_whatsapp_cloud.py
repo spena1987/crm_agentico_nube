@@ -448,5 +448,78 @@ async def test_handle_automated_interactive_action_reprogramar_turno():
         assert log_args.get("nivel") == "WARNING"
 
 
+@pytest.mark.asyncio
+async def test_handle_automated_text_action_affirmative_presupuesto():
+    from app.services.whatsapp_cloud.worker import handle_automated_interactive_action
+
+    with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sup, \
+         patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=("1289373670929621", "token_123")), \
+         patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.send_document", return_value={"wamid": "wamid.TEST_DOC_AFFIRM"}) as mock_send_doc, \
+         patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.close"), \
+         patch("app.services.pdf_service.asegurar_pdf_presupuesto_canonica") as mock_pdf_canon:
+
+        # 1. Simular mensaje previo en la conversación que ofreció el presupuesto
+        mock_sup.table().select().eq().neq().order().limit().execute.return_value.data = [{
+            "contenido": "📄 [PLANTILLA OFICIAL: Presupuesto Médico Disponible]...",
+            "metadata_json": {
+                "tipo": "template",
+                "template_name": "plantilla_presupuesto",
+                "presupuesto_id": "pres-exacto-026"
+            },
+            "created_at": "2026-09-28T18:48:09Z",
+            "emisor": "operador"
+        }]
+
+        # 2. Simular consulta de paciente
+        mock_sup.table().select().eq().execute.return_value.data = [{"nombre": "Peña, Juan Sebastian"}]
+
+        # 3. Simular presupuesto exacto encontrado
+        mock_sup.table().select().eq().limit().execute.return_value.data = [{
+            "id": "pres-exacto-026",
+            "numero_presupuesto": 26,
+            "total": 131520,
+            "total_ars": 131000,
+            "total_usd": 520,
+            "created_at": "2026-09-28T18:48:03Z",
+            "estado": "enviado"
+        }]
+        mock_sup.table().insert().execute.return_value.data = []
+        mock_sup.table().update().eq().execute.return_value.data = []
+
+        # El paciente responde simplemente 'Si' por texto (button_id=None)
+        handled = await handle_automated_interactive_action(
+            button_id=None,
+            text_content="Si",
+            paciente_id="pac-juan-001",
+            normalized_phone="5492614703230",
+            crm_conv_id="conv-juan-001",
+            account_id="acc-123"
+        )
+
+        assert handled is True
+        assert mock_send_doc.called
+        doc_kwargs = mock_send_doc.call_args[1]
+        assert "presupuesto_pres-exacto-026.pdf" in doc_kwargs.get("document_url", "")
+        assert "Peña, Juan Sebastian" in doc_kwargs.get("filename", "") or "Pena" in doc_kwargs.get("filename", "") or "Presupuesto" in doc_kwargs.get("filename", "")
+
+
+@pytest.mark.asyncio
+async def test_handle_automated_text_action_non_affirmative_returns_false():
+    from app.services.whatsapp_cloud.worker import handle_automated_interactive_action
+
+    with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sup:
+        # Pregunta clínica regular no debe ser interceptada determinísticamente
+        handled = await handle_automated_interactive_action(
+            button_id=None,
+            text_content="Hola, ¿atienden los días sábados por la tarde?",
+            paciente_id="pac-123",
+            normalized_phone="5492614703230",
+            crm_conv_id="conv-123",
+            account_id="acc-123"
+        )
+        assert handled is False
+
+
+
 
 

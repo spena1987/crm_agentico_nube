@@ -600,9 +600,9 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     except Exception:
                         pass
 
-                # 4.2 Intercepción de Botones Interactivos Automatizados (Presupuesto PDF y Confirmación de Turnos)
+                # 4.2 Intercepción de Acciones Determinísticas (Botones Interactivos y Respuestas de Texto a Presupuestos / Turnos)
                 interactive_handled = False
-                if msg_type in ("interactive", "button") or interactive_id:
+                if msg_type in ("interactive", "button", "text") or interactive_id:
                     interactive_handled = await handle_automated_interactive_action(
                         button_id=interactive_id,
                         text_content=text_content,
@@ -798,7 +798,7 @@ async def handle_automated_interactive_action(
     """
     btn_id = (button_id or "").lower().strip()
     title_str = (text_content or "").lower().strip()
-    logger.info(f"[Interactive Auto] Evaluando botón: id='{btn_id}', texto='{title_str}' para paciente={paciente_id}")
+    logger.info(f"[Interactive Auto] Evaluando acción: id='{btn_id}', texto='{title_str}' para paciente={paciente_id}")
 
     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 
@@ -810,28 +810,53 @@ async def handle_automated_interactive_action(
         "ver presupuesto", "descargar presupuesto"
     ]) or btn_id.startswith("presupuesto_")
 
-    # Si el paciente responde afirmativamente ("si", "sí", "por favor", "dale", "enviámelo") y el último mensaje del bot/operador fue la plantilla de presupuesto
-    if not is_presupuesto and crm_conv_id and any(title_str.strip().lower() == aff for aff in ["si", "sí", "por favor", "porfavor", "si por favor", "sí por favor", "si gracias", "dale", "enviámelo", "enviame", "mandamelo", "mandamela", "ok", "bueno"]):
-        try:
-            last_msg = supabase.table("mensajes")\
-                .select("contenido, metadata_json")\
-                .eq("conversacion_id", crm_conv_id)\
-                .eq("emisor", "operador")\
-                .order("created_at", desc=True)\
-                .limit(1)\
-                .execute()
-            if last_msg.data and len(last_msg.data) > 0:
-                l_row = last_msg.data[0]
-                l_meta = l_row.get("metadata_json") or {}
-                l_cont = str(l_row.get("contenido") or "").lower()
-                if l_meta.get("tipo") == "template" or "presupuesto médico disponible" in l_cont or "plantilla_presupuesto" in str(l_meta):
-                    logger.info(f"[Interactive Auto] Respuesta afirmativa '{title_str}' a plantilla de presupuesto. Despachando PDF.")
-                    is_presupuesto = True
-        except Exception as l_err:
-            logger.debug(f"[Interactive Auto] Error verificando último mensaje: {l_err}")
+    target_presupuesto_id = None
+
+    # Si no es explícito, verificar si es respuesta afirmativa a una oferta previa de presupuesto
+    if not is_presupuesto and crm_conv_id:
+        import unicodedata
+        clean_text = unicodedata.normalize('NFKD', title_str).encode('ASCII', 'ignore').decode('utf-8').strip()
+        clean_words = re.sub(r'[^a-z0-9\s]', ' ', clean_text).split()
+        
+        # Evaluar patrones afirmativos: "si", "sí", "por favor", "dale", "enviámelo", "mandamelo", "ok", "bueno", "quiero", etc.
+        es_afirmativo = False
+        if clean_words:
+            first_word = clean_words[0]
+            if first_word in ("si", "sii", "siii", "dale", "bueno", "ok", "claro", "perfecto", "mandamelo", "mandamela", "mandame", "enviamelo", "enviame", "quiero"):
+                es_afirmativo = True
+            elif "por" in clean_words and "favor" in clean_words:
+                es_afirmativo = True
+            elif any(w in clean_words for w in ("mandamelo", "enviamelo", "mandamela", "enviarmelo", "recibirlo")):
+                es_afirmativo = True
+
+        if es_afirmativo:
+            try:
+                # Buscar mensajes salientes previos hacia el paciente que no sean notas internas
+                last_msgs = supabase.table("mensajes")\
+                    .select("contenido, metadata_json, created_at, emisor")\
+                    .eq("conversacion_id", crm_conv_id)\
+                    .neq("emisor", "paciente")\
+                    .order("created_at", desc=True)\
+                    .limit(5)\
+                    .execute()
+
+                for m_row in (last_msgs.data or []):
+                    m_meta = m_row.get("metadata_json") or {}
+                    if m_meta.get("es_nota_interna") is True:
+                        continue
+                    m_cont = str(m_row.get("contenido") or "").lower()
+                    m_tpl = str(m_meta.get("template_name") or "").lower()
+                    if m_meta.get("tipo") == "template" or "presupuesto" in m_cont or "plantilla_presupuesto" in m_tpl or "presupuesto_entrega_pdf" in m_tpl:
+                        logger.info(f"[Interactive Auto] Respuesta afirmativa '{title_str}' a plantilla de presupuesto ({m_tpl or 'template'}). Despachando PDF.")
+                        is_presupuesto = True
+                        if m_meta.get("presupuesto_id"):
+                            target_presupuesto_id = m_meta.get("presupuesto_id")
+                        break
+            except Exception as l_err:
+                logger.debug(f"[Interactive Auto] Error verificando mensajes previos para respuesta afirmativa: {l_err}")
 
     if is_presupuesto:
-        logger.info(f"[Interactive Auto] Intención de Presupuesto PDF para {normalized_phone}")
+        logger.info(f"[Interactive Auto] Intención de Presupuesto PDF para {normalized_phone} (target_id={target_presupuesto_id})")
         paciente_nombre = "Paciente"
         if paciente_id:
             try:
@@ -842,10 +867,25 @@ async def handle_automated_interactive_action(
                 logger.warning(f"[Interactive Presupuesto] Error leyendo paciente: {pe}")
 
         presupuesto = None
-        if paciente_id:
+        # 1. Priorizar el presupuesto exacto referenciado en la plantilla previa
+        if target_presupuesto_id:
+            try:
+                t_resp = supabase.table("presupuestos")\
+                    .select("id, total, total_ars, total_usd, pdf_url, created_at, estado, numero_presupuesto")\
+                    .eq("id", target_presupuesto_id)\
+                    .limit(1)\
+                    .execute()
+                if t_resp.data and len(t_resp.data) > 0:
+                    presupuesto = t_resp.data[0]
+                    logger.info(f"[Interactive Presupuesto] Presupuesto #{presupuesto.get('numero_presupuesto')} ({target_presupuesto_id}) encontrado desde metadata de plantilla.")
+            except Exception as t_err:
+                logger.warning(f"[Interactive Presupuesto] Error buscando target_presupuesto_id {target_presupuesto_id}: {t_err}")
+
+        # 2. Si no vino en metadata, buscar el último activo del paciente
+        if not presupuesto and paciente_id:
             try:
                 pres_resp = supabase.table("presupuestos") \
-                    .select("id, total, total_ars, total_usd, pdf_url, created_at, estado") \
+                    .select("id, total, total_ars, total_usd, pdf_url, created_at, estado, numero_presupuesto") \
                     .eq("paciente_id", paciente_id) \
                     .order("created_at", desc=True) \
                     .limit(5) \
@@ -862,7 +902,7 @@ async def handle_automated_interactive_action(
                 p_ids = [p["id"] for p in (p_by_phone.data or [])]
                 if p_ids:
                     pres_resp = supabase.table("presupuestos") \
-                        .select("id, total, total_ars, total_usd, pdf_url, created_at, estado") \
+                        .select("id, total, total_ars, total_usd, pdf_url, created_at, estado, numero_presupuesto") \
                         .in_("paciente_id", p_ids) \
                         .order("created_at", desc=True) \
                         .limit(5) \
@@ -882,6 +922,13 @@ async def handle_automated_interactive_action(
         try:
             if presupuesto:
                 pres_id = presupuesto["id"]
+                # Asegurar pre-generación física del PDF oficial antes del envío
+                try:
+                    from app.services.pdf_service import asegurar_pdf_presupuesto_canonica
+                    asegurar_pdf_presupuesto_canonica(pres_id)
+                except Exception as aseg_err:
+                    logger.warning(f"[Interactive Presupuesto] Advertencia asegurando PDF canónico para {pres_id}: {aseg_err}")
+
                 base_backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app").rstrip("/")
                 pdf_full_url = f"{base_backend_url}/static/presupuesto_{pres_id}.pdf"
                 safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', paciente_nombre).strip('_')
