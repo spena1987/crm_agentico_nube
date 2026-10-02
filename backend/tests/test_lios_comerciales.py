@@ -107,6 +107,12 @@ def mock_lios_si_offline(monkeypatch):
     if hasattr(main_mod, "guardar_lios_habilitados_practica"):
         monkeypatch.setattr(main_mod, "guardar_lios_habilitados_practica", fake_guardar_lios)
 
+    import sys
+    current_test_mod = sys.modules[__name__]
+    monkeypatch.setattr(current_test_mod, "obtener_lios_comerciales", fake_obtener_lios)
+    monkeypatch.setattr(current_test_mod, "get_practica_resumen_operativo", fake_get_resumen)
+    monkeypatch.setattr(current_test_mod, "guardar_practica_crm_integral", fake_guardar_integral)
+
     yield
 
 
