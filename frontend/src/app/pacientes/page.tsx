@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { 
@@ -74,10 +75,12 @@ interface Paciente {
   }>
 }
 
-export default function PacientesPage() {
+function PacientesContent() {
   const { can, canAccess } = usePermissions()
+  const searchParams = useSearchParams()
+  const paramId = searchParams?.get('id') || null
   const [pacientes, setPacientes] = useState<Paciente[]>([])
-  const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(null)
+  const [selectedPacienteId, setSelectedPacienteId] = useState<string | null>(paramId)
   const [search, setSearch] = useState('')
   const [filtroCategoria, setFiltroCategoria] = useState<'todos' | 'activos' | 'alertas' | 'proximas'>('todos')
   const [loading, setLoading] = useState(true)
@@ -142,8 +145,10 @@ export default function PacientesPage() {
   }
 
   useEffect(() => {
-    fetchPacientes()
+    fetchPacientes(paramId || undefined)
+  }, [paramId])
 
+  useEffect(() => {
     // Suscripción Realtime a asesorias_quirurgicas para mantener sincronizados los casos y categorías
     const channel = supabase
       .channel('pacientes-asesorias-realtime')
@@ -1442,5 +1447,19 @@ export default function PacientesPage() {
       )}
 
     </div>
+  )
+}
+
+export default function PacientesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-16 flex items-center justify-center min-h-[400px]">
+          <Loader2 className="animate-spin text-blue-600" size={36} />
+        </div>
+      }
+    >
+      <PacientesContent />
+    </Suspense>
   )
 }

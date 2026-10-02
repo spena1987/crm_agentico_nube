@@ -39,9 +39,11 @@ import { usePermissions } from '@/hooks/usePermissions'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
+import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
+import { Columns3, AlignJustify } from 'lucide-react'
 import { Radio, Users } from 'lucide-react'
 
-interface PacienteData {
+export interface PacienteData {
   id: string
   nombre: string
   dni?: string | null
@@ -50,7 +52,7 @@ interface PacienteData {
   email?: string | null
 }
 
-interface AsesoriaCasoPipeline {
+export interface AsesoriaCasoPipeline {
   id: string
   codigo_caso?: string
   ojo?: string
@@ -73,6 +75,13 @@ interface AsesoriaCasoPipeline {
   ultimo_contacto_at?: string | null
   dias_sin_contacto?: number
   es_alerta?: boolean
+  turno_quirofano_info?: {
+    id?: string
+    fecha?: string
+    hora?: string
+    estado?: string
+    quirofano_nombre?: string
+  }
   es_critico?: boolean
   checklist_prequirurgico?: any
   created_at: string
@@ -145,6 +154,28 @@ export default function PipelineQuirurgicoPage() {
   // Vista activa: 'activos' (Pipeline Kanban de 4 etapas) o 'cerrados' (Historial Operados y Cancelados)
   const [vistaActual, setVistaActual] = useState<'activos' | 'cerrados'>('activos')
   const [subfiltroCerrados, setSubfiltroCerrados] = useState<'todos' | 'operado' | 'cancelado'>('todos')
+  const [modoVisualizacion, setModoVisualizacion] = useState<'vertical' | 'kanban'>('vertical')
+
+  // Cargar preferencia guardada de visualización
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('crm_pipeline_view_mode')
+      if (saved === 'kanban' || saved === 'vertical') {
+        setModoVisualizacion(saved)
+      }
+    } catch (e) {
+      // Ignorar
+    }
+  }, [])
+
+  const handleCambiarModoVisualizacion = (modo: 'vertical' | 'kanban') => {
+    setModoVisualizacion(modo)
+    try {
+      localStorage.setItem('crm_pipeline_view_mode', modo)
+    } catch (e) {
+      // Ignorar
+    }
+  }
 
   // Filtros
   const [filtroTexto, setFiltroTexto] = useState('')
@@ -692,6 +723,38 @@ export default function PipelineQuirurgicoPage() {
               </span>
             </button>
           </div>
+
+          {/* Selector de Modo: Vista Vertical Asistida vs Tablero Kanban */}
+          {vistaActual === 'activos' && (
+            <div className="flex items-center bg-neutral-950 p-1 rounded-xl border border-[var(--border)]">
+              <button
+                type="button"
+                onClick={() => handleCambiarModoVisualizacion('vertical')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  modoVisualizacion === 'vertical'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+                title="Vista Vertical Asistida: flujo continuo con datos clínicos completos sin truncar"
+              >
+                <AlignJustify size={13} />
+                <span>Vista Vertical</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCambiarModoVisualizacion('kanban')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
+                  modoVisualizacion === 'kanban'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-400 hover:text-gray-200'
+                }`}
+                title="Tablero Kanban Horizontal: columnas compactas para arrastrar y soltar"
+              >
+                <Columns3 size={13} />
+                <span>Tablero Kanban</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Centro: Métricas Clave en Pastillas Compactas */}
@@ -976,7 +1039,19 @@ export default function PipelineQuirurgicoPage() {
       {/* ==================================================================== */}
       {/* 5A. TABLERO KANBAN DE ETAPAS ABIERTAS / ACTIVAS (5 COLUMNAS FULL-WIDTH) */}
       {/* ==================================================================== */}
-      {vistaActual === 'activos' && (
+      {vistaActual === 'activos' && modoVisualizacion === 'vertical' && (
+        <VistaVerticalPipeline
+          columnasEtapas={ETAPAS_COLUMNAS_ACTIVAS}
+          etapasActivasFiltradas={etapasActivasFiltradas}
+          onCambiarEtapa={handleSeleccionarEtapa}
+          onAbrirWhatsApp={handleAbrirWhatsApp}
+          onMarcarContactadoHoy={handleMarcarContactadoHoy}
+          actualizandoCasoId={actualizandoCasoId}
+          canChangeStage={canChangeStage}
+        />
+      )}
+
+      {vistaActual === 'activos' && modoVisualizacion === 'kanban' && (
         <div className="w-full overflow-x-auto pb-4">
           <div className="grid grid-cols-5 gap-3.5 min-w-[1300px] 2xl:min-w-0 items-start">
             {ETAPAS_COLUMNAS_ACTIVAS.map((col) => {
@@ -1352,7 +1427,11 @@ export default function PipelineQuirurgicoPage() {
 
                                 {/* Selector para mover de etapa */}
                                 <select
-                                  value={caso.estado}
+                                  value={
+                                    ['en_espera', 'pre_quirofano', 'en_operacion'].includes(caso.estado)
+                                      ? 'programado'
+                                      : caso.estado
+                                  }
                                   disabled={actualizandoCasoId === caso.id}
                                   onChange={(e) => handleSeleccionarEtapa(caso, e.target.value)}
                                   className="text-[10px] font-semibold bg-neutral-900 border border-[var(--border)] text-gray-300 rounded-lg px-1.5 py-0.5 focus:outline-none focus:border-blue-500 cursor-pointer max-w-[105px]"
@@ -1361,6 +1440,7 @@ export default function PipelineQuirurgicoPage() {
                                   <option value="en_asesoramiento">2. Asesoramiento</option>
                                   <option value="en_analisis">3. Análisis</option>
                                   <option value="confirmado">4. Confirmado</option>
+                                  <option value="programado">5. Programado</option>
                                   <option disabled>──────────</option>
                                   <option value="operado">✔ Operado (Cerrar)</option>
                                   <option value="cancelado">✖ Cancelar (Cerrar)</option>

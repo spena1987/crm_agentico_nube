@@ -4433,6 +4433,21 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
             
         casos = resp.data or []
         
+        # Enriquecer con turnos vigentes de quirófano
+        turnos_activos = {}
+        try:
+            resp_t = supabase.table("turnos_quirofano") \
+                .select("id, asesoria_id, fecha_cirugia, hora_inicio, estado, quirofanos(nombre, codigo)") \
+                .neq("estado", "cancelado") \
+                .order("fecha_cirugia", desc=True) \
+                .execute()
+            for t in (resp_t.data or []):
+                as_id = t.get("asesoria_id")
+                if as_id and as_id not in turnos_activos:
+                    turnos_activos[as_id] = t
+        except Exception as e_t:
+            logger.warning(f"Aviso enriqueciendo turnos en pipeline: {e_t}")
+
         # 2. Configuración de SLA
         config = get_configuracion_quirurgica()
         sla_alerta = config.get("sla_dias_alerta", 3)
@@ -4461,6 +4476,19 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
             if est not in etapas_map:
                 etapas_map[est] = []
                 
+            # Enriquecer con datos del turno si existe
+            t_asoc = turnos_activos.get(c.get("id"))
+            if t_asoc:
+                if not c.get("fecha_definitiva_cirugia") and t_asoc.get("fecha_cirugia"):
+                    c["fecha_definitiva_cirugia"] = t_asoc.get("fecha_cirugia")
+                c["turno_quirofano_info"] = {
+                    "id": t_asoc.get("id"),
+                    "fecha": t_asoc.get("fecha_cirugia"),
+                    "hora": t_asoc.get("hora_inicio"),
+                    "estado": t_asoc.get("estado"),
+                    "quirofano_nombre": t_asoc.get("quirofanos", {}).get("nombre") if isinstance(t_asoc.get("quirofanos"), dict) else None
+                }
+
             # Cálculo de días sin contacto
             ultimo_c = c.get("ultimo_contacto_at") or c.get("created_at")
             dias_sin_contacto = 0
