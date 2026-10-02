@@ -48,7 +48,9 @@ import {
   ArrowRightLeft,
   ArrowLeft,
   MoreVertical,
-  AlertTriangle
+  AlertTriangle,
+  Plus,
+  Link2
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
@@ -65,6 +67,8 @@ import ChatContactContextMenu from './chat/ChatContactContextMenu'
 import ModalHistoriaClinica from './ModalHistoriaClinica'
 import ModalEditarPaciente from './ModalEditarPaciente'
 import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
+import ModalIniciarConversacionWhatsApp from './chat/ModalIniciarConversacionWhatsApp'
+import ModalBuscarGeclisa from './ModalBuscarGeclisa'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { 
   getCalendarDayKey,
@@ -215,6 +219,55 @@ export default function ChatInbox() {
   const [selectedPacienteHistoriaClinica, setSelectedPacienteHistoriaClinica] = useState<any | null>(null)
   const [selectedPacienteEditar, setSelectedPacienteEditar] = useState<any | null>(null)
   const [guardandoPaciente, setGuardandoPaciente] = useState(false)
+
+  // Modales de Inicio Rápido de Conversación y Vinculación Geclisa
+  const [showModalNuevoChat, setShowModalNuevoChat] = useState(false)
+  const [showModalVincularGeclisa, setShowModalVincularGeclisa] = useState(false)
+
+  const handleConversacionIniciada = (convIniciada: any, _yaExistia: boolean) => {
+    if (!convIniciada || !convIniciada.id) return
+
+    setConversaciones((prev) => {
+      const idx = prev.findIndex((c) => c.id === convIniciada.id)
+      if (idx >= 0) {
+        const updated = [...prev]
+        updated[idx] = { ...updated[idx], ...convIniciada, unread_count: 0 }
+        const item = updated.splice(idx, 1)[0]
+        return [item, ...updated]
+      } else {
+        return [convIniciada, ...prev]
+      }
+    })
+
+    setSelectedConvId(convIniciada.id)
+
+    if (activeTab === 'archivados' || activeTab === 'sin_asignar') {
+      setActiveTab('mis_chats')
+    }
+
+    setTimeout(() => {
+      messageInputRef.current?.focus()
+    }, 100)
+  }
+
+  const handlePacienteVinculadoGeclisa = (pacienteActualizado: any) => {
+    if (!pacienteActualizado || !selectedConvId) return
+
+    setConversaciones((prev) =>
+      prev.map((c) => {
+        if (c.id === selectedConvId) {
+          const currentP = getPatient(c)
+          const pMerged = { ...(currentP || {}), ...pacienteActualizado }
+          return {
+            ...c,
+            pacientes: pMerged
+          }
+        }
+        return c
+      })
+    )
+    setShowModalVincularGeclisa(false)
+  }
 
   // Abrir Ficha 360 por defecto en monitores amplios (>= 1536px)
   useEffect(() => {
@@ -1818,7 +1871,16 @@ export default function ChatInbox() {
             </Link>
           </div>
           
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <button
+              type="button"
+              onClick={() => setShowModalNuevoChat(true)}
+              className="px-2 sm:px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-all shadow-sm shadow-blue-600/30 shrink-0 cursor-pointer"
+              title="Iniciar una conversación nueva por WhatsApp"
+            >
+              <Plus size={13} />
+              <span className="hidden sm:inline">Nuevo Chat</span>
+            </button>
             <button 
               onClick={() => setShowSimulator(!showSimulator)}
               className={`p-1.5 rounded-lg text-xs transition-colors border ${
@@ -2471,6 +2533,30 @@ export default function ChatInbox() {
                 onResolverUrgencia={handleResolverUrgencia}
                 onOpenHistoriaClinica={() => currentPaciente && setSelectedPacienteHistoriaClinica(currentPaciente)}
               />
+            )}
+
+            {/* Banner de Contacto Rápido / Sin Ficha de Geclisa Vinculada */}
+            {currentPaciente && !currentPaciente.geclisa_ficha_id && (
+              <div className="px-3.5 py-2 bg-gradient-to-r from-amber-950/50 to-amber-900/30 border-b border-amber-800/40 flex items-center justify-between text-xs text-amber-300 animate-fade-in shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded-md bg-amber-500/20 text-amber-400">
+                    <Zap size={14} />
+                  </div>
+                  <div>
+                    <span className="font-semibold text-amber-200">Contacto Rápido</span>
+                    <span className="text-amber-400/80 text-[11px] ml-1.5 hidden sm:inline">• Sin ficha clínica vinculada en Geclisa</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowModalVincularGeclisa(true)}
+                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-bold rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                  title="Vincular este chat con la ficha médica del paciente en Geclisa mediante su DNI"
+                >
+                  <Link2 size={12} />
+                  <span>Vincular con DNI</span>
+                </button>
+              </div>
             )}
 
             {/* Historial de Mensajes con Contenedor Relativo y Botón Flotante */}
@@ -3349,6 +3435,22 @@ export default function ChatInbox() {
           </div>
         </div>
       )}
+
+      {/* Modal Iniciar Nueva Conversación de WhatsApp (DNI Geclisa o Teléfono Directo) */}
+      <ModalIniciarConversacionWhatsApp
+        isOpen={showModalNuevoChat}
+        onClose={() => setShowModalNuevoChat(false)}
+        onConversacionIniciada={handleConversacionIniciada}
+        currentUserId={currentUserId}
+        currentUserName={user?.email || 'Operador'}
+      />
+
+      {/* Modal Vincular Paciente de Contacto Rápido con Geclisa mediante DNI */}
+      <ModalBuscarGeclisa
+        isOpen={showModalVincularGeclisa}
+        onClose={() => setShowModalVincularGeclisa(false)}
+        onPacienteImportado={handlePacienteVinculadoGeclisa}
+      />
     </div>
   )
 }

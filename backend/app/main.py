@@ -822,6 +822,152 @@ def get_operadores_activos_api():
     """
     return obtener_operadores_activos()
 
+
+@app.post("/api/conversaciones/iniciar-rapido")
+def iniciar_conversacion_rapida_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Inicia o recupera una conversación de WhatsApp directamente desde el inbox.
+    Soporta dos modalidades:
+    1. "geclisa_dni": Busca al paciente en Geclisa por DNI (o recibe datos_geclisa previamente consultados),
+       lo importa/asegura en Supabase con su Ficha ID y datos clínicos, asegura su número de WhatsApp
+       y crea o recupera la conversación.
+    2. "telefono_directo": Permite iniciar conversación rápida inmediata con solo el número de celular
+       y una referencia/nombre opcional, creando un registro de Lead / Contacto Rápido provisional en Supabase
+       sin exigir ficha médica ni DNI de antemano.
+    Si se provee 'operador_id', autoasigna la conversación al operador y desactiva el bot.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+
+    modalidad = payload.get("modalidad", "telefono_directo")
+    operador_id = payload.get("operador_id")
+    operador_nombre = payload.get("operador_nombre")
+    primer_mensaje = payload.get("primer_mensaje")
+
+    paciente = None
+    ya_existia = False
+
+    if modalidad == "geclisa_dni":
+        dni = str(payload.get("dni") or "").strip()
+        datos_geclisa = payload.get("datos_geclisa")
+        tel_override = payload.get("telefono")
+
+        if not dni and not datos_geclisa:
+            raise HTTPException(status_code=400, detail="Debe proporcionar el número de DNI o datos de Geclisa.")
+
+        if not datos_geclisa:
+            dni_limpio = "".join(filter(str.isdigit, dni))
+            if not dni_limpio:
+                raise HTTPException(status_code=400, detail="El DNI proporcionado no es válido.")
+            res_dni = geclisa_client.buscar_paciente_por_dni(dni_limpio)
+            if not res_dni.get("encontrado"):
+                raise HTTPException(status_code=404, detail=res_dni.get("mensaje") or f"No se encontró paciente con DNI {dni_limpio} en Geclisa.")
+            datos_geclisa = res_dni
+
+        # Si el usuario suministró un teléfono explícito de WhatsApp, aplicarlo
+        if tel_override:
+            tel_norm = normalize_phone_number(str(tel_override).strip())
+            datos_geclisa["telefono"] = tel_norm
+            datos_geclisa["celular"] = tel_norm
+
+        try:
+            paciente = crear_o_actualizar_paciente_geclisa(datos_geclisa)
+        except Exception as e:
+            logger.error(f"Error importando paciente Geclisa en inicio rápido: {e}")
+            raise HTTPException(status_code=500, detail=f"Error al registrar paciente de Geclisa: {str(e)}")
+
+    elif modalidad == "telefono_directo":
+        raw_tel = payload.get("telefono")
+        if not raw_tel:
+            raise HTTPException(status_code=400, detail="Debe ingresar un número de teléfono celular.")
+        
+        tel_norm = normalize_phone_number(str(raw_tel).strip())
+        # Validación mínima de longitud (al menos 8 dígitos numéricos)
+        digitos = "".join(filter(str.isdigit, tel_norm))
+        if len(digitos) < 8:
+            raise HTTPException(status_code=400, detail="El número de teléfono ingresado es demasiado corto o inválido.")
+
+        # Verificar si ya existe en CRM
+        paciente_existente = get_paciente_by_telefono(tel_norm)
+        if paciente_existente:
+            paciente = paciente_existente
+            ya_existia = True
+        else:
+            nombre_ref = (payload.get("nombre_referencia") or payload.get("nombre") or "").strip()
+            final_nombre = nombre_ref if nombre_ref else f"Contacto {tel_norm[-4:] if len(tel_norm) >= 4 else tel_norm}"
+            
+            nuevo_pac_data = {
+                "telefono": tel_norm,
+                "nombre": final_nombre,
+                "etapa_clinica": "CONTACTO_RAPIDO",
+                "geclisa_ficha_id": None,
+                "dni": None
+            }
+            res_insert = supabase.table("pacientes").insert(nuevo_pac_data).execute()
+            if not res_insert.data:
+                raise HTTPException(status_code=500, detail="No se pudo crear el contacto rápido en la base de datos.")
+            paciente = res_insert.data[0]
+            ya_existia = False
+    else:
+        raise HTTPException(status_code=400, detail=f"Modalidad desconocida: '{modalidad}'. Use 'geclisa_dni' o 'telefono_directo'.")
+
+    if not paciente or not paciente.get("id"):
+        raise HTTPException(status_code=500, detail="Error interno al resolver el paciente.")
+
+    # Asegurar o recuperar la conversación
+    conv = get_or_create_conversacion(paciente["id"])
+    if not conv:
+        raise HTTPException(status_code=500, detail="No se pudo obtener o crear la conversación.")
+
+    conv_id = conv["id"]
+
+    # Si estaba archivada, desarchivarla inmediatamente
+    if conv.get("archivada"):
+        try:
+            supabase.table("conversaciones").update({
+                "archivada": False,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", conv_id).execute()
+        except Exception as unarch_err:
+            logger.warning(f"Error desarchivando conversación {conv_id}: {unarch_err}")
+
+    # Si se especificó operador, tomar la conversación
+    if operador_id:
+        try:
+            tomar_conversacion(conv_id, operador_id, operador_nombre)
+        except Exception as top_err:
+            logger.warning(f"No se pudo autoasignar conversación {conv_id} a {operador_id}: {top_err}")
+
+    # Si viene primer mensaje
+    if primer_mensaje and str(primer_mensaje).strip():
+        try:
+            guardar_mensaje(
+                conversacion_id=conv_id,
+                emisor="operador",
+                contenido=str(primer_mensaje).strip()
+            )
+        except Exception as msg_err:
+            logger.warning(f"No se pudo guardar el primer mensaje en {conv_id}: {msg_err}")
+
+    # Retornar la conversación enriquecida
+    try:
+        conv_enriquecida = supabase.table("conversaciones").select(
+            "id, paciente_id, bot_disabled, archivada, agente_asignado_codigo, asignado_a_usuario_id, estado_gestion, ultimo_mensaje, ultimo_mensaje_at, updated_at, unread_count, metadata_json, pacientes(*)"
+        ).eq("id", conv_id).single().execute()
+        conv_data = conv_enriquecida.data or conv
+    except Exception:
+        conv_data = conv
+        conv_data["pacientes"] = paciente
+
+    return {
+        "success": True,
+        "ya_existia": ya_existia,
+        "mensaje": "Conversación iniciada correctamente." if not ya_existia else "Conversación existente recuperada.",
+        "conversacion": conv_data,
+        "paciente": paciente
+    }
+
+
 @app.post("/api/conversaciones/{conversacion_id}/tomar")
 def tomar_conversacion_api(conversacion_id: str, payload: Dict[str, Any] = Body(...)):
     """
