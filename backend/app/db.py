@@ -217,8 +217,6 @@ def crear_paciente(telefono: str, nombre: str = None, email: str = None):
         response = supabase.table("pacientes").insert(data).execute()
         if response.data:
             paciente = response.data[0]
-            # Crear también su conversación
-            get_or_create_conversacion(paciente["id"])
             return paciente
         return None
     except Exception as e:
@@ -286,8 +284,6 @@ def crear_o_actualizar_paciente_geclisa(payload: dict):
                 raise Exception("No se pudo insertar el paciente en Supabase.")
             paciente = resp.data[0]
 
-        # Asegurar conversación inicializada
-        get_or_create_conversacion(paciente["id"])
         return paciente
 
     except Exception as e:
@@ -411,7 +407,6 @@ def vincular_o_fusionar_paciente_con_geclisa(
         resp_ins = supabase.table("pacientes").insert(datos_limpios).execute()
         if resp_ins.data:
             nuevo_pac = resp_ins.data[0]
-            get_or_create_conversacion(nuevo_pac["id"])
             return nuevo_pac
 
         raise Exception("No se pudo completar la vinculación del paciente con Geclisa.")
@@ -631,11 +626,32 @@ def archivar_conversacion(conversacion_id: str, archivada: bool = True):
         logger.error(f"Error al cambiar estado archivada en conversación {conversacion_id}: {e}")
         return None
 
+def es_conversacion_activa(c: dict) -> bool:
+    """
+    Determina si una conversación tiene actividad real (mensajes enviados/recibidos o iniciada por operador),
+    excluyendo registros fantasma generados de forma automática sin interacción.
+    """
+    if not c or not isinstance(c, dict):
+        return False
+    # 1. Tiene último mensaje no vacío
+    ult_msg = c.get("ultimo_mensaje")
+    if ult_msg is not None and str(ult_msg).strip() != "":
+        return True
+    # 2. Fue iniciada explícitamente por un operador / usuario
+    meta = c.get("metadata_json") or {}
+    if meta.get("iniciada_manualmente") or meta.get("iniciada_por_operador_id") or meta.get("iniciada_por"):
+        return True
+    # 3. Tiene mensajes sin leer acumulados
+    if int(c.get("unread_count") or 0) > 0:
+        return True
+    return False
+
 def obtener_conversaciones(incluir_archivadas: bool = True):
     """
     Retorna la lista de todas las conversaciones con los datos de sus pacientes asociados,
     el operador asignado (usuarios_perfil), el estado de gestión del ciclo de vida
     y el conteo de mensajes no leídos (unread_count).
+    Excluye conversaciones vacías generadas automáticamente sin interacción de WhatsApp.
     """
     if not supabase:
         return []
@@ -657,6 +673,9 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
                 query = query.eq("archivada", False)
             response = query.order("ultimo_mensaje_at", desc=True).execute()
             convs = response.data or []
+
+        # Filtrar conversaciones fantasma sin interacción real
+        convs = [c for c in convs if es_conversacion_activa(c)]
 
         # Enriquecer con datos del operador asignado desde usuarios_perfil
         user_ids = list({str(c.get("asignado_a_usuario_id")) for c in convs if c.get("asignado_a_usuario_id")})
@@ -758,13 +777,15 @@ def obtener_metricas_conversaciones(usuario_id: Optional[str] = None):
         try:
             try:
                 res = supabase.table("conversaciones").select(
-                    "id, bot_disabled, archivada, unread_count, asignado_a_usuario_id, estado_gestion"
+                    "id, bot_disabled, archivada, unread_count, asignado_a_usuario_id, estado_gestion, ultimo_mensaje, metadata_json"
                 ).execute()
             except Exception:
                 res = supabase.table("conversaciones").select(
-                    "id, bot_disabled, archivada, unread_count"
+                    "id, bot_disabled, archivada, unread_count, ultimo_mensaje, metadata_json"
                 ).execute()
             convs = res.data or []
+            # Excluir conversaciones fantasma sin interacción real
+            convs = [c for c in convs if es_conversacion_activa(c)]
 
             u_id_str = str(usuario_id) if usuario_id else None
             mis_chats = 0

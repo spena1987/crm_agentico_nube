@@ -570,6 +570,7 @@ export default function ChatInbox() {
             metadata_json,
             pacientes (*)
           `)
+          .not('ultimo_mensaje', 'is', null)
           .order('ultimo_mensaje_at', { ascending: false, nullsFirst: false })
         
         if (!error && data) {
@@ -605,24 +606,47 @@ export default function ChatInbox() {
         }
       }
 
-      if (paramPacienteId && convs.length > 0 && !selectedConvIdRef.current) {
+      if ((paramPacienteId || paramTelefono) && !selectedConvIdRef.current) {
         const target = convs.find((c) => {
           const p = getPatient(c)
-          return c.paciente_id === paramPacienteId || p?.id === paramPacienteId
+          if (paramPacienteId && (c.paciente_id === paramPacienteId || p?.id === paramPacienteId)) return true
+          if (paramTelefono && p?.telefono === paramTelefono) return true
+          return false
         })
         if (target) {
           setSelectedConvId(target.id)
           return
         }
-      }
-      if (paramTelefono && convs.length > 0 && !selectedConvIdRef.current) {
-        const target = convs.find((c) => {
-          const p = getPatient(c)
-          return p?.telefono === paramTelefono
-        })
-        if (target) {
-          setSelectedConvId(target.id)
-          return
+
+        // Si el paciente no tiene conversación previa activa, inicializarla on-demand
+        try {
+          const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
+          const res = await apiFetch('/api/conversaciones/iniciar-rapido', {
+            method: 'POST',
+            body: JSON.stringify({
+              modalidad: paramPacienteId ? 'paciente_id' : 'telefono_directo',
+              paciente_id: paramPacienteId,
+              telefono: paramTelefono,
+              operador_id: currentUserId || null,
+              operador_nombre: currentUserName || null
+            })
+          })
+          if (res.ok) {
+            const data = await res.json()
+            if (data?.conversacion) {
+              setConversaciones((prev) => {
+                const filtered = prev.filter((c) => c.id !== data.conversacion.id)
+                return [data.conversacion, ...filtered]
+              })
+              setSelectedConvId(data.conversacion.id)
+              if (activeTab === 'archivados' || activeTab === 'sin_asignar') {
+                setActiveTab('mis_chats')
+              }
+              return
+            }
+          }
+        } catch (errInit) {
+          console.error('Error iniciando conversación on-demand para deep link de paciente:', errInit)
         }
       }
     } catch (err) {

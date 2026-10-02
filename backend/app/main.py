@@ -908,8 +908,24 @@ def iniciar_conversacion_rapida_api(payload: Dict[str, Any] = Body(...)):
                 raise HTTPException(status_code=500, detail="No se pudo crear el contacto rápido en la base de datos.")
             paciente = res_insert.data[0]
             ya_existia = False
+    elif modalidad == "paciente_id":
+        p_id = str(payload.get("paciente_id") or "").strip()
+        if not p_id:
+            raise HTTPException(status_code=400, detail="Debe proporcionar el ID del paciente.")
+        p_res = supabase.table("pacientes").select("*").eq("id", p_id).execute()
+        if not p_res.data:
+            raise HTTPException(status_code=404, detail=f"No se encontró paciente con ID {p_id}.")
+        paciente = p_res.data[0]
+        ya_existia = True
+
+        # Si se envió un teléfono de actualización
+        tel_override = payload.get("telefono")
+        if tel_override and (not paciente.get("telefono") or str(paciente.get("telefono")).startswith("temp_")):
+            tel_norm = normalize_phone_number(str(tel_override).strip())
+            supabase.table("pacientes").update({"telefono": tel_norm}).eq("id", p_id).execute()
+            paciente["telefono"] = tel_norm
     else:
-        raise HTTPException(status_code=400, detail=f"Modalidad desconocida: '{modalidad}'. Use 'geclisa_dni' o 'telefono_directo'.")
+        raise HTTPException(status_code=400, detail=f"Modalidad desconocida: '{modalidad}'. Use 'geclisa_dni', 'telefono_directo' o 'paciente_id'.")
 
     if not paciente or not paciente.get("id"):
         raise HTTPException(status_code=500, detail="Error interno al resolver el paciente.")
@@ -920,6 +936,21 @@ def iniciar_conversacion_rapida_api(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=500, detail="No se pudo obtener o crear la conversación.")
 
     conv_id = conv["id"]
+
+    # Marcar metadata como iniciada manualmente por operador para que aparezca en el listado de chats
+    try:
+        c_meta = dict(conv.get("metadata_json") or {})
+        c_meta["iniciada_manualmente"] = True
+        if operador_id:
+            c_meta["iniciada_por_operador_id"] = operador_id
+        if operador_nombre:
+            c_meta["iniciada_por_operador_nombre"] = operador_nombre
+        supabase.table("conversaciones").update({
+            "metadata_json": c_meta,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("id", conv_id).execute()
+    except Exception as meta_err:
+        logger.warning(f"Error actualizando metadata_json en inicio rápido: {meta_err}")
 
     # Si estaba archivada, desarchivarla inmediatamente
     if conv.get("archivada"):
