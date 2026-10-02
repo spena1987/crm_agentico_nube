@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -268,6 +268,80 @@ export default function ChatInbox() {
     )
     setShowModalVincularGeclisa(false)
   }
+
+  // Redimensionamiento interactivo de la Barra Lateral (Resizable Splitter)
+  const DEFAULT_SIDEBAR_WIDTH = 360
+  const MIN_SIDEBAR_WIDTH = 280
+  const MAX_SIDEBAR_WIDTH = 580
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('crm_inbox_sidebar_width')
+        if (saved) {
+          const parsed = parseInt(saved, 10)
+          if (!isNaN(parsed) && parsed >= MIN_SIDEBAR_WIDTH && parsed <= MAX_SIDEBAR_WIDTH) {
+            return parsed
+          }
+        }
+      } catch (err) {}
+    }
+    return DEFAULT_SIDEBAR_WIDTH
+  })
+  const [isResizing, setIsResizing] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(false)
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth >= 1024)
+    }
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }, [])
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false)
+  }, [])
+
+  const resize = useCallback(
+    (e: MouseEvent) => {
+      if (!isResizing || !containerRef.current) return
+      const containerRect = containerRef.current.getBoundingClientRect()
+      const newWidth = Math.round(e.clientX - containerRect.left)
+      if (newWidth >= MIN_SIDEBAR_WIDTH && newWidth <= MAX_SIDEBAR_WIDTH) {
+        setSidebarWidth(newWidth)
+        try {
+          localStorage.setItem('crm_inbox_sidebar_width', String(newWidth))
+        } catch (err) {}
+      }
+    },
+    [isResizing]
+  )
+
+  const resetSidebarWidth = useCallback(() => {
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)
+    try {
+      localStorage.setItem('crm_inbox_sidebar_width', String(DEFAULT_SIDEBAR_WIDTH))
+    } catch (err) {}
+  }, [])
+
+  useEffect(() => {
+    if (isResizing) {
+      window.addEventListener('mousemove', resize)
+      window.addEventListener('mouseup', stopResizing)
+    }
+    return () => {
+      window.removeEventListener('mousemove', resize)
+      window.removeEventListener('mouseup', stopResizing)
+    }
+  }, [isResizing, resize, stopResizing])
 
   // Abrir Ficha 360 por defecto en monitores amplios (>= 1536px)
   useEffect(() => {
@@ -1843,23 +1917,31 @@ export default function ChatInbox() {
   const currentPaciente = getPatient(selectedConv)
 
   return (
-    <div className="flex flex-1 h-full min-h-0 border border-slate-800 rounded-2xl overflow-hidden bg-[#0a101d] shadow-2xl w-full text-slate-100 min-w-0">
+    <div 
+      ref={containerRef}
+      className={`flex flex-1 h-full min-h-0 border border-slate-800 rounded-2xl overflow-hidden bg-[#0a101d] shadow-2xl w-full text-slate-100 min-w-0 ${
+        isResizing ? 'select-none cursor-col-resize' : ''
+      }`}
+    >
       
-      {/* 1. Panel de Conversaciones (Izquierda) */}
-      <div className={`w-full lg:w-80 xl:w-88 border-r border-slate-800 flex flex-col bg-[#0d1527] lg:min-w-[280px] lg:max-w-[350px] min-h-0 shrink-0 ${
-        selectedConvId ? 'hidden lg:flex' : 'flex'
-      }`}>
+      {/* 1. Panel de Conversaciones (Izquierda) con Ancho Ajustable */}
+      <div 
+        style={{ width: isDesktop ? `${sidebarWidth}px` : undefined }}
+        className={`w-full border-r border-slate-800 flex flex-col bg-[#0d1527] min-h-0 shrink-0 ${
+          selectedConvId ? 'hidden lg:flex' : 'flex'
+        }`}
+      >
         
         {/* Cabecera de Chats y Estado de WhatsApp */}
-        <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-[#101b33]">
-          <div className="flex items-center gap-2">
-            <h2 className="font-bold flex items-center gap-1.5 text-sm text-slate-100">
+        <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-[#101b33] gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <h2 className="font-bold flex items-center gap-1.5 text-sm text-slate-100 truncate">
               <MessageCircle size={17} className="text-blue-400 shrink-0" />
-              Inbox Pacientes
+              <span className="truncate">Inbox Pacientes</span>
             </h2>
             <Link 
               href="/ajustes" 
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all border ${
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all border shrink-0 ${
                 isWaConnected 
                   ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60 hover:bg-emerald-900/60' 
                   : 'bg-amber-950/80 text-amber-300 border-amber-800/60 hover:bg-amber-900/60'
@@ -1867,20 +1949,11 @@ export default function ChatInbox() {
               title="Click para ir a Ajustes de WhatsApp"
             >
               <span className={`w-1.5 h-1.5 rounded-full ${isWaConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'}`} />
-              <span>{isWaConnected ? 'WhatsApp Online' : 'Vincular QR'}</span>
+              <span className="hidden sm:inline">{isWaConnected ? 'Online' : 'Desconectado'}</span>
             </Link>
           </div>
           
-          <div className="flex items-center gap-1 sm:gap-1.5">
-            <button
-              type="button"
-              onClick={() => setShowModalNuevoChat(true)}
-              className="px-2 sm:px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold flex items-center gap-1 transition-all shadow-sm shadow-blue-600/30 shrink-0 cursor-pointer"
-              title="Iniciar una conversación nueva por WhatsApp"
-            >
-              <Plus size={13} />
-              <span className="hidden sm:inline">Nuevo Chat</span>
-            </button>
+          <div className="flex items-center gap-1 shrink-0">
             <button 
               onClick={() => setShowSimulator(!showSimulator)}
               className={`p-1.5 rounded-lg text-xs transition-colors border ${
@@ -1902,8 +1975,21 @@ export default function ChatInbox() {
           </div>
         </div>
 
+        {/* Botón Principal de Acción: Iniciar Nueva Conversación */}
+        <div className="p-2.5 pb-1 bg-[#0d1527]">
+          <button
+            type="button"
+            onClick={() => setShowModalNuevoChat(true)}
+            className="w-full py-2 px-3 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-600/30 cursor-pointer"
+            title="Iniciar una conversación nueva por WhatsApp"
+          >
+            <Plus size={15} />
+            <span>Iniciar Nueva Conversación</span>
+          </button>
+        </div>
+
         {/* Barra de Búsqueda Rápida en Vivo (Tema Oscuro) */}
-        <div className="p-2.5 border-b border-slate-800 bg-[#0d1527]">
+        <div className="p-2.5 pt-1.5 border-b border-slate-800 bg-[#0d1527]">
           <div className="relative flex items-center">
             <Search size={14} className="absolute left-2.5 text-slate-400 pointer-events-none" />
             <input 
@@ -2273,6 +2359,20 @@ export default function ChatInbox() {
             })
           )}
         </div>
+      </div>
+
+      {/* Resizer Handle / Splitter Draggable (Desktop) */}
+      <div
+        onMouseDown={startResizing}
+        onDoubleClick={resetSidebarWidth}
+        className={`hidden lg:flex items-center justify-center w-2 -ml-1 z-30 cursor-col-resize select-none group transition-colors shrink-0 ${
+          isResizing ? 'bg-blue-600' : 'hover:bg-blue-500/60 active:bg-blue-600'
+        }`}
+        title="Arrastra para cambiar el ancho de la lista. Doble clic para restablecer (360px)."
+      >
+        <div className={`w-0.5 h-8 rounded-full transition-colors ${
+          isResizing ? 'bg-white' : 'bg-slate-700 group-hover:bg-blue-200'
+        }`} />
       </div>
 
       {/* 2. Área Central y Lateral del Chat Activo (Derecha) */}
