@@ -41,11 +41,13 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
             pass
 
     # 2. Validación local por secreto simétrico HS256 si SUPABASE_JWT_SECRET es un secreto válido
-    if SUPABASE_JWT_SECRET:
+    active_secret = (os.getenv("SUPABASE_JWT_SECRET") or SUPABASE_JWT_SECRET or "").strip().strip("'\"")
+    active_secret = active_secret if (active_secret and not active_secret.startswith("eyJ")) else ""
+    if active_secret:
         try:
             payload = jwt.decode(
                 token, 
-                SUPABASE_JWT_SECRET, 
+                active_secret, 
                 algorithms=["HS256"],
                 options={"verify_aud": False}
             )

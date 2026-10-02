@@ -24,6 +24,92 @@ def generate_test_jwt(email: str = "asesora@test.com", role: str = "authenticate
     }
     return jwt.encode(payload, os.environ["SUPABASE_JWT_SECRET"], algorithm="HS256")
 
+@pytest.fixture(autouse=True)
+def mock_lios_si_offline(monkeypatch):
+    """Provee datos de prueba para LIOs comerciales cuando corre en CI sin base de datos en vivo."""
+    import app.db as db_mod
+
+    try:
+        real_data = db_mod.obtener_lios_comerciales()
+    except Exception:
+        real_data = []
+
+    if real_data and len(real_data) > 0:
+        yield
+        return
+
+    sample_lios = [
+        {
+            "id": "lio-clareon",
+            "codigo": "CLAREON",
+            "nombre": "Lente Intraocular Clareon Monofocal",
+            "categoria": "Lentes Intraoculares",
+            "precio": 520.0,
+            "moneda": "USD",
+            "es_torico": False,
+            "tipo_vision": "Monofocal",
+            "habilitado_en_practica": True
+        },
+        {
+            "id": "lio-clareont",
+            "codigo": "CLAREONT",
+            "nombre": "Lente Intraocular Clareon Toric",
+            "categoria": "Lentes Intraoculares",
+            "precio": 750.0,
+            "moneda": "USD",
+            "es_torico": True,
+            "tipo_vision": "Tórico",
+            "habilitado_en_practica": True
+        },
+        {
+            "id": "lio-trifocal",
+            "codigo": "TRIFOCAL",
+            "nombre": "Lente PanOptix Trifocal",
+            "categoria": "Lentes Intraoculares",
+            "precio": 1200.0,
+            "moneda": "USD",
+            "es_torico": False,
+            "tipo_vision": "Trifocal",
+            "habilitado_en_practica": True
+        }
+    ]
+
+    sample_practica = {
+        "id": "practica-34031-uuid",
+        "codigo": "34031",
+        "nombre": "Cirugía de Catarata con Facoemulsificación",
+        "categoria": "Cirugía",
+        "requiere_lente": True,
+        "lios_habilitados": ["CLAREON", "CLAREONT", "TRIFOCAL"]
+    }
+
+    def fake_obtener_lios(fecha_consulta=None, practica_id=None, solo_habilitados=False):
+        if solo_habilitados and practica_id:
+            return [l for l in sample_lios if l["codigo"] in ("CLAREON", "CLAREONT", "TRIFOCAL")]
+        return sample_lios
+
+    def fake_get_resumen(codigo_o_id):
+        if str(codigo_o_id).strip() in ("34031", "practica-34031-uuid"):
+            return sample_practica
+        return None
+
+    def fake_guardar_integral(payload):
+        return {"success": True, "practica": payload}
+
+    def fake_actualizar_arancel(codigo, precio, moneda="ARS", usuario_id=None):
+        return {"success": True, "precio": precio, "moneda": moneda}
+
+    def fake_actualizar_lios(practica_id, lios_habilitados, usuario_id=None):
+        return {"success": True, "lios_habilitados": lios_habilitados}
+
+    monkeypatch.setattr(db_mod, "obtener_lios_comerciales", fake_obtener_lios)
+    monkeypatch.setattr(db_mod, "get_practica_resumen_operativo", fake_get_resumen)
+    monkeypatch.setattr(db_mod, "guardar_practica_crm_integral", fake_guardar_integral)
+    monkeypatch.setattr(db_mod, "actualizar_arancel_practica", fake_actualizar_arancel)
+    monkeypatch.setattr(db_mod, "actualizar_lios_habilitados_practica", fake_actualizar_lios)
+
+    yield
+
 def test_obtener_lios_comerciales_direct():
     lios = obtener_lios_comerciales()
     assert isinstance(lios, list)

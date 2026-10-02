@@ -43,3 +43,17 @@ def client(auth_headers):
         return original_request(method, url, **kwargs)
     c.request = authenticated_request
     return c
+
+@pytest.fixture(autouse=True)
+def mock_supabase_si_offline(monkeypatch):
+    """Garantiza que supabase tenga un mock básico en entornos CI herméticos sin credenciales."""
+    import app.main as main_mod
+    import app.db as db_mod
+    from unittest.mock import MagicMock
+    if main_mod.supabase is None:
+        mock_sb = MagicMock()
+        mock_sb.auth.get_user.side_effect = Exception("Mock DB: remote auth get_user disabled")
+        monkeypatch.setattr(main_mod, "supabase", mock_sb)
+        monkeypatch.setattr(db_mod, "supabase", mock_sb)
+    yield
+
