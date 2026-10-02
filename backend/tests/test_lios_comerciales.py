@@ -26,17 +26,9 @@ def generate_test_jwt(email: str = "asesora@test.com", role: str = "authenticate
 
 @pytest.fixture(autouse=True)
 def mock_lios_si_offline(monkeypatch):
-    """Provee datos de prueba para LIOs comerciales cuando corre en CI sin base de datos en vivo."""
+    """Provee datos de prueba para LIOs comerciales para pruebas unitarias herméticas sin dependencia de base de datos."""
     import app.db as db_mod
-
-    try:
-        real_data = db_mod.obtener_lios_comerciales()
-    except Exception:
-        real_data = []
-
-    if real_data and len(real_data) > 0:
-        yield
-        return
+    import app.main as main_mod
 
     sample_lios = [
         {
@@ -96,19 +88,27 @@ def mock_lios_si_offline(monkeypatch):
     def fake_guardar_integral(payload):
         return {"success": True, "practica": payload}
 
-    def fake_actualizar_arancel(codigo, precio, moneda="ARS", usuario_id=None):
-        return {"success": True, "precio": precio, "moneda": moneda}
+    def fake_actualizar_arancel(codigo, precio, moneda="USD", usuario_id=None):
+        return {"success": True, "codigo": codigo, "precio": precio, "moneda": moneda}
 
-    def fake_actualizar_lios(practica_id, lios_habilitados, usuario_id=None):
+    def fake_guardar_lios(practica_id, lios_habilitados, usuario_id=None):
         return {"success": True, "lios_habilitados": lios_habilitados}
 
     monkeypatch.setattr(db_mod, "obtener_lios_comerciales", fake_obtener_lios)
     monkeypatch.setattr(db_mod, "get_practica_resumen_operativo", fake_get_resumen)
     monkeypatch.setattr(db_mod, "guardar_practica_crm_integral", fake_guardar_integral)
-    monkeypatch.setattr(db_mod, "actualizar_arancel_practica", fake_actualizar_arancel)
-    monkeypatch.setattr(db_mod, "actualizar_lios_habilitados_practica", fake_actualizar_lios)
+    monkeypatch.setattr(db_mod, "actualizar_arancel_lio_rapido", fake_actualizar_arancel)
+    monkeypatch.setattr(db_mod, "guardar_lios_habilitados_practica", fake_guardar_lios)
+
+    if hasattr(main_mod, "obtener_lios_comerciales"):
+        monkeypatch.setattr(main_mod, "obtener_lios_comerciales", fake_obtener_lios)
+    if hasattr(main_mod, "actualizar_arancel_lio_rapido"):
+        monkeypatch.setattr(main_mod, "actualizar_arancel_lio_rapido", fake_actualizar_arancel)
+    if hasattr(main_mod, "guardar_lios_habilitados_practica"):
+        monkeypatch.setattr(main_mod, "guardar_lios_habilitados_practica", fake_guardar_lios)
 
     yield
+
 
 def test_obtener_lios_comerciales_direct():
     lios = obtener_lios_comerciales()
