@@ -726,13 +726,62 @@ class GeclisaClient:
             )
             return {"success": False, "turnos": [], "error": str(e)}
 
+    def obtener_servicios(self) -> list:
+        """
+        Retorna el catálogo completo oficial de servicios médicos en Geclisa.
+        Ruta: GET /api/Turnos/asistente/servicios
+        """
+        ahora = time.time()
+        if hasattr(self, "_servicios_cache") and self._servicios_cache and ahora < getattr(self, "_servicios_cache_exp", 0):
+            return self._servicios_cache
+
+        url = f"{self.base_url}/api/Turnos/asistente/servicios"
+        try:
+            headers = self._get_headers()
+            res = self._do_request("GET", url, headers=headers, timeout=10)
+            res.raise_for_status()
+            data = res.json()
+            items = data if isinstance(data, list) else (data.get("data", []) if isinstance(data, dict) else [])
+            servicios_nom = []
+            for s in items:
+                nombre = (s.get("nombre") or "").strip()
+                if nombre and nombre not in servicios_nom:
+                    servicios_nom.append(nombre)
+            if not servicios_nom:
+                servicios_nom = ["ASESORAMIENTO", "CIRUGIA", "CONSULTAS", "ESTUDIOS VARIOS", "ANESTESISTAS", "ESPECIALES", "ESTETICA", "INVESTIGACION"]
+            self._servicios_cache = sorted(servicios_nom)
+            self._servicios_cache_exp = ahora + 3600
+            return self._servicios_cache
+        except Exception as e:
+            logger.warning(f"Error obteniendo servicios de asistente en Geclisa: {e}")
+            return ["ASESORAMIENTO", "CIRUGIA", "CONSULTAS", "ESTUDIOS VARIOS", "ANESTESISTAS", "ESPECIALES", "ESTETICA", "INVESTIGACION"]
+
+    def obtener_turno_por_id(self, turno_id: int) -> dict:
+        """
+        Obtiene el detalle completo de un turno específico en Geclisa.
+        Ruta: GET /api/Turnos/{turnoId}
+        """
+        url = f"{self.base_url}/api/Turnos/{turno_id}"
+        try:
+            headers = self._get_headers()
+            res = self._do_request("GET", url, headers=headers, timeout=8)
+            if res.status_code == 200:
+                return res.json()
+            return {}
+        except Exception as e:
+            logger.debug(f"Error consultando detalle de turno #{turno_id}: {e}")
+            return {}
+
     def obtener_agenda_prestador(self, pre_id: int, fecha_iso: str) -> list:
         """
-        Obtiene la agenda de turnos asignados a un prestador específico para una fecha determinada.
+        Obtiene la agenda de turnos asignados a un prestador específico para una fecha determinada,
+        enriqueciendo concurrentemente cada turno con su estado real de sala de espera y atención médica.
         Ruta: GET /api/Turnos/prestador/{preId}?fechaDesde={fecha_iso}T00:00:00
         """
         token = self._obtener_token()
         from datetime import datetime
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         fecha_limpia = fecha_iso.split("T")[0] if fecha_iso else datetime.now().strftime("%Y-%m-%d")
         url = f"{self.base_url}/api/Turnos/prestador/{pre_id}?fechaDesde={fecha_limpia}T00:00:00"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
@@ -745,17 +794,43 @@ class GeclisaClient:
             data = res.json()
             items = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
             
-            turnos_normalizados = []
+            # 1. Filtrar solo los turnos que correspondan al día solicitado
+            items_del_dia = []
             for t in items:
                 fecha_tur = t.get("fecha") or ""
-                # Filtrar solo los turnos que correspondan al día solicitado
                 if fecha_limpia and fecha_tur and not fecha_tur.startswith(fecha_limpia):
                     continue
-                    
-                cancelado = bool(t.get("cancelado"))
-                asistio = bool(t.get("asistio"))
-                en_espera = bool(t.get("enEspera"))
-                confirmado = bool(t.get("confirmado"))
+                items_del_dia.append(t)
+
+            # 2. Enriquecimiento concurrente: consultar /api/Turnos/{id} para obtener turFechaAtendido, turFechaEspera y nomNombre
+            detalles_map = {}
+            if items_del_dia:
+                tids = [t.get("turnoId") or t.get("id") for t in items_del_dia if (t.get("turnoId") or t.get("id"))]
+                if tids:
+                    with ThreadPoolExecutor(max_workers=min(10, len(tids))) as executor:
+                        future_to_tid = {executor.submit(self.obtener_turno_por_id, tid): tid for tid in tids}
+                        for future in as_completed(future_to_tid):
+                            tid = future_to_tid[future]
+                            try:
+                                det = future.result()
+                                if det:
+                                    detalles_map[tid] = det
+                            except Exception:
+                                pass
+
+            # 3. Mapear y normalizar turnos con estados exactos
+            turnos_normalizados = []
+            for t in items_del_dia:
+                t_id = t.get("turnoId") or t.get("id")
+                det = detalles_map.get(t_id, {})
+                fecha_tur = t.get("fecha") or ""
+
+                cancelado = bool(t.get("cancelado") or det.get("cancelado"))
+                # En Geclisa la atención se registra en turFechaAtendido / turHoraAtendido
+                asistio = bool(t.get("asistio") or det.get("turFechaAtendido") or det.get("turHoraAtendido"))
+                # La espera / recepción se registra en turFechaEspera / turHoraEspera
+                en_espera = bool(t.get("enEspera") or det.get("turFechaEspera") or det.get("turHoraEspera"))
+                confirmado = bool(t.get("confirmado") or det.get("confirmado"))
                 
                 if cancelado:
                     estado_key = "cancelado"
@@ -775,23 +850,37 @@ class GeclisaClient:
                     
                 # Extraer hora HH:mm
                 hora_str = ""
-                if fecha_tur and "T" in fecha_tur:
+                if det.get("turHoraIncio"):
+                    hora_str = str(det.get("turHoraIncio")).strip()
+                elif fecha_tur and "T" in fecha_tur:
                     hora_str = fecha_tur.split("T")[1][:5]
                 elif t.get("hsIni"):
                     h = str(t.get("hsIni")).zfill(4)
                     hora_str = f"{h[:2]}:{h[2:]}"
 
-                # Extraer práctica o estudio médico
-                practica_str = (t.get("nombrePractica") or t.get("practica") or t.get("nomNombre") or "").strip()
+                # Extraer práctica o estudio médico (nomNombre es el más fidedigno en el detalle)
+                practica_str = (
+                    det.get("nomNombre")
+                    or det.get("nombrePractica")
+                    or t.get("nombrePractica")
+                    or t.get("practica")
+                    or t.get("nomNombre")
+                    or ""
+                ).strip()
                 if not practica_str:
-                    nom_cod = (t.get("nomCod") or "").strip()
+                    nom_cod = (det.get("nomCodigo") or t.get("nomCod") or "").strip()
                     if nom_cod:
                         practica_str = f"Práctica {nom_cod}"
                     else:
-                        practica_str = t.get("servicioNombre") or "Consulta Médica"
+                        practica_str = det.get("servNombre") or t.get("servicioNombre") or "Consulta Médica"
 
                 # Desglosar consultorio y ubicación
-                raw_cons = (t.get("nombreConsultorio") or t.get("consultorio") or "MENDOZA Mitre 540").strip()
+                raw_cons = (
+                    det.get("consNombre")
+                    or t.get("nombreConsultorio")
+                    or t.get("consultorio")
+                    or "MENDOZA Mitre 540"
+                ).strip()
                 if "Mitre 540" in raw_cons or "MENDOZA" in raw_cons.upper():
                     consultorio_str = "Consultorio Mendoza"
                     ubicacion_str = "Sede Central (Mitre 540)"
@@ -809,32 +898,43 @@ class GeclisaClient:
                     ubicacion_str = "Sede Roca (Luján)"
                 else:
                     consultorio_str = raw_cons
-                    ubicacion_str = "CentroVisión Mendoza"
-                    
+                    ubicacion_str = det.get("ubicNombre") or "CentroVisión Mendoza"
+
+                # Datos del paciente combinados
+                dni_val = str(det.get("pacNroDoc") or t.get("nroDoc") or "").strip() or None
+                tel_val = det.get("pacTelefono") or det.get("pacCelular") or t.get("telefono") or t.get("celular")
+                email_val = det.get("pacEmail") or t.get("email")
+                os_plan_val = t.get("osPlan") or (f"{det.get('osNombre', '')} {det.get('planNombre', '')}".strip() if det.get('osNombre') else "Particular")
+                obs_val = (det.get("turObs") or t.get("observaciones") or "").strip()
+                
                 turnos_normalizados.append({
-                    "turno_id": t.get("turnoId") or t.get("id"),
+                    "turno_id": t_id,
                     "fecha_hora": fecha_tur,
                     "hora": hora_str or "00:00",
-                    "paciente": t.get("paciente") or f"Paciente #{t.get('fichaId')}",
-                    "ficha_id": t.get("fichaId"),
-                    "dni": str(t.get("nroDoc") or "").strip() if t.get("nroDoc") else None,
-                    "telefono": t.get("telefono") or t.get("celular"),
-                    "obra_social": t.get("osPlan") or "Particular",
-                    "servicio": t.get("servicioNombre") or "Consultas",
+                    "paciente": t.get("paciente") or (f"{det.get('pacApe', '')} {det.get('pacNombre', '')}".strip() if det.get("pacApe") else f"Paciente #{t.get('fichaId')}"),
+                    "ficha_id": t.get("fichaId") or det.get("pacFichaId"),
+                    "dni": dni_val,
+                    "telefono": tel_val,
+                    "email": email_val,
+                    "obra_social": os_plan_val or "Particular",
+                    "servicio": det.get("servNombre") or t.get("servicioNombre") or "Consultas",
                     "practica": practica_str,
                     "consultorio": consultorio_str,
                     "ubicacion": ubicacion_str,
-                    "prestador_id": t.get("preId") or pre_id,
-                    "prestador_nombre": t.get("nombrePrestador") or "",
-                    "observaciones": t.get("observaciones") or "",
-                    "es_sobreturno": bool(t.get("esSobreturno")),
+                    "sala_id": det.get("salaId"),
+                    "sala_nombre": det.get("salaNombre"),
+                    "prestador_id": t.get("preId") or det.get("preId") or pre_id,
+                    "prestador_nombre": t.get("nombrePrestador") or det.get("preNombre") or "",
+                    "observaciones": obs_val,
+                    "es_sobreturno": bool(t.get("esSobreturno") or det.get("turEsSobreTurno")),
                     "estado_key": estado_key,
                     "estado_label": estado_label,
                     "confirmado": confirmado,
                     "en_espera": en_espera,
                     "asistio": asistio,
                     "cancelado": cancelado,
-                    "raw": t
+                    "raw": t,
+                    "detalle_geclisa": det
                 })
                 
             turnos_normalizados.sort(key=lambda x: x.get("hora") or "00:00")
@@ -901,8 +1001,8 @@ class GeclisaClient:
         Cambia el estado de un turno en Geclisa:
         - 'confirmado': POST /api/Turnos/{turnoId}/confirmar?canal={canal}
         - 'reservado': POST /api/Turnos/{turnoId}/cancelar-confirmacion
-        - 'ingresado': POST /api/Turnos/NumeroRecepcion (salaId=1)
-        - 'atendido': PUT /api/Turnos/marcar-atendido/{turnoId}
+        - 'ingresado': POST /api/Turnos/NumeroRecepcion (salaId)
+        - 'atendido': PUT /api/Turnos/marcar-atendido/{turnoId} (con auto-espera si Geclisa lo exige)
         - 'cancelado': POST /api/Turnos/{turnoId}/cancelar?mctId={motivo_id}
         """
         token = self._obtener_token()
@@ -924,9 +1024,17 @@ class GeclisaClient:
                 return {"success": True, "estado": "reservado", "mensaje": "Confirmación cancelada. Turno en estado Reservado."}
                 
             elif estado == "ingresado":
+                sala_id = 1
+                try:
+                    det = self.obtener_turno_por_id(turno_id)
+                    if det.get("salaId"):
+                        sala_id = int(det["salaId"])
+                except Exception:
+                    pass
+
                 url = f"{self.base_url}/api/Turnos/NumeroRecepcion"
                 payload = {
-                    "salaId": 1,
+                    "salaId": sala_id,
                     "turnoId": int(turno_id),
                     "motivo": 1000
                 }
@@ -937,6 +1045,25 @@ class GeclisaClient:
             elif estado == "atendido":
                 url = f"{self.base_url}/api/Turnos/marcar-atendido/{turno_id}"
                 res = self._do_request("PUT", url, headers=headers, timeout=15)
+                
+                # Si Geclisa rechaza porque el turno debe estar en espera primero, auto-ingresar a sala y reintentar
+                if res.status_code == 400 and "en espera" in res.text.lower():
+                    sala_id = 1
+                    try:
+                        det = self.obtener_turno_por_id(turno_id)
+                        if det.get("salaId"):
+                            sala_id = int(det["salaId"])
+                    except Exception:
+                        pass
+                    recep_url = f"{self.base_url}/api/Turnos/NumeroRecepcion"
+                    self._do_request("POST", recep_url, headers=headers, json={"salaId": sala_id, "turnoId": int(turno_id), "motivo": 1000}, timeout=10)
+                    # Reintentar marcar atendido
+                    res = self._do_request("PUT", url, headers=headers, timeout=15)
+
+                if res.status_code == 400:
+                    err_msg = res.json().get("error", [res.text])[0] if isinstance(res.json().get("error"), list) else res.text
+                    return {"success": False, "error": f"Geclisa: {err_msg}"}
+
                 res.raise_for_status()
                 return {"success": True, "estado": "atendido", "mensaje": "Turno marcado como Atendido en Geclisa."}
                 

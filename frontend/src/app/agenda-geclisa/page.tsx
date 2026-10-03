@@ -798,11 +798,18 @@ export default function AgendaGeclisaPage() {
                   </div>
                 </div>
 
-                {/* Badge de Práctica / Prestación Médica Visible */}
+                {/* Badges de Servicio y Práctica Médica */}
                 <div className="space-y-1.5">
-                  <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-bold border ${theme.practicaBadge}`}>
-                    <Sparkles size={12} className="shrink-0" />
-                    <span className="truncate">{t.practica}</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 uppercase tracking-wide">
+                      {t.servicio}
+                    </span>
+                    {t.practica && t.practica.toUpperCase() !== t.servicio.toUpperCase() && (
+                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-bold border truncate max-w-[230px] ${theme.practicaBadge}`} title={t.practica}>
+                        <Sparkles size={11} className="shrink-0" />
+                        <span className="truncate">{t.practica}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Datos del Paciente */}

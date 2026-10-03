@@ -6410,11 +6410,21 @@ def obtener_agenda_geclisa_endpoint(
             "cancelado": sum(1 for t in turnos if t.get("estado_key") == "cancelado")
         }
         
-        # 4. Extraer catálogos dinámicos presentes en los turnos
-        servicios_set = set()
-        ubicaciones_set = set()
-        consultorios_set = set()
+        # 4. Extraer catálogos dinámicos y fusionar con catálogo oficial de Geclisa
+        servicios_set = {"ASESORAMIENTO", "CIRUGIA"}
+        try:
+            cat_oficial = geclisa_client.obtener_servicios()
+            for s in cat_oficial:
+                if s:
+                    servicios_set.add(s)
+        except Exception as e_cat:
+            logger.warning(f"Error fusionando catálogo de servicios: {e_cat}")
+
+        ubicaciones_set = {"Sede Central (Mitre 540)", "Sede Luján de Cuyo", "Sede Mitre 538", "Sede Palmares"}
+        consultorios_set = {"Consultorio Mendoza", "Consultorio Luján", "Consultorio Estudios (3er Piso)", "Consultorio Palmares"}
         prestadores_dict = {}
+        if prestador_info and prestador_info.get("pre_id"):
+            prestadores_dict[prestador_info["pre_id"]] = prestador_info.get("nombre") or f"Prestador #{prestador_info['pre_id']}"
 
         for t in turnos:
             if t.get("servicio"):
