@@ -58,7 +58,8 @@ const CLINICAL_VARIABLES = [
   { id: 'medico_nombre', label: 'Profesional / Médico', icon: Stethoscope, sample: 'Dr. Roberto Gómez' },
   { id: 'practica_nombre', label: 'Práctica / Cirugía', icon: FileText, sample: 'Cirugía de Cataratas' },
   { id: 'quirofano_nombre', label: 'Sede / Quirófano', icon: Building, sample: 'Sede Central - Quirófano 1' },
-  { id: 'presupuesto_monto', label: 'Monto Presupuesto', icon: DollarSign, sample: '$ 45.000' }
+  { id: 'presupuesto_monto', label: 'Monto Presupuesto', icon: DollarSign, sample: '$ 45.000' },
+  { id: 'preparacion_texto', label: 'Preparación Prequirúrgica', icon: ShieldCheck, sample: 'Ayuno de 8 hs de sólidos y líquidos. Concurrir con DNI y estudios prequirúrgicos.' }
 ]
 
 interface PremadeTemplate {
@@ -74,6 +75,25 @@ interface PremadeTemplate {
 
 // Plantillas pre-diseñadas para carga rápida (con soporte de ambas opciones de botones)
 const PREMADE_TEMPLATES: PremadeTemplate[] = [
+  {
+    title: 'Recordatorio Cirugía con Preparación (Prequirúrgico)',
+    name: 'recordatorio_cirugia_preparacion_v1',
+    category: 'UTILITY' as const,
+    header_content: '',
+    body_text: 'Hola {{1}}, le recordamos que su cirugía de {{2}} está programada para el día {{3}} a las {{4}} hs en Centrovisión.\n\n📋 Indicaciones de preparación:\n{{5}}\n\nPor favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.',
+    footer_text: 'Centrovisión Clínica Oftalmológica',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre',
+      '3': 'turno_fecha',
+      '4': 'turno_hora',
+      '5': 'preparacion_texto'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Confirmar Asistencia' },
+      { type: 'QUICK_REPLY', text: 'Tengo una consulta' }
+    ]
+  },
   {
     title: 'Recordatorio Turno Quirúrgico',
     name: 'recordatorio_turno_quirurgico',

@@ -19,7 +19,8 @@ import {
   FileText,
   Eye,
   Layers,
-  Sparkles
+  Sparkles,
+  BellRing
 } from 'lucide-react'
 
 import type { AsesoriaCasoPipeline } from '@/app/pipeline-quirurgico/page'
@@ -37,6 +38,7 @@ interface VistaVerticalPipelineProps {
   etapasActivasFiltradas: Record<string, AsesoriaCasoPipeline[]>
   onCambiarEtapa: (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => Promise<void>
   onAbrirWhatsApp: (caso: AsesoriaCasoPipeline) => void
+  onAbrirRecordatorioQx?: (caso: AsesoriaCasoPipeline) => void
   onMarcarContactadoHoy: (caso: AsesoriaCasoPipeline) => Promise<void>
   actualizandoCasoId: string | null
   canChangeStage: boolean
@@ -47,6 +49,7 @@ export default function VistaVerticalPipeline({
   etapasActivasFiltradas,
   onCambiarEtapa,
   onAbrirWhatsApp,
+  onAbrirRecordatorioQx,
   onMarcarContactadoHoy,
   actualizandoCasoId,
   canChangeStage
@@ -428,6 +431,17 @@ export default function VistaVerticalPipeline({
                                   <span>{caso.estado === 'programado' ? 'Turno Qx' : 'Agendar'}</span>
                                 </Link>
                               )}
+
+                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) */}
+                              <button
+                                type="button"
+                                onClick={() => onAbrirRecordatorioQx?.(caso)}
+                                className="px-2 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white text-[10.5px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
+                                title="Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)"
+                              >
+                                <BellRing size={12} className="text-indigo-400" />
+                                <span>Recordatorio Qx</span>
+                              </button>
 
                               {/* Botón WhatsApp */}
                               <button

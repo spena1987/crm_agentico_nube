@@ -7,6 +7,7 @@ import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPac
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
+import ModalRecordatorioCirugiaWhatsApp from '@/components/ModalRecordatorioCirugiaWhatsApp'
 
 // Subcomponentes Especializados Modulares
 import CasoAcordeonHeader from '@/components/asesoria/CasoAcordeonHeader'
@@ -197,6 +198,7 @@ export default function ItemCasoQuirurgicoAcordeon({
   // Modales
   const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
   const [mostrarModalWhatsApp, setMostrarModalWhatsApp] = useState(false)
+  const [mostrarModalRecordatorioQx, setMostrarModalRecordatorioQx] = useState(false)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [presupuestoParaEnviarWA, setPresupuestoParaEnviarWA] = useState<PresupuestoPaciente | null>(null)
   const [practicaParaModalPresupuesto, setPracticaParaModalPresupuesto] = useState<{
@@ -613,6 +615,7 @@ export default function ItemCasoQuirurgicoAcordeon({
                 setMostrarModalPresupuesto(true)
               }}
               onAbrirModalWhatsApp={() => setMostrarModalWhatsApp(true)}
+              onAbrirRecordatorioQx={() => setMostrarModalRecordatorioQx(true)}
               onAbrirModalCierre={() => setMostrarModalCierre(true)}
               onEliminar={handleEliminarCaso}
               onAprobarRechazarPresupuesto={handleAprobarRechazarPresupuesto}
@@ -748,6 +751,24 @@ export default function ItemCasoQuirurgicoAcordeon({
           monedaExtra={caso.moneda_extra}
           fechaProbable={caso.fecha_probable_cirugia}
           fechaDefinitiva={caso.fecha_definitiva_cirugia}
+        />
+      )}
+
+      {/* Modal Acción Rápida: Recordatorio Prequirúrgico Meta UTILITY */}
+      {mostrarModalRecordatorioQx && (
+        <ModalRecordatorioCirugiaWhatsApp
+          isOpen={mostrarModalRecordatorioQx}
+          onClose={() => setMostrarModalRecordatorioQx(false)}
+          casoId={caso.id}
+          pacienteId={pacienteId}
+          pacienteNombreDefault={pacienteNombre}
+          pacienteTelefonoDefault={pacienteTelefono || ''}
+          onMensajeEnviado={() => {
+            onCasoActualizado({
+              ...caso,
+              ultimo_contacto_at: new Date().toISOString()
+            })
+          }}
         />
       )}
     </div>

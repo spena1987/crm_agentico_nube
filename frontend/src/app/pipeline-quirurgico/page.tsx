@@ -37,11 +37,12 @@ import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import { usePermissions } from '@/hooks/usePermissions'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
+import ModalRecordatorioCirugiaWhatsApp from '@/components/ModalRecordatorioCirugiaWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
 import { Columns3, AlignJustify } from 'lucide-react'
-import { Radio, Users } from 'lucide-react'
+import { Radio, Users, BellRing } from 'lucide-react'
 
 export interface PacienteData {
   id: string
@@ -200,6 +201,8 @@ export default function PipelineQuirurgicoPage() {
   // Modales
   const [modalWhatsAppOpen, setModalWhatsAppOpen] = useState(false)
   const [casoParaWhatsApp, setCasoParaWhatsApp] = useState<AsesoriaCasoPipeline | null>(null)
+  const [modalRecordatorioOpen, setModalRecordatorioOpen] = useState(false)
+  const [casoParaRecordatorio, setCasoParaRecordatorio] = useState<AsesoriaCasoPipeline | null>(null)
 
   const [modalCierreOpen, setModalCierreOpen] = useState(false)
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
@@ -525,6 +528,12 @@ export default function PipelineQuirurgicoPage() {
   const handleAbrirWhatsApp = (caso: AsesoriaCasoPipeline) => {
     setCasoParaWhatsApp(caso)
     setModalWhatsAppOpen(true)
+  }
+
+  // Acción rápida oficial: Recordatorio Prequirúrgico Meta UTILITY
+  const handleAbrirRecordatorioQx = (caso: AsesoriaCasoPipeline) => {
+    setCasoParaRecordatorio(caso)
+    setModalRecordatorioOpen(true)
   }
 
   // Filtrado de casos por etapa
@@ -1045,6 +1054,7 @@ export default function PipelineQuirurgicoPage() {
           etapasActivasFiltradas={etapasActivasFiltradas}
           onCambiarEtapa={handleSeleccionarEtapa}
           onAbrirWhatsApp={handleAbrirWhatsApp}
+          onAbrirRecordatorioQx={handleAbrirRecordatorioQx}
           onMarcarContactadoHoy={handleMarcarContactadoHoy}
           actualizandoCasoId={actualizandoCasoId}
           canChangeStage={canChangeStage}
@@ -1407,6 +1417,15 @@ export default function PipelineQuirurgicoPage() {
                                 {/* Botón WhatsApp */}
                                 <button
                                   type="button"
+                                  onClick={() => handleAbrirRecordatorioQx(caso)}
+                                  className="p-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white transition-colors cursor-pointer"
+                                  title="Enviar recordatorio oficial de fecha y preparación por WhatsApp (Meta UTILITY)"
+                                >
+                                  <BellRing size={12} />
+                                </button>
+
+                                <button
+                                  type="button"
                                   onClick={() => handleAbrirWhatsApp(caso)}
                                   className="p-1 rounded-lg bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-500/30 text-emerald-400 hover:text-emerald-300 transition-colors"
                                   title="Enviar mensaje de WhatsApp con plantillas"
@@ -1622,6 +1641,24 @@ export default function PipelineQuirurgicoPage() {
           fechaDefinitiva={casoParaWhatsApp.fecha_definitiva_cirugia}
           onMensajeEnviado={() => {
             mostrarToast('Mensaje de WhatsApp enviado y contacto registrado.')
+            fetchPipeline()
+          }}
+        />
+      )}
+
+      {modalRecordatorioOpen && casoParaRecordatorio && (
+        <ModalRecordatorioCirugiaWhatsApp
+          isOpen={modalRecordatorioOpen}
+          onClose={() => {
+            setModalRecordatorioOpen(false)
+            setCasoParaRecordatorio(null)
+          }}
+          casoId={casoParaRecordatorio.id}
+          pacienteId={casoParaRecordatorio.paciente_id}
+          pacienteNombreDefault={casoParaRecordatorio.pacientes?.nombre}
+          pacienteTelefonoDefault={casoParaRecordatorio.pacientes?.telefono || undefined}
+          onMensajeEnviado={() => {
+            mostrarToast('Recordatorio prequirúrgico enviado por WhatsApp con éxito.')
             fetchPipeline()
           }}
         />

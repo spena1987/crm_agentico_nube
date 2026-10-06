@@ -33,7 +33,8 @@ import {
   X,
   Info,
   Printer,
-  FileSignature
+  FileSignature,
+  BellRing
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -81,6 +82,7 @@ interface CasoFormularioActivoProps {
   onGuardar: (datosActualizados: Partial<AsesoriaQuirurgica>) => Promise<void>
   onAbrirModalPresupuesto: (datosPractica?: { codigo: string; nombre: string; precio: number; moneda: string }) => void
   onAbrirModalWhatsApp: () => void
+  onAbrirRecordatorioQx?: () => void
   onAbrirModalCierre: () => void
   onEliminar: () => void
   onAprobarRechazarPresupuesto: (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado') => Promise<void> | void
@@ -131,6 +133,7 @@ export default function CasoFormularioActivo({
   onGuardar,
   onAbrirModalPresupuesto,
   onAbrirModalWhatsApp,
+  onAbrirRecordatorioQx,
   onAbrirModalCierre,
   onEliminar,
   onAprobarRechazarPresupuesto,
@@ -2378,15 +2381,29 @@ export default function CasoFormularioActivo({
                 </p>
               </div>
               
-              <button
-                type="button"
-                onClick={onAbrirModalWhatsApp}
-                className="px-2.5 py-1 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border border-emerald-500/40 shrink-0 cursor-pointer"
-                title="Abrir modal para enviar plantillas quirúrgicas por WhatsApp"
-              >
-                <Send size={12} />
-                <span>Contactar WhatsApp</span>
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {onAbrirRecordatorioQx && (
+                  <button
+                    type="button"
+                    onClick={onAbrirRecordatorioQx}
+                    className="px-2.5 py-1 bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 hover:text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border border-indigo-500/40 cursor-pointer"
+                    title="Enviar recordatorio oficial de fecha de cirugía y preparación prequirúrgica por WhatsApp (Meta UTILITY)"
+                  >
+                    <BellRing size={12} className="text-indigo-400" />
+                    <span>Recordatorio Qx</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={onAbrirModalWhatsApp}
+                  className="px-2.5 py-1 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border border-emerald-500/40 cursor-pointer"
+                  title="Abrir modal para enviar plantillas quirúrgicas por WhatsApp"
+                >
+                  <Send size={12} />
+                  <span>Contactar WhatsApp</span>
+                </button>
+              </div>
             </div>
 
             {/* CASO A: Diálogo para Registrar Cumplimiento y Pasar a Bitácora */}

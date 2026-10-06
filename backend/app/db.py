@@ -3110,6 +3110,277 @@ def eliminar_asesoria_quirurgica(asesoria_id: str) -> bool:
         raise
 
 # ====================================================================
+# RECORDATORIO PREQUIRÚRGICO OFICIAL POR WHATSAPP (META UTILITY)
+# ====================================================================
+
+def get_datos_recordatorio_quirurgico(asesoria_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Resuelve todos los datos requeridos para la plantilla de recordatorio prequirúrgico:
+    1. Paciente (nombre y teléfono)
+    2. Práctica quirúrgica (nombre, código, ojo, cirujano)
+    3. Turno de quirófano (fecha_cirugia, hora_inicio, quirofano_nombre, cálculo de hora_citacion)
+    4. Preparación médica (desde nomenclador_practicas / plantillas_preparaciones)
+    5. Listado de plantillas de WhatsApp registradas en Meta (whatsapp_templates) con su estado
+    """
+    if not supabase or not asesoria_id:
+        return None
+    try:
+        # 1. Obtener asesoría con paciente y turnos
+        resp = supabase.table("asesorias_quirurgicas") \
+            .select("*, pacientes(*), turnos_quirofano(*, quirofanos(nombre, codigo, color))") \
+            .eq("id", asesoria_id) \
+            .limit(1) \
+            .execute()
+
+        casos = resp.data or []
+        if not casos:
+            return None
+        caso = casos[0]
+
+        # 2. Obtener datos del paciente
+        paciente = caso.get("pacientes") or {}
+        if not paciente and caso.get("paciente_id"):
+            p_res = supabase.table("pacientes").select("*").eq("id", caso["paciente_id"]).limit(1).execute()
+            if p_res.data:
+                paciente = p_res.data[0]
+
+        paciente_nombre = paciente.get("nombre") or ""
+        telefono_paciente = paciente.get("telefono") or ""
+
+        # Formatear nombre para saludo informal y cálido si es posible
+        saludo_nombre = paciente_nombre
+        if "," in paciente_nombre:
+            partes = [p.strip() for p in paciente_nombre.split(",") if p.strip()]
+            if len(partes) >= 2:
+                saludo_nombre = partes[1].title()
+            elif len(partes) == 1:
+                saludo_nombre = partes[0].title()
+        elif paciente_nombre:
+            saludo_nombre = paciente_nombre.title()
+
+        # 3. Datos de la cirugía
+        cirugia_nombre = caso.get("practica_nombre") or "Procedimiento Quirúrgico"
+        ojo = caso.get("ojo") or ""
+        if ojo and ojo not in cirugia_nombre:
+            cirugia_completa = f"{cirugia_nombre} ({ojo})"
+        else:
+            cirugia_completa = cirugia_nombre
+
+        cirujano_nombre = caso.get("medico_cirujano_nombre") or ""
+
+        # 4. Turnos de quirófano
+        turnos = caso.get("turnos_quirofano") or []
+        turnos_activos = [t for t in turnos if t.get("estado") != "cancelado"]
+        
+        fecha_cirugia = None
+        hora_cirugia = None
+        quirofano_nombre = "Centrovisión - Quirófano Central"
+        turno_id = None
+
+        if turnos_activos:
+            # Ordenar por fecha_cirugia asc
+            turnos_activos.sort(key=lambda x: str(x.get("fecha_cirugia", "")))
+            turno_elegido = turnos_activos[0]
+            turno_id = turno_elegido.get("id")
+            fecha_cirugia = turno_elegido.get("fecha_cirugia")
+            hora_cirugia = turno_elegido.get("hora_inicio")
+            if turno_elegido.get("quirofanos"):
+                quirofano_nombre = turno_elegido["quirofanos"].get("nombre") or quirofano_nombre
+        else:
+            fecha_cirugia = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
+
+        # Formatear fecha legible
+        fecha_texto = fecha_cirugia or ""
+        if fecha_cirugia and "-" in fecha_cirugia:
+            try:
+                from datetime import datetime
+                dt = datetime.strptime(fecha_cirugia, "%Y-%m-%d")
+                dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+                dia_semana = dias[dt.weekday()]
+                mes_nombre = meses[dt.month - 1]
+                fecha_texto = f"{dia_semana} {dt.day} de {mes_nombre} ({dt.strftime('%d/%m/%Y')})"
+            except Exception:
+                fecha_texto = fecha_cirugia
+
+        # Formatear horas: Citación e Inicio
+        hora_citacion = ""
+        hora_display = ""
+        if hora_cirugia:
+            # Limpiar segundos si vienen (ej: "08:30:00" -> "08:30")
+            h_clean = hora_cirugia[:5]
+            try:
+                from datetime import datetime, timedelta
+                t_obj = datetime.strptime(h_clean, "%H:%M")
+                t_cit = t_obj - timedelta(minutes=40)
+                hora_citacion = t_cit.strftime("%H:%M")
+                hora_display = f"{hora_citacion} hs (Procedimiento {h_clean} hs)"
+            except Exception:
+                hora_citacion = h_clean
+                hora_display = f"{h_clean} hs"
+        else:
+            hora_display = "07:30 hs (a confirmar)"
+
+        # 5. Resolver preparación médica desde el nomenclador
+        preparacion_texto = ""
+        ayuno_horas = 8
+        try:
+            resumen_op = get_practica_resumen_operativo(caso.get("practica_codigo") or caso.get("practica_nombre"))
+            if resumen_op:
+                if resumen_op.get("texto_preparacion"):
+                    preparacion_texto = resumen_op["texto_preparacion"]
+                if resumen_op.get("ayuno_horas"):
+                    ayuno_horas = resumen_op["ayuno_horas"]
+        except Exception as e_prep:
+            logger.warning(f"Aviso al obtener resumen operativo de práctica: {e_prep}")
+
+        if not preparacion_texto:
+            preparacion_texto = (
+                f"- Ayuno de {ayuno_horas} horas de alimentos sólidos y líquidos.\n"
+                f"- Concurrir con DNI, credencial médica y estudios prequirúrgicos solicitados.\n"
+                f"- Asistir acompañado por un adulto responsable.\n"
+                f"- Concurrir con ropa cómoda (camisa o prenda con botones al frente), sin maquillaje, alhajas ni esmalte de uñas."
+            )
+
+        # 6. Obtener plantillas registradas en Meta
+        plantillas_list = []
+        try:
+            tpl_res = supabase.table("whatsapp_templates").select("id, name, category, status, body_text, buttons").execute()
+            plantillas_list = tpl_res.data or []
+        except Exception as e_tpl:
+            logger.warning(f"Aviso al consultar plantillas whatsapp: {e_tpl}")
+
+        return {
+            "caso_id": caso.get("id"),
+            "codigo_caso": caso.get("codigo_caso"),
+            "paciente_id": caso.get("paciente_id"),
+            "paciente_nombre": paciente_nombre,
+            "saludo_nombre": saludo_nombre,
+            "telefono": telefono_paciente,
+            "cirugia": cirugia_completa,
+            "cirujano_nombre": cirujano_nombre,
+            "fecha": fecha_texto,
+            "fecha_iso": fecha_cirugia,
+            "hora": hora_display,
+            "hora_cirugia": hora_cirugia,
+            "hora_citacion": hora_citacion,
+            "quirofano_nombre": quirofano_nombre,
+            "preparacion": preparacion_texto,
+            "ayuno_horas": ayuno_horas,
+            "turno_id": turno_id,
+            "plantillas": plantillas_list,
+            "plantilla_recomendada": "recordatorio_cirugia_preparacion_v1"
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener datos de recordatorio quirúrgico: {e}")
+        return None
+
+def registrar_envio_recordatorio_quirurgico(
+    asesoria_id: str,
+    paciente_id: str,
+    telefono: str,
+    template_name: str,
+    variables: Dict[str, Any],
+    wamid: Optional[str] = None,
+    usuario_id: Optional[str] = None,
+    usuario_nombre: Optional[str] = None,
+    texto_renderizado: Optional[str] = None
+) -> bool:
+    """
+    Registra el impacto del envío del recordatorio quirúrgico en:
+    - Ultimo contacto en la asesoría
+    - Nota de evolución cronológica
+    - Mensaje en la conversación de chat de WhatsApp del paciente
+    - Check de recordatorio enviado en turnos_quirofano si existe
+    """
+    if not supabase:
+        return False
+    try:
+        from datetime import datetime, timezone
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+
+        # 1. Actualizar ultimo_contacto_at en asesorías quirúrgicas
+        try:
+            supabase.table("asesorias_quirurgicas") \
+                .update({"ultimo_contacto_at": ahora_iso}) \
+                .eq("id", asesoria_id) \
+                .execute()
+        except Exception as e_ac:
+            logger.warning(f"Error actualizando ultimo_contacto_at en asesoria {asesoria_id}: {e_ac}")
+
+        # 2. Registrar evolución formal en la bitácora del caso
+        cirugia_txt = variables.get("cirugia") or "Cirugía"
+        fecha_txt = variables.get("fecha") or "Fecha programada"
+        hora_txt = variables.get("hora") or "Horario programado"
+        
+        texto_evolucion = (
+            f"Recordatorio prequirúrgico enviado por WhatsApp Oficial (Plantilla Meta UTILITY: '{template_name}').\n"
+            f"• Procedimiento: {cirugia_txt}\n"
+            f"• Fecha: {fecha_txt}\n"
+            f"• Horario: {hora_txt}\n"
+            f"• Teléfono de envío: {telefono}"
+        )
+        if wamid:
+            texto_evolucion += f"\n• Meta WAMID: {wamid}"
+
+        try:
+            crear_evolucion_asesoria({
+                "asesoria_id": asesoria_id,
+                "paciente_id": paciente_id,
+                "usuario_id": usuario_id,
+                "usuario_nombre": usuario_nombre or "Asesora Quirúrgica",
+                "tipo_contacto": "whatsapp",
+                "contenido": texto_evolucion,
+                "fecha_contacto": ahora_iso
+            })
+        except Exception as e_ev:
+            logger.warning(f"Error creando evolución de asesoría para recordatorio: {e_ev}")
+
+        # 3. Guardar en tabla mensajes de la conversación
+        try:
+            conv = get_or_create_conversacion(paciente_id)
+            if conv and conv.get("id"):
+                meta_extra = {
+                    "tipo": "template",
+                    "template_name": template_name,
+                    "categoria": "UTILITY",
+                    "wamid": wamid,
+                    "variables": variables,
+                    "provider": "meta_cloud_api",
+                    "asesoria_id": asesoria_id
+                }
+                c_texto = texto_renderizado or f"[Plantilla WhatsApp Meta: {template_name}]\n{cirugia_txt} - {fecha_txt} - {hora_txt}"
+                guardar_mensaje(
+                    conversacion_id=conv["id"],
+                    emisor="operador",
+                    contenido=c_texto,
+                    texto=c_texto,
+                    metadata_json=meta_extra,
+                    whatsapp_message_id=wamid
+                )
+        except Exception as e_msg:
+            logger.warning(f"Error registrando mensaje de plantilla en conversación: {e_msg}")
+
+        # 4. Actualizar checks_adicionales en turnos_quirofano si existe turno para esta asesoría
+        try:
+            t_res = supabase.table("turnos_quirofano").select("id, checks_adicionales").eq("asesoria_id", asesoria_id).execute()
+            for t in (t_res.data or []):
+                chk = t.get("checks_adicionales") or {}
+                if not isinstance(chk, dict):
+                    chk = {}
+                chk["recordatorio_enviado"] = True
+                chk["recordatorio_fecha"] = ahora_iso
+                chk["recordatorio_template"] = template_name
+                supabase.table("turnos_quirofano").update({"checks_adicionales": chk}).eq("id", t["id"]).execute()
+        except Exception as e_chk:
+            logger.warning(f"Aviso al actualizar checks de turno_quirofano: {e_chk}")
+
+        return True
+    except Exception as e:
+        logger.error(f"Error general registrando impacto de recordatorio quirúrgico: {e}")
+        return False
+
+# ====================================================================
 # GESTIÓN INTEGRADA DE PRESUPUESTOS (NATIVO CRM)
 # ====================================================================
 

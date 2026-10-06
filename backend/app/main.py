@@ -58,6 +58,8 @@ from app.db import (
     guardar_transcripcion_mensaje,
     get_asesorias_by_paciente,
     get_asesorias_confirmadas_pendientes,
+    get_datos_recordatorio_quirurgico,
+    registrar_envio_recordatorio_quirurgico,
     crear_asesoria_quirurgica,
     actualizar_asesoria_quirurgica,
     eliminar_asesoria_quirurgica,
@@ -3801,6 +3803,157 @@ def eliminar_asesoria(asesoria_id: str):
         return {"success": ok, "mensaje": "Caso quirúrgico eliminado."}
     except Exception as e:
         logger.error(f"Error al eliminar asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: ACCIÓN RÁPIDA RECORDATORIO QUIRÚRGICO (WHATSAPP META UTILITY)
+# ====================================================================
+
+@app.get("/api/asesorias-quirurgicas/{asesoria_id}/datos-recordatorio-whatsapp")
+def obtener_datos_recordatorio_whatsapp_endpoint(asesoria_id: str):
+    """
+    Recupera los datos sugeridos para el recordatorio prequirúrgico:
+    cirugía, fecha, horario de citación, preparación médica del nomenclador
+    y plantillas registradas en Meta para validación de estado.
+    """
+    try:
+        datos = get_datos_recordatorio_quirurgico(asesoria_id)
+        if not datos:
+            raise HTTPException(status_code=404, detail="No se encontró el caso quirúrgico solicitado.")
+        return {"success": True, **datos}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al obtener datos de recordatorio para asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/enviar-recordatorio-whatsapp")
+async def enviar_recordatorio_whatsapp_endpoint(
+    asesoria_id: str,
+    payload: Dict[str, Any] = Body(...),
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Despacha la plantilla oficial de WhatsApp de Meta (UTILITY) con los parámetros
+    validados y editados por el usuario, registrando auditoría, bitácora y evolución.
+    """
+    to_phone = payload.get("telefono")
+    if not to_phone:
+        raise HTTPException(status_code=400, detail="El teléfono de destino es obligatorio.")
+
+    template_name = payload.get("template_name") or "recordatorio_cirugia_preparacion_v1"
+    language_code = payload.get("language_code") or "es_AR"
+    variables = payload.get("variables") or {}
+
+    # 1. Normalizar teléfono a formato internacional de Meta
+    from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+    from app.services.whatsapp_cloud.client import (
+        WhatsAppCloudClient,
+        get_whatsapp_cloud_credentials,
+        ConversationWindowClosedError
+    )
+    from app.services.whatsapp_cloud.worker import record_outbound_audit_message
+
+    normalized_to = normalize_to_meta_e164(to_phone)
+
+    # 2. Obtener cliente WABA
+    phone_id, token = get_whatsapp_cloud_credentials()
+    if not phone_id or not token:
+        raise HTTPException(
+            status_code=500,
+            detail="Credenciales de Meta WhatsApp Cloud API no configuradas en el servidor ni en Ajustes."
+        )
+
+    # 3. Construir components de la plantilla según el nombre y mapeo
+    p_nombre = str(variables.get("paciente_nombre") or "").strip()
+    p_cirugia = str(variables.get("cirugia") or "").strip()
+    p_fecha = str(variables.get("fecha") or "").strip()
+    p_hora = str(variables.get("hora") or "").strip()
+    p_prep = str(variables.get("preparacion") or "").strip()
+
+    if template_name in ["recordatorio_turno_quirurgico", "turno_cirug_a"]:
+        p_medico = str(variables.get("cirujano_nombre") or "Equipo Quirúrgico").strip()
+        p_quirofano = str(variables.get("quirofano_nombre") or "Centrovisión").strip()
+        body_params = [
+            {"type": "text", "text": p_nombre or "Estimado/a"},
+            {"type": "text", "text": p_fecha or "fecha a confirmar"},
+            {"type": "text", "text": p_hora or "horario a confirmar"},
+            {"type": "text", "text": p_medico or "Profesional"},
+            {"type": "text", "text": p_cirugia or "Cirugía Oftalmológica"},
+            {"type": "text", "text": p_quirofano or "Sede Central"}
+        ]
+    else:
+        # Default recordatorio con preparación (5 variables)
+        body_params = [
+            {"type": "text", "text": p_nombre or "Estimado/a"},
+            {"type": "text", "text": p_cirugia or "Cirugía Oftalmológica"},
+            {"type": "text", "text": p_fecha or "fecha a confirmar"},
+            {"type": "text", "text": p_hora or "horario a confirmar"},
+            {"type": "text", "text": p_prep or "Concurrir con DNI y en ayunas."}
+        ]
+
+    components = [
+        {
+            "type": "body",
+            "parameters": body_params
+        }
+    ]
+
+    client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+    try:
+        result = await client.send_template(
+            to_phone=normalized_to,
+            template_name=template_name,
+            language_code=language_code,
+            components=components
+        )
+        wamid = result.get("wamid")
+
+        # 4. Registrar auditoría técnica si background_tasks está disponible
+        if background_tasks and wamid:
+            background_tasks.add_task(
+                record_outbound_audit_message,
+                to_phone=normalized_to,
+                wamid=wamid,
+                message_type="template",
+                content_text=f"[TEMPLATE: {template_name}] Cirugía: {p_cirugia}",
+                payload=payload,
+                billing_category="utility"
+            )
+
+        # 5. Registrar impacto en CRM (evolución, mensajes de paciente, timestamp y turnos)
+        paciente_id = payload.get("paciente_id")
+        if not paciente_id:
+            c_info = get_datos_recordatorio_quirurgico(asesoria_id)
+            if c_info:
+                paciente_id = c_info.get("paciente_id")
+
+        registrar_envio_recordatorio_quirurgico(
+            asesoria_id=asesoria_id,
+            paciente_id=paciente_id or "",
+            telefono=normalized_to,
+            template_name=template_name,
+            variables=variables,
+            wamid=wamid,
+            usuario_id=payload.get("usuario_id"),
+            usuario_nombre=payload.get("usuario_nombre"),
+            texto_renderizado=payload.get("texto_renderizado")
+        )
+
+        return {
+            "success": True,
+            "mensaje": "Plantilla de recordatorio quirúrgico enviada con éxito.",
+            "wamid": wamid,
+            "to": normalized_to
+        }
+
+    except ConversationWindowClosedError:
+        raise HTTPException(
+            status_code=400,
+            detail="La ventana de 24 horas está cerrada y Meta rechazó el formato. Verifique que la plantilla esté APROBADA en Ajustes."
+        )
+    except Exception as e:
+        logger.error(f"Error al enviar recordatorio por WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================
