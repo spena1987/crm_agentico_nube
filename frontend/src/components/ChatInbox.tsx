@@ -50,7 +50,8 @@ import {
   MoreVertical,
   AlertTriangle,
   Plus,
-  Link2
+  Link2,
+  FolderOpen
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
@@ -2476,13 +2477,26 @@ export default function ChatInbox() {
                       {currentPaciente?.nombre || 'Paciente'}
                     </h3>
                     {currentPaciente?.id && (
-                      <button
-                        onClick={() => setSelectedPacienteHistoriaClinica(currentPaciente)}
-                        className="px-1.5 py-0.5 rounded-md bg-blue-950/80 border border-blue-700/50 text-[9.5px] sm:text-[10px] font-semibold text-blue-300 hover:text-white hover:bg-blue-900 transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
-                        title="Ver Historia Clínica Completa"
-                      >
-                        <span>HC</span> <ExternalLink size={10} />
-                      </button>
+                      <>
+                        <button
+                          onClick={() => setSelectedPacienteHistoriaClinica(currentPaciente)}
+                          className="px-1.5 py-0.5 rounded-md bg-blue-950/80 border border-blue-700/50 text-[9.5px] sm:text-[10px] font-semibold text-blue-300 hover:text-white hover:bg-blue-900 transition-colors flex items-center gap-1 shrink-0 cursor-pointer"
+                          title="Ver Historia Clínica Completa"
+                        >
+                          <span>HC</span> <ExternalLink size={10} />
+                        </button>
+                        <a
+                          href={`/pacientes?id=${currentPaciente.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hidden sm:inline-flex px-1.5 py-0.5 rounded-md bg-indigo-950/80 border border-indigo-700/50 text-[9.5px] sm:text-[10px] font-semibold text-indigo-300 hover:text-white hover:bg-indigo-900 transition-colors items-center gap-1 shrink-0 cursor-pointer"
+                          title="Abrir expediente completo en Módulo Pacientes (Nueva pestaña)"
+                        >
+                          <FolderOpen size={10} />
+                          <span>Expediente</span>
+                          <ExternalLink size={9} />
+                        </a>
+                      </>
                     )}
                   </div>
 
@@ -2612,6 +2626,26 @@ export default function ChatInbox() {
                             <span className="text-[10px] text-slate-400">Resumen con Gemini</span>
                           </div>
                         </button>
+
+                        {/* Abrir Expediente del Paciente */}
+                        {currentPaciente?.id && (
+                          <a
+                            href={`/pacientes?id=${currentPaciente.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() => setShowHeaderMenu(false)}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-blue-300 hover:bg-blue-950/50 hover:text-blue-200 transition-colors text-left cursor-pointer"
+                          >
+                            <FolderOpen size={14} className="text-blue-400 shrink-0" />
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-semibold text-[11.5px] flex items-center gap-1">
+                                <span>Abrir Expediente</span>
+                                <ExternalLink size={10} className="text-blue-400" />
+                              </span>
+                              <span className="text-[10px] text-slate-400">Ver ficha en Módulo Pacientes</span>
+                            </div>
+                          </a>
+                        )}
 
                         {/* Derivar Conversación */}
                         {!selectedConv.archivada && (

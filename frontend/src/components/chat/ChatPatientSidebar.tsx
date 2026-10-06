@@ -21,8 +21,10 @@ import {
   Stethoscope,
   X,
   Tag,
-  Database
+  Database,
+  FolderOpen
 } from 'lucide-react'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import { formatPhoneDisplay } from '@/lib/phoneUtils'
@@ -243,6 +245,8 @@ export default function ChatPatientSidebar({
     }
   }
 
+  const targetPacienteId = pacienteInfo?.id || paciente?.id
+
   return (
     <div className="w-full h-full border-l border-slate-800 bg-[#0d1527] flex flex-col overflow-y-auto panel-scroll text-slate-100 text-xs">
       
@@ -257,22 +261,35 @@ export default function ChatPatientSidebar({
             <p className="text-[10px] text-slate-400">Contexto clínico en vivo</p>
           </div>
         </div>
-        {onClose && (
-          <button 
-            type="button"
-            onClick={onClose}
-            className="p-1.5 hover:bg-slate-800/80 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
-            title="Cerrar Ficha 360°"
-          >
-            <X size={17} />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {targetPacienteId && (
+            <Link
+              href={`/pacientes?id=${targetPacienteId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-1.5 hover:bg-slate-800/80 rounded-xl text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+              title="Abrir expediente completo en Módulo Pacientes (Nueva pestaña)"
+            >
+              <ExternalLink size={16} />
+            </Link>
+          )}
+          {onClose && (
+            <button 
+              type="button"
+              onClick={onClose}
+              className="p-1.5 hover:bg-slate-800/80 rounded-xl text-slate-400 hover:text-white transition-colors cursor-pointer"
+              title="Cerrar Ficha 360°"
+            >
+              <X size={17} />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="p-4 space-y-4">
         
         {/* 1. FICHA PRINCIPAL */}
-        <div className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-2.5">
+        <div className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-3">
           <div className="flex items-start justify-between gap-2">
             <div>
               <h3 className="font-bold text-sm text-slate-100 truncate">{paciente.nombre}</h3>
@@ -343,12 +360,44 @@ export default function ChatPatientSidebar({
             )}
           </div>
 
-          {/* Acciones Rápidas */}
-          <div className="pt-2 border-t border-slate-700/60 flex items-center gap-2">
+          {/* Botón Principal: Abrir Expediente Completo en Módulo de Pacientes */}
+          <div className="pt-2 border-t border-slate-700/60">
+            {targetPacienteId ? (
+              <Link
+                href={`/pacientes?id=${targetPacienteId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full py-2 px-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-700 hover:from-blue-500 hover:via-indigo-500 hover:to-blue-600 text-white rounded-xl text-xs font-bold flex items-center justify-between shadow-md shadow-blue-900/40 border border-blue-400/30 transition-all group cursor-pointer"
+                title="Abrir expediente clínico y quirúrgico completo en el módulo de Pacientes (Nueva pestaña)"
+              >
+                <div className="flex items-center gap-2">
+                  <FolderOpen size={14} className="text-blue-200 group-hover:scale-110 transition-transform shrink-0" />
+                  <span className="tracking-tight">Abrir Expediente Completo</span>
+                </div>
+                <span className="flex items-center gap-1 text-[10px] text-blue-200 group-hover:text-white bg-white/10 px-1.5 py-0.5 rounded-md">
+                  <span>Módulo Pacientes</span>
+                  <ExternalLink size={10} className="shrink-0" />
+                </span>
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMostrarModalGeclisa(true)}
+                className="w-full py-2 px-3 bg-amber-950/40 hover:bg-amber-900/40 text-amber-300 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 border border-amber-600/40 transition-colors cursor-pointer"
+                title="Vincule el paciente por DNI para habilitar su expediente completo"
+              >
+                <AlertTriangle size={13} className="text-amber-400" />
+                <span>Vincular Paciente para Ver Expediente</span>
+              </button>
+            )}
+          </div>
+
+          {/* Acciones Rápidas Complementarias */}
+          <div className="flex items-center gap-2">
             {onOpenHistoriaClinica && (
               <button
                 onClick={() => onOpenHistoriaClinica(pacienteInfo.id || paciente.id)}
-                className="flex-1 py-1.5 px-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
+                className="flex-1 py-1.5 px-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
               >
                 <FileText size={12} />
                 <span>Historia Clínica</span>
@@ -357,7 +406,7 @@ export default function ChatPatientSidebar({
 
             <button
               onClick={() => setMostrarModalGeclisa(true)}
-              className="flex-1 py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors"
+              className="flex-1 py-1.5 px-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10.5px] font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
               title="Buscar en Geclisa por DNI y vincular a este chat"
             >
               <Database size={12} />

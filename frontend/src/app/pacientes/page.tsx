@@ -134,6 +134,17 @@ function PacientesContent() {
       // Seleccionar paciente
       if (autoSelectId) {
         setSelectedPacienteId(autoSelectId)
+        const existe = lista.some((p) => p.id === autoSelectId)
+        if (!existe) {
+          const { data: pDirecto } = await supabase
+            .from('pacientes')
+            .select('*, asesorias_quirurgicas(id, estado, fecha_probable_cirugia, fecha_definitiva_cirugia, proxima_accion_fecha, proxima_accion_texto, ultimo_contacto_at, created_at, updated_at)')
+            .eq('id', autoSelectId)
+            .maybeSingle()
+          if (pDirecto) {
+            setPacientes((prev) => [pDirecto as Paciente, ...prev])
+          }
+        }
       } else if (lista.length > 0 && !selectedPacienteId) {
         setSelectedPacienteId(lista[0].id)
       }
