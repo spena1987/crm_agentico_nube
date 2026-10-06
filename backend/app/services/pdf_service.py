@@ -544,6 +544,23 @@ def generar_pdf_presupuesto(
     estado_raw = str(presupuesto.get('estado', 'BORRADOR')).upper()
     color_estado = '#16A34A' if estado_raw == 'APROBADO' else ('#2563EB' if estado_raw == 'ENVIADO' else ('#DC2626' if estado_raw == 'RECHAZADO' else '#475569'))
     
+    # Resolver Cobertura Médica con prioridad jerárquica (Presupuesto > Asesoría Quirúrgica > Paciente > Particular)
+    as_info = presupuesto.get("asesorias_quirurgicas") or presupuesto.get("asesoria_quirurgica") or {}
+    if isinstance(as_info, list) and len(as_info) > 0:
+        as_info = as_info[0]
+
+    cobertura_candidato = (
+        presupuesto.get("cobertura") or
+        presupuesto.get("obra_social") or
+        presupuesto.get("cobertura_obra_social") or
+        (as_info.get("cobertura_obra_social") if isinstance(as_info, dict) else None) or
+        paciente.get("obra_social") or
+        "Particular"
+    )
+    cobertura_efectiva = str(cobertura_candidato).strip() if cobertura_candidato else "Particular"
+    if not cobertura_efectiva:
+        cobertura_efectiva = "Particular"
+
     # Información del Paciente y Detalle de Emisión (Limpio y con Vencimiento)
     info_box = [
         [
@@ -555,7 +572,7 @@ def generar_pdf_presupuesto(
                 f"<b>Nombre:</b> {paciente.get('nombre', 'Paciente Particular')}<br/>"
                 f"<b>Teléfono:</b> {paciente.get('telefono', 'N/A')}<br/>"
                 f"<b>DNI:</b> {paciente.get('dni') or 'No especificado'}<br/>"
-                f"<b>Cobertura:</b> {paciente.get('obra_social') or 'Particular'}", 
+                f"<b>Cobertura:</b> {cobertura_efectiva}", 
                 style_texto
             ),
             Paragraph(
@@ -841,6 +858,21 @@ def asegurar_pdf_presupuesto_canonica(presupuesto_id: str, forzar_regeneracion: 
             "moneda": str(it_moneda).upper()
         })
         
+    # Resolver y asegurar cobertura médica del presupuesto o de la asesoría quirúrgica
+    if not presupuesto.get("cobertura") and presupuesto.get("asesoria_id"):
+        as_rel = presupuesto.get("asesorias_quirurgicas")
+        if isinstance(as_rel, list) and len(as_rel) > 0:
+            as_rel = as_rel[0]
+        if isinstance(as_rel, dict) and as_rel.get("cobertura_obra_social"):
+            presupuesto["cobertura"] = as_rel.get("cobertura_obra_social")
+        else:
+            try:
+                as_db = supabase.table("asesorias_quirurgicas").select("cobertura_obra_social").eq("id", presupuesto["asesoria_id"]).limit(1).execute()
+                if as_db.data and as_db.data[0].get("cobertura_obra_social"):
+                    presupuesto["cobertura"] = as_db.data[0]["cobertura_obra_social"]
+            except Exception:
+                pass
+
     return generar_pdf_presupuesto(presupuesto, paciente, items_normalizados)
 
 

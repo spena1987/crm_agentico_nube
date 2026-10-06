@@ -156,7 +156,9 @@ class WhatsAppManager:
         conversacion_id: Optional[str] = None,
         emisor: str = "operador",
         quoted_message_id: Optional[str] = None,
-        quoted_message_data: Optional[Dict[str, Any]] = None
+        quoted_message_data: Optional[Dict[str, Any]] = None,
+        usuario_id: Optional[str] = None,
+        usuario_nombre: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Despacha un mensaje de texto libre de forma asíncrona hacia el teléfono del paciente a través de Meta Cloud API.
@@ -199,16 +201,24 @@ class WhatsAppManager:
 
             if conversacion_id:
                 try:
+                    meta_payload: Dict[str, Any] = {
+                        "wamid": wamid,
+                        "delivery_status": "enviado",
+                        "provider": "meta_cloud_api"
+                    }
+                    if usuario_id:
+                        meta_payload["operador_id"] = usuario_id
+                    if usuario_nombre:
+                        meta_payload["operador_nombre"] = usuario_nombre
+                    if quoted_message_data:
+                        meta_payload["quoted_message"] = quoted_message_data
+
                     guardar_mensaje(
                         conversacion_id=conversacion_id,
                         emisor=emisor,
                         contenido=texto,
                         whatsapp_message_id=wamid,
-                        metadata_json={
-                            "wamid": wamid,
-                            "delivery_status": "enviado",
-                            "provider": "meta_cloud_api"
-                        }
+                        metadata_json=meta_payload
                     )
                 except Exception as db_err:
                     self.add_log("WARNING", f"Error guardando mensaje en Supabase: {db_err}")
@@ -241,7 +251,9 @@ class WhatsAppManager:
         conversacion_id: Optional[str] = None,
         emisor: str = "operador",
         quoted_message_id: Optional[str] = None,
-        quoted_message_data: Optional[Dict[str, Any]] = None
+        quoted_message_data: Optional[Dict[str, Any]] = None,
+        usuario_id: Optional[str] = None,
+        usuario_nombre: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Versión síncrona segura de envío de texto que previene el error 'Cannot run the event loop while another loop is running'.
@@ -253,7 +265,9 @@ class WhatsAppManager:
                 conversacion_id=conversacion_id,
                 emisor=emisor,
                 quoted_message_id=quoted_message_id,
-                quoted_message_data=quoted_message_data
+                quoted_message_data=quoted_message_data,
+                usuario_id=usuario_id,
+                usuario_nombre=usuario_nombre
             )
         )
 

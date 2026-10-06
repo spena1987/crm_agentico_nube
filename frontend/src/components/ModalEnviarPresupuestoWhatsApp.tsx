@@ -21,6 +21,7 @@ import {
   Clock
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
 
 interface ModalEnviarPresupuestoWhatsAppProps {
   isOpen: boolean
@@ -45,6 +46,7 @@ export default function ModalEnviarPresupuestoWhatsApp({
   totalUsd = 0,
   onSuccess
 }: ModalEnviarPresupuestoWhatsAppProps) {
+  const { user } = useAuth()
   const [telefono, setTelefono] = useState(telefonoDefault)
   const [mensaje, setMensaje] = useState('')
   const [plantillaOriginal, setPlantillaOriginal] = useState('')
@@ -161,10 +163,14 @@ export default function ModalEnviarPresupuestoWhatsApp({
       setError(null)
       setSuccessMsg(null)
 
+      const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
+
       const payload: any = {
         telefono: telefono.trim(),
         mensaje: mensaje.trim(),
-        modo: isWindowOpen ? modoEnvio : 'template'
+        modo: isWindowOpen ? modoEnvio : 'template',
+        usuario_id: user?.id || null,
+        usuario_nombre: currentUserName
       }
 
       if (payload.modo === 'template') {

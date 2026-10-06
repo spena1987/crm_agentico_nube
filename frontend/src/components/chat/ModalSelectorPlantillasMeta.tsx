@@ -102,6 +102,8 @@ interface ModalSelectorPlantillasMetaProps {
   isWindowOpen?: boolean
   onInsertText?: (text: string) => void
   onEnviadoExitoso?: () => void
+  currentUserId?: string | null
+  currentUserName?: string | null
 }
 
 export default function ModalSelectorPlantillasMeta({
@@ -113,7 +115,9 @@ export default function ModalSelectorPlantillasMeta({
   conversacionId,
   isWindowOpen = true,
   onInsertText,
-  onEnviadoExitoso
+  onEnviadoExitoso,
+  currentUserId,
+  currentUserName
 }: ModalSelectorPlantillasMetaProps) {
   const [templates, setTemplates] = useState<MetaTemplateData[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplateData | null>(null)
@@ -411,18 +415,22 @@ export default function ModalSelectorPlantillasMeta({
       if (conversacionId) {
         const renderedFull = getFullRenderedMessage()
         try {
+          const metaTpl: any = {
+            tipo: 'template',
+            template_name: selectedTemplate.name,
+            category: selectedTemplate.category,
+            wamid: data.wamid,
+            delivery_status: 'enviado',
+            provider: 'meta_cloud_api'
+          }
+          if (currentUserId) metaTpl.operador_id = currentUserId
+          if (currentUserName) metaTpl.operador_nombre = currentUserName
+
           await supabase.from('mensajes').insert({
             conversacion_id: conversacionId,
             emisor: 'operador',
             contenido: `📄 [PLANTILLA OFICIAL: ${selectedTemplate.name}]\n\n${renderedFull}`,
-            metadata_json: {
-              tipo: 'template',
-              template_name: selectedTemplate.name,
-              category: selectedTemplate.category,
-              wamid: data.wamid,
-              delivery_status: 'enviado',
-              provider: 'meta_cloud_api'
-            }
+            metadata_json: metaTpl
           } as any)
 
           await supabase.from('conversaciones').update({

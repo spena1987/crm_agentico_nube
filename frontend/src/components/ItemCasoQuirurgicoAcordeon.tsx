@@ -667,7 +667,7 @@ export default function ItemCasoQuirurgicoAcordeon({
           pacienteNombre={pacienteNombre}
           pacienteDni={pacienteDni}
           pacienteTelefono={pacienteTelefono}
-          obraSocial={obraSocialDefault}
+          obraSocial={caso.cobertura_obra_social || obraSocialDefault || 'Particular'}
           practicaInicial={practicaParaModalPresupuesto}
           presupuestoAEditar={presupuestoAEditar}
           onPresupuestoCreado={handlePresupuestoCreado}

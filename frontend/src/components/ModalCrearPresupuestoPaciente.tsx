@@ -18,7 +18,8 @@ import {
   ChevronUp,
   Check,
   CheckSquare,
-  Square
+  Square,
+  Shield
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -62,6 +63,7 @@ export interface PresupuestoEdicionData {
   numero_presupuesto?: number | string | null
   paciente_id: string
   asesoria_id?: string | null
+  cobertura?: string | null
   estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado' | string
   total: number
   total_ars?: number
@@ -105,6 +107,7 @@ export default function ModalCrearPresupuestoPaciente({
 }: ModalCrearPresupuestoPacienteProps) {
   const [monedaDefault, setMonedaDefault] = useState<'ARS' | 'USD'>('ARS')
   const [items, setItems] = useState<ItemPresupuestoForm[]>([])
+  const [coberturaPresupuesto, setCoberturaPresupuesto] = useState<string>(obraSocial || 'Particular')
   
   // Búsqueda en Nomenclador
   const [busqueda, setBusqueda] = useState('')
@@ -237,6 +240,9 @@ export default function ModalCrearPresupuestoPaciente({
       
       // Si estamos en modo de edición de un presupuesto existente
       if (presupuestoAEditar) {
+        const cobExistente = (presupuestoAEditar as any).cobertura || (presupuestoAEditar as any).cobertura_obra_social || obraSocial || 'Particular'
+        setCoberturaPresupuesto(cobExistente)
+
         if (presupuestoAEditar.estado) {
           setEmitirEstado(presupuestoAEditar.estado as any)
         }
@@ -383,10 +389,11 @@ export default function ModalCrearPresupuestoPaciente({
         setBundleConfig({})
       }
 
+      setCoberturaPresupuesto(obraSocial || 'Particular')
       setItems(listaInicial)
       buscarPracticasCatalogo('')
     }
-  }, [isOpen, presupuestoAEditar, practicaInicial?.nombre, practicaInicial?.codigo, practicaInicial?.precio, practicaInicial?.moneda])
+  }, [isOpen, presupuestoAEditar, obraSocial, practicaInicial?.nombre, practicaInicial?.codigo, practicaInicial?.precio, practicaInicial?.moneda])
 
   // Buscar prácticas en el nomenclador
   const buscarPracticasCatalogo = async (query: string) => {
@@ -556,6 +563,7 @@ export default function ModalCrearPresupuestoPaciente({
     const payload = {
       paciente_id: pacienteId,
       asesoria_id: asesoriaId || null,
+      cobertura: coberturaPresupuesto.trim() || 'Particular',
       estado: emitirEstado,
       moneda: totalUSD > 0 && totalARS === 0 ? 'USD' : 'ARS',
       items: items.map((it) => ({
@@ -638,7 +646,7 @@ export default function ModalCrearPresupuestoPaciente({
                 </span>
               </div>
               <p className="text-xs text-[var(--secondary)]">
-                Paciente: <strong className="text-white">{pacienteNombre}</strong> {pacienteDni && `(DNI: ${pacienteDni})`} • Obra Social: <strong className="text-blue-300">{obraSocial || 'Particular'}</strong>
+                Paciente: <strong className="text-white">{pacienteNombre}</strong> {pacienteDni && `(DNI: ${pacienteDni})`} • Cobertura: <strong className="text-blue-300">{coberturaPresupuesto || 'Particular'}</strong>
               </p>
             </div>
           </div>
@@ -662,52 +670,66 @@ export default function ModalCrearPresupuestoPaciente({
             </div>
           )}
 
-          {/* Configuración de Moneda por Defecto y Estado Inicial */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-xl bg-neutral-950/40 border border-[var(--border)]">
+          {/* Configuración de Moneda, Estado y Cobertura */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-xl bg-neutral-950/40 border border-[var(--border)]">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                 <DollarSign size={14} className="text-amber-400" />
-                Moneda por Defecto (Nuevos Ítems)
+                Moneda por Defecto
               </label>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => setMonedaDefault('ARS')}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold transition-all border ${
                     monedaDefault === 'ARS'
                       ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-sm'
                       : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
                   }`}
                 >
-                  $ Pesos Argentinos (ARS)
+                  $ ARS
                 </button>
                 <button
                   type="button"
                   onClick={() => setMonedaDefault('USD')}
-                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                  className={`flex-1 py-2 px-2.5 rounded-xl text-xs font-bold transition-all border ${
                     monedaDefault === 'USD'
                       ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow-sm'
                       : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
                   }`}
                 >
-                  U$S Dólares (USD)
+                  U$S USD
                 </button>
               </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                <Shield size={14} className="text-blue-400" />
+                Cobertura en Presupuesto / PDF
+              </label>
+              <input
+                type="text"
+                value={coberturaPresupuesto}
+                onChange={(e) => setCoberturaPresupuesto(e.target.value)}
+                placeholder="Particular, Obra Social, Prepaga..."
+                className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white font-medium focus:outline-none"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
                 <FileCheck2 size={14} className="text-indigo-400" />
-                Estado Inicial del Presupuesto
+                Estado Inicial
               </label>
               <select
                 value={emitirEstado}
                 onChange={(e) => setEmitirEstado(e.target.value as any)}
                 className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white font-medium focus:outline-none"
               >
-                <option value="enviado">Enviado / En Análisis (Recomendado)</option>
+                <option value="enviado">Enviado / En Análisis</option>
                 <option value="borrador">Borrador Interno</option>
-                <option value="aprobado">Aprobado / Confirmado Directamente</option>
+                <option value="aprobado">Aprobado / Confirmado</option>
               </select>
             </div>
           </div>

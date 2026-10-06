@@ -1402,7 +1402,9 @@ def send_message_api(payload: SendMessageRequest):
         conversacion_id=conversacion_id,
         emisor="operador",
         quoted_message_id=payload.quoted_message_id,
-        quoted_message_data=payload.quoted_message_data
+        quoted_message_data=payload.quoted_message_data,
+        usuario_id=payload.usuario_id,
+        usuario_nombre=payload.usuario_nombre
     )
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -1676,7 +1678,8 @@ async def send_media_api(
                         "caption": caption or "",
                         "delivery_status": "enviado",
                         "provider": result.get("provider", "meta_cloud_api"),
-                        "operador_id": usuario_id
+                        "operador_id": usuario_id,
+                        "operador_nombre": usuario_nombre
                     }
                 )
 
@@ -2236,6 +2239,7 @@ def create_presupuesto_api(payload: Dict[str, Any] = Body(...)):
         presupuesto = crear_presupuesto_rapido({
             "paciente_id": paciente_id,
             "asesoria_id": payload.get("asesoria_id"),
+            "cobertura": payload.get("cobertura"),
             "estado": payload.get("estado", "enviado"),
             "items": items_parsed
         })
@@ -4097,13 +4101,17 @@ def enviar_presupuesto_whatsapp_api(presupuesto_id: str, payload: Dict[str, Any]
         mensaje_custom = payload.get("mensaje")
         modo = payload.get("modo", "auto")
         template_params = payload.get("template_params")
+        usuario_id = payload.get("usuario_id")
+        usuario_nombre = payload.get("usuario_nombre")
         
         res = enviar_presupuesto_por_whatsapp(
             presupuesto_id=presupuesto_id,
             telefono_override=telefono_override,
             mensaje_custom=mensaje_custom,
             modo=modo,
-            template_params=template_params
+            template_params=template_params,
+            usuario_id=usuario_id,
+            usuario_nombre=usuario_nombre
         )
         return res
     except ValueError as ve:

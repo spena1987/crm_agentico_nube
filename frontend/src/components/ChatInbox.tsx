@@ -200,6 +200,46 @@ export default function ChatInbox() {
   const [tomandoCaso, setTomandoCaso] = useState(false)
   const [finalizandoCaso, setFinalizandoCaso] = useState(false)
 
+  // Nombre del usuario actual (prioriza el perfil de operadores cargado)
+  const currentUserName = useMemo(() => {
+    if (!currentUserId) return user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
+    const opFound = operadores.find((op) => op.id === currentUserId)
+    if (opFound?.nombre_completo) return opFound.nombre_completo
+    return user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
+  }, [currentUserId, operadores, user])
+
+  // Helper para resolver el nombre y si el mensaje saliente pertenece al usuario actual o a un compañero
+  const getOperatorSenderInfo = (msg: Mensaje) => {
+    const meta = msg.metadata_json || {}
+    const opId = meta.operador_id || meta.usuario_id
+    const isCurrentUser = Boolean(
+      (opId && currentUserId && opId === currentUserId) ||
+      (msg.id && typeof msg.id === 'string' && msg.id.startsWith('temp_'))
+    )
+
+    let name = meta.operador_nombre || meta.usuario_nombre || meta.autor
+    if (!name && opId) {
+      const matchOp = operadores.find((op) => op.id === opId)
+      if (matchOp?.nombre_completo) {
+        name = matchOp.nombre_completo
+      }
+    }
+    if (!name && isCurrentUser) {
+      name = currentUserName
+    }
+    if (!name && selectedConv?.asignado_a?.nombre_completo) {
+      name = selectedConv.asignado_a.nombre_completo
+    }
+    if (!name) {
+      name = 'Operador'
+    }
+
+    return {
+      isCurrentUser,
+      name
+    }
+  }
+
   // Presencia y Detección de Colisiones entre Operadores (Supabase Realtime Presence)
   const [activeOperatorsInChat, setActiveOperatorsInChat] = useState<Array<{
     user_id: string
@@ -1469,17 +1509,24 @@ export default function ChatInbox() {
     setQuickRepliesOpen(false)
 
     const quotedId = currentReply?.metadata_json?.whatsapp_message_id || currentReply?.id
+    const quotedSenderName = currentReply
+      ? currentReply.emisor === 'paciente'
+        ? (getPatient(selectedConv)?.nombre || 'Paciente')
+        : currentReply.emisor === 'bot'
+        ? 'Bot Gemini'
+        : getOperatorSenderInfo(currentReply).name
+      : ''
     const quotedData = currentReply ? {
       id: currentReply.id,
       emisor: currentReply.emisor,
       contenido: currentReply.contenido,
-      nombre: currentReply.emisor === 'paciente' ? (getPatient(selectedConv)?.nombre || 'Paciente') : 'Operador Humano'
+      nombre: quotedSenderName
     } : undefined
 
     const tempId = `temp_${Date.now()}`
     const metaOpt: any = esNotaInternaActual 
-      ? { is_internal_note: true, tipo: 'nota_interna' } 
-      : { delivery_status: 'enviado', provider: 'meta_cloud_api' }
+      ? { is_internal_note: true, tipo: 'nota_interna', operador_id: currentUserId, operador_nombre: currentUserName } 
+      : { delivery_status: 'enviado', provider: 'meta_cloud_api', operador_id: currentUserId, operador_nombre: currentUserName }
     if (quotedData) metaOpt.quoted_message = quotedData
 
     const optimisticMsg: Mensaje = {
@@ -1498,7 +1545,6 @@ export default function ChatInbox() {
       
       let dispatchedViaBackend = false
       try {
-        const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
         const response = await apiFetch('/api/whatsapp/send-message', {
           method: 'POST',
           body: JSON.stringify({
@@ -1637,7 +1683,6 @@ export default function ChatInbox() {
     if (!file || !selectedConvId || !selectedConv) return
 
     const paciente = getPatient(selectedConv)
-    const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Operador'
     setSubiendoArchivo(true)
     try {
       const formData = new FormData()
@@ -2798,6 +2843,8 @@ export default function ChatInbox() {
                       msg.metadata_json?.tipo !== 'template'
                     )
 
+                          const operatorSenderInfo = isOperator ? getOperatorSenderInfo(msg) : null
+
                           return (
                             <div
                               key={msg.id}
@@ -2845,7 +2892,9 @@ export default function ChatInbox() {
                                   : isOperator
                                   ? isTemplate
                                     ? 'bg-[#182642] border border-blue-400/30 text-white rounded-tr-none shadow-blue-950/40'
-                                    : 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                                    : operatorSenderInfo?.isCurrentUser
+                                    ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
+                                    : 'bg-indigo-900/90 border border-purple-500/40 text-white rounded-tr-none shadow-purple-950/30 ring-1 ring-purple-500/20'
                                   : isBot
                                   ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
                                   : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
@@ -2873,10 +2922,17 @@ export default function ChatInbox() {
                                 </div>
                               )}
 
-                              {/* Badge del emisor: Nombre del paciente registrado o Tú (Operador) / Bot */}
+                              {/* Badge del emisor: Nombre del paciente registrado o Tú (Nombre) / Compañero / Bot */}
                               <div className="flex items-center gap-1 text-[11px] font-bold mb-0.5 tracking-tight pr-5">
                                 {isOperator ? (
-                                  <span className="text-blue-200">Tú (Operador)</span>
+                                  operatorSenderInfo?.isCurrentUser ? (
+                                    <span className="text-blue-200">Tú ({operatorSenderInfo.name})</span>
+                                  ) : (
+                                    <span className="text-purple-300 font-semibold flex items-center gap-1">
+                                      <User size={11} className="text-purple-400 shrink-0" />
+                                      {operatorSenderInfo?.name}
+                                    </span>
+                                  )
                                 ) : isBot ? (
                                   <span className="text-teal-400 flex items-center gap-1 font-semibold">
                                     <Bot size={11} /> Bot Gemini
@@ -3155,7 +3211,7 @@ export default function ChatInbox() {
                 <div className="flex items-center justify-between p-2.5 bg-[#0b1324] border-l-4 border-blue-500 rounded-xl border border-slate-700/60 shadow-lg animate-in slide-in-from-bottom-2 duration-150">
                   <div className="flex flex-col min-w-0 pr-2">
                     <span className="text-[10px] font-bold text-blue-400 flex items-center gap-1">
-                      <Reply size={11} /> Respondiendo a {replyingToMessage.emisor === 'paciente' ? (getPatient(selectedConv)?.nombre || 'Paciente') : 'Operador Humano'}
+                      <Reply size={11} /> Respondiendo a {replyingToMessage.emisor === 'paciente' ? (getPatient(selectedConv)?.nombre || 'Paciente') : replyingToMessage.emisor === 'bot' ? 'Bot Gemini' : getOperatorSenderInfo(replyingToMessage).name}
                     </span>
                     <span className="text-xs text-slate-300 truncate max-w-md italic mt-0.5">
                       {replyingToMessage.contenido || '[Archivo Multimedia]'}
@@ -3459,6 +3515,8 @@ export default function ChatInbox() {
           onEnviadoExitoso={() => {
             if (selectedConvId) fetchMensajes(selectedConvId)
           }}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
         />
       )}
 
@@ -3566,7 +3624,7 @@ export default function ChatInbox() {
         onClose={() => setShowModalNuevoChat(false)}
         onConversacionIniciada={handleConversacionIniciada}
         currentUserId={currentUserId}
-        currentUserName={user?.email || 'Operador'}
+        currentUserName={currentUserName}
       />
 
       {/* Modal Vincular Paciente de Contacto Rápido con Geclisa mediante DNI */}

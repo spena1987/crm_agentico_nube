@@ -3457,11 +3457,25 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
         pdf_url = f"/static/{pdf_filename}"
         
+        # Resolver cobertura médica explícita o desde asesoría vinculada
+        cobertura_in = payload.get("cobertura") or payload.get("obra_social")
+        if not cobertura_in and asesoria_id:
+            try:
+                as_cob = supabase.table("asesorias_quirurgicas").select("cobertura_obra_social").eq("id", asesoria_id).limit(1).execute()
+                if as_cob.data and as_cob.data[0].get("cobertura_obra_social"):
+                    cobertura_in = as_cob.data[0]["cobertura_obra_social"]
+            except Exception as e_cob:
+                logger.warning(f"No se pudo consultar cobertura de asesoría {asesoria_id}: {e_cob}")
+
+        if not cobertura_in:
+            cobertura_in = paciente.get("obra_social") or "Particular"
+
         # 4. Insertar cabecera de presupuesto en Supabase (obtiene numero_presupuesto correlativo de la BD)
         pres_data = {
             "id": presupuesto_id,
             "paciente_id": paciente_id,
             "asesoria_id": asesoria_id or None,
+            "cobertura": cobertura_in,
             "estado": payload.get("estado", "enviado"),
             "total": total_escalar,
             "total_ars": total_ars,
@@ -3481,6 +3495,7 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             "total_ars": total_ars,
             "total_usd": total_usd,
             "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
+            "cobertura": cobertura_in,
             "created_at": presupuesto_db.get("created_at") or "now()"
         }
         generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
@@ -3632,11 +3647,24 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
         pdf_filename = f"presupuesto_{presupuesto_id}.pdf"
         pdf_url = f"/static/{pdf_filename}"
 
+        # Resolver cobertura médica
+        cobertura_in = payload.get("cobertura") or payload.get("obra_social") or presupuesto_db.get("cobertura")
+        if not cobertura_in and asesoria_id:
+            try:
+                as_cob = supabase.table("asesorias_quirurgicas").select("cobertura_obra_social").eq("id", asesoria_id).limit(1).execute()
+                if as_cob.data and as_cob.data[0].get("cobertura_obra_social"):
+                    cobertura_in = as_cob.data[0]["cobertura_obra_social"]
+            except Exception:
+                pass
+        if not cobertura_in:
+            cobertura_in = paciente.get("obra_social") or "Particular"
+
         # 5. Actualizar cabecera de presupuesto
         update_data = {
             "total": total_escalar,
             "total_ars": total_ars,
             "total_usd": total_usd,
+            "cobertura": cobertura_in,
             "pdf_url": pdf_url,
             "updated_at": "now()"
         }
@@ -3667,6 +3695,7 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
             "total_ars": total_ars,
             "total_usd": total_usd,
             "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
+            "cobertura": cobertura_in,
             "created_at": presupuesto_db.get("created_at") or "now()"
         }
         try:
@@ -3916,7 +3945,9 @@ def enviar_presupuesto_por_whatsapp(
     telefono_override: Optional[str] = None, 
     mensaje_custom: Optional[str] = None,
     modo: str = "auto",
-    template_params: Optional[Dict[str, str]] = None
+    template_params: Optional[Dict[str, str]] = None,
+    usuario_id: Optional[str] = None,
+    usuario_nombre: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Envía el PDF de un presupuesto generado por WhatsApp junto con el mensaje protocolar ameno
@@ -4130,18 +4161,24 @@ def enviar_presupuesto_por_whatsapp(
         # Guardar en la conversación del CRM
         if conv_id:
             try:
+                tpl_meta: Dict[str, Any] = {
+                    "tipo": "template",
+                    "template_name": active_template_name,
+                    "wamid": wamid,
+                    "delivery_status": "enviado",
+                    "provider": "meta_cloud_api",
+                    "presupuesto_id": presupuesto_id
+                }
+                if usuario_id:
+                    tpl_meta["operador_id"] = usuario_id
+                if usuario_nombre:
+                    tpl_meta["operador_nombre"] = usuario_nombre
+
                 supabase.table("mensajes").insert({
                     "conversacion_id": conv_id,
                     "emisor": "operador",
                     "contenido": rendered_msg,
-                    "metadata_json": {
-                        "tipo": "template",
-                        "template_name": active_template_name,
-                        "wamid": wamid,
-                        "delivery_status": "enviado",
-                        "provider": "meta_cloud_api",
-                        "presupuesto_id": presupuesto_id
-                    }
+                    "metadata_json": tpl_meta
                 }).execute()
                 now_iso = datetime.now(timezone.utc).isoformat()
                 supabase.table("conversaciones").update({
@@ -4172,20 +4209,26 @@ def enviar_presupuesto_por_whatsapp(
             try:
                 base_backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://crmagenticonube-production.up.railway.app").rstrip("/")
                 pdf_rel_or_full = f"{base_backend_url}/static/presupuesto_{presupuesto_id}.pdf"
+                doc_meta: Dict[str, Any] = {
+                    "tipo": "documento",
+                    "media_url": pdf_rel_or_full,
+                    "file_name": pdf_filename,
+                    "caption": mensaje_final,
+                    "wamid": w_res.get("wamid"),
+                    "delivery_status": "enviado",
+                    "provider": "meta_cloud_api",
+                    "presupuesto_id": presupuesto_id
+                }
+                if usuario_id:
+                    doc_meta["operador_id"] = usuario_id
+                if usuario_nombre:
+                    doc_meta["operador_nombre"] = usuario_nombre
+
                 supabase.table("mensajes").insert({
                     "conversacion_id": conv_id,
                     "emisor": "operador",
                     "contenido": mensaje_final,
-                    "metadata_json": {
-                        "tipo": "documento",
-                        "media_url": pdf_rel_or_full,
-                        "file_name": pdf_filename,
-                        "caption": mensaje_final,
-                        "wamid": w_res.get("wamid"),
-                        "delivery_status": "enviado",
-                        "provider": "meta_cloud_api",
-                        "presupuesto_id": presupuesto_id
-                    },
+                    "metadata_json": doc_meta,
                     "whatsapp_message_id": w_res.get("wamid")
                 }).execute()
                 now_iso = datetime.now(timezone.utc).isoformat()
