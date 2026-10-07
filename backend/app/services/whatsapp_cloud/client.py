@@ -330,7 +330,31 @@ class WhatsAppCloudClient:
     ) -> Dict[str, Any]:
         """
         Envía un mensaje de plantilla pre-aprobada (UTILITY, MARKETING, AUTHENTICATION).
+        Sanitiza automáticamente los parámetros de texto para cumplir estrictamente con las
+        reglas de Meta Cloud API: prohíbe saltos de línea (\r, \n), tabulaciones (\t)
+        y secuencias de más de 4 espacios consecutivos (Error #132018).
         """
+        import re
+        safe_components = []
+        if components:
+            for comp in components:
+                c_copy = dict(comp)
+                if "parameters" in c_copy and isinstance(c_copy["parameters"], list):
+                    safe_params = []
+                    for param in c_copy["parameters"]:
+                        p_copy = dict(param)
+                        if p_copy.get("type") == "text" and "text" in p_copy:
+                            raw_t = str(p_copy["text"] or "").strip()
+                            lines = [l.strip() for l in raw_t.splitlines() if l.strip()]
+                            if len(lines) > 1:
+                                raw_t = " • ".join(lines)
+                            raw_t = re.sub(r"[\r\n\t]+", " ", raw_t)
+                            raw_t = re.sub(r"\s{2,}", " ", raw_t).strip()
+                            p_copy["text"] = raw_t
+                        safe_params.append(p_copy)
+                    c_copy["parameters"] = safe_params
+                safe_components.append(c_copy)
+
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -339,7 +363,7 @@ class WhatsAppCloudClient:
             "template": {
                 "name": template_name,
                 "language": {"code": language_code},
-                "components": components or []
+                "components": safe_components
             }
         }
         res = await self._request_with_retry("POST", "messages", payload)

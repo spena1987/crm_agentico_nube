@@ -3234,6 +3234,21 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str) -> Optional[Dict[str, An
         except Exception as e_prep:
             logger.warning(f"Aviso al obtener resumen operativo de práctica: {e_prep}")
 
+        if preparacion_texto:
+            # Reemplazar posibles tags contextuales si vienen de la plantilla del nomenclador
+            preparacion_texto = (
+                preparacion_texto
+                .replace("{paciente}", saludo_nombre or paciente_nombre or "")
+                .replace("{practica}", cirugia_completa or "")
+                .replace("{fecha_cirugia}", fecha_texto or "")
+                .replace("{fecha}", fecha_texto or "")
+            )
+            # Si el texto de preparación arranca con un saludo o encabezado introductorio redundante, limpiarlo
+            lineas_prep = [l.strip() for l in preparacion_texto.splitlines() if l.strip()]
+            if lineas_prep and any(w in lineas_prep[0].lower() for w in ["estimado", "para su cirugía", "para su cirugia", "hola"]):
+                lineas_prep = lineas_prep[1:]
+                preparacion_texto = "\n".join(lineas_prep)
+
         if not preparacion_texto:
             preparacion_texto = (
                 f"- Ayuno de {ayuno_horas} horas de alimentos sólidos y líquidos.\n"

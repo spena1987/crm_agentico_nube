@@ -24,7 +24,8 @@ import {
   Video,
   MoreVertical,
   Layers,
-  ChevronDown
+  ChevronDown,
+  RefreshCw
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 
@@ -79,6 +80,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
 }: ModalRecordatorioCirugiaWhatsAppProps) {
   const [cargando, setCargando] = useState<boolean>(true)
   const [enviando, setEnviando] = useState<boolean>(false)
+  const [sincronizandoEstado, setSincronizandoEstado] = useState<boolean>(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [exitoMsg, setExitoMsg] = useState<string | null>(null)
 
@@ -149,6 +151,27 @@ export default function ModalRecordatorioCirugiaWhatsApp({
 
   if (!isOpen) return null
 
+  // Sincronizar y consultar estado en vivo con Meta
+  const handleSincronizarEstado = async () => {
+    try {
+      setSincronizandoEstado(true)
+      setErrorMsg(null)
+      await apiFetch('/api/whatsapp/cloud/templates/sync', { method: 'POST' })
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${casoId}/datos-recordatorio-whatsapp`)
+      if (res.ok) {
+        const resp = await res.json()
+        if (resp && resp.plantillas) {
+          setPlantillasDisponibles(resp.plantillas)
+        }
+      }
+    } catch (err: any) {
+      console.error('Error sincronizando estado de plantillas con Meta:', err)
+      setErrorMsg('No se pudo verificar el estado en vivo con Meta.')
+    } finally {
+      setSincronizandoEstado(false)
+    }
+  }
+
   // Restablecer a los valores calculados
   const handleRestablecer = () => {
     if (!datosOriginales) return
@@ -166,7 +189,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     (t) => t.name.toLowerCase() === plantillaSeleccionada.toLowerCase()
   )
 
-  const templateStatus = templateActualInfo?.status || 'PENDING'
+  const templateStatus = templateActualInfo ? templateActualInfo.status : 'NO_REGISTRADA'
   const isAprobadaMeta = templateStatus === 'APPROVED'
 
   // Generar texto completo del mensaje para previsualización
@@ -181,6 +204,11 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
   const handleEnviarWhatsApp = async () => {
     if (!telefono || telefono.trim().length < 8) {
       setErrorMsg('Por favor ingrese un número de teléfono de WhatsApp válido.')
+      return
+    }
+
+    if (!isAprobadaMeta) {
+      setErrorMsg(`La plantilla seleccionada se encuentra en estado "${templateStatus}". Solo se pueden emitir plantillas autorizadas (APPROVED) por Meta.`)
       return
     }
 
@@ -303,7 +331,7 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                     </span>
                   ) : (
                     <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-950 text-rose-300 border border-rose-500/40 flex items-center gap-1">
-                      <AlertCircle size={12} /> No Homologada
+                      <AlertCircle size={12} /> No Registrada en Meta
                     </span>
                   )}
 
@@ -320,24 +348,35 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                 </div>
               </div>
 
-              {/* Selector de plantilla si hay varias */}
+              {/* Selector de plantilla y comprobación en vivo */}
               <div className="flex items-center gap-2">
                 <select
                   value={plantillaSeleccionada}
                   onChange={(e) => setPlantillaSeleccionada(e.target.value)}
                   className="flex-1 px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white font-mono focus:outline-none focus:border-blue-500 cursor-pointer"
                 >
-                  <option value="recordatorio_cirugia_preparacion_v1">
-                    recordatorio_cirugia_preparacion_v1 (Recomendada con Preparación)
-                  </option>
-                  {plantillasDisponibles
-                    .filter((t) => t.name !== 'recordatorio_cirugia_preparacion_v1')
-                    .map((t) => (
-                      <option key={t.name} value={t.name}>
-                        {t.name} ({t.category} • {t.status})
-                      </option>
-                    ))}
+                  {plantillasDisponibles.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.name} ({t.category} • {t.status === 'APPROVED' ? 'Aprobada' : t.status === 'PENDING' ? 'En Revisión' : t.status})
+                    </option>
+                  ))}
+                  {!plantillasDisponibles.some((t) => t.name === 'recordatorio_cirugia_preparacion_v1') && (
+                    <option value="recordatorio_cirugia_preparacion_v1">
+                      recordatorio_cirugia_preparacion_v1 (Recomendada • No Registrada)
+                    </option>
+                  )}
                 </select>
+
+                <button
+                  type="button"
+                  onClick={handleSincronizarEstado}
+                  disabled={sincronizandoEstado}
+                  className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white rounded-lg text-xs font-medium flex items-center gap-1 border border-[var(--border)] transition-colors disabled:opacity-50"
+                  title="Consultar en tiempo real con Meta Graph API si la plantilla ya fue aprobada"
+                >
+                  <RefreshCw size={12} className={sincronizandoEstado ? 'animate-spin text-blue-400' : ''} />
+                  <span>{sincronizandoEstado ? 'Verificando...' : 'Comprobar'}</span>
+                </button>
 
                 <button
                   type="button"
@@ -351,13 +390,25 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
               </div>
 
               {!isAprobadaMeta && (
-                <div className="p-2 rounded-lg bg-amber-950/30 border border-amber-500/20 text-[11px] text-amber-200/90 flex items-start gap-1.5">
-                  <AlertCircle size={14} className="shrink-0 text-amber-400 mt-0.5" />
+                <div className={`p-2.5 rounded-lg text-[11px] flex items-start gap-2 ${
+                  templateStatus === 'PENDING'
+                    ? 'bg-amber-950/30 border border-amber-500/20 text-amber-200/90'
+                    : 'bg-rose-950/30 border border-rose-500/20 text-rose-200/90'
+                }`}>
+                  <AlertCircle size={14} className={`shrink-0 mt-0.5 ${templateStatus === 'PENDING' ? 'text-amber-400' : 'text-rose-400'}`} />
                   <div>
-                    Esta plantilla se encuentra en estado <strong>{templateStatus}</strong>. Meta requiere unas horas para autorizar plantillas de utilidad nuevas. Puedes verificar el estado en tiempo real en{' '}
-                    <a href="/ajustes" target="_blank" rel="noreferrer" className="underline font-bold text-amber-300">
-                      Ajustes ➔ Plantillas WhatsApp
-                    </a>.
+                    {templateStatus === 'PENDING' ? (
+                      <>
+                        Esta plantilla está registrada y en proceso de revisión por <strong>Meta WABA</strong>. Meta requiere su aprobación antes del primer despacho. Pulsa <strong>Comprobar</strong> para verificar si Meta ya la aprobó.
+                      </>
+                    ) : (
+                      <>
+                        Esta plantilla no se encuentra registrada ni homologada en Meta WhatsApp Cloud API. Para darla de alta, diríjase a{' '}
+                        <a href="/ajustes" target="_blank" rel="noreferrer" className="underline font-bold text-rose-300">
+                          Ajustes ➔ Plantillas WhatsApp
+                        </a>.
+                      </>
+                    )}
                   </div>
                 </div>
               )}
@@ -598,13 +649,25 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
             <button
               type="button"
               onClick={handleEnviarWhatsApp}
-              disabled={enviando || cargando}
-              className="px-4 py-2 bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+              disabled={enviando || cargando || !isAprobadaMeta}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 ${
+                isAprobadaMeta
+                  ? 'bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white cursor-pointer'
+                  : 'bg-neutral-800 text-gray-500 border border-neutral-700 cursor-not-allowed opacity-80'
+              }`}
+              title={!isAprobadaMeta ? 'La plantilla debe estar autorizada por Meta para poder ser enviada.' : undefined}
             >
               {enviando ? (
                 <>
                   <Loader2 size={14} className="animate-spin" />
                   <span>Despachando a Meta...</span>
+                </>
+              ) : !isAprobadaMeta ? (
+                <>
+                  <Clock size={14} className="text-amber-400" />
+                  <span>
+                    {templateStatus === 'PENDING' ? 'Esperando Aprobación de Meta' : 'Plantilla No Aprobada'}
+                  </span>
                 </>
               ) : (
                 <>

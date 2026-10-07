@@ -3864,40 +3864,68 @@ async def enviar_recordatorio_whatsapp_endpoint(
             detail="Credenciales de Meta WhatsApp Cloud API no configuradas en el servidor ni en Ajustes."
         )
 
-    # 3. Construir components de la plantilla según el nombre y mapeo
-    p_nombre = str(variables.get("paciente_nombre") or "").strip()
-    p_cirugia = str(variables.get("cirugia") or "").strip()
-    p_fecha = str(variables.get("fecha") or "").strip()
-    p_hora = str(variables.get("hora") or "").strip()
-    p_prep = str(variables.get("preparacion") or "").strip()
+    # Validar existencia y estado de homologación de la plantilla en Supabase
+    try:
+        tpl_check = supabase.table("whatsapp_templates").select("name, status, body_text").eq("name", template_name).execute()
+        if tpl_check.data and len(tpl_check.data) > 0:
+            current_status = tpl_check.data[0].get("status", "PENDING")
+            if current_status != "APPROVED":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"La plantilla '{template_name}' se encuentra en estado '{current_status}'. Meta requiere que esté Aprobada (APPROVED) para permitir su envío a pacientes."
+                )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"La plantilla '{template_name}' no se encuentra registrada en Meta Cloud API ni en Ajustes. Debe homologarla antes de emitirla."
+            )
+    except HTTPException:
+        raise
+    except Exception as e_tpl_val:
+        logger.warning(f"Aviso al validar plantilla antes de enviar: {e_tpl_val}")
 
-    if template_name in ["recordatorio_turno_quirurgico", "turno_cirug_a"]:
-        p_medico = str(variables.get("cirujano_nombre") or "Equipo Quirúrgico").strip()
-        p_quirofano = str(variables.get("quirofano_nombre") or "Centrovisión").strip()
+    # 3. Construir components de la plantilla según el nombre y mapeo
+    import re
+    def _sanitize_meta_param(v: str, fallback: str = "") -> str:
+        s = str(v or fallback).strip()
+        lines = [l.strip() for l in s.splitlines() if l.strip()]
+        if len(lines) > 1:
+            s = " • ".join(lines)
+        s = re.sub(r"[\r\n\t]+", " ", s)
+        return re.sub(r"\s{2,}", " ", s).strip()
+
+    p_nombre = _sanitize_meta_param(variables.get("paciente_nombre"), "Estimado/a")
+    p_cirugia = _sanitize_meta_param(variables.get("cirugia"), "Cirugía Oftalmológica")
+    p_fecha = _sanitize_meta_param(variables.get("fecha"), "fecha a confirmar")
+    p_hora = _sanitize_meta_param(variables.get("hora"), "horario a confirmar")
+    p_prep = _sanitize_meta_param(variables.get("preparacion"), "Concurrir con DNI y en ayunas.")
+
+    components = []
+    if template_name == "turno_cirug_a":
+        # 'turno_cirug_a' en Meta es de texto fijo sin variables posicionales
+        components = []
+    elif template_name in ["recordatorio_turno_quirurgico"]:
+        p_medico = _sanitize_meta_param(variables.get("cirujano_nombre"), "Equipo Quirúrgico")
+        p_quirofano = _sanitize_meta_param(variables.get("quirofano_nombre"), "Centrovisión")
         body_params = [
-            {"type": "text", "text": p_nombre or "Estimado/a"},
-            {"type": "text", "text": p_fecha or "fecha a confirmar"},
-            {"type": "text", "text": p_hora or "horario a confirmar"},
-            {"type": "text", "text": p_medico or "Profesional"},
-            {"type": "text", "text": p_cirugia or "Cirugía Oftalmológica"},
-            {"type": "text", "text": p_quirofano or "Sede Central"}
+            {"type": "text", "text": p_nombre},
+            {"type": "text", "text": p_fecha},
+            {"type": "text", "text": p_hora},
+            {"type": "text", "text": p_medico},
+            {"type": "text", "text": p_cirugia},
+            {"type": "text", "text": p_quirofano}
         ]
+        components = [{"type": "body", "parameters": body_params}]
     else:
         # Default recordatorio con preparación (5 variables)
         body_params = [
-            {"type": "text", "text": p_nombre or "Estimado/a"},
-            {"type": "text", "text": p_cirugia or "Cirugía Oftalmológica"},
-            {"type": "text", "text": p_fecha or "fecha a confirmar"},
-            {"type": "text", "text": p_hora or "horario a confirmar"},
-            {"type": "text", "text": p_prep or "Concurrir con DNI y en ayunas."}
+            {"type": "text", "text": p_nombre},
+            {"type": "text", "text": p_cirugia},
+            {"type": "text", "text": p_fecha},
+            {"type": "text", "text": p_hora},
+            {"type": "text", "text": p_prep}
         ]
-
-    components = [
-        {
-            "type": "body",
-            "parameters": body_params
-        }
-    ]
+        components = [{"type": "body", "parameters": body_params}]
 
     client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
     try:
@@ -3947,6 +3975,8 @@ async def enviar_recordatorio_whatsapp_endpoint(
             "to": normalized_to
         }
 
+    except HTTPException:
+        raise
     except ConversationWindowClosedError:
         raise HTTPException(
             status_code=400,
