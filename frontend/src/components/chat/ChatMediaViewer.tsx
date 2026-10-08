@@ -107,20 +107,27 @@ export default function ChatMediaViewer({
     if (dataUri && (dataUri.startsWith('data:') || dataUri.startsWith('blob:'))) {
       return dataUri
     }
+
+    // 1. Si existe URL absoluta pública (ej. Supabase Storage o CDN), priorizarla siempre
+    if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+      let cleanUrl = url.replace(/\?+$/, '')
+      // Si por alguna razón vino con localhost o 127.0.0.1, redirigir a BACKEND_URL
+      if (cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1')) {
+        const match = cleanUrl.match(/\/static\/.+/)
+        if (match) {
+          return `${BACKEND_URL}${match[0]}`
+        }
+      }
+      return cleanUrl
+    }
+
+    // 2. Fallback a ruta relativa del backend local
     let target = relUrl || url
     if (!target) return ''
     if (target.startsWith('data:') || target.startsWith('blob:')) return target
     
     // Saneamiento de query params residuales (? al final)
     target = target.replace(/\?+$/, '')
-
-    // Sanear URLs que vengan con localhost o 127.0.0.1 para que apunten al backend real
-    if (target.includes('localhost') || target.includes('127.0.0.1')) {
-      const match = target.match(/\/static\/.+/)
-      if (match) {
-        target = match[0]
-      }
-    }
 
     if (target.startsWith('http://') || target.startsWith('https://')) {
       return target

@@ -532,7 +532,10 @@ def servir_archivo_media(subfolder: str, filename: str):
         
     file_path = os.path.join(STATIC_MEDIA_DIR, safe_subfolder, safe_filename)
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Archivo multimedia no encontrado.")
+        # Si el archivo no está en el disco local efímero (ej. despliegue en Railway),
+        # redirigir transparentemente al almacenamiento persistente en Supabase Storage
+        supabase_storage_url = f"https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/whatsapp-media/{safe_subfolder}/{safe_filename}"
+        return RedirectResponse(url=supabase_storage_url, status_code=307)
         
     import mimetypes
     guessed_mime, _ = mimetypes.guess_type(file_path)
