@@ -2853,6 +2853,11 @@ export default function ChatInbox() {
                             )
                           }
 
+                    // Omitir renderizado de mensajes de reacción en el timeline (se muestran sobre el mensaje original)
+                    if (msg.metadata_json?.tipo === 'reaction' || msg.contenido === '[REACTION] Mensaje recibido') {
+                      return null
+                    }
+
                     // 2. MENSAJE NORMAL DE WHATSAPP O STICKER
                     const isSticker = msg.metadata_json?.tipo === 'sticker'
                     const isButton = msg.metadata_json?.tipo === 'button' || msg.contenido?.startsWith('🔘') || msg.contenido === '[BUTTON] Mensaje recibido'
@@ -2862,19 +2867,36 @@ export default function ChatInbox() {
                                      Boolean(msg.metadata_json?.error_message)
                     const isWindowClosedError = Boolean(msg.metadata_json?.is_window_closed_error)
 
+                    const isDocumentFilename = Boolean(
+                      msg.contenido && (
+                        msg.contenido.trim().toLowerCase().endsWith('.pdf') || 
+                        msg.contenido.trim().toLowerCase().endsWith('.docx') || 
+                        msg.contenido.trim().toLowerCase().endsWith('.xlsx')
+                      )
+                    )
+                    const isPhotoContent = Boolean(
+                      msg.contenido && (msg.contenido.includes('📷') || msg.contenido.toLowerCase().includes('[foto]'))
+                    )
+
+                    const hasMedia = Boolean(
+                      (msg.metadata_json?.tipo &&
+                       msg.metadata_json?.tipo !== 'texto' &&
+                       msg.metadata_json?.tipo !== 'button' &&
+                       msg.metadata_json?.tipo !== 'template' &&
+                       msg.metadata_json?.tipo !== 'reaction') ||
+                      isDocumentFilename ||
+                      isPhotoContent
+                    )
+
                     const hasText = Boolean(
                       msg.contenido && (
                         isButton ||
                         isTemplate ||
-                        !msg.metadata_json?.tipo ||
-                        (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))
+                        (!isDocumentFilename && !isPhotoContent && (
+                          !msg.metadata_json?.tipo ||
+                          (!msg.contenido.startsWith('[') && !msg.contenido.endsWith(']'))
+                        ))
                       )
-                    )
-                    const hasMedia = Boolean(
-                      msg.metadata_json?.tipo &&
-                      msg.metadata_json?.tipo !== 'texto' &&
-                      msg.metadata_json?.tipo !== 'button' &&
-                      msg.metadata_json?.tipo !== 'template'
                     )
 
                           const operatorSenderInfo = isOperator ? getOperatorSenderInfo(msg) : null
@@ -2902,6 +2924,7 @@ export default function ChatInbox() {
                                   metadata={msg.metadata_json} 
                                   isOperator={isOperator} 
                                   mensajeId={msg.id}
+                                  contenidoTexto={msg.contenido}
                                 />
 
                                 {/* Micro-badge translúcido en la esquina inferior del sticker */}
@@ -2985,6 +3008,7 @@ export default function ChatInbox() {
                                     metadata={msg.metadata_json} 
                                     isOperator={isOperator} 
                                     mensajeId={msg.id}
+                                    contenidoTexto={msg.contenido}
                                     onTranscribeSuccess={(mId, transcript) => {
                                       setMensajes((prev) =>
                                         prev.map((m) =>

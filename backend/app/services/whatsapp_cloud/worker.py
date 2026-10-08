@@ -263,6 +263,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         if media_id:
             try:
                 from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient, MediaPayloadTooLargeError
+                from app.services.media_service import MediaService
                 from app.agent import transcribir_audio_con_gemini
                 p_id, tkn = get_whatsapp_cloud_credentials()
                 if p_id and tkn:
@@ -270,19 +271,23 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     audio_bytes, mime_type = await wa_client.download_media_bytes(media_id)
                     await wa_client.close()
 
-                    # Subir audio a Supabase Storage
-                    storage_path = f"audios/{int(datetime.now().timestamp())}_{media_id}.ogg"
+                    # Persistencia dual resiliente (disco local /static/media + Supabase Storage)
                     try:
-                        supabase.storage.from_("whatsapp-media").upload(
-                            file=audio_bytes,
-                            path=storage_path,
-                            file_options={"content-type": mime_type, "upsert": "true"}
+                        saved = MediaService.save_media_bytes(
+                            data=audio_bytes,
+                            subfolder="audio",
+                            mime_type=mime_type or "audio/ogg",
+                            original_filename=f"{media_id}.ogg",
+                            prefix="wa_voice"
                         )
-                        pub = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
-                        if pub:
-                            media_url = pub
+                        media_url = (saved.get("media_url") or "").rstrip("?")
+                        media_meta["media_url"] = media_url
+                        media_meta["relative_url"] = saved.get("relative_url")
+                        media_meta["file_name"] = saved.get("file_name") or f"{media_id}.ogg"
+                        media_meta["file_size_bytes"] = len(audio_bytes)
+                        media_meta["mime_type"] = mime_type
                     except Exception as st_err:
-                        logger.warning(f"[Worker Audio] Supabase storage upload warning: {st_err}")
+                        logger.warning(f"[Worker Audio] MediaService error al guardar audio: {st_err}")
 
                     # Transcribir audio automáticamente con Google Gemini
                     try:
@@ -318,67 +323,67 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
     elif msg_type in ("image", "document", "sticker", "video"):
         media = msg_dict.get(msg_type, {})
         media_id = media.get("id")
-        caption = media.get("caption") or media.get("filename") or ""
+        caption = media.get("caption") or ""
+        doc_name = media.get("filename") or ""
 
         # Mapeo de etiqueta de texto y tipo normalizado para la interfaz del CRM
         if msg_type == "image":
             tipo_normalizado = "imagen"
             text_content = caption or "📷 [Foto]"
+            subfolder = "images"
         elif msg_type == "sticker":
             tipo_normalizado = "sticker"
             text_content = "✨ [Sticker]"
+            subfolder = "stickers"
         elif msg_type == "video":
             tipo_normalizado = "video"
             text_content = caption or "🎥 [Video]"
+            subfolder = "videos"
         elif msg_type == "document":
             tipo_normalizado = "documento"
-            doc_name = media.get("filename") or "Documento"
+            doc_name = doc_name or "Documento"
             text_content = caption or f"📄 [{doc_name}]"
+            subfolder = "documents"
         else:
             tipo_normalizado = msg_type
             text_content = caption or f"[{msg_type.upper()}]"
+            subfolder = "media"
 
         media_meta["tipo"] = tipo_normalizado
-        if media.get("filename"):
-            media_meta["file_name"] = media.get("filename")
+        if doc_name:
+            media_meta["file_name"] = doc_name
 
         if media_id:
             try:
                 from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient, MediaPayloadTooLargeError
+                from app.services.media_service import MediaService
                 p_id, tkn = get_whatsapp_cloud_credentials()
                 if p_id and tkn:
                     wa_client = WhatsAppCloudClient(phone_number_id=p_id, access_token=tkn)
                     media_bytes, mime_type = await wa_client.download_media_bytes(media_id)
                     await wa_client.close()
 
-                    # Determinar extensión adecuada según MIME y tipo
-                    if "webp" in mime_type or msg_type == "sticker":
-                        ext = "webp"
-                    elif "video" in mime_type or msg_type == "video":
-                        ext = "mp4"
-                    elif "image" in mime_type or msg_type == "image":
-                        ext = "jpg" if "jpeg" in mime_type or "jpg" in mime_type else "png"
-                    elif "pdf" in mime_type:
-                        ext = "pdf"
-                    else:
-                        ext = "bin"
-
-                    storage_path = f"{msg_type}s/{int(datetime.now().timestamp())}_{media_id}.{ext}"
+                    # Guardar con persistencia dual resiliente (disco local /static/media + Supabase Storage)
                     try:
-                        supabase.storage.from_("whatsapp-media").upload(
-                            file=media_bytes,
-                            path=storage_path,
-                            file_options={"content-type": mime_type, "upsert": "true"}
+                        saved = MediaService.save_media_bytes(
+                            data=media_bytes,
+                            subfolder=subfolder,
+                            mime_type=mime_type or "application/octet-stream",
+                            original_filename=doc_name or (f"{media_id}.jpg" if msg_type == "image" else None),
+                            prefix=f"wa_{msg_type}"
                         )
-                        pub = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
-                        if pub:
-                            media_url = pub
+                        media_url = (saved.get("media_url") or "").rstrip("?")
+                        media_meta["media_url"] = media_url
+                        media_meta["relative_url"] = saved.get("relative_url")
+                        media_meta["file_name"] = saved.get("file_name") or doc_name
+                        media_meta["file_size_bytes"] = len(media_bytes)
+                        media_meta["mime_type"] = mime_type
                     except Exception as st_err:
-                        logger.warning(f"[Worker Media] Supabase storage upload warning: {st_err}")
+                        logger.warning(f"[Worker Media] MediaService error al guardar {msg_type}: {st_err}")
 
                 media_meta["media_url"] = media_url
                 media_meta["caption"] = caption
-                if msg_type == "video" and ("gif" in str(media.get("mime_type", "")).lower() or "gif" in str(media.get("caption", "")).lower()):
+                if msg_type == "video" and ("gif" in str(media.get("mime_type", "")).lower() or "gif" in str(caption).lower()):
                     media_meta["is_gif"] = True
             except MediaPayloadTooLargeError as sz_err:
                 logger.warning(f"[Worker Media] Archivo {media_id} ({msg_type}) excede 20MB: {sz_err}")
@@ -400,6 +405,67 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
             except Exception as dwn_err:
                 logger.error(f"[Worker Media] Error descargando {msg_type} de Meta: {dwn_err}")
                 media_meta["download_error"] = str(dwn_err)
+
+    elif msg_type == "location":
+        loc = msg_dict.get("location", {})
+        lat = loc.get("latitude")
+        lng = loc.get("longitude")
+        loc_name = loc.get("name") or "Ubicación compartida"
+        address = loc.get("address") or ""
+        text_content = f"📍 Ubicación: {loc_name}" + (f" ({address})" if address else "")
+        media_meta["tipo"] = "ubicacion"
+        media_meta["latitud"] = lat
+        media_meta["longitud"] = lng
+        media_meta["nombre"] = loc_name
+        media_meta["direccion"] = address
+        media_meta["maps_url"] = f"https://www.google.com/maps?q={lat},{lng}"
+
+    elif msg_type == "contacts":
+        contacts_list = msg_dict.get("contacts", [])
+        primer_contacto = contacts_list[0] if contacts_list else {}
+        c_name = primer_contacto.get("name", {}).get("formatted_name") or primer_contacto.get("name", {}).get("first_name") or "Contacto"
+        phones = primer_contacto.get("phones", [])
+        c_phone = phones[0].get("phone") if phones else ""
+        text_content = f"👤 Contacto: {c_name}" + (f" - Tel: {c_phone}" if c_phone else "")
+        media_meta["tipo"] = "contacto"
+        media_meta["contact_name"] = c_name
+        media_meta["contact_phone"] = c_phone
+        media_meta["contacts"] = contacts_list
+
+    elif msg_type == "reaction":
+        react_info = msg_dict.get("reaction", {})
+        target_wamid = react_info.get("message_id")
+        emoji = react_info.get("emoji")
+        # Vincular reacción al mensaje padre original si existe
+        if target_wamid:
+            try:
+                parent_msg = supabase.table("mensajes").select("id, metadata_json").eq("whatsapp_message_id", target_wamid).limit(1).execute()
+                if parent_msg.data and len(parent_msg.data) > 0:
+                    p_id = parent_msg.data[0]["id"]
+                    p_meta = parent_msg.data[0].get("metadata_json") or {}
+                    reactions = p_meta.get("reactions") or []
+                    if emoji:
+                        # Reemplazar reacción previa del paciente o agregar nueva
+                        reactions = [r for r in reactions if r.get("emisor") != "paciente"]
+                        reactions.append({
+                            "emisor": "paciente",
+                            "emoji": emoji,
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                    else:
+                        reactions = [r for r in reactions if r.get("emisor") != "paciente"]
+                    p_meta["reactions"] = reactions
+                    supabase.table("mensajes").update({"metadata_json": p_meta}).eq("id", p_id).execute()
+                    logger.info(f"[Worker Reaction] Reacción '{emoji}' vinculada al mensaje {target_wamid}")
+                    # Al vincular exitosamente la reacción, finalizamos para no generar un mensaje basura nuevo en el chat
+                    return {"status": "reaction_linked", "target_wamid": target_wamid}
+            except Exception as r_err:
+                logger.warning(f"[Worker Reaction] Error vinculando reacción: {r_err}")
+
+        text_content = f"Reacción: {emoji}" if emoji else "Reacción removida"
+        media_meta["tipo"] = "reaction"
+        media_meta["emoji"] = emoji
+        media_meta["target_wamid"] = target_wamid
     else:
         text_content = f"[{msg_type.upper()}] Mensaje recibido"
 

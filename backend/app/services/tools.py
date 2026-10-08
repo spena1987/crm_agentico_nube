@@ -2,7 +2,7 @@ import re
 import time
 import logging
 from typing import Any, Optional, List, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Caché en memoria para evitar duplicación de notas / eventos repetidos en corto tiempo (Debounce)
 _LAST_ESCALATION_CACHE: Dict[str, float] = {}
@@ -370,14 +370,23 @@ def escalar_a_operador_humano(conversacion_id: str, motivo: str, nivel_urgencia:
             }
         )
 
-        # 2. Desmarcar como leído para encender el badge rojo en la bandeja de operadores humanos
+        # 2. Desmarcar como leído en la conversación para encender el badge en la bandeja de operadores humanos
         if supabase:
             try:
-                supabase.table("mensajes").update({
-                    "metadata_json": {"leido_por_operador": False, "requiere_atencion_humana": True}
-                }).eq("conversacion_id", conversacion_id).eq("emisor", "paciente").execute()
-            except Exception:
-                pass
+                # Actualizar estado de la conversación sin destruir la metadata de los mensajes existentes
+                conv_res = supabase.table("conversaciones").select("unread_count, metadata_json").eq("id", conversacion_id).limit(1).execute()
+                if conv_res.data and len(conv_res.data) > 0:
+                    curr_unread = int(conv_res.data[0].get("unread_count") or 0)
+                    c_meta = conv_res.data[0].get("metadata_json") or {}
+                    c_meta["requiere_atencion_humana"] = True
+                    c_meta["escalado_humano_at"] = datetime.now(timezone.utc).isoformat()
+                    supabase.table("conversaciones").update({
+                        "unread_count": max(curr_unread, 1),
+                        "bot_disabled": True,
+                        "metadata_json": c_meta
+                    }).eq("id", conversacion_id).execute()
+            except Exception as esc_err:
+                logger.warning(f"Advertencia actualizando estado de conversación al escalar: {esc_err}")
 
         return {
             "success": True,

@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { 
   FileText, 
+  FileSpreadsheet,
   Download, 
   Play, 
   Pause, 
@@ -16,12 +17,18 @@ import {
   Sparkles,
   Copy,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  RotateCw,
+  ZoomIn,
+  ZoomOut,
+  Eye,
+  UserCheck,
+  Phone
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
 interface MediaMetadata {
-  tipo?: 'imagen' | 'audio' | 'documento' | 'sticker' | 'video' | 'ubicacion' | 'contacto' | 'texto'
+  tipo?: 'imagen' | 'audio' | 'documento' | 'sticker' | 'video' | 'ubicacion' | 'contacto' | 'texto' | 'reaction'
   media_url?: string
   relative_url?: string
   file_name?: string
@@ -34,7 +41,11 @@ interface MediaMetadata {
   latitud?: number
   longitud?: number
   nombre?: string
+  direccion?: string
   maps_url?: string
+  contact_name?: string
+  contact_phone?: string
+  contacts?: any[]
   vcard?: string
   delivery_status?: 'enviado' | 'entregado' | 'leido'
   reactions?: Array<{ emisor: string; emoji: string; timestamp?: string }>
@@ -45,16 +56,49 @@ interface ChatMediaViewerProps {
   metadata?: MediaMetadata
   isOperator?: boolean
   mensajeId?: string
+  contenidoTexto?: string
   onTranscribeSuccess?: (mensajeId: string, transcripcion: string) => void
 }
 
-export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTranscribeSuccess }: ChatMediaViewerProps) {
+export default function ChatMediaViewer({ 
+  metadata: propMetadata, 
+  isOperator, 
+  mensajeId, 
+  contenidoTexto,
+  onTranscribeSuccess 
+}: ChatMediaViewerProps) {
   const [modalOpen, setModalOpen] = useState(false)
+  const [rotacion, setRotacion] = useState(0)
+  const [zoom, setZoom] = useState(1)
   const [transcribiendo, setTranscribiendo] = useState(false)
   const [transcripcionLocal, setTranscripcionLocal] = useState<string | null>(null)
   const [copiado, setCopiado] = useState(false)
+  const [copiadoContacto, setCopiadoContacto] = useState(false)
 
-  if (!metadata || !metadata.tipo || metadata.tipo === 'texto') {
+  // Inferencia defensiva: Si metadata no tiene tipo pero el contenido o metadata indica un archivo
+  let metadata: MediaMetadata = { ...(propMetadata || {}) }
+  
+  if (!metadata.tipo && contenidoTexto) {
+    const txt = contenidoTexto.trim()
+    if (txt.toLowerCase().endsWith('.pdf') || txt.toLowerCase().includes('.pdf')) {
+      metadata.tipo = 'documento'
+      metadata.file_name = metadata.file_name || txt
+    } else if (txt.toLowerCase().endsWith('.docx') || txt.toLowerCase().endsWith('.doc')) {
+      metadata.tipo = 'documento'
+      metadata.file_name = metadata.file_name || txt
+    } else if (txt.toLowerCase().endsWith('.xlsx') || txt.toLowerCase().endsWith('.xls')) {
+      metadata.tipo = 'documento'
+      metadata.file_name = metadata.file_name || txt
+    } else if (txt.includes('📷') || txt.toLowerCase().includes('[foto]')) {
+      metadata.tipo = 'imagen'
+    } else if (txt.startsWith('📍 Ubicación:') || txt.includes('[LOCATION]')) {
+      metadata.tipo = 'ubicacion'
+    } else if (txt.startsWith('👤 Contacto:') || txt.includes('[CONTACTS]')) {
+      metadata.tipo = 'contacto'
+    }
+  }
+
+  if (!metadata || !metadata.tipo || metadata.tipo === 'texto' || metadata.tipo === 'reaction') {
     return null
   }
 
@@ -67,7 +111,10 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
     if (!target) return ''
     if (target.startsWith('data:') || target.startsWith('blob:')) return target
     
-    // Sanear URLs que vengan con localhost o 127.0.0.1 para que apunten al dominio de producción
+    // Saneamiento de query params residuales (? al final)
+    target = target.replace(/\?+$/, '')
+
+    // Sanear URLs que vengan con localhost o 127.0.0.1 para que apunten al backend real
     if (target.includes('localhost') || target.includes('127.0.0.1')) {
       const match = target.match(/\/static\/.+/)
       if (match) {
@@ -125,11 +172,34 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
     setTimeout(() => setCopiado(false), 2000)
   }
 
+  const handleCopyContactPhone = () => {
+    const ph = metadata.contact_phone || ''
+    if (!ph) return
+    navigator.clipboard.writeText(ph)
+    setCopiadoContacto(true)
+    setTimeout(() => setCopiadoContacto(false), 2000)
+  }
+
   const isPurged = Boolean(metadata.media_purged)
+
+  // Obtener icono e identidad para tipos de documentos
+  const getDocTypeInfo = (fileName?: string) => {
+    const f = (fileName || '').toLowerCase()
+    if (f.endsWith('.pdf')) {
+      return { label: 'PDF', bgIcon: 'bg-red-500/15 text-red-500', isPdf: true }
+    }
+    if (f.endsWith('.xlsx') || f.endsWith('.xls') || f.endsWith('.csv')) {
+      return { label: 'Excel', bgIcon: 'bg-emerald-500/15 text-emerald-500', isExcel: true }
+    }
+    if (f.endsWith('.docx') || f.endsWith('.doc')) {
+      return { label: 'Word', bgIcon: 'bg-blue-500/15 text-blue-500', isWord: true }
+    }
+    return { label: 'Documento', bgIcon: 'bg-indigo-500/15 text-indigo-400' }
+  }
 
   return (
     <div className="mt-1 space-y-2">
-      {/* 1. IMAGEN */}
+      {/* 1. IMAGEN / ESTUDIO MÉDICO */}
       {metadata.tipo === 'imagen' && (
         isPurged ? (
           <div className="p-2.5 rounded-xl border border-slate-700/60 bg-[#111a30] text-slate-300 text-xs flex items-center gap-2 max-w-xs">
@@ -144,65 +214,136 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
         ) : mediaUrl ? (
           <div>
             <div 
-              onClick={() => setModalOpen(true)}
-              className="relative rounded-xl overflow-hidden cursor-pointer group border border-slate-700/60 shadow-sm max-w-xs"
+              onClick={() => {
+                setRotacion(0)
+                setZoom(1)
+                setModalOpen(true)
+              }}
+              className="relative rounded-xl overflow-hidden cursor-pointer group border border-slate-700/60 shadow-sm max-w-xs bg-slate-950/40"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img 
                 src={mediaUrl} 
                 alt={metadata.caption || metadata.file_name || 'Imagen de WhatsApp'}
-                className="w-full max-h-64 object-cover group-hover:scale-105 transition-transform duration-200"
+                className="w-full max-h-64 object-cover group-hover:scale-102 transition-transform duration-200"
                 loading="lazy"
               />
-              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                <Maximize2 size={20} />
+              <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-2">
+                <Maximize2 size={22} className="drop-shadow-md" />
+                <span className="text-xs font-semibold drop-shadow-md">Ampliar</span>
               </div>
             </div>
 
-            {/* Modal Lightbox para Zoom de imagen médica */}
+            {/* Modal Lightbox con Zoom Panorámico y Rotación Médica (90°) */}
             {modalOpen && (
               <div 
-                className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 select-none"
                 onClick={() => setModalOpen(false)}
               >
                 <div 
-                  className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden p-2 flex flex-col items-center shadow-2xl"
+                  className="relative w-full max-w-4xl max-h-[92vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col items-center shadow-2xl"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div className="w-full flex items-center justify-between p-2 text-white border-b border-slate-800 mb-2">
-                    <span className="text-xs font-semibold truncate max-w-md">
+                  {/* Barra de herramientas superior */}
+                  <div className="w-full flex items-center justify-between p-3 text-white border-b border-slate-800 bg-slate-950/70">
+                    <span className="text-xs font-semibold truncate max-w-sm text-slate-200">
                       {metadata.caption || metadata.file_name || 'Estudio / Imagen Médica'}
                     </span>
-                    <div className="flex items-center gap-2">
+                    
+                    <div className="flex items-center gap-1.5">
+                      {/* Botón Rotar 90° */}
+                      <button
+                        type="button"
+                        onClick={() => setRotacion((prev) => (prev + 90) % 360)}
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition-colors flex items-center gap-1 text-xs"
+                        title="Rotar 90° (útil para recetas u órdenes médicas horizontales)"
+                      >
+                        <RotateCw size={15} />
+                        <span className="text-[11px] hidden sm:inline">Rotar</span>
+                      </button>
+
+                      {/* Botones Zoom */}
+                      <button
+                        type="button"
+                        onClick={() => setZoom((prev) => Math.min(prev + 0.25, 3))}
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition-colors"
+                        title="Acercar zoom"
+                      >
+                        <ZoomIn size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setZoom((prev) => Math.max(prev - 0.25, 0.75))}
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white transition-colors"
+                        title="Alejar zoom"
+                      >
+                        <ZoomOut size={15} />
+                      </button>
+                      {zoom !== 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setZoom(1)}
+                          className="px-1.5 py-0.5 hover:bg-slate-800 rounded text-[10px] text-blue-300 transition-colors"
+                          title="Restablecer zoom normal"
+                        >
+                          100%
+                        </button>
+                      )}
+
+                      <div className="h-4 w-px bg-slate-700 mx-1" />
+
+                      {/* Botón Descargar */}
                       <a 
                         href={mediaUrl} 
-                        download={metadata.file_name || 'imagen.jpg'}
+                        download={metadata.file_name || 'imagen_medica.jpg'}
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors"
-                        title="Descargar imagen"
+                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-emerald-400 transition-colors"
+                        title="Descargar imagen en tamaño original"
                       >
                         <Download size={16} />
                       </a>
+
+                      {/* Botón Cerrar */}
                       <button 
+                        type="button"
                         onClick={() => setModalOpen(false)}
-                        className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 transition-colors"
+                        className="p-1.5 hover:bg-rose-500/20 hover:text-rose-400 rounded-lg text-slate-400 transition-colors ml-1"
+                        title="Cerrar visor"
                       >
-                        <X size={16} />
+                        <X size={17} />
                       </button>
                     </div>
                   </div>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img 
-                    src={mediaUrl} 
-                    alt="Vista ampliada" 
-                    className="max-h-[75vh] w-auto object-contain rounded-lg"
-                  />
+
+                  {/* Lienzo de imagen con transformaciones */}
+                  <div className="w-full flex-1 min-h-[300px] max-h-[78vh] overflow-auto flex items-center justify-center p-4 bg-slate-950/50">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                      src={mediaUrl} 
+                      alt="Vista ampliada" 
+                      style={{
+                        transform: `rotate(${rotacion}deg) scale(${zoom})`,
+                        transition: 'transform 0.2s ease-out'
+                      }}
+                      className="max-h-[72vh] max-w-full object-contain rounded-lg shadow-lg select-none"
+                    />
+                  </div>
                 </div>
               </div>
             )}
           </div>
-        ) : null
+        ) : (
+          <div className="p-3 rounded-xl border border-slate-700/60 bg-[#111a30] text-slate-300 text-xs flex items-center gap-2.5 max-w-xs shadow-sm">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 shrink-0">
+              <AlertCircle size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-slate-200 truncate leading-snug">Foto médica</p>
+              <span className="text-[10.5px] text-slate-400 leading-tight block">Imagen recibida por WhatsApp</span>
+            </div>
+          </div>
+        )
       )}
 
       {/* 2. AUDIO / NOTA DE VOZ CON TRANSCRIPCIÓN IA */}
@@ -309,44 +450,79 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
       )}
 
       {/* 3. DOCUMENTO / PDF DE ESTUDIOS */}
-      {metadata.tipo === 'documento' && (
-        <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 min-w-[220px] max-w-sm ${
-          isOperator 
-            ? 'bg-blue-700/60 border-blue-500/50 text-white' 
-            : 'bg-white dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)] shadow-sm'
-        }`}>
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2 rounded-lg bg-red-500/10 text-red-500 shrink-0">
-              <FileText size={20} />
+      {metadata.tipo === 'documento' && (() => {
+        const docInfo = getDocTypeInfo(metadata.file_name)
+        return (
+          <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 min-w-[240px] max-w-sm ${
+            isOperator 
+              ? 'bg-blue-700/60 border-blue-500/50 text-white shadow-sm' 
+              : 'bg-white dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)] shadow-sm'
+          }`}>
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className={`p-2.5 rounded-xl ${docInfo.bgIcon} shrink-0`}>
+                {docInfo.isExcel ? (
+                  <FileSpreadsheet size={20} />
+                ) : (
+                  <FileText size={20} />
+                )}
+              </div>
+              <div className="truncate min-w-0 flex-1">
+                <p className="text-xs font-bold truncate leading-tight" title={metadata.file_name}>
+                  {metadata.file_name || 'Documento adjunto'}
+                </p>
+                <div className="flex items-center gap-2 text-[10px] opacity-75 mt-0.5">
+                  <span className="font-semibold uppercase tracking-wider">{docInfo.label}</span>
+                  {metadata.file_size_bytes ? (
+                    <>
+                      <span>•</span>
+                      <span>{formatFileSize(metadata.file_size_bytes)}</span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
             </div>
-            <div className="truncate min-w-0">
-              <p className="text-xs font-bold truncate leading-tight" title={metadata.file_name}>
-                {metadata.file_name || 'Documento adjunto'}
-              </p>
-              <span className="text-[10px] opacity-70">
-                {formatFileSize(metadata.file_size_bytes) || 'PDF / Documento'}
-              </span>
-            </div>
-          </div>
 
-          {mediaUrl && (
-            <a
-              href={mediaUrl}
-              download={metadata.file_name || 'documento.pdf'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`p-2 rounded-lg transition-colors shrink-0 ${
-                isOperator 
-                  ? 'hover:bg-blue-600 text-white' 
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-blue-600'
-              }`}
-              title="Descargar archivo"
-            >
-              <Download size={15} />
-            </a>
-          )}
-        </div>
-      )}
+            {mediaUrl ? (
+              <div className="flex items-center gap-1 shrink-0">
+                {/* Botón Ver / Abrir en pestaña */}
+                <a
+                  href={mediaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`p-2 rounded-lg transition-colors ${
+                    isOperator 
+                      ? 'hover:bg-blue-600 text-white/90 hover:text-white' 
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300'
+                  }`}
+                  title="Abrir y previsualizar documento en nueva pestaña"
+                >
+                  <Eye size={15} />
+                </a>
+
+                {/* Botón Descargar */}
+                <a
+                  href={mediaUrl}
+                  download={metadata.file_name || 'documento.pdf'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`p-2 rounded-lg transition-colors ${
+                    isOperator 
+                      ? 'hover:bg-blue-600 text-white' 
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-400'
+                  }`}
+                  title="Descargar archivo en tu equipo"
+                >
+                  <Download size={15} />
+                </a>
+              </div>
+            ) : (
+              <span className="text-[10px] text-amber-500 font-medium px-2 py-1 rounded bg-amber-500/10 shrink-0">
+                Adjunto
+              </span>
+            )}
+          </div>
+        )
+      })()}
 
       {/* 3.5. VIDEO / GIF */}
       {metadata.tipo === 'video' && (
@@ -404,12 +580,58 @@ export default function ChatMediaViewer({ metadata, isOperator, mensajeId, onTra
           href={metadata.maps_url || `https://maps.google.com/?q=${metadata.latitud},${metadata.longitud}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-xs font-semibold hover:bg-blue-100 transition-colors"
+          className="inline-flex items-center gap-2.5 p-3 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/80 text-xs font-semibold hover:bg-blue-100/90 dark:hover:bg-blue-900/40 transition-all shadow-xs group max-w-sm"
         >
-          <MapPin size={16} className="text-blue-600 shrink-0" />
-          <span className="truncate max-w-[200px]">{metadata.nombre || 'Ver en Google Maps'}</span>
-          <ExternalLink size={12} className="shrink-0 opacity-60" />
+          <div className="p-2 rounded-lg bg-blue-500/15 text-blue-600 dark:text-blue-400 shrink-0 group-hover:scale-105 transition-transform">
+            <MapPin size={18} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="font-bold block truncate text-slate-900 dark:text-slate-100">{metadata.nombre || 'Ubicación Compartida'}</span>
+            {metadata.direccion && (
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 block truncate">{metadata.direccion}</span>
+            )}
+            <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium inline-flex items-center gap-1 mt-0.5">
+              Ver en Google Maps <ExternalLink size={10} />
+            </span>
+          </div>
         </a>
+      )}
+
+      {/* 5.5. CONTACTO */}
+      {metadata.tipo === 'contacto' && (
+        <div className="p-3 rounded-xl border border-slate-700/60 bg-[#121c33] text-slate-100 text-xs flex items-center justify-between gap-3 min-w-[230px] max-w-sm shadow-sm">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="p-2.5 rounded-xl bg-teal-500/15 text-teal-400 shrink-0">
+              <UserCheck size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-bold text-slate-100 truncate text-xs">
+                {metadata.contact_name || metadata.nombre || 'Contacto'}
+              </p>
+              {metadata.contact_phone && (
+                <p className="text-[11px] text-slate-300 font-mono mt-0.5 truncate flex items-center gap-1">
+                  <Phone size={11} className="text-teal-400" />
+                  {metadata.contact_phone}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {metadata.contact_phone && (
+            <button
+              type="button"
+              onClick={handleCopyContactPhone}
+              className="p-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors shrink-0 flex items-center gap-1"
+              title="Copiar teléfono del contacto"
+            >
+              {copiadoContacto ? (
+                <Check size={14} className="text-emerald-400" />
+              ) : (
+                <Copy size={14} />
+              )}
+            </button>
+          )}
+        </div>
       )}
 
       {/* 6. BADGE DE REACCIONES */}
