@@ -22,7 +22,9 @@ import {
   X,
   Tag,
   Database,
-  FolderOpen
+  FolderOpen,
+  CheckCheck,
+  BellRing
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -49,6 +51,11 @@ export default function ChatPatientSidebar({
 }: PatientSidebarProps) {
   // Estado local enriquecido del paciente (con fallback a BD)
   const [pacienteInfo, setPacienteInfo] = useState<any>(paciente || {})
+
+  // Estados para Casos Quirúrgicos y Recordatorios
+  const [casosQuirurgicos, setCasosQuirurgicos] = useState<any[]>([])
+  const [cargandoCasos, setCargandoCasos] = useState(false)
+  const [casosOpen, setCasosOpen] = useState(true)
 
   // Estados para Presupuestos
   const [presupuestos, setPresupuestos] = useState<any[]>([])
@@ -197,7 +204,25 @@ export default function ChatPatientSidebar({
       }
     }
 
+    const loadCasosQuirurgicos = async () => {
+      try {
+        setCargandoCasos(true)
+        const { data: cData } = await supabase
+          .from('asesorias_quirurgicas')
+          .select('id, codigo_caso, practica_nombre, fecha_definitiva_cirugia, fecha_probable_cirugia, estado, checklist_prequirurgico, created_at')
+          .eq('paciente_id', paciente.id)
+          .order('created_at', { ascending: false })
+          .limit(3)
+        setCasosQuirurgicos(cData || [])
+      } catch (err) {
+        console.warn('Error cargando casos quirúrgicos en sidebar:', err)
+      } finally {
+        setCargandoCasos(false)
+      }
+    }
+
     loadPresupuestos()
+    loadCasosQuirurgicos()
   }, [paciente?.id])
 
   if (!paciente) {
@@ -415,7 +440,105 @@ export default function ChatPatientSidebar({
           </div>
         </div>
 
-        {/* 2. PRÓXIMOS TURNOS (CONSULTA EN VIVO A GECLISA - COLAPSABLE POR DEFECTO) */}
+        {/* 2. CIRUGÍA & RECORDATORIO QUIRÚRGICO DE WHATSAPP */}
+        {casosQuirurgicos.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#14203d] border border-indigo-700/50">
+              <button
+                type="button"
+                onClick={() => setCasosOpen(!casosOpen)}
+                className="flex-1 flex items-center justify-between text-left pr-2"
+              >
+                <div className="flex items-center gap-1.5 font-bold text-slate-200 text-[11px]">
+                  <Stethoscope size={13} className="text-indigo-400" />
+                  <span>Cirugía & Recordatorio Qx</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold border bg-indigo-950 text-indigo-300 border-indigo-800/60">
+                    {casosQuirurgicos.length}
+                  </span>
+                  <ChevronDown
+                    size={15}
+                    className={`text-slate-400 transition-transform duration-200 ${casosOpen ? 'rotate-180 text-indigo-300' : ''}`}
+                  />
+                </div>
+              </button>
+            </div>
+
+            {casosOpen && (
+              <div className="space-y-2 pt-1">
+                {cargandoCasos ? (
+                  <div className="p-3 text-center text-slate-400">
+                    <Loader2 size={16} className="animate-spin mx-auto text-indigo-400" />
+                  </div>
+                ) : (
+                  casosQuirurgicos.map((caso) => {
+                    const chk = caso.checklist_prequirurgico || {}
+                    const rec = chk._recordatorio_qx || {}
+                    const fechaQx = caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || 'Sin fecha'
+                    const recEstado = rec.estado || 'no_enviado'
+
+                    return (
+                      <div key={caso.id} className="p-3 rounded-xl bg-[#14203d] border border-slate-700/60 space-y-2 shadow-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-500/30">
+                              {caso.codigo_caso || 'Caso Qx'}
+                            </span>
+                            <p className="font-bold text-slate-100 text-xs mt-1 truncate" title={caso.practica_nombre}>
+                              {caso.practica_nombre || 'Cirugía Oftalmológica'}
+                            </p>
+                            <p className="text-[10px] text-gray-400 font-mono mt-0.5">
+                              📅 Fecha: {fechaQx} ({caso.estado})
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Badge de Recordatorio */}
+                        <div className="pt-1">
+                          {recEstado === 'confirmado' ? (
+                            <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 text-[10.5px] font-bold">
+                              <CheckCheck size={13} className="text-emerald-400 shrink-0" />
+                              <span>Paciente confirmó asistencia a cirugía</span>
+                            </div>
+                          ) : recEstado === 'enviado' ? (
+                            <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-amber-950/70 border border-amber-500/40 text-amber-300 text-[10.5px] font-semibold">
+                              <Clock size={12} className="text-amber-400 shrink-0 animate-pulse" />
+                              <span>Recordatorio enviado • Esperando</span>
+                            </div>
+                          ) : recEstado === 'con_consulta' ? (
+                            <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-purple-950/80 border border-purple-500/50 text-purple-200 text-[10.5px] font-bold">
+                              <AlertTriangle size={13} className="text-purple-400 shrink-0" />
+                              <span>El paciente tiene consultas sobre la cirugía</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-neutral-900 border border-slate-700/60 text-slate-400 text-[10px]">
+                              <BellRing size={12} className="text-slate-500 shrink-0" />
+                              <span>Sin recordatorio de cirugía enviado</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="pt-1 border-t border-slate-800 flex items-center justify-end">
+                          <Link
+                            href={`/pipeline-quirurgico?q=${caso.codigo_caso || ''}`}
+                            target="_blank"
+                            className="text-[10.5px] text-blue-400 hover:text-blue-300 font-bold flex items-center gap-1 transition-colors"
+                          >
+                            <span>Ver en Pipeline</span>
+                            <ExternalLink size={11} />
+                          </Link>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 3. PRÓXIMOS TURNOS (CONSULTA EN VIVO A GECLISA - COLAPSABLE POR DEFECTO) */}
         <div className="space-y-2">
           
           {/* Botón Acordeón Cabecera */}

@@ -20,7 +20,9 @@ import {
   Eye,
   Layers,
   Sparkles,
-  BellRing
+  BellRing,
+  CheckCheck,
+  AlertCircle
 } from 'lucide-react'
 
 import type { AsesoriaCasoPipeline } from '@/app/pipeline-quirurgico/page'
@@ -174,6 +176,21 @@ export default function VistaVerticalPipeline({
                     const estadoSelectValue = ['en_espera', 'pre_quirofano', 'en_operacion'].includes(caso.estado)
                       ? 'programado'
                       : caso.estado
+
+                    // Información unificada del recordatorio quirúrgico de WhatsApp
+                    const recInfo = caso.recordatorio_qx || (
+                      caso.turno_quirofano_info?.checks_adicionales?.recordatorio_estado ? {
+                        estado: caso.turno_quirofano_info.checks_adicionales.recordatorio_estado,
+                        enviado_at: caso.turno_quirofano_info.checks_adicionales.recordatorio_fecha,
+                        respondido_at: caso.turno_quirofano_info.checks_adicionales.recordatorio_respondido_at,
+                        respuesta_texto: caso.turno_quirofano_info.checks_adicionales.recordatorio_respuesta_texto
+                      } : caso.turno_quirofano_info?.checks_adicionales?.recordatorio_enviado ? {
+                        estado: 'enviado',
+                        enviado_at: caso.turno_quirofano_info.checks_adicionales.recordatorio_fecha
+                      } : {
+                        estado: 'no_enviado'
+                      }
+                    )
 
                     // Cálculo semáforo de próxima acción
                     let labelFechaAccion = ''
@@ -364,6 +381,48 @@ export default function VistaVerticalPipeline({
                               </span>
                             </div>
 
+                            {/* Badge Semáforo de Recordatorio Quirúrgico de WhatsApp */}
+                            <div className="pt-0.5">
+                              {recInfo.estado === 'confirmado' ? (
+                                <div
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 font-mono text-[10px] font-bold shadow-xs truncate"
+                                  title={`Confirmado por el paciente${recInfo.respondido_at ? ` el ${new Date(recInfo.respondido_at).toLocaleDateString()} a las ${new Date(recInfo.respondido_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`}
+                                >
+                                  <CheckCheck size={12} className="text-emerald-400 shrink-0" />
+                                  <span className="truncate">Confirmó cirugía</span>
+                                  {recInfo.respondido_at && (
+                                    <span className="text-[9px] text-emerald-400/80 font-normal shrink-0">
+                                      ({new Date(recInfo.respondido_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}hs)
+                                    </span>
+                                  )}
+                                </div>
+                              ) : recInfo.estado === 'enviado' ? (
+                                <div
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-950/70 text-amber-300 border border-amber-500/40 font-mono text-[10px] font-semibold shadow-xs truncate"
+                                  title={`Recordatorio oficial enviado${recInfo.enviado_at ? ` el ${new Date(recInfo.enviado_at).toLocaleDateString()}` : ''}. Esperando confirmación del paciente.`}
+                                >
+                                  <Clock size={11} className="text-amber-400 shrink-0 animate-pulse" />
+                                  <span className="truncate">Recordatorio enviado • Esperando</span>
+                                </div>
+                              ) : recInfo.estado === 'con_consulta' ? (
+                                <div
+                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-purple-950/80 text-purple-200 border border-purple-500/50 font-mono text-[10px] font-bold shadow-xs truncate"
+                                  title="El paciente indicó que tiene consultas sobre la cirugía tras el recordatorio. Requiere atención asistencial."
+                                >
+                                  <AlertCircle size={12} className="text-purple-400 shrink-0" />
+                                  <span className="truncate">Tiene consulta • Requiere atención</span>
+                                </div>
+                              ) : (caso.estado === 'confirmado' || caso.estado === 'programado') ? (
+                                <div
+                                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-800/70 text-gray-400 border border-neutral-700/60 font-mono text-[9.5px] truncate"
+                                  title="Aún no se ha enviado el recordatorio oficial al paciente"
+                                >
+                                  <BellRing size={10} className="text-gray-500 shrink-0" />
+                                  <span className="truncate">Sin recordatorio enviado</span>
+                                </div>
+                              ) : null}
+                            </div>
+
                             {/* Próxima Acción Programada */}
                             {Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) && (
                               <div
@@ -449,15 +508,50 @@ export default function VistaVerticalPipeline({
                                 </Link>
                               )}
 
-                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) */}
+                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado */}
                               <button
                                 type="button"
                                 onClick={() => onAbrirRecordatorioQx?.(caso)}
-                                className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
-                                title="Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)"
+                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
+                                  recInfo.estado === 'confirmado'
+                                    ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
+                                    : recInfo.estado === 'enviado'
+                                    ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/40 text-amber-300 hover:text-white'
+                                    : recInfo.estado === 'con_consulta'
+                                    ? 'bg-purple-950/80 hover:bg-purple-900 border-purple-500/50 text-purple-300 hover:text-white'
+                                    : 'bg-indigo-950/80 hover:bg-indigo-900 border-indigo-500/40 text-indigo-300 hover:text-white'
+                                }`}
+                                title={
+                                  recInfo.estado === 'confirmado'
+                                    ? 'Paciente confirmó cirugía por WhatsApp. Clic para ver o reenviar recordatorio'
+                                    : recInfo.estado === 'enviado'
+                                    ? 'Recordatorio oficial enviado (esperando respuesta). Clic para reenviar'
+                                    : recInfo.estado === 'con_consulta'
+                                    ? 'El paciente tiene consultas sobre la cirugía. Clic para gestionar'
+                                    : 'Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)'
+                                }
                               >
-                                <BellRing size={13} className="text-indigo-400" />
-                                <span>Recordatorio Qx</span>
+                                {recInfo.estado === 'confirmado' ? (
+                                  <>
+                                    <CheckCheck size={13} className="text-emerald-400" />
+                                    <span>Confirmado</span>
+                                  </>
+                                ) : recInfo.estado === 'enviado' ? (
+                                  <>
+                                    <Clock size={13} className="text-amber-400" />
+                                    <span>Enviado</span>
+                                  </>
+                                ) : recInfo.estado === 'con_consulta' ? (
+                                  <>
+                                    <AlertCircle size={13} className="text-purple-400" />
+                                    <span>Con Consulta</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <BellRing size={13} className="text-indigo-400" />
+                                    <span>Recordatorio Qx</span>
+                                  </>
+                                )}
                               </button>
 
                               {/* Botón WhatsApp */}

@@ -82,9 +82,18 @@ export interface AsesoriaCasoPipeline {
     hora?: string
     estado?: string
     quirofano_nombre?: string
+    checks_adicionales?: any
   }
   es_critico?: boolean
   checklist_prequirurgico?: any
+  recordatorio_qx?: {
+    estado: 'no_enviado' | 'enviado' | 'confirmado' | 'con_consulta'
+    enviado_at?: string | null
+    respondido_at?: string | null
+    respuesta_tipo?: string | null
+    respuesta_texto?: string | null
+    template?: string | null
+  }
   created_at: string
   updated_at?: string
 }
@@ -186,6 +195,9 @@ export default function PipelineQuirurgicoPage() {
   const [filtroFechaTipo, setFiltroFechaTipo] = useState<
     'todas' | 'vencidas' | '7dias' | '30dias' | 'sin_fecha' | 'personalizado'
   >('todas')
+  const [filtroRecordatorio, setFiltroRecordatorio] = useState<
+    'todos' | 'confirmados' | 'enviados' | 'con_consulta' | 'sin_enviar'
+  >('todos')
   const [fechaDesde, setFechaDesde] = useState<string>('')
   const [fechaHasta, setFechaHasta] = useState<string>('')
   const [soloAlertas, setSoloAlertas] = useState(false)
@@ -605,7 +617,25 @@ export default function PipelineQuirurgicoPage() {
       }
     }
 
-    return matchTexto && matchCirujano && matchObraSocial && matchPractica && matchFecha
+    // Filtro por Estado de Recordatorio Quirúrgico
+    let matchRecordatorio = true
+    if (filtroRecordatorio !== 'todos') {
+      const recEstado = caso.recordatorio_qx?.estado || (
+        caso.turno_quirofano_info?.checks_adicionales?.recordatorio_estado ||
+        (caso.turno_quirofano_info?.checks_adicionales?.recordatorio_enviado ? 'enviado' : 'no_enviado')
+      )
+      if (filtroRecordatorio === 'confirmados') {
+        matchRecordatorio = recEstado === 'confirmado'
+      } else if (filtroRecordatorio === 'enviados') {
+        matchRecordatorio = recEstado === 'enviado'
+      } else if (filtroRecordatorio === 'con_consulta') {
+        matchRecordatorio = recEstado === 'con_consulta'
+      } else if (filtroRecordatorio === 'sin_enviar') {
+        matchRecordatorio = recEstado === 'no_enviado' || !recEstado
+      }
+    }
+
+    return matchTexto && matchCirujano && matchObraSocial && matchPractica && matchFecha && matchRecordatorio
   }
 
   // Casos activos filtrados por columna
@@ -629,6 +659,7 @@ export default function PipelineQuirurgicoPage() {
     filtroObraSocial,
     filtroPractica,
     filtroFechaTipo,
+    filtroRecordatorio,
     fechaDesde,
     fechaHasta,
     soloAlertas
@@ -934,6 +965,23 @@ export default function PipelineQuirurgicoPage() {
               <option value="30dias">📅 Próximos 30 días</option>
               <option value="sin_fecha">❓ Sin fecha asignada</option>
               <option value="personalizado">🎯 Rango Personalizado...</option>
+            </select>
+          </div>
+
+          {/* Filtro por Recordatorio Quirúrgico de WhatsApp */}
+          <div className="flex items-center gap-1 min-w-[155px] max-w-[210px]">
+            <BellRing size={12} className="text-indigo-400 shrink-0" />
+            <select
+              value={filtroRecordatorio}
+              onChange={(e) => setFiltroRecordatorio(e.target.value as any)}
+              className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-300 rounded-xl px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer truncate font-medium"
+              title="Filtrar por estado del recordatorio oficial enviado al paciente"
+            >
+              <option value="todos">Recordatorios: Todos</option>
+              <option value="confirmados">✅ Confirmados por paciente</option>
+              <option value="enviados">⏳ Enviados (esperando)</option>
+              <option value="con_consulta">⚠️ Con consulta / atención</option>
+              <option value="sin_enviar">🔔 Pendientes de envío</option>
             </select>
           </div>
 

@@ -1098,14 +1098,14 @@ async def handle_automated_interactive_action(
         return True
 
     # =========================================================================
-    # CASO 2: CONFIRMACIÓN DE TURNO QUIRÚRGICO / CONSULTA
+    # CASO 2: CONFIRMACIÓN DE ASISTENCIA A CIRUGÍA / TURNO QUIRÚRGICO
     # =========================================================================
     is_confirm = any(k in title_str or k in btn_id for k in [
-        "confirmar", "confirmar turno", "confirmar asistencia", "si, confirmo", "asistiré", "asistire"
+        "confirmar asistencia", "confirmar turno", "confirmar", "confirmo", "si, confirmo", "si confirmo", "asistiré", "asistire"
     ]) or btn_id.startswith("confirmar_turno")
 
     if is_confirm:
-        logger.info(f"[Interactive Auto] Confirmación de turno para paciente {paciente_id} ({normalized_phone})")
+        logger.info(f"[Interactive Auto] Confirmación de turno quirúrgico para paciente {paciente_id} ({normalized_phone})")
         turno_id = None
         if "confirmar_turno" in btn_id:
             match_id = re.search(r"confirmar_turno[_\-:]([a-zA-Z0-9\-_]+)", button_id or "", re.IGNORECASE)
@@ -1115,35 +1115,99 @@ async def handle_automated_interactive_action(
                 turno_id = button_id.replace("CONFIRMAR_TURNO_", "").replace("confirmar_turno_", "").strip()
 
         turno_data = None
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+
         if paciente_id:
             try:
                 today_str = datetime.now(timezone.utc).date().isoformat()
-                t_query = supabase.table("turnos_quirofano").select("id, fecha, hora_inicio, estado, practica_o_cirugia, quirofanos(nombre)")
+                t_query = supabase.table("turnos_quirofano").select("id, asesoria_id, fecha_cirugia, hora_inicio, estado, checks_adicionales, practica_nombre, quirofanos(nombre)")
                 if turno_id:
                     t_query = t_query.eq("id", turno_id)
                 else:
-                    # Si no hay ID explícito, buscar el próximo turno pendiente o notificado
-                    t_query = t_query.eq("paciente_id", paciente_id).in_("estado", ["pendiente", "notificado", "agendado"]).gte("fecha", today_str).order("fecha", desc=False).limit(1)
+                    t_query = t_query.eq("paciente_id", paciente_id).in_("estado", ["pendiente", "notificado", "agendado", "confirmado"]).gte("fecha_cirugia", today_str).order("fecha_cirugia", desc=False).limit(1)
                 t_res = t_query.execute()
                 if t_res.data and len(t_res.data) > 0:
                     turno_data = t_res.data[0]
                     target_tid = turno_data["id"]
+                    chk = turno_data.get("checks_adicionales") or {}
+                    if not isinstance(chk, dict):
+                        chk = {}
+                    chk["recordatorio_estado"] = "confirmado"
+                    chk["recordatorio_respondido_at"] = ahora_iso
+                    chk["recordatorio_respuesta_texto"] = text_content
+
                     supabase.table("turnos_quirofano").update({
                         "estado": "confirmado",
-                        "updated_at": datetime.now(timezone.utc).isoformat()
+                        "checks_adicionales": chk,
+                        "updated_at": ahora_iso
                     }).eq("id", target_tid).execute()
                     logger.info(f"[Turnos] Turno quirúrgico {target_tid} confirmado en Supabase.")
             except Exception as te:
                 logger.error(f"[Interactive Turnos] Error confirmando turno: {te}")
 
+            # Sincronizar en asesorias_quirurgicas y bitácora del CRM
+            try:
+                as_id = turno_data.get("asesoria_id") if turno_data else None
+                c_chk = {}
+                if not as_id:
+                    c_res = supabase.table("asesorias_quirurgicas") \
+                        .select("id, checklist_prequirurgico, practica_nombre") \
+                        .eq("paciente_id", paciente_id) \
+                        .in_("estado", ["confirmado", "programado", "en_asesoramiento", "en_analisis"]) \
+                        .order("created_at", desc=True) \
+                        .limit(1) \
+                        .execute()
+                    if c_res.data and len(c_res.data) > 0:
+                        as_id = c_res.data[0]["id"]
+                        c_chk = c_res.data[0].get("checklist_prequirurgico") or {}
+                else:
+                    c_res = supabase.table("asesorias_quirurgicas").select("id, checklist_prequirurgico, practica_nombre").eq("id", as_id).limit(1).execute()
+                    if c_res.data and len(c_res.data) > 0:
+                        c_chk = c_res.data[0].get("checklist_prequirurgico") or {}
+
+                if as_id:
+                    if not isinstance(c_chk, dict):
+                        c_chk = {}
+                    prev_rec = c_chk.get("_recordatorio_qx") or {}
+                    if not isinstance(prev_rec, dict):
+                        prev_rec = {}
+                    c_chk["_recordatorio_qx"] = {
+                        "estado": "confirmado",
+                        "enviado_at": prev_rec.get("enviado_at") or ahora_iso,
+                        "respondido_at": ahora_iso,
+                        "respuesta_tipo": "confirmado",
+                        "respuesta_texto": text_content,
+                        "template": prev_rec.get("template")
+                    }
+                    supabase.table("asesorias_quirurgicas").update({
+                        "checklist_prequirurgico": c_chk,
+                        "ultimo_contacto_at": ahora_iso
+                    }).eq("id", as_id).execute()
+
+                    # Bitácora formal de evolución
+                    try:
+                        from app.db import crear_evolucion_asesoria
+                        crear_evolucion_asesoria({
+                            "asesoria_id": as_id,
+                            "paciente_id": paciente_id,
+                            "usuario_nombre": "Asistente WhatsApp (Meta)",
+                            "tipo_contacto": "whatsapp",
+                            "contenido": f"✅ CONFIRMACIÓN QUIRÚRGICA RECIBIDA:\nEl paciente confirmó su asistencia a la cirugía vía WhatsApp tras el recordatorio oficial enviado.\n• Respuesta: {text_content}",
+                            "fecha_contacto": ahora_iso
+                        })
+                    except Exception as e_ev:
+                        logger.warning(f"Aviso registrando evolución de confirmación: {e_ev}")
+            except Exception as as_err:
+                logger.error(f"[Interactive Asesoria] Error sincronizando asesoría para confirmación: {as_err}")
+
         if turno_data:
-            f_val = turno_data.get("fecha") or ""
+            f_val = turno_data.get("fecha_cirugia") or ""
             h_val = str(turno_data.get("hora_inicio") or "")[:5]
             hora_str = f" a las {h_val} hs" if h_val else ""
-            practica_str = f" para {turno_data.get('practica_o_cirugia')}" if turno_data.get('practica_o_cirugia') else ""
-            reply_text = f"✅ ¡Excelente! Su turno quirúrgico{practica_str} para el día {f_val}{hora_str} ha sido confirmado con éxito. Lo esperamos puntualmente en el centro médico."
+            practica_str = f" para {turno_data.get('practica_nombre')}" if turno_data.get('practica_nombre') else ""
+            reply_text = f"✅ ¡Excelente! Su asistencia a la cirugía{practica_str} para el día {f_val}{hora_str} ha sido confirmada con éxito. Lo esperamos en Centrovisión."
         else:
-            reply_text = "✅ ¡Muchas gracias! Su asistencia ha sido confirmada correctamente en nuestro sistema. ¡Lo esperamos!"
+            reply_text = "✅ ¡Muchas gracias! Su asistencia a la cirugía ha sido confirmada correctamente en nuestro sistema. Lo esperamos en Centrovisión."
 
         phone_id, token = get_whatsapp_cloud_credentials()
         if phone_id and token:
@@ -1157,7 +1221,7 @@ async def handle_automated_interactive_action(
                     wamid=txt_wamid,
                     message_type="text",
                     content_text=reply_text,
-                    payload={"intent": "confirmar_turno", "turno_id": turno_data.get("id") if turno_data else None},
+                    payload={"intent": "confirmar_asistencia_qx", "turno_id": turno_data.get("id") if turno_data else None},
                     billing_category="service"
                 )
 
@@ -1169,13 +1233,14 @@ async def handle_automated_interactive_action(
                         "metadata_json": {
                             "wamid": txt_wamid,
                             "tipo": "text",
+                            "recordatorio_evento": "confirmado",
                             "delivery_status": "enviado",
                             "provider": "meta_cloud_api"
                         }
                     }).execute()
                     supabase.table("conversaciones").update({
                         "ultimo_mensaje": reply_text,
-                        "updated_at": datetime.now(timezone.utc).isoformat()
+                        "updated_at": ahora_iso
                     }).eq("id", crm_conv_id).execute()
             finally:
                 await wa_client.close()
@@ -1183,7 +1248,147 @@ async def handle_automated_interactive_action(
         return True
 
     # =========================================================================
-    # CASO 3: REPROGRAMACIÓN O CANCELACIÓN DE TURNO
+    # CASO 3: CONSULTA PREQUIRÚRGICA ("Tengo una consulta")
+    # =========================================================================
+    is_inquiry = any(k in title_str or k in btn_id for k in [
+        "tengo una consulta", "tengo dudas", "tengo una duda", "consulta sobre", "hacer una consulta",
+        "duda sobre la cirugia", "consulta quirurgica"
+    ]) or title_str == "tengo una consulta" or btn_id.startswith("consulta_turno")
+
+    if is_inquiry:
+        logger.info(f"[Interactive Auto] Paciente {paciente_id} tiene una consulta sobre el turno quirúrgico ({normalized_phone})")
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        turno_data = None
+
+        if paciente_id:
+            try:
+                today_str = datetime.now(timezone.utc).date().isoformat()
+                t_query = supabase.table("turnos_quirofano").select("id, asesoria_id, fecha_cirugia, hora_inicio, checks_adicionales, practica_nombre").eq("paciente_id", paciente_id).gte("fecha_cirugia", today_str).order("fecha_cirugia", desc=False).limit(1)
+                t_res = t_query.execute()
+                if t_res.data and len(t_res.data) > 0:
+                    turno_data = t_res.data[0]
+                    target_tid = turno_data["id"]
+                    chk = turno_data.get("checks_adicionales") or {}
+                    if not isinstance(chk, dict):
+                        chk = {}
+                    chk["recordatorio_estado"] = "con_consulta"
+                    chk["recordatorio_respondido_at"] = ahora_iso
+                    chk["recordatorio_respuesta_texto"] = text_content
+                    supabase.table("turnos_quirofano").update({
+                        "checks_adicionales": chk,
+                        "updated_at": ahora_iso
+                    }).eq("id", target_tid).execute()
+            except Exception as te:
+                logger.error(f"[Interactive Inquiry] Error actualizando checks de turno: {te}")
+
+            # Sincronizar en asesorias_quirurgicas y bitácora del CRM
+            try:
+                as_id = turno_data.get("asesoria_id") if turno_data else None
+                c_chk = {}
+                if not as_id:
+                    c_res = supabase.table("asesorias_quirurgicas") \
+                        .select("id, checklist_prequirurgico") \
+                        .eq("paciente_id", paciente_id) \
+                        .in_("estado", ["confirmado", "programado", "en_asesoramiento", "en_analisis"]) \
+                        .order("created_at", desc=True) \
+                        .limit(1) \
+                        .execute()
+                    if c_res.data and len(c_res.data) > 0:
+                        as_id = c_res.data[0]["id"]
+                        c_chk = c_res.data[0].get("checklist_prequirurgico") or {}
+                else:
+                    c_res = supabase.table("asesorias_quirurgicas").select("id, checklist_prequirurgico").eq("id", as_id).limit(1).execute()
+                    if c_res.data and len(c_res.data) > 0:
+                        c_chk = c_res.data[0].get("checklist_prequirurgico") or {}
+
+                if as_id:
+                    if not isinstance(c_chk, dict):
+                        c_chk = {}
+                    prev_rec = c_chk.get("_recordatorio_qx") or {}
+                    if not isinstance(prev_rec, dict):
+                        prev_rec = {}
+                    c_chk["_recordatorio_qx"] = {
+                        "estado": "con_consulta",
+                        "enviado_at": prev_rec.get("enviado_at") or ahora_iso,
+                        "respondido_at": ahora_iso,
+                        "respuesta_tipo": "consulta",
+                        "respuesta_texto": text_content,
+                        "template": prev_rec.get("template")
+                    }
+                    supabase.table("asesorias_quirurgicas").update({
+                        "checklist_prequirurgico": c_chk,
+                        "ultimo_contacto_at": ahora_iso
+                    }).eq("id", as_id).execute()
+
+                    # Bitácora formal de evolución
+                    try:
+                        from app.db import crear_evolucion_asesoria
+                        crear_evolucion_asesoria({
+                            "asesoria_id": as_id,
+                            "paciente_id": paciente_id,
+                            "usuario_nombre": "Asistente WhatsApp (Meta)",
+                            "tipo_contacto": "whatsapp",
+                            "contenido": f"⚠️ CONSULTA PREQUIRÚRGICA DEL PACIENTE:\nEl paciente indicó 'Tengo una consulta' tras el recordatorio de cirugía enviado.\n• Detalle: {text_content}\n• Acción: Asignado al equipo de coordinación para seguimiento.",
+                            "fecha_contacto": ahora_iso
+                        })
+                    except Exception as e_ev:
+                        logger.warning(f"Aviso registrando evolución de consulta: {e_ev}")
+            except Exception as as_err:
+                logger.error(f"[Interactive Asesoria] Error sincronizando asesoría para consulta: {as_err}")
+
+        # Reabrir conversación para que el operador la vea inmediatamente
+        if crm_conv_id:
+            try:
+                supabase.table("conversaciones").update({
+                    "archivada": False,
+                    "estado_gestion": "SIN_ASIGNAR",
+                    "updated_at": ahora_iso
+                }).eq("id", crm_conv_id).execute()
+            except Exception as c_err:
+                logger.warning(f"Error reabriendo conversación para consulta: {c_err}")
+
+        reply_text = "👨‍⚕️ Hemos registrado su consulta sobre la cirugía. Un asesor quirúrgico de Centrovisión se comunicará con usted a la brevedad por este medio para resolver todas sus dudas."
+
+        phone_id, token = get_whatsapp_cloud_credentials()
+        if phone_id and token:
+            wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+            try:
+                txt_res = await wa_client.send_free_text(normalized_phone, reply_text)
+                txt_wamid = txt_res.get("wamid")
+
+                await record_outbound_audit_message(
+                    to_phone=normalized_phone,
+                    wamid=txt_wamid,
+                    message_type="text",
+                    content_text=reply_text,
+                    payload={"intent": "consulta_quirurgica"},
+                    billing_category="service"
+                )
+
+                if crm_conv_id:
+                    supabase.table("mensajes").insert({
+                        "conversacion_id": crm_conv_id,
+                        "emisor": "bot",
+                        "contenido": reply_text,
+                        "metadata_json": {
+                            "wamid": txt_wamid,
+                            "tipo": "text",
+                            "recordatorio_evento": "con_consulta",
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api"
+                        }
+                    }).execute()
+                    supabase.table("conversaciones").update({
+                        "ultimo_mensaje": reply_text,
+                        "updated_at": ahora_iso
+                    }).eq("id", crm_conv_id).execute()
+            finally:
+                await wa_client.close()
+
+        return True
+
+    # =========================================================================
+    # CASO 4: REPROGRAMACIÓN O CANCELACIÓN DE TURNO
     # =========================================================================
     is_reschedule = any(k in title_str or k in btn_id for k in [
         "reprogramar", "cancelar", "cambiar fecha", "no puedo"
@@ -1197,7 +1402,7 @@ async def handle_automated_interactive_action(
                 supabase.table("turnos_quirofano").update({
                     "estado": "reprogramar",
                     "updated_at": datetime.now(timezone.utc).isoformat()
-                }).eq("paciente_id", paciente_id).gte("fecha", today_str).execute()
+                }).eq("paciente_id", paciente_id).gte("fecha_cirugia", today_str).execute()
 
                 from app.services.logger_service import log_event
                 log_event(

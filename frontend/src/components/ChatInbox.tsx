@@ -30,6 +30,7 @@ import {
   Wand2,
   FileText,
   Check,
+  CheckCheck,
   Copy,
   Info,
   Smile,
@@ -3039,12 +3040,41 @@ export default function ChatInbox() {
                               {/* Contenido textual con Hora y Tildes en el MISMO renglón (WhatsApp Web Nativo) */}
                               {hasText && (
                                 <div className="text-[13px] leading-snug break-words">
-                                  {isButton ? (
-                                    <div className="inline-flex items-center gap-1.5 py-1 px-2.5 my-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-medium text-xs shadow-xs select-none">
-                                      <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">Botón Clickeado</span>
-                                      <span>{msg.contenido === '[BUTTON] Mensaje recibido' ? 'Recibir Presupuesto PDF' : msg.contenido.replace(/^🔘\s*/, '')}</span>
-                                    </div>
-                                  ) : isTemplate ? (
+                                  {isButton ? (() => {
+                                    const btnRaw = msg.contenido === '[BUTTON] Mensaje recibido' ? 'Recibir Presupuesto PDF' : msg.contenido.replace(/^🔘\s*/, '')
+                                    const btnLower = btnRaw.toLowerCase()
+                                    const isQxConfirm = btnLower.includes('confirmar asistencia') || btnLower.includes('confirmar turno')
+                                    const isQxQuery = btnLower.includes('tengo una consulta') || btnLower.includes('consulta')
+
+                                    return (
+                                      <div className={`inline-flex flex-col gap-1 py-1.5 px-3 my-0.5 rounded-lg border text-xs shadow-xs select-none ${
+                                        isQxConfirm
+                                          ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-200'
+                                          : isQxQuery
+                                          ? 'bg-purple-950/70 border-purple-500/50 text-purple-200'
+                                          : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300 font-medium'
+                                      }`}>
+                                        <div className="flex items-center gap-1.5">
+                                          {isQxConfirm ? (
+                                            <span className="text-[9px] uppercase font-black tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-300 flex items-center gap-1">
+                                              <CheckCheck size={10} />
+                                              Asistencia Confirmada
+                                            </span>
+                                          ) : isQxQuery ? (
+                                            <span className="text-[9px] uppercase font-black tracking-wider px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-300 flex items-center gap-1">
+                                              <AlertCircle size={10} />
+                                              Consulta Prequirúrgica
+                                            </span>
+                                          ) : (
+                                            <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300">
+                                              Botón Clickeado
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="font-semibold text-[13px]">{btnRaw}</span>
+                                      </div>
+                                    )
+                                  })() : isTemplate ? (
                                     <div className="space-y-1.5 pt-0.5">
                                       <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-300 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded w-fit select-none">
                                         <FileText size={11} className="text-amber-400" />

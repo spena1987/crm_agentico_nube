@@ -3314,14 +3314,28 @@ def registrar_envio_recordatorio_quirurgico(
         from datetime import datetime, timezone
         ahora_iso = datetime.now(timezone.utc).isoformat()
 
-        # 1. Actualizar ultimo_contacto_at en asesorías quirúrgicas
+        # 1. Actualizar ultimo_contacto_at y checklist_prequirurgico en asesorías quirúrgicas
         try:
+            caso_chk_res = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico").eq("id", asesoria_id).limit(1).execute()
+            chk_pre = {}
+            if caso_chk_res.data and isinstance(caso_chk_res.data[0].get("checklist_prequirurgico"), dict):
+                chk_pre = dict(caso_chk_res.data[0]["checklist_prequirurgico"])
+            chk_pre["_recordatorio_qx"] = {
+                "estado": "enviado",
+                "enviado_at": ahora_iso,
+                "template": template_name,
+                "telefono": telefono,
+                "wamid": wamid
+            }
             supabase.table("asesorias_quirurgicas") \
-                .update({"ultimo_contacto_at": ahora_iso}) \
+                .update({
+                    "ultimo_contacto_at": ahora_iso,
+                    "checklist_prequirurgico": chk_pre
+                }) \
                 .eq("id", asesoria_id) \
                 .execute()
         except Exception as e_ac:
-            logger.warning(f"Error actualizando ultimo_contacto_at en asesoria {asesoria_id}: {e_ac}")
+            logger.warning(f"Error actualizando ultimo_contacto_at y checklist en asesoria {asesoria_id}: {e_ac}")
 
         # 2. Registrar evolución formal en la bitácora del caso
         cirugia_txt = variables.get("cirugia") or "Cirugía"
@@ -3386,6 +3400,8 @@ def registrar_envio_recordatorio_quirurgico(
                 chk["recordatorio_enviado"] = True
                 chk["recordatorio_fecha"] = ahora_iso
                 chk["recordatorio_template"] = template_name
+                chk["recordatorio_estado"] = "enviado"
+                chk["wamid"] = wamid
                 supabase.table("turnos_quirofano").update({"checks_adicionales": chk}).eq("id", t["id"]).execute()
         except Exception as e_chk:
             logger.warning(f"Aviso al actualizar checks de turno_quirofano: {e_chk}")
@@ -4787,7 +4803,7 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
         turnos_activos = {}
         try:
             resp_t = supabase.table("turnos_quirofano") \
-                .select("id, asesoria_id, fecha_cirugia, hora_inicio, estado, quirofanos(nombre, codigo)") \
+                .select("id, asesoria_id, fecha_cirugia, hora_inicio, estado, checks_adicionales, quirofanos(nombre, codigo)") \
                 .neq("estado", "cancelado") \
                 .order("fecha_cirugia", desc=True) \
                 .execute()
@@ -4836,8 +4852,49 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
                     "fecha": t_asoc.get("fecha_cirugia"),
                     "hora": t_asoc.get("hora_inicio"),
                     "estado": t_asoc.get("estado"),
+                    "checks_adicionales": t_asoc.get("checks_adicionales"),
                     "quirofano_nombre": t_asoc.get("quirofanos", {}).get("nombre") if isinstance(t_asoc.get("quirofanos"), dict) else None
                 }
+
+            # Resolver estado unificado de recordatorio quirúrgico (prioriza asesorias, fallback a turnos)
+            chk_c = c.get("checklist_prequirurgico") or {}
+            rec_chk = chk_c.get("_recordatorio_qx") if isinstance(chk_c, dict) else None
+            t_chk = (t_asoc.get("checks_adicionales") or {}) if (t_asoc and isinstance(t_asoc, dict)) else {}
+
+            rec_estado = "no_enviado"
+            rec_enviado_at = None
+            rec_respondido_at = None
+            rec_respuesta_tipo = None
+            rec_respuesta_texto = None
+            rec_template = None
+
+            if rec_chk and isinstance(rec_chk, dict) and rec_chk.get("estado"):
+                rec_estado = rec_chk.get("estado")
+                rec_enviado_at = rec_chk.get("enviado_at")
+                rec_respondido_at = rec_chk.get("respondido_at")
+                rec_respuesta_tipo = rec_chk.get("respuesta_tipo")
+                rec_respuesta_texto = rec_chk.get("respuesta_texto")
+                rec_template = rec_chk.get("template")
+            elif t_chk.get("recordatorio_estado"):
+                rec_estado = t_chk.get("recordatorio_estado")
+                rec_enviado_at = t_chk.get("recordatorio_fecha")
+                rec_respondido_at = t_chk.get("recordatorio_respondido_at")
+                rec_respuesta_tipo = t_chk.get("recordatorio_estado")
+                rec_respuesta_texto = t_chk.get("recordatorio_respuesta_texto")
+                rec_template = t_chk.get("recordatorio_template")
+            elif t_chk.get("recordatorio_enviado"):
+                rec_estado = "enviado"
+                rec_enviado_at = t_chk.get("recordatorio_fecha")
+                rec_template = t_chk.get("recordatorio_template")
+
+            c["recordatorio_qx"] = {
+                "estado": rec_estado,
+                "enviado_at": rec_enviado_at,
+                "respondido_at": rec_respondido_at,
+                "respuesta_tipo": rec_respuesta_tipo,
+                "respuesta_texto": rec_respuesta_texto,
+                "template": rec_template
+            }
 
             # Cálculo de días sin contacto
             ultimo_c = c.get("ultimo_contacto_at") or c.get("created_at")
