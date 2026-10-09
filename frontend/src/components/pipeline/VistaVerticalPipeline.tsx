@@ -211,11 +211,11 @@ export default function VistaVerticalPipeline({
                             : 'border-[var(--border)] hover:border-blue-500/40'
                         }`}
                       >
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+                        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1.6fr)] gap-4 items-center">
                           {/* ==================================================================== */}
-                          {/* COLUMNA 1: PACIENTE & IDENTIFICACIÓN (Lg: 3 cols) */}
+                          {/* COLUMNA 1: PACIENTE & IDENTIFICACIÓN (21.5% de ancho) */}
                           {/* ==================================================================== */}
-                          <div className="lg:col-span-3 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
+                          <div className="min-w-0 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-950/90 text-blue-300 border border-blue-500/40">
                                 {caso.codigo_caso || 'QX-26-0001'}
@@ -242,13 +242,13 @@ export default function VistaVerticalPipeline({
                               )}
                             </div>
 
-                            <div>
+                            <div className="min-w-0">
                               <Link
                                 href={`/pacientes?id=${caso.paciente_id}`}
-                                className="text-sm font-bold text-white hover:text-blue-400 transition-colors flex items-center gap-1.5"
+                                className="text-sm font-bold text-white hover:text-blue-400 transition-colors flex items-center gap-1.5 truncate"
                                 title="Ver expediente clínico y caso quirúrgico"
                               >
-                                <span>{pac?.nombre || 'Paciente sin nombre'}</span>
+                                <span className="truncate">{pac?.nombre || 'Paciente sin nombre'}</span>
                                 <ExternalLink size={12} className="text-blue-400 opacity-70 hover:opacity-100 shrink-0" />
                               </Link>
                               <div className="flex items-center gap-2 text-[11px] text-gray-400 font-mono pt-0.5">
@@ -264,17 +264,17 @@ export default function VistaVerticalPipeline({
                           </div>
 
                           {/* ==================================================================== */}
-                          {/* COLUMNA 2: CLÍNICA, CIRUJANO & OBRA SOCIAL (Lg: 3 cols) */}
+                          {/* COLUMNA 2: CLÍNICA, CIRUJANO & OBRA SOCIAL (27.5% de ancho) */}
                           {/* ==================================================================== */}
-                          <div className="lg:col-span-3 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
-                            <div className="flex items-start gap-1.5 text-xs text-gray-200 font-medium">
+                          <div className="min-w-0 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
+                            <div className="flex items-start gap-1.5 text-xs text-gray-100 font-medium">
                               <Stethoscope size={13} className="text-blue-400 shrink-0 mt-0.5" />
-                              <span className="leading-snug">
+                              <span className="leading-snug line-clamp-2" title={caso.practica_nombre}>
                                 {caso.practica_nombre || 'Práctica quirúrgica no especificada'}
                               </span>
                             </div>
 
-                            <div className="flex items-center justify-between text-[11px] text-gray-400 gap-2">
+                            <div className="flex items-center justify-between text-[11px] text-gray-400 gap-2 flex-wrap">
                               {caso.medico_cirujano_nombre ? (
                                 <span className="flex items-center gap-1 text-emerald-400/90 font-medium truncate">
                                   <User size={12} className="shrink-0" />
@@ -285,7 +285,7 @@ export default function VistaVerticalPipeline({
                               )}
 
                               {os && (
-                                <span className="flex items-center gap-1 text-purple-300 font-medium shrink-0 max-w-[140px] truncate" title={os}>
+                                <span className="flex items-center gap-1 text-purple-300 font-medium shrink-0 max-w-[150px] truncate" title={os}>
                                   <Building2 size={12} className="shrink-0 text-purple-400" />
                                   {os}
                                 </span>
@@ -308,35 +308,66 @@ export default function VistaVerticalPipeline({
                           </div>
 
                           {/* ==================================================================== */}
-                          {/* COLUMNA 3: FECHAS & PRÓXIMA ACCIÓN PROGRAMADA (Lg: 3 cols) */}
+                          {/* COLUMNA 3: FECHAS & PRÓXIMA ACCIÓN PROGRAMADA (17.6% de ancho) */}
                           {/* ==================================================================== */}
-                          <div className="lg:col-span-3 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
+                          <div className="min-w-0 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3 overflow-hidden">
                             {/* Fecha de Cirugía */}
                             <div className="text-xs">
                               {caso.fecha_definitiva_cirugia ? (
-                                <div className="flex items-center gap-1.5 text-cyan-300 font-mono font-bold bg-cyan-950/40 px-2 py-1 rounded border border-cyan-500/30">
+                                <div className="flex items-center gap-1.5 text-cyan-300 font-mono font-bold bg-cyan-950/40 px-2 py-1 rounded border border-cyan-500/30 truncate">
                                   <CalendarClock size={13} className="shrink-0 text-cyan-400" />
-                                  <span>Definitiva: {caso.fecha_definitiva_cirugia}</span>
+                                  <span className="truncate">Definitiva: {caso.fecha_definitiva_cirugia}</span>
                                   {caso.turno_quirofano_info?.hora && (
-                                    <span className="text-[10px] text-gray-400 font-normal">
-                                      ({caso.turno_quirofano_info.hora}hs {caso.turno_quirofano_info.quirofano_nombre || ''})
+                                    <span className="text-[10px] text-gray-400 font-normal shrink-0">
+                                      ({caso.turno_quirofano_info.hora}hs)
                                     </span>
                                   )}
                                 </div>
                               ) : caso.fecha_probable_cirugia ? (
-                                <div className="flex items-center gap-1.5 text-gray-300 font-mono text-[11px]">
+                                <div className="flex items-center gap-1.5 text-gray-300 font-mono text-[11px] truncate">
                                   <Calendar size={13} className="shrink-0 text-amber-400" />
-                                  <span>Probable: {caso.fecha_probable_cirugia}</span>
+                                  <span className="truncate">Probable: {caso.fecha_probable_cirugia}</span>
                                 </div>
                               ) : (
                                 <span className="text-gray-500 text-[11px] italic">Sin fecha quirúrgica pautada</span>
                               )}
                             </div>
 
+                            {/* Mini Checklist de Preparación */}
+                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 pt-0.5 flex-wrap">
+                              <span
+                                className={`px-1.5 py-0.5 rounded border ${
+                                  checklist.estudios_completos
+                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30 font-semibold'
+                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
+                                }`}
+                              >
+                                {checklist.estudios_completos ? '✓ Estudios' : 'Estudios'}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded border ${
+                                  checklist.lente_seleccionado
+                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30 font-semibold'
+                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
+                                }`}
+                              >
+                                {checklist.lente_seleccionado ? '✓ LIO' : 'LIO'}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded border ${
+                                  checklist.consentimiento_firmado
+                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30 font-semibold'
+                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
+                                }`}
+                              >
+                                {checklist.consentimiento_firmado ? '✓ C.I.' : 'C.I.'}
+                              </span>
+                            </div>
+
                             {/* Próxima Acción Programada */}
                             {Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) && (
                               <div
-                                className={`p-1.5 rounded-lg border text-[11px] flex items-start gap-1.5 ${
+                                className={`p-1.5 rounded-lg border text-[10.5px] flex items-start gap-1.5 ${
                                   esAccionVencida
                                     ? 'bg-red-950/40 border-red-500/40 text-red-200'
                                     : esAccionHoy
@@ -344,12 +375,12 @@ export default function VistaVerticalPipeline({
                                     : 'bg-blue-950/40 border-blue-500/30 text-blue-200'
                                 }`}
                               >
-                                <Clock size={12} className="shrink-0 mt-0.5" />
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1 flex-wrap">
+                                <Clock size={11} className="shrink-0 mt-0.5" />
+                                <div className="min-w-0 flex-1 truncate">
+                                  <div className="flex items-center gap-1 truncate">
                                     {caso.proxima_accion_fecha && (
-                                      <span className="font-mono font-bold">
-                                        {esAccionHoy ? 'HOY' : esAccionVencida ? `Vencida (${labelFechaAccion})` : `${labelFechaAccion} (${diasAccionDiferencia}d)`}
+                                      <span className="font-mono font-bold shrink-0">
+                                        {esAccionHoy ? 'HOY' : esAccionVencida ? `Vencida (${labelFechaAccion})` : `${labelFechaAccion}`}
                                       </span>
                                     )}
                                     {caso.proxima_accion_texto && (
@@ -359,118 +390,39 @@ export default function VistaVerticalPipeline({
                                 </div>
                               </div>
                             )}
-
-                            {/* Mini Checklist de Preparación */}
-                            <div className="flex items-center gap-2 text-[10px] text-gray-400 pt-0.5">
-                              <span
-                                className={`px-1.5 py-0.5 rounded border ${
-                                  checklist.estudios_completos
-                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30'
-                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
-                                }`}
-                              >
-                                {checklist.estudios_completos ? '✓ Estudios' : 'Estudios'}
-                              </span>
-                              <span
-                                className={`px-1.5 py-0.5 rounded border ${
-                                  checklist.lente_seleccionado
-                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30'
-                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
-                                }`}
-                              >
-                                {checklist.lente_seleccionado ? '✓ LIO' : 'LIO'}
-                              </span>
-                              <span
-                                className={`px-1.5 py-0.5 rounded border ${
-                                  checklist.consentimiento_firmado
-                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30'
-                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
-                                }`}
-                              >
-                                {checklist.consentimiento_firmado ? '✓ C.I. Firmado' : 'C.I.'}
-                              </span>
-                            </div>
                           </div>
 
                           {/* ==================================================================== */}
-                          {/* COLUMNA 4: ECONÓMICO & ACCIONES RÁPIDAS (Lg: 3 cols) */}
+                          {/* COLUMNA 4: PRESUPUESTO & ACCIONES RÁPIDAS EN DOS NIVELES (31.4% ancho) */}
                           {/* ==================================================================== */}
-                          <div className="lg:col-span-3 flex flex-col justify-between space-y-2.5">
-                            {/* Monto de la Cirugía */}
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">
-                                Presupuesto:
-                              </span>
-                              <span className="text-xs font-mono font-bold">
+                          <div className="min-w-0 flex flex-col justify-between gap-2.5">
+                            {/* Nivel Superior: Presupuesto (Izquierda) + Selector de Etapa (Derecha) */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 text-xs font-mono font-bold min-w-0">
+                                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold shrink-0">
+                                  Presupuesto:
+                                </span>
                                 {Number(caso.monto_extra || 0) > 0 ? (
                                   caso.moneda_extra === 'USD' ? (
-                                    <span className="text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30">
+                                    <span className="text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30 truncate">
                                       USD {Number(caso.monto_extra).toLocaleString('es-AR')}
                                     </span>
                                   ) : (
-                                    <span className="text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30">
+                                    <span className="text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 truncate">
                                       ${Number(caso.monto_extra).toLocaleString('es-AR')} ARS
                                     </span>
                                   )
                                 ) : (
-                                  <span className="text-gray-500 font-normal">Sin cotizar</span>
+                                  <span className="text-gray-500 font-normal text-[11px]">Sin cotizar</span>
                                 )}
-                              </span>
-                            </div>
-
-                            {/* Fila de Botones y Selector de Etapa */}
-                            <div className="flex items-center justify-end gap-1.5 pt-1">
-                              {/* Botón Agendar si está Confirmado o Programado */}
-                              {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
-                                <Link
-                                  href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
-                                  className="px-2 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10.5px] flex items-center gap-1 shadow transition-colors"
-                                  title="Asignar o editar turno en el Quirófano"
-                                >
-                                  <CalendarClock size={12} />
-                                  <span>{caso.estado === 'programado' ? 'Turno Qx' : 'Agendar'}</span>
-                                </Link>
-                              )}
-
-                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) */}
-                              <button
-                                type="button"
-                                onClick={() => onAbrirRecordatorioQx?.(caso)}
-                                className="px-2 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white text-[10.5px] font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-sm"
-                                title="Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)"
-                              >
-                                <BellRing size={12} className="text-indigo-400" />
-                                <span>Recordatorio Qx</span>
-                              </button>
-
-                              {/* Botón WhatsApp */}
-                              <button
-                                type="button"
-                                onClick={() => onAbrirWhatsApp(caso)}
-                                className="px-2 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 text-[10.5px] font-bold flex items-center gap-1 transition-colors"
-                                title="Enviar mensaje de WhatsApp al paciente"
-                              >
-                                <MessageSquare size={12} />
-                                <span>WhatsApp</span>
-                              </button>
-
-                              {/* Botón Contactado Hoy */}
-                              <button
-                                type="button"
-                                onClick={() => onMarcarContactadoHoy(caso)}
-                                disabled={actualizandoCasoId === caso.id}
-                                className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-[var(--border)] text-gray-300 hover:text-blue-400 transition-colors"
-                                title="Registrar contacto hoy (reinicia SLA)"
-                              >
-                                <Check size={13} />
-                              </button>
+                              </div>
 
                               {/* Selector para mover de etapa */}
                               <select
                                 value={estadoSelectValue}
                                 disabled={actualizandoCasoId === caso.id}
                                 onChange={(e) => onCambiarEtapa(caso, e.target.value)}
-                                className="text-[10.5px] font-semibold bg-neutral-800 border border-[var(--border)] text-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:border-blue-500 cursor-pointer"
+                                className="text-[11px] font-semibold bg-neutral-800 hover:bg-neutral-750 border border-[var(--border)] text-gray-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-blue-500 cursor-pointer shadow-xs shrink-0 max-w-[140px]"
                               >
                                 <option value="derivado">1. Derivado</option>
                                 <option value="en_asesoramiento">2. Asesoramiento</option>
@@ -481,6 +433,54 @@ export default function VistaVerticalPipeline({
                                 <option value="operado">✔ Operado (Cerrar)</option>
                                 <option value="cancelado">✖ Cancelar (Cerrar)</option>
                               </select>
+                            </div>
+
+                            {/* Nivel Inferior: Barra de Acciones Rápidas (Alineada a la Derecha) */}
+                            <div className="flex items-center justify-end gap-1.5 pt-0.5 flex-wrap sm:flex-nowrap">
+                              {/* Botón Agendar si está Confirmado o Turno Qx si está Programado */}
+                              {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
+                                <Link
+                                  href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
+                                  className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-sm transition-all shrink-0"
+                                  title="Asignar o editar turno en el Quirófano"
+                                >
+                                  <CalendarClock size={13} />
+                                  <span>{caso.estado === 'programado' ? 'Turno Qx' : 'Agendar'}</span>
+                                </Link>
+                              )}
+
+                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) */}
+                              <button
+                                type="button"
+                                onClick={() => onAbrirRecordatorioQx?.(caso)}
+                                className="px-2.5 py-1 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
+                                title="Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)"
+                              >
+                                <BellRing size={13} className="text-indigo-400" />
+                                <span>Recordatorio Qx</span>
+                              </button>
+
+                              {/* Botón WhatsApp */}
+                              <button
+                                type="button"
+                                onClick={() => onAbrirWhatsApp(caso)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs shrink-0"
+                                title="Enviar mensaje de WhatsApp al paciente"
+                              >
+                                <MessageSquare size={13} />
+                                <span>WhatsApp</span>
+                              </button>
+
+                              {/* Botón Contactado Hoy */}
+                              <button
+                                type="button"
+                                onClick={() => onMarcarContactadoHoy(caso)}
+                                disabled={actualizandoCasoId === caso.id}
+                                className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-[var(--border)] text-gray-300 hover:text-blue-400 transition-colors shadow-xs shrink-0"
+                                title="Registrar contacto hoy (reinicia SLA)"
+                              >
+                                <Check size={13} />
+                              </button>
                             </div>
                           </div>
 
