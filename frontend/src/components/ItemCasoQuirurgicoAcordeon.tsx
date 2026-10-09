@@ -302,6 +302,7 @@ export default function ItemCasoQuirurgicoAcordeon({
 
       const casoGuardado: AsesoriaQuirurgica = data.asesoria
       onCasoActualizado(casoGuardado)
+      fetchPresupuestos()
       setMensajeGuardado('✔ Caso quirúrgico actualizado correctamente.')
       setTimeout(() => setMensajeGuardado(null), 3000)
     } catch (err: any) {

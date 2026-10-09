@@ -15,6 +15,7 @@ import {
   Trash2,
   Send,
   CheckCircle,
+  CheckCircle2,
   RefreshCw,
   Clock,
   AlertCircle,
@@ -35,6 +36,7 @@ interface Presupuesto {
   id: string
   numero_presupuesto?: number | null
   paciente_id: string
+  asesoria_id?: string | null
   estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
   total: number
   total_ars?: number
@@ -43,6 +45,11 @@ interface Presupuesto {
   motivo_desistimiento?: string | null
   created_at: string
   pacientes: Paciente | null
+  asesorias_quirurgicas?: {
+    id: string
+    estado: string
+    fecha_definitiva_cirugia?: string | null
+  } | null
 }
 
 export default function PresupuestosPage() {
@@ -54,6 +61,8 @@ export default function PresupuestosPage() {
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('create')
   const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [loading, setLoading] = useState(false)
+  const [conciliando, setConciliando] = useState(false)
+  const [mensajeConciliacion, setMensajeConciliacion] = useState<string | null>(null)
   const [presupuestoParaClonar, setPresupuestoParaClonar] = useState<any | null>(null)
 
   // Ajustar tab si no tiene permiso de crear
@@ -78,17 +87,25 @@ export default function PresupuestosPage() {
         .from('presupuestos')
         .select(`
           id,
+          numero_presupuesto,
           paciente_id,
+          asesoria_id,
           estado,
           total,
           total_ars,
           total_usd,
           pdf_url,
+          motivo_desistimiento,
           created_at,
           pacientes (
             id,
             nombre,
             telefono
+          ),
+          asesorias_quirurgicas!presupuestos_asesoria_id_fkey (
+            id,
+            estado,
+            fecha_definitiva_cirugia
           )
         `)
         .order('created_at', { ascending: false })
@@ -99,6 +116,31 @@ export default function PresupuestosPage() {
       console.error('Error cargando listado presupuestos:', err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleConciliarConQuirofano = async () => {
+    try {
+      setConciliando(true)
+      setMensajeConciliacion(null)
+      const res = await fetch(`${BACKEND_URL}/api/presupuestos/conciliar-estados`, {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setMensajeConciliacion(
+          `Sincronización completada: ${data.total_conciliados} presupuesto(s) actualizados a "Aprobado" automáticamente tras conciliar con Quirófano.`
+        )
+        await fetchPresupuestos()
+        setTimeout(() => setMensajeConciliacion(null), 7000)
+      } else {
+        alert(data.detail || data.error || 'No se pudo completar la sincronización.')
+      }
+    } catch (e: any) {
+      console.error('Error al conciliar presupuestos:', e)
+      alert('Error de conexión al sincronizar con quirófano.')
+    } finally {
+      setConciliando(false)
     }
   }
 
@@ -331,18 +373,39 @@ export default function PresupuestosPage() {
         />
       ) : (
         <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
-          <div className="flex justify-between items-center pb-2 border-b border-[var(--border)]">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-[var(--border)]">
             <h2 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
               <FileText className="text-blue-600" size={18} />
               Historial de Presupuestos ({presupuestos.length})
             </h2>
-            <button 
-              onClick={fetchPresupuestos}
-              className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-[var(--secondary)] hover:text-blue-600 transition-colors flex items-center gap-1 text-xs font-bold"
-            >
-              <RefreshCw size={13} /> Recargar
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleConciliarConQuirofano}
+                disabled={conciliando}
+                className="px-3 py-1.5 bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 dark:text-blue-400 border border-blue-500/30 rounded-lg text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
+                title="Sincronizar automáticamente estados de presupuestos con cirugías confirmadas y turnos de quirófano"
+              >
+                <RefreshCw size={12} className={conciliando ? 'animate-spin' : ''} />
+                {conciliando ? 'Sincronizando...' : 'Sincronizar con Quirófano'}
+              </button>
+              <button 
+                type="button"
+                onClick={fetchPresupuestos}
+                className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-[var(--secondary)] hover:text-blue-600 transition-colors flex items-center gap-1 text-xs font-bold"
+                title="Recargar listado"
+              >
+                <RefreshCw size={13} /> Recargar
+              </button>
+            </div>
           </div>
+
+          {mensajeConciliacion && (
+            <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/40 text-emerald-300 text-xs font-semibold flex items-center gap-2 animate-in fade-in">
+              <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+              <span>{mensajeConciliacion}</span>
+            </div>
+          )}
 
           {loading ? (
             <div className="text-center py-12 text-xs text-[var(--secondary)]">Cargando historial de presupuestos...</div>
@@ -432,6 +495,11 @@ export default function PresupuestosPage() {
                                 <option value="aprobado">Aprobado</option>
                                 <option value="rechazado">Rechazado</option>
                               </select>
+                              {pres.asesorias_quirurgicas?.estado && ['confirmado', 'fecha_programada', 'programado', 'operado'].includes(pres.asesorias_quirurgicas.estado) && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5" title={`Caso Quirúrgico: ${pres.asesorias_quirurgicas.estado.toUpperCase()}${pres.asesorias_quirurgicas.fecha_definitiva_cirugia ? ` (Qx: ${pres.asesorias_quirurgicas.fecha_definitiva_cirugia})` : ''}`}>
+                                  Qx {pres.asesorias_quirurgicas.estado === 'operado' ? 'Operado' : 'Programado'}
+                                </span>
+                              )}
                               {pres.estado === 'rechazado' && pres.motivo_desistimiento && (
                                 <span className="text-[9px] text-rose-600 dark:text-rose-400 font-medium max-w-[140px] truncate" title={pres.motivo_desistimiento}>
                                   {pres.motivo_desistimiento}
@@ -443,6 +511,11 @@ export default function PresupuestosPage() {
                               <span className={`px-2.5 py-1 text-[10px] font-bold rounded-lg ${getBadgeColor(pres.estado)}`}>
                                 {pres.estado.toUpperCase()}
                               </span>
+                              {pres.asesorias_quirurgicas?.estado && ['confirmado', 'fecha_programada', 'programado', 'operado'].includes(pres.asesorias_quirurgicas.estado) && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5" title={`Caso Quirúrgico: ${pres.asesorias_quirurgicas.estado.toUpperCase()}${pres.asesorias_quirurgicas.fecha_definitiva_cirugia ? ` (Qx: ${pres.asesorias_quirurgicas.fecha_definitiva_cirugia})` : ''}`}>
+                                  Qx {pres.asesorias_quirurgicas.estado === 'operado' ? 'Operado' : 'Programado'}
+                                </span>
+                              )}
                               {pres.estado === 'rechazado' && pres.motivo_desistimiento && (
                                 <span className="text-[9px] text-rose-600 dark:text-rose-400 font-medium max-w-[140px] truncate" title={pres.motivo_desistimiento}>
                                   {pres.motivo_desistimiento}

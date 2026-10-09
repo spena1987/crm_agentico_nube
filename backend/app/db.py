@@ -3086,6 +3086,17 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 except Exception as e_t:
                     logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
 
+        # 3. Sincronizar automáticamente hacia la tabla presupuestos
+        try:
+            sincronizar_presupuesto_desde_caso_quirurgico(
+                asesoria_id=asesoria_id,
+                nuevo_estado_asesoria=datos.get("estado"),
+                checklist=datos.get("checklist_prequirurgico"),
+                origen="ACTUALIZACION_ASESORIA"
+            )
+        except Exception as e_sync:
+            logger.warning(f"Aviso al sincronizar presupuesto desde asesoría {asesoria_id}: {e_sync}")
+
         return resp.data[0]
     except Exception as e:
         logger.error(f"Error al actualizar asesoría quirúrgica {asesoria_id}: {e}")
@@ -3646,9 +3657,249 @@ def vincular_presupuesto_a_asesoria(presupuesto_id: str, asesoria_id: str) -> Di
             "updated_at": "now()"
         }).eq("id", asesoria_id).execute()
 
+        # Si la asesoría ya estaba en un estado quirúrgico avanzado, auto-aprobar el presupuesto vinculado
+        sincronizar_presupuesto_desde_caso_quirurgico(asesoria_id=asesoria_id, origen="VINCULACION_PRESUPUESTO")
+
         return pres
     except Exception as e:
         logger.error(f"Error al vincular presupuesto {presupuesto_id} a asesoría {asesoria_id}: {e}")
+        raise
+
+def sincronizar_presupuesto_desde_caso_quirurgico(
+    asesoria_id: str, 
+    nuevo_estado_asesoria: Optional[str] = None, 
+    checklist: Optional[Dict[str, Any]] = None,
+    origen: str = "PIPELINE_QUIRURGICO"
+) -> Optional[Dict[str, Any]]:
+    """
+    Sincroniza automáticamente el estado del presupuesto ('aprobado' o 'rechazado')
+    cuando el caso quirúrgico avanza en el pipeline (confirmado, fecha_programada, programado, operado)
+    o cuando se tilda 'presupuesto_aceptado' en el checklist prequirúrgico.
+    Si el caso se cancela, transiciona los presupuestos no aprobados a 'rechazado'.
+    """
+    if not supabase or not asesoria_id:
+        return None
+    try:
+        # 1. Obtener la asesoría
+        res_a = supabase.table("asesorias_quirurgicas")\
+            .select("id, paciente_id, estado, presupuesto_id, checklist_prequirurgico, fecha_definitiva_cirugia")\
+            .eq("id", asesoria_id)\
+            .limit(1)\
+            .execute()
+        if not res_a.data:
+            return None
+            
+        asesoria = res_a.data[0]
+        estado_caso = nuevo_estado_asesoria or asesoria.get("estado") or ""
+        chk = checklist if checklist is not None else (asesoria.get("checklist_prequirurgico") or {})
+        pres_aceptado_chk = bool(chk.get("presupuesto_aceptado"))
+        pres_id = asesoria.get("presupuesto_id")
+        paciente_id = asesoria.get("paciente_id")
+        
+        # 2. Si no hay presupuesto_id vinculado directo, buscar presupuesto del caso o del paciente
+        if not pres_id and paciente_id:
+            try:
+                # Buscar presupuesto que tenga asesoria_id
+                r_p = supabase.table("presupuestos")\
+                    .select("id, estado")\
+                    .eq("asesoria_id", asesoria_id)\
+                    .order("created_at", desc=True)\
+                    .limit(1)\
+                    .execute()
+                if r_p.data:
+                    pres_id = r_p.data[0]["id"]
+                else:
+                    # Buscar el presupuesto más reciente del paciente no rechazado
+                    r_p2 = supabase.table("presupuestos")\
+                        .select("id, estado")\
+                        .eq("paciente_id", paciente_id)\
+                        .neq("estado", "rechazado")\
+                        .order("created_at", desc=True)\
+                        .limit(1)\
+                        .execute()
+                    if r_p2.data:
+                        pres_id = r_p2.data[0]["id"]
+                        
+                if pres_id:
+                    supabase.table("asesorias_quirurgicas")\
+                        .update({"presupuesto_id": pres_id, "updated_at": "now()"})\
+                        .eq("id", asesoria_id)\
+                        .execute()
+                    supabase.table("presupuestos")\
+                        .update({"asesoria_id": asesoria_id})\
+                        .eq("id", pres_id)\
+                        .execute()
+                    logger.info(f"Auto-vinculado presupuesto {pres_id} con asesoría {asesoria_id}")
+            except Exception as e_vinc:
+                logger.warning(f"Aviso al auto-vincular presupuesto en sincronización: {e_vinc}")
+
+        if not pres_id:
+            return None
+
+        # 3. Determinar si debe pasar a 'aprobado'
+        debe_aprobar = (
+            estado_caso in ["confirmado", "fecha_programada", "programado", "operado"] or
+            pres_aceptado_chk or
+            bool(asesoria.get("fecha_definitiva_cirugia"))
+        )
+
+        if debe_aprobar:
+            # Obtener estado actual del presupuesto
+            r_curr = supabase.table("presupuestos").select("id, estado").eq("id", pres_id).limit(1).execute()
+            if r_curr.data and r_curr.data[0].get("estado") != "aprobado":
+                supabase.table("presupuestos").update({
+                    "estado": "aprobado",
+                    "motivo_desistimiento": None,
+                    "desestimado_at": None,
+                    "desestimado_por": None
+                }).eq("id", pres_id).execute()
+                
+                logger.info(f"Presupuesto {pres_id} auto-sincronizado a 'aprobado' desde asesoría {asesoria_id} ({origen}, estado={estado_caso})")
+                
+                # Registrar evolución clínica con deduplicación por ventana de 2 minutos
+                if paciente_id:
+                    try:
+                        prefix_id = str(pres_id)[:8]
+                        dos_min_atras = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+                        check_ev = supabase.table("asesoria_evoluciones")\
+                            .select("id")\
+                            .eq("asesoria_id", asesoria_id)\
+                            .ilike("contenido", f"%Presupuesto #{prefix_id}%aprobado%")\
+                            .gte("created_at", dos_min_atras)\
+                            .limit(1)\
+                            .execute()
+                        if not check_ev.data:
+                            crear_evolucion_asesoria({
+                                "asesoria_id": asesoria_id,
+                                "paciente_id": paciente_id,
+                                "usuario_nombre": "Sistema CRM (Pipeline Qx)",
+                                "tipo_contacto": "presencial",
+                                "contenido": f"Presupuesto #{prefix_id} marcado como APROBADO automáticamente tras avanzar caso quirúrgico a '{estado_caso}'.",
+                                "fecha_contacto": "now()"
+                            })
+                    except Exception as ev_err:
+                        logger.warning(f"Aviso registrando evolución en sincronización de presupuesto: {ev_err}")
+                return {"id": pres_id, "estado": "aprobado"}
+
+        elif estado_caso == "cancelado":
+            r_curr = supabase.table("presupuestos").select("id, estado").eq("id", pres_id).limit(1).execute()
+            if r_curr.data and r_curr.data[0].get("estado") in ["enviado", "borrador"]:
+                supabase.table("presupuestos").update({
+                    "estado": "rechazado",
+                    "motivo_desistimiento": "Caso quirúrgico cancelado/desestimado en el expediente",
+                    "desestimado_at": "now()",
+                    "desestimado_por": origen
+                }).eq("id", pres_id).execute()
+                logger.info(f"Presupuesto {pres_id} auto-sincronizado a 'rechazado' tras cancelar asesoría {asesoria_id}")
+                return {"id": pres_id, "estado": "rechazado"}
+
+        return None
+    except Exception as e:
+        logger.error(f"Error en sincronizar_presupuesto_desde_caso_quirurgico ({asesoria_id}): {e}")
+        return None
+
+def conciliar_estados_presupuestos_historicos() -> Dict[str, Any]:
+    """
+    Recorre los presupuestos históricos en estado 'enviado' o 'borrador'
+    y los concilia automáticamente con las asesorías quirúrgicas y turnos de quirófano.
+    Si el paciente ya tiene el caso confirmado, programado, operado, checklist aceptado
+    o un turno quirúrgico agendado, actualiza el presupuesto a 'aprobado'.
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+        
+    try:
+        # 1. Obtener presupuestos pendientes de aprobación
+        r_pres = supabase.table("presupuestos")\
+            .select("id, paciente_id, asesoria_id, estado, created_at, pacientes(id, nombre)")\
+            .in_("estado", ["enviado", "borrador"])\
+            .order("created_at", desc=True)\
+            .execute()
+            
+        presupuestos_pendientes = r_pres.data or []
+        total_evaluados = len(presupuestos_pendientes)
+        conciliados = []
+        
+        for p in presupuestos_pendientes:
+            p_id = p["id"]
+            pac_id = p.get("paciente_id")
+            as_id = p.get("asesoria_id")
+            pac_nombre = (p.get("pacientes") or {}).get("nombre") or "Paciente"
+            
+            # Buscar asesoría asociada
+            as_data = None
+            if as_id:
+                ra = supabase.table("asesorias_quirurgicas")\
+                    .select("id, estado, fecha_definitiva_cirugia, checklist_prequirurgico, presupuesto_id")\
+                    .eq("id", as_id)\
+                    .limit(1)\
+                    .execute()
+                if ra.data:
+                    as_data = ra.data[0]
+            elif pac_id:
+                # Buscar asesoría activa del paciente
+                ra = supabase.table("asesorias_quirurgicas")\
+                    .select("id, estado, fecha_definitiva_cirugia, checklist_prequirurgico, presupuesto_id")\
+                    .eq("paciente_id", pac_id)\
+                    .in_("estado", ["confirmado", "fecha_programada", "programado", "operado"])\
+                    .order("created_at", desc=True)\
+                    .limit(1)\
+                    .execute()
+                if ra.data:
+                    as_data = ra.data[0]
+                    # Vincular asesoria_id que faltaba
+                    supabase.table("presupuestos").update({"asesoria_id": as_data["id"]}).eq("id", p_id).execute()
+                    if not as_data.get("presupuesto_id"):
+                        supabase.table("asesorias_quirurgicas").update({"presupuesto_id": p_id}).eq("id", as_data["id"]).execute()
+            
+            # Buscar turnos de quirófano activos del paciente
+            t_data = []
+            if pac_id:
+                rt = supabase.table("turnos_quirofano")\
+                    .select("id, estado, fecha_cirugia")\
+                    .eq("paciente_id", pac_id)\
+                    .neq("estado", "cancelado")\
+                    .limit(1)\
+                    .execute()
+                t_data = rt.data or []
+                
+            motivo_aprobacion = None
+            if as_data:
+                chk = as_data.get("checklist_prequirurgico") or {}
+                st_as = as_data.get("estado")
+                f_def = as_data.get("fecha_definitiva_cirugia")
+                if chk.get("presupuesto_aceptado") is True:
+                    motivo_aprobacion = f"Checklist prequirúrgico 'presupuesto_aceptado' confirmado en caso #{as_data['id'][:8]}"
+                elif st_as in ["confirmado", "fecha_programada", "programado", "operado"]:
+                    motivo_aprobacion = f"Caso quirúrgico en etapa '{st_as}'" + (f" (Fecha: {f_def})" if f_def else "")
+            
+            if not motivo_aprobacion and t_data:
+                t0 = t_data[0]
+                motivo_aprobacion = f"Turno de quirófano programado para {t0.get('fecha_cirugia')} (Estado: {t0.get('estado')})"
+                
+            if motivo_aprobacion:
+                supabase.table("presupuestos").update({
+                    "estado": "aprobado",
+                    "motivo_desistimiento": None,
+                    "desestimado_at": None,
+                    "desestimado_por": None
+                }).eq("id", p_id).execute()
+                
+                conciliados.append({
+                    "presupuesto_id": p_id,
+                    "paciente": pac_nombre,
+                    "motivo": motivo_aprobacion
+                })
+                logger.info(f"Conciliado históricamente presupuesto {p_id} de {pac_nombre} a 'aprobado': {motivo_aprobacion}")
+                
+        return {
+            "success": True,
+            "total_evaluados": total_evaluados,
+            "total_conciliados": len(conciliados),
+            "conciliados": conciliados
+        }
+    except Exception as e:
+        logger.error(f"Error en conciliar_estados_presupuestos_historicos: {e}")
         raise
 
 def eliminar_presupuesto(presupuesto_id: str) -> bool:
@@ -3812,33 +4063,52 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                     logger.warning(f"No se pudo registrar item {it}: {it_err}")
                     
         # 7. Si hay asesoría vinculada o activa del paciente, actualizar presupuesto_id y monto_extra
+        estado_asesoria_actual = None
         if not asesoria_id and paciente_id:
             try:
                 p_as = supabase.table("asesorias_quirurgicas") \
                     .select("id, estado") \
                     .eq("paciente_id", paciente_id) \
-                    .in_("estado", ["en_asesoramiento", "derivado", "en_analisis"]) \
+                    .in_("estado", ["en_asesoramiento", "derivado", "en_analisis", "confirmado", "fecha_programada", "programado"]) \
                     .order("created_at", desc=True) \
                     .limit(1) \
                     .execute()
                 if p_as.data:
                     asesoria_id = p_as.data[0]["id"]
+                    estado_asesoria_actual = p_as.data[0]["estado"]
                     supabase.table("presupuestos").update({"asesoria_id": asesoria_id}).eq("id", presupuesto_id).execute()
-                    logger.info(f"Presupuesto {presupuesto_id} auto-vinculado a asesoría activa {asesoria_id} en crear_presupuesto_rapido_crm.")
+                    logger.info(f"Presupuesto {presupuesto_id} auto-vinculado a asesoría activa {asesoria_id} ({estado_asesoria_actual}) en crear_presupuesto_rapido_crm.")
             except Exception as e_as:
                 logger.warning(f"Error auto-vinculando asesoría activa en crear_presupuesto_rapido_crm: {e_as}")
 
         if asesoria_id:
-            supabase.table("asesorias_quirurgicas") \
-                .update({
-                    "presupuesto_id": presupuesto_id,
-                    "monto_extra": total_escalar,
-                    "moneda_extra": "USD" if total_usd > 0 else "ARS",
-                    "estado": "en_analisis",
-                    "updated_at": "now()"
-                }) \
-                .eq("id", asesoria_id) \
-                .execute()
+            if not estado_asesoria_actual:
+                try:
+                    r_st = supabase.table("asesorias_quirurgicas").select("estado").eq("id", asesoria_id).limit(1).execute()
+                    if r_st.data:
+                        estado_asesoria_actual = r_st.data[0]["estado"]
+                except Exception:
+                    pass
+
+            upd_as = {
+                "presupuesto_id": presupuesto_id,
+                "monto_extra": total_escalar,
+                "moneda_extra": "USD" if total_usd > 0 else "ARS",
+                "updated_at": "now()"
+            }
+            # Solo si el caso estaba en etapas iniciales se pasa a en_analisis, preservando estados avanzados
+            if estado_asesoria_actual in ["en_asesoramiento", "derivado"]:
+                upd_as["estado"] = "en_analisis"
+
+            supabase.table("asesorias_quirurgicas").update(upd_as).eq("id", asesoria_id).execute()
+
+            # Si el caso ya estaba en estado avanzado (confirmado / programado), auto-aprobar el presupuesto
+            if estado_asesoria_actual in ["confirmado", "fecha_programada", "programado", "operado"]:
+                try:
+                    sincronizar_presupuesto_desde_caso_quirurgico(asesoria_id=asesoria_id, origen="CREAR_PRESUPUESTO_CASO_AVANZADO")
+                    pres_data["estado"] = "aprobado"
+                except Exception as e_s:
+                    logger.warning(f"Aviso auto-aprobando presupuesto en caso avanzado: {e_s}")
                 
         return {
             "id": presupuesto_id,
@@ -5603,6 +5873,11 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
         
         # Evaluar estado de la asesoría con reglas de bilateralidad y asignación completa de fechas
         evaluar_y_sincronizar_estado_caso_quirurgico(asesoria_id, datos_turno, nuevo_estado)
+        # Sincronizar automáticamente hacia presupuestos
+        try:
+            sincronizar_presupuesto_desde_caso_quirurgico(asesoria_id=asesoria_id, nuevo_estado_asesoria=nuevo_estado, origen="SINCRONIZAR_QUIROFANO")
+        except Exception as e_pr2:
+            logger.warning(f"Aviso sincronizando presupuesto en sincronizar_asesoria_desde_quirofano: {e_pr2}")
     except Exception as e:
         logger.error(f"Error sincronizando asesoría {asesoria_id} desde quirófano: {e}")
 
@@ -5649,6 +5924,10 @@ def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
         # Sincronización bidireccional y cambio de estado a 'programado'
         if payload.get("asesoria_id"):
             sincronizar_asesoria_desde_quirofano(payload["asesoria_id"], payload, nuevo_estado="programado")
+            try:
+                sincronizar_presupuesto_desde_caso_quirurgico(asesoria_id=payload["asesoria_id"], nuevo_estado_asesoria="programado", origen="CREAR_TURNO_QUIROFANO")
+            except Exception as e_pr:
+                logger.warning(f"Aviso al auto-aprobar presupuesto desde turno quirofano: {e_pr}")
                 
         return turno_creado
     except Exception as e:

@@ -67,6 +67,8 @@ from app.db import (
     get_presupuestos_by_paciente,
     cambiar_estado_presupuesto,
     vincular_presupuesto_a_asesoria,
+    sincronizar_presupuesto_desde_caso_quirurgico,
+    conciliar_estados_presupuestos_historicos,
     eliminar_presupuesto,
     crear_presupuesto_rapido,
     actualizar_presupuesto_rapido,
@@ -4090,6 +4092,7 @@ def eliminar_presupuesto_endpoint(presupuesto_id: str):
         logger.error(f"Error al eliminar presupuesto {presupuesto_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/presupuestos")
 @app.post("/api/presupuestos/crear-rapido")
 def emitir_presupuesto_rapido(payload: Dict[str, Any] = Body(...)):
     """
@@ -4109,6 +4112,19 @@ def emitir_presupuesto_rapido(payload: Dict[str, Any] = Body(...)):
         }
     except Exception as e:
         logger.error(f"Error al emitir presupuesto rápido: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/presupuestos/conciliar-estados")
+def conciliar_estados_presupuestos_api():
+    """
+    Recorre los presupuestos históricos y los concilia de forma reactiva con el pipeline quirúrgico y quirófano.
+    Si el caso ya está confirmado o tiene fecha asignada de cirugía, aprueba el presupuesto y vincula su asesoría.
+    """
+    try:
+        resultado = conciliar_estados_presupuestos_historicos()
+        return resultado
+    except Exception as e:
+        logger.error(f"Error al conciliar estados de presupuestos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/presupuestos")
