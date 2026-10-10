@@ -5384,13 +5384,17 @@ def get_configuracion_quirurgica() -> Dict[str, Any]:
     try:
         resp = supabase.table("configuracion_quirurgica").select("*").eq("id", "default").limit(1).execute()
         if resp.data:
-            return resp.data[0]
+            data = resp.data[0]
+            if "seguimiento_automatizado_activo" not in data:
+                data["seguimiento_automatizado_activo"] = True
+            return data
         return {
             "id": "default",
             "sla_dias_alerta": 3,
             "sla_dias_critico": 6,
             "checklist_items": [],
-            "plantillas_whatsapp": []
+            "plantillas_whatsapp": [],
+            "seguimiento_automatizado_activo": True
         }
     except Exception as e:
         logger.error(f"Error al obtener configuración quirúrgica: {e}")
@@ -5412,6 +5416,8 @@ def actualizar_configuracion_quirurgica(payload: dict) -> Dict[str, Any]:
             datos["checklist_items"] = payload["checklist_items"]
         if "plantillas_whatsapp" in payload:
             datos["plantillas_whatsapp"] = payload["plantillas_whatsapp"]
+        if "seguimiento_automatizado_activo" in payload:
+            datos["seguimiento_automatizado_activo"] = bool(payload["seguimiento_automatizado_activo"])
             
         datos["updated_at"] = "now()"
         

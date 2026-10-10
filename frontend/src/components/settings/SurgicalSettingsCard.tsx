@@ -33,6 +33,7 @@ export default function SurgicalSettingsCard() {
   const [slaCritico, setSlaCritico] = useState(6)
   const [checklistItems, setChecklistItems] = useState<ItemChecklist[]>([])
   const [plantillas, setPlantillas] = useState<PlantillaWA[]>([])
+  const [seguimientoAutoActivo, setSeguimientoAutoActivo] = useState(true)
 
   const [nuevoItemChecklist, setNuevoItemChecklist] = useState('')
   const [cargando, setCargando] = useState(true)
@@ -53,6 +54,7 @@ export default function SurgicalSettingsCard() {
         setSlaCritico(conf.sla_dias_critico || 6)
         setChecklistItems(conf.checklist_items || [])
         setPlantillas(conf.plantillas_whatsapp || [])
+        setSeguimientoAutoActivo(conf.seguimiento_automatizado_activo !== false)
       }
     } catch (err: any) {
       console.error('Error cargando configuración quirúrgica:', err)
@@ -77,7 +79,8 @@ export default function SurgicalSettingsCard() {
         sla_dias_alerta: slaAlerta,
         sla_dias_critico: slaCritico,
         checklist_items: checklistItems,
-        plantillas_whatsapp: plantillas
+        plantillas_whatsapp: plantillas,
+        seguimiento_automatizado_activo: seguimientoAutoActivo
       }
 
       const res = await fetch(`${BACKEND_URL}/api/configuracion-quirurgica`, {
@@ -209,6 +212,57 @@ export default function SurgicalSettingsCard() {
           <span>{mensajeExito}</span>
         </div>
       )}
+
+      {/* ==================================================================== */}
+      {/* SWITCH MAESTRO: AUTOMATISMO DE SEGUIMIENTO QUIRÚRGICO (WHATSAPP)     */}
+      {/* ==================================================================== */}
+      <div className={`p-5 rounded-2xl border transition-all shadow-sm ${
+        seguimientoAutoActivo 
+          ? 'bg-gradient-to-r from-emerald-950/30 via-slate-900/60 to-[var(--card)] border-emerald-500/30' 
+          : 'bg-gradient-to-r from-amber-950/30 via-slate-900/60 to-[var(--card)] border-amber-500/30'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <span className={`w-3 h-3 rounded-full animate-pulse ${seguimientoAutoActivo ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              <h4 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                Motor de Seguimiento Automatizado Quirúrgico (WhatsApp)
+              </h4>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                seguimientoAutoActivo 
+                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+              }`}>
+                {seguimientoAutoActivo ? '🟢 Activo en Toda la Clínica' : '⏸️ Pausado Centralmente'}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--secondary)] max-w-2xl leading-relaxed">
+              {seguimientoAutoActivo ? (
+                <>Control central de envíos programados: el motor escanea periódicamente las inactividades y despacha las <strong>Cadencias A (D+3, D+8, D+18)</strong> y <strong>Cadencias B (D+2, D+6, D+13 aviso arancel, D+25)</strong> a través de Meta WhatsApp Cloud API.</>
+              ) : (
+                <span className="text-amber-300/90 font-medium">
+                  ⚠️ <strong>Automatismo desactivado centralmente:</strong> No se despachará ningún toque programado a ningún paciente, independientemente del estado de su caso. Ideal para frenar mensajes durante pruebas, feriados o mantenimiento asistencial.
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={seguimientoAutoActivo}
+                onChange={(e) => setSeguimientoAutoActivo(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-12 h-6 bg-slate-700 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+            </label>
+            <span className="text-xs font-semibold text-slate-300">
+              {seguimientoAutoActivo ? 'Habilitado' : 'Deshabilitado'}
+            </span>
+          </div>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         

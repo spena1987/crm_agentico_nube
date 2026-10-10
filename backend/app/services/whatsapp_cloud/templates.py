@@ -226,7 +226,14 @@ async def sync_templates_from_meta():
                 "1": "paciente_nombre",
                 "2": "practica_nombre",
                 "3": "presupuesto_monto"
-            }
+            },
+            "seguimiento_asesoramiento_t1": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "seguimiento_asesoramiento_t2": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "seguimiento_asesoramiento_t3": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "seguimiento_analisis_t1": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "seguimiento_analisis_t2": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "seguimiento_analisis_t3": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "seguimiento_analisis_t4": {"1": "paciente_nombre", "2": "practica_nombre"}
         }
 
         try:
@@ -464,3 +471,258 @@ async def render_template_preview(req: RenderPreviewRequest):
         "header_content": req.header_content,
         "footer_text": req.footer_text
     }
+
+
+# ---------------------------------------------------------------------
+# Catálogo y Registro Masivo de Plantillas de Seguimiento Quirúrgico
+# ---------------------------------------------------------------------
+
+SEGUIMIENTO_TEMPLATES_CATALOG = [
+    {
+        "name": "seguimiento_asesoramiento_t1",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Seguimiento Asistencial",
+        "body_text": "Hola {{1}}, le escribimos desde el equipo quirurgico de Centrovision. Queríamos consultarle si le quedo alguna duda sobre la indicacion medica para {{2}} o si desea coordinar una fecha tentativa.",
+        "footer_text": "Centrovision Oftalmologia",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Quiero operarme"},
+            {"type": "QUICK_REPLY", "text": "Tengo dudas"}
+        ]
+    },
+    {
+        "name": "seguimiento_asesoramiento_t2",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Estudios Prequirurgicos y Cobertura",
+        "body_text": "Estimado/a {{1}}, esperamos que se encuentre muy bien. Respecto a su procedimiento de {{2}}, le recordamos que nuestro equipo puede asesorarlo con la gestion de estudios prequirurgicos y autorizaciones con su obra social. ¿Desea que lo asistamos?",
+        "footer_text": "Centrovision Quirofano",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Si, por favor"},
+            {"type": "QUICK_REPLY", "text": "Lo veo mas adelante"}
+        ]
+    },
+    {
+        "name": "seguimiento_asesoramiento_t3",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Consulta de Estado Quirurgico",
+        "body_text": "Hola {{1}}, desde Centrovision queremos saber como se encuentra respecto a su cirugia de {{2}}. Si aun esta evaluando los tiempos o prefiere que retomemos el contacto el proximo mes, haganoslo saber para acompanarlo cuando mejor le convenga.",
+        "footer_text": "Centrovision Oftalmologia",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Retomar ahora"},
+            {"type": "QUICK_REPLY", "text": "Posponer 30 dias"}
+        ]
+    },
+    {
+        "name": "seguimiento_analisis_t1",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Presupuesto Quirurgico Formal",
+        "body_text": "Hola {{1}}, nos comunicamos para confirmar si pudo abrir y revisar el presupuesto medico formal que le enviamos para {{2}}. Si tiene alguna consulta sobre los aranceles, insumos o formas de pago, estamos a su total disposicion.",
+        "footer_text": "Centrovision Area Quirurgica",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Pude revisarlo"},
+            {"type": "QUICK_REPLY", "text": "Tengo dudas de pago"}
+        ]
+    },
+    {
+        "name": "seguimiento_analisis_t2",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Opciones de Financiacion y Cobertura",
+        "body_text": "Estimado/a {{1}}, respecto a su cotizacion para {{2}}, le recordamos que disponemos de facilidades de pago en cuotas y orientacion personalizada para reintegros con su cobertura medica. ¿Desea que le acerquemos mas informacion?",
+        "footer_text": "Centrovision Administracion",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Consultar cuotas"},
+            {"type": "QUICK_REPLY", "text": "Sigo analizando"}
+        ]
+    },
+    {
+        "name": "seguimiento_analisis_t3",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Aviso de Vigencia Arancelaria",
+        "body_text": "Estimado/a {{1}}, le informamos que el presupuesto emitido para {{2}} se encuentra a 48 horas de cumplir su plazo de validez arancelaria de 15 dias. Si desea congelar el valor cotizado y reservar su fecha en quirofano antes del reajuste, avisenos con un clic.",
+        "footer_text": "Centrovision Area Quirurgica",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Congelar arancel"},
+            {"type": "QUICK_REPLY", "text": "Pausar seguimiento"}
+        ]
+    },
+    {
+        "name": "seguimiento_analisis_t4",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Actualizacion de su Expediente",
+        "body_text": "Hola {{1}}, nos comunicamos para consultarle si desea que mantengamos activa su propuesta para {{2}} o si prefiere posponerla para mas adelante. De no confirmar, dejaremos el caso en pausa para no importunarlo, quedando a su entera disposicion.",
+        "footer_text": "Centrovision Oftalmologia",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Carlos", "Cirugia de Cataratas"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Mantener activa"},
+            {"type": "QUICK_REPLY", "text": "Posponer por ahora"}
+        ]
+    }
+]
+
+
+@templates_router.post("/registrar-seguimiento", status_code=status.HTTP_200_OK)
+async def registrar_plantillas_seguimiento_en_meta():
+    """
+    Registra el pack oficial de las 7 plantillas de seguimiento quirúrgico en Meta WhatsApp Cloud API
+    y las sincroniza en la base de datos de Supabase.
+    """
+    waba_id, token = get_waba_credentials()
+    if not waba_id or not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Credenciales WABA (WABA ID o Access Token) no configuradas en el sistema."
+        )
+
+    resultados: List[Dict[str, Any]] = []
+
+    for tpl_spec in SEGUIMIENTO_TEMPLATES_CATALOG:
+        tpl_name = tpl_spec["name"]
+        try:
+            # 1. Comprobar si ya existe en Supabase
+            exist_res = supabase.table("whatsapp_templates").select("id, status, meta_template_id").eq("name", tpl_name).execute()
+            if exist_res.data and len(exist_res.data) > 0 and exist_res.data[0].get("meta_template_id"):
+                resultados.append({
+                    "name": tpl_name,
+                    "status": exist_res.data[0].get("status", "EXISTS"),
+                    "action": "ya_registrada",
+                    "meta_id": exist_res.data[0].get("meta_template_id")
+                })
+                continue
+
+            # 2. Construir componentes para Meta Graph API
+            components: List[Dict[str, Any]] = [
+                {
+                    "type": "HEADER",
+                    "format": "TEXT",
+                    "text": clean_header_text(tpl_spec["header_content"])
+                },
+                {
+                    "type": "BODY",
+                    "text": tpl_spec["body_text"],
+                    "example": {
+                        "body_text": [tpl_spec["sample_values"]]
+                    }
+                },
+                {
+                    "type": "FOOTER",
+                    "text": tpl_spec["footer_text"]
+                },
+                {
+                    "type": "BUTTONS",
+                    "buttons": [
+                        {"type": b["type"], "text": b["text"]}
+                        for b in tpl_spec["buttons"]
+                    ]
+                }
+            ]
+
+            meta_payload = {
+                "name": tpl_name,
+                "category": tpl_spec["category"],
+                "language": "es_AR",
+                "components": components
+            }
+
+            url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.post(url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+
+            meta_data = res.json() if res.content else {}
+            
+            if res.status_code in (200, 201):
+                meta_id = meta_data.get("id")
+                meta_status = meta_data.get("status", "PENDING")
+                
+                # Guardar en Supabase
+                db_record = {
+                    "waba_id": waba_id,
+                    "meta_template_id": meta_id,
+                    "name": tpl_name,
+                    "category": tpl_spec["category"],
+                    "language": "es_AR",
+                    "status": meta_status,
+                    "header_type": "TEXT",
+                    "header_content": tpl_spec["header_content"],
+                    "body_text": tpl_spec["body_text"],
+                    "footer_text": tpl_spec["footer_text"],
+                    "buttons": tpl_spec["buttons"],
+                    "variable_mappings": tpl_spec["variable_mappings"],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+                supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+
+                resultados.append({
+                    "name": tpl_name,
+                    "status": meta_status,
+                    "action": "creada_en_meta",
+                    "meta_id": meta_id
+                })
+            else:
+                error_msg = meta_data.get("error", {}).get("message", res.text)
+                # Si ya existía en Meta pero no en DB local, intentar registrarla localmente
+                if "already exists" in error_msg.lower():
+                    db_record = {
+                        "waba_id": waba_id,
+                        "name": tpl_name,
+                        "category": tpl_spec["category"],
+                        "language": "es_AR",
+                        "status": "APPROVED",
+                        "header_type": "TEXT",
+                        "header_content": tpl_spec["header_content"],
+                        "body_text": tpl_spec["body_text"],
+                        "footer_text": tpl_spec["footer_text"],
+                        "buttons": tpl_spec["buttons"],
+                        "variable_mappings": tpl_spec["variable_mappings"],
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }
+                    supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+                    resultados.append({
+                        "name": tpl_name,
+                        "status": "APPROVED",
+                        "action": "ya_existia_en_meta_sincronizada_local",
+                        "detail": "Ya existía en Meta. Se vinculó localmente."
+                    })
+                else:
+                    resultados.append({
+                        "name": tpl_name,
+                        "status": "ERROR",
+                        "action": "fallo_meta",
+                        "detail": error_msg
+                    })
+
+        except Exception as e:
+            logger.error(f"Error procesando plantilla {tpl_name}: {e}")
+            resultados.append({
+                "name": tpl_name,
+                "status": "EXCEPTION",
+                "action": "error_interno",
+                "detail": str(e)
+            })
+
+    return {
+        "status": "success",
+        "total": len(SEGUIMIENTO_TEMPLATES_CATALOG),
+        "resultados": resultados
+    }
+

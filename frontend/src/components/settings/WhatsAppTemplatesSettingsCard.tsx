@@ -202,7 +202,7 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     category: 'UTILITY' as const,
     header_content: 'Seguimiento Asistencial',
     body_text: 'Hola {{1}}, le escribimos desde el equipo quirúrgico de Centrovisión. Queríamos consultarle si le quedó alguna duda sobre la indicación médica para {{2}} o si desea coordinar una fecha tentativa.',
-    footer_text: 'Centrovisión • Asesoramiento Quirúrgico',
+    footer_text: 'Centrovisión Oftalmología',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'practica_nombre'
@@ -213,12 +213,76 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     ]
   },
   {
-    title: 'Seguimiento Análisis (D+13 - Vencimiento Presupuesto)',
+    title: 'Seguimiento Asesoramiento (D+8 - Toque 2)',
+    name: 'seguimiento_asesoramiento_t2',
+    category: 'UTILITY' as const,
+    header_content: 'Estudios Prequirúrgicos y Cobertura',
+    body_text: 'Estimado/a {{1}}, esperamos que se encuentre muy bien. Respecto a su procedimiento de {{2}}, le recordamos que nuestro equipo puede asesorarlo con la gestión de estudios prequirúrgicos y autorizaciones con su obra social. ¿Desea que lo asistamos?',
+    footer_text: 'Centrovisión Quirófano',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Sí, por favor' },
+      { type: 'QUICK_REPLY', text: 'Lo veo más adelante' }
+    ]
+  },
+  {
+    title: 'Seguimiento Asesoramiento (D+18 - Toque 3)',
+    name: 'seguimiento_asesoramiento_t3',
+    category: 'UTILITY' as const,
+    header_content: 'Consulta de Estado Quirúrgico',
+    body_text: 'Hola {{1}}, desde Centrovisión queremos saber cómo se encuentra respecto a su cirugía de {{2}}. Si aún está evaluando los tiempos o prefiere que retomemos el contacto el próximo mes, háganoslo saber para acompañarlo cuando mejor le convenga.',
+    footer_text: 'Centrovisión Oftalmología',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Retomar ahora' },
+      { type: 'QUICK_REPLY', text: 'Posponer 30 días' }
+    ]
+  },
+  {
+    title: 'Seguimiento Análisis (D+2 - Toque 1)',
+    name: 'seguimiento_analisis_t1',
+    category: 'UTILITY' as const,
+    header_content: 'Presupuesto Quirúrgico Formal',
+    body_text: 'Hola {{1}}, nos comunicamos para confirmar si pudo abrir y revisar el presupuesto médico formal que le enviamos para {{2}}. Si tiene alguna consulta sobre los aranceles, insumos o formas de pago, estamos a su total disposición.',
+    footer_text: 'Centrovisión Área Quirúrgica',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Pude revisarlo' },
+      { type: 'QUICK_REPLY', text: 'Tengo dudas de pago' }
+    ]
+  },
+  {
+    title: 'Seguimiento Análisis (D+6 - Toque 2)',
+    name: 'seguimiento_analisis_t2',
+    category: 'UTILITY' as const,
+    header_content: 'Opciones de Financiación y Cobertura',
+    body_text: 'Estimado/a {{1}}, respecto a su cotización para {{2}}, le recordamos que disponemos de facilidades de pago en cuotas y orientación personalizada para reintegros con su cobertura médica. ¿Desea que le acerquemos más información?',
+    footer_text: 'Centrovisión Administración',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Consultar cuotas' },
+      { type: 'QUICK_REPLY', text: 'Sigo analizando' }
+    ]
+  },
+  {
+    title: 'Seguimiento Análisis (D+13 - Toque 3: Vencimiento Arancel)',
     name: 'seguimiento_analisis_t3',
     category: 'UTILITY' as const,
     header_content: 'Aviso de Vigencia Arancelaria',
-    body_text: 'Estimado/a {{1}}, le recordamos que el presupuesto emitido para {{2}} se encuentra a 48 hs de cumplir su plazo de validez arancelaria de 15 días.\n\nSi desea congelar el valor y reservar su fecha en quirófano, responda a este mensaje.',
-    footer_text: 'Centrovisión • Área Quirúrgica',
+    body_text: 'Estimado/a {{1}}, le informamos que el presupuesto emitido para {{2}} se encuentra a 48 horas de cumplir su plazo de validez arancelaria de 15 días. Si desea congelar el valor cotizado y reservar su fecha en quirófano antes del reajuste, avísenos con un clic.',
+    footer_text: 'Centrovisión Área Quirúrgica',
     variable_mappings: {
       '1': 'paciente_nombre',
       '2': 'practica_nombre'
@@ -227,6 +291,22 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
       { type: 'QUICK_REPLY', text: 'Congelar arancel' },
       { type: 'QUICK_REPLY', text: 'Pausar seguimiento' }
     ]
+  },
+  {
+    title: 'Seguimiento Análisis (D+25 - Toque 4: Cierre Suave)',
+    name: 'seguimiento_analisis_t4',
+    category: 'UTILITY' as const,
+    header_content: 'Actualización de su Expediente',
+    body_text: 'Hola {{1}}, nos comunicamos para consultarle si desea que mantengamos activa su propuesta para {{2}} o si prefiere posponerla para más adelante. De no confirmar, dejaremos el caso en pausa para no importunarlo, quedando a su entera disposición.',
+    footer_text: 'Centrovisión Oftalmología',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Mantener activa' },
+      { type: 'QUICK_REPLY', text: 'Posponer por ahora' }
+    ]
   }
 ]
 
@@ -234,6 +314,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [loading, setLoading] = useState<boolean>(true)
   const [syncing, setSyncing] = useState<boolean>(false)
+  const [registeringFollowUp, setRegisteringFollowUp] = useState<boolean>(false)
   const [searchFilter, setSearchFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL')
 
@@ -299,6 +380,31 @@ export default function WhatsAppTemplatesSettingsCard() {
       setErrorFeedback(`Fallo de conexión: ${err.message}`)
     } finally {
       setSyncing(false)
+    }
+  }
+
+  // Registrar las 7 plantillas de seguimiento en Meta
+  const handleRegisterFollowUpTemplates = async () => {
+    try {
+      setRegisteringFollowUp(true)
+      setErrorFeedback(null)
+      const res = await apiFetch('/api/whatsapp/cloud/templates/registrar-seguimiento', {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.status === 'success') {
+        const creadas = data.resultados?.filter((r: any) => r.action === 'creada_en_meta').length || 0
+        const existentes = data.resultados?.filter((r: any) => r.action === 'ya_registrada' || r.action === 'ya_existia_en_meta_sincronizada_local').length || 0
+        setSuccessFeedback(`Pack de seguimiento procesado: ${creadas} registradas en Meta, ${existentes} vinculadas en el CRM.`)
+        setTimeout(() => setSuccessFeedback(null), 5000)
+        fetchTemplates()
+      } else {
+        setErrorFeedback(data.detail || 'Error registrando plantillas de seguimiento.')
+      }
+    } catch (err: any) {
+      setErrorFeedback(`Error de conexión: ${err.message}`)
+    } finally {
+      setRegisteringFollowUp(false)
     }
   }
 
@@ -447,7 +553,8 @@ export default function WhatsAppTemplatesSettingsCard() {
   const filteredTemplates = templates.filter(tpl => {
     const matchesSearch = tpl.name.toLowerCase().includes(searchFilter.toLowerCase()) || 
                           tpl.body_text.toLowerCase().includes(searchFilter.toLowerCase())
-    const matchesCategory = categoryFilter === 'ALL' || tpl.category === categoryFilter
+    const matchesCategory = categoryFilter === 'ALL' || 
+      (categoryFilter === 'SEGUIMIENTO' ? tpl.name.startsWith('seguimiento_') : tpl.category === categoryFilter)
     return matchesSearch && matchesCategory
   })
 
@@ -455,6 +562,8 @@ export default function WhatsAppTemplatesSettingsCard() {
   const countApproved = templates.filter(t => t.status === 'APPROVED').length
   const countPending = templates.filter(t => t.status === 'PENDING').length
   const countRejected = templates.filter(t => t.status === 'REJECTED').length
+  const countSeguimiento = templates.filter(t => t.name.startsWith('seguimiento_')).length
+  const countSeguimientoApproved = templates.filter(t => t.name.startsWith('seguimiento_') && t.status === 'APPROVED').length
 
   return (
     <div className="space-y-6">
@@ -476,7 +585,17 @@ export default function WhatsAppTemplatesSettingsCard() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            <button
+              onClick={handleRegisterFollowUpTemplates}
+              disabled={registeringFollowUp}
+              className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg text-sm font-semibold shadow-sm transition-all disabled:opacity-50"
+              title="Registrar las 7 plantillas oficiales de seguimiento quirúrgico en Meta Graph API y en el CRM"
+            >
+              <Zap className={`w-4 h-4 ${registeringFollowUp ? 'animate-bounce text-amber-300' : 'text-amber-300'}`} />
+              <span>{registeringFollowUp ? 'Registrando en Meta...' : 'Registrar Pack Seguimiento'}</span>
+            </button>
+
             <button
               onClick={handleSyncWithMeta}
               disabled={syncing}
@@ -515,7 +634,7 @@ export default function WhatsAppTemplatesSettingsCard() {
         )}
 
         {/* Estadísticas / KPIs */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-6 border-t border-[#1e2d42]">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6 pt-6 border-t border-[#1e2d42]">
           <div className="p-3 rounded-lg bg-[#162232] border border-[#233348]">
             <div className="text-xs font-medium text-slate-400">Total Plantillas</div>
             <div className="text-xl font-bold text-white mt-0.5">{templates.length}</div>
@@ -538,6 +657,14 @@ export default function WhatsAppTemplatesSettingsCard() {
             </div>
             <div className="text-xl font-bold text-red-300 mt-0.5">{countRejected}</div>
           </div>
+          <div className="p-3 rounded-lg bg-[#0d2238]/60 border border-[#1b3a5b]">
+            <div className="text-xs font-medium text-blue-400 flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5 text-amber-400" /> Seguimiento Qx
+            </div>
+            <div className="text-xl font-bold text-blue-300 mt-0.5">
+              {countSeguimiento} <span className="text-xs font-normal text-slate-400">({countSeguimientoApproved} OK)</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -554,14 +681,22 @@ export default function WhatsAppTemplatesSettingsCard() {
           />
         </div>
 
-        <div className="flex items-center gap-1.5 self-start sm:self-auto bg-[#162232] p-1 rounded-lg border border-[#233348] text-xs">
+        <div className="flex items-center gap-1.5 self-start sm:self-auto bg-[#162232] p-1 rounded-lg border border-[#233348] text-xs flex-wrap">
           <button
             onClick={() => setCategoryFilter('ALL')}
             className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
               categoryFilter === 'ALL' ? 'bg-[#23354c] text-white font-semibold' : 'text-slate-400 hover:text-white'
             }`}
           >
-            Todas
+            Todas ({templates.length})
+          </button>
+          <button
+            onClick={() => setCategoryFilter('SEGUIMIENTO')}
+            className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+              categoryFilter === 'SEGUIMIENTO' ? 'bg-blue-950 text-blue-300 font-semibold border border-blue-800/50' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Seguimiento Quirúrgico ({countSeguimiento})
           </button>
           <button
             onClick={() => setCategoryFilter('UTILITY')}

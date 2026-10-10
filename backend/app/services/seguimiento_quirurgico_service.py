@@ -54,6 +54,20 @@ def evaluar_y_ejecutar_seguimiento_automatizado() -> Dict[str, Any]:
     if not sb:
         return {"error": "Base de datos no conectada", "procesados": 0}
 
+    # 0. Pre-flight: Verificar Switch Maestro Global en Ajustes
+    try:
+        from app.db import get_configuracion_quirurgica
+        conf_q = get_configuracion_quirurgica()
+        if conf_q.get("seguimiento_automatizado_activo", True) is False:
+            logger.info("⏸️ [Seguimiento Auto] Automatismo global desactivado en Ajustes. Escaneo abortado.")
+            return {
+                "status": "pausado_globalmente",
+                "procesados": 0,
+                "mensaje": "El automatismo de seguimiento está desactivado globalmente en Ajustes."
+            }
+    except Exception as e_conf:
+        logger.warning(f"Error consultando switch maestro de seguimiento: {e_conf}")
+
     ahora = datetime.now(timezone.utc)
     hoy_fecha_str = ahora.strftime("%Y-%m-%d")
     resultados = {
@@ -200,10 +214,16 @@ def _enviar_plantilla_meta_sync(
     parametros_body: List[Dict[str, Any]],
     language_code: str = "es_AR"
 ) -> Dict[str, Any]:
-    """Helper síncrono para enviar plantillas vía WhatsApp Cloud API."""
     creds = get_whatsapp_cloud_credentials()
-    phone_number_id = creds.get("phone_number_id")
-    access_token = creds.get("access_token")
+    if isinstance(creds, (tuple, list)):
+        phone_number_id = creds[0] if len(creds) > 0 else None
+        access_token = creds[1] if len(creds) > 1 else None
+    elif isinstance(creds, dict):
+        phone_number_id = creds.get("phone_number_id")
+        access_token = creds.get("access_token")
+    else:
+        phone_number_id, access_token = None, None
+
     if not phone_number_id or not access_token:
         return {"error": "Sin credenciales de WhatsApp Cloud configuradas"}
 

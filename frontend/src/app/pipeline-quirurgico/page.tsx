@@ -247,12 +247,26 @@ export default function PipelineQuirurgicoPage() {
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
 
   const [modalAnaliticaOpen, setModalAnaliticaOpen] = useState<boolean>(false)
+  const [seguimientoAutoGlobal, setSeguimientoAutoGlobal] = useState<boolean>(true)
 
   // Cargar Pipeline (con apiFetch autenticado y fallback resiliente a Supabase)
   const fetchPipeline = async () => {
     try {
       setCargando(true)
       setError(null)
+
+      // Consultar estado de automatismo global en Ajustes
+      try {
+        const resConf = await fetch(`${BACKEND_URL}/api/configuracion-quirurgica`)
+        if (resConf.ok) {
+          const dConf = await resConf.json()
+          if (dConf?.configuracion?.seguimiento_automatizado_activo === false) {
+            setSeguimientoAutoGlobal(false)
+          } else {
+            setSeguimientoAutoGlobal(true)
+          }
+        }
+      } catch (_) {}
 
       let datosCargados = false
       try {
@@ -768,11 +782,17 @@ export default function PipelineQuirurgicoPage() {
               <TrendingUp size={16} />
             </div>
             <div>
-              <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5">
+              <h1 className="text-sm font-black text-white tracking-tight flex items-center gap-1.5 flex-wrap">
                 Pipeline Quirúrgico
                 <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full bg-blue-950 text-blue-300 border border-blue-800/40">
                   En Vivo
                 </span>
+                {!seguimientoAutoGlobal && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-950/80 text-amber-300 border border-amber-600/50 flex items-center gap-1" title="El motor de seguimiento automático está pausado globalmente desde Ajustes">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                    <span>Automatismo Pausado en Ajustes</span>
+                  </span>
+                )}
               </h1>
             </div>
           </div>
