@@ -59,7 +59,8 @@ const CLINICAL_VARIABLES = [
   { id: 'practica_nombre', label: 'Práctica / Cirugía', icon: FileText, sample: 'Cirugía de Cataratas' },
   { id: 'quirofano_nombre', label: 'Sede / Quirófano', icon: Building, sample: 'Sede Central - Quirófano 1' },
   { id: 'presupuesto_monto', label: 'Monto Presupuesto', icon: DollarSign, sample: '$ 45.000' },
-  { id: 'preparacion_texto', label: 'Preparación Prequirúrgica', icon: ShieldCheck, sample: 'Ayuno de 8 hs de sólidos y líquidos. Concurrir con DNI y estudios prequirúrgicos.' }
+  { id: 'preparacion_texto', label: 'Preparación Prequirúrgica', icon: ShieldCheck, sample: 'Ayuno de 8 hs de sólidos y líquidos. Concurrir con DNI y estudios prequirúrgicos.' },
+  { id: 'enlace_consentimiento', label: 'Enlace Firma Consentimiento', icon: LinkIcon, sample: 'https://crm-agentico-nube.vercel.app/consentimiento/tok_abc123' }
 ]
 
 interface PremadeTemplate {
@@ -75,6 +76,34 @@ interface PremadeTemplate {
 
 // Plantillas pre-diseñadas para carga rápida (con soporte de ambas opciones de botones)
 const PREMADE_TEMPLATES: PremadeTemplate[] = [
+  {
+    title: 'Consentimiento Informado Quirúrgico (Firma Digital)',
+    name: 'consentimiento_informado_quirurgico_v1',
+    category: 'UTILITY' as const,
+    header_content: '',
+    body_text: 'Hola {{1}}, le escribimos de Centrovisión respecto a su cirugía de {{2}} programada para el día {{3}} con el/la Dr/a. {{4}}.\n\n📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, le compartimos su Consentimiento Informado oficial:\n{{5}}\n\nAnte cualquier consulta, estamos a su disposición.',
+    footer_text: 'Centrovisión • Quirófano',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre',
+      '3': 'turno_fecha',
+      '4': 'medico_nombre',
+      '5': 'enlace_consentimiento'
+    },
+    buttons: []
+  },
+  {
+    title: 'Apertura de Conversación (Ventana 24h)',
+    name: 'apertura_conversacion',
+    category: 'UTILITY' as const,
+    header_content: '',
+    body_text: 'Hola {{1}}, nos comunicamos de Centrovisión respecto a su cirugía programada. Por favor responda a este mensaje para activar el canal y enviarle la documentación prequirúrgica.',
+    footer_text: 'Centrovisión Oftalmología',
+    variable_mappings: {
+      '1': 'paciente_nombre'
+    },
+    buttons: []
+  },
   {
     title: 'Recordatorio Cirugía con Preparación (Prequirúrgico)',
     name: 'recordatorio_cirugia_preparacion_v1',

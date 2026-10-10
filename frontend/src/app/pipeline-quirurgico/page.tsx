@@ -38,11 +38,12 @@ import { supabase } from '@/lib/supabase'
 import { usePermissions } from '@/hooks/usePermissions'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalRecordatorioCirugiaWhatsApp from '@/components/ModalRecordatorioCirugiaWhatsApp'
+import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
 import { Columns3, AlignJustify } from 'lucide-react'
-import { Radio, Users, BellRing } from 'lucide-react'
+import { Radio, Users, BellRing, FileCheck2 } from 'lucide-react'
 
 export interface PacienteData {
   id: string
@@ -93,6 +94,15 @@ export interface AsesoriaCasoPipeline {
     respuesta_tipo?: string | null
     respuesta_texto?: string | null
     template?: string | null
+  }
+  consentimiento_info?: {
+    firmado: boolean
+    estado: string
+    enviado_at?: string | null
+    firmado_at?: string | null
+    modo_firma?: string | null
+    pdf_url?: string | null
+    token?: string | null
   }
   created_at: string
   updated_at?: string
@@ -215,6 +225,8 @@ export default function PipelineQuirurgicoPage() {
   const [casoParaWhatsApp, setCasoParaWhatsApp] = useState<AsesoriaCasoPipeline | null>(null)
   const [modalRecordatorioOpen, setModalRecordatorioOpen] = useState(false)
   const [casoParaRecordatorio, setCasoParaRecordatorio] = useState<AsesoriaCasoPipeline | null>(null)
+  const [modalConsentimientoOpen, setModalConsentimientoOpen] = useState(false)
+  const [casoParaConsentimiento, setCasoParaConsentimiento] = useState<AsesoriaCasoPipeline | null>(null)
 
   const [modalCierreOpen, setModalCierreOpen] = useState(false)
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
@@ -546,6 +558,12 @@ export default function PipelineQuirurgicoPage() {
   const handleAbrirRecordatorioQx = (caso: AsesoriaCasoPipeline) => {
     setCasoParaRecordatorio(caso)
     setModalRecordatorioOpen(true)
+  }
+
+  // Acción rápida: Consentimiento Informado (WhatsApp / Digital)
+  const handleAbrirConsentimientoQx = (caso: AsesoriaCasoPipeline) => {
+    setCasoParaConsentimiento(caso)
+    setModalConsentimientoOpen(true)
   }
 
   // Filtrado de casos por etapa
@@ -1103,6 +1121,7 @@ export default function PipelineQuirurgicoPage() {
           onCambiarEtapa={handleSeleccionarEtapa}
           onAbrirWhatsApp={handleAbrirWhatsApp}
           onAbrirRecordatorioQx={handleAbrirRecordatorioQx}
+          onAbrirConsentimientoQx={handleAbrirConsentimientoQx}
           onMarcarContactadoHoy={handleMarcarContactadoHoy}
           actualizandoCasoId={actualizandoCasoId}
           canChangeStage={canChangeStage}
@@ -1462,6 +1481,30 @@ export default function PipelineQuirurgicoPage() {
                                   </Link>
                                 )}
 
+                                {/* Botón Consentimiento Informado (Firma Digital / WhatsApp) */}
+                                {(caso.estado === 'programado' || caso.estado === 'confirmado' || caso.fecha_definitiva_cirugia) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAbrirConsentimientoQx(caso)}
+                                    className={`p-1 rounded-lg border transition-colors cursor-pointer ${
+                                      caso.checklist_prequirurgico?.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                        ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-500/50 text-emerald-300 hover:text-white'
+                                        : caso.consentimiento_info?.estado === 'enviado_whatsapp' || caso.checklist_prequirurgico?._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                        ? 'bg-amber-950/70 hover:bg-amber-900 border-amber-500/50 text-amber-300 hover:text-white'
+                                        : 'bg-teal-950/70 hover:bg-teal-900 border-teal-500/40 text-teal-300 hover:text-white'
+                                    }`}
+                                    title={
+                                      caso.checklist_prequirurgico?.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                        ? 'Consentimiento firmado. Clic para ver o gestionar'
+                                        : caso.consentimiento_info?.estado === 'enviado_whatsapp'
+                                        ? 'Consentimiento enviado por WhatsApp (esperando firma)'
+                                        : 'Enviar Consentimiento Informado por WhatsApp con firma digital'
+                                    }
+                                  >
+                                    <FileCheck2 size={12} />
+                                  </button>
+                                )}
+
                                 {/* Botón WhatsApp */}
                                 <button
                                   type="button"
@@ -1707,6 +1750,24 @@ export default function PipelineQuirurgicoPage() {
           pacienteTelefonoDefault={casoParaRecordatorio.pacientes?.telefono || undefined}
           onMensajeEnviado={() => {
             mostrarToast('Recordatorio prequirúrgico enviado por WhatsApp con éxito.')
+            fetchPipeline()
+          }}
+        />
+      )}
+
+      {modalConsentimientoOpen && casoParaConsentimiento && (
+        <ModalEnviarConsentimientoWhatsApp
+          isOpen={modalConsentimientoOpen}
+          onClose={() => {
+            setModalConsentimientoOpen(false)
+            setCasoParaConsentimiento(null)
+          }}
+          casoId={casoParaConsentimiento.id}
+          pacienteId={casoParaConsentimiento.paciente_id}
+          pacienteNombreDefault={casoParaConsentimiento.pacientes?.nombre}
+          pacienteTelefonoDefault={casoParaConsentimiento.pacientes?.telefono || undefined}
+          onConsentimientoEnviado={() => {
+            mostrarToast('Consentimiento Informado enviado por WhatsApp con éxito.')
             fetchPipeline()
           }}
         />

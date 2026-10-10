@@ -39,6 +39,7 @@ import {
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import { Printer } from 'lucide-react'
 
 interface FichaTurnoModalProps {
@@ -97,6 +98,7 @@ export default function FichaTurnoModal({
   // Modal flotante para Administrar Modelos de LIO sin salir de la ficha
   const [mostrarModalConfigLio, setMostrarModalConfigLio] = useState(false)
   const [mostrarModalPulsera, setMostrarModalPulsera] = useState(false)
+  const [modalConsentimientoWhatsAppOpen, setModalConsentimientoWhatsAppOpen] = useState(false)
   const [nuevoModeloLio, setNuevoModeloLio] = useState({
     marca: '',
     modelo: '',
@@ -1923,9 +1925,17 @@ export default function FichaTurnoModal({
                         <span className="text-emerald-600 flex items-center gap-1">
                           <CheckCircle2 size={13} /> Firmado Digitalmente
                         </span>
+                      ) : turno?.consentimiento_estado === 'firmado_papel' ? (
+                        <span className="text-blue-600 flex items-center gap-1">
+                          <CheckCircle2 size={13} /> Firmado en Papel
+                        </span>
                       ) : turno?.consentimiento_estado === 'enviado_whatsapp' ? (
                         <span className="text-amber-600 flex items-center gap-1">
                           <Clock size={13} /> Enviado por WhatsApp (Pendiente)
+                        </span>
+                      ) : turno?.consentimiento_estado === 'esperando_apertura' ? (
+                        <span className="text-amber-600 flex items-center gap-1">
+                          <Clock size={13} /> Esperando Apertura WhatsApp
                         </span>
                       ) : (
                         <span className="text-slate-400 flex items-center gap-1">
@@ -2000,13 +2010,17 @@ export default function FichaTurnoModal({
                 {/* Botón Enviar Consentimiento */}
                 <button
                   type="button"
-                  onClick={handleEnviarConsentimientoWA}
-                  disabled={enviandoWA || !formData.paciente_telefono || cancelando}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50"
-                  title="Enviar enlace web de firma digital por WhatsApp"
+                  onClick={() => setModalConsentimientoWhatsAppOpen(true)}
+                  disabled={!formData.paciente_telefono || cancelando}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all disabled:opacity-50 cursor-pointer"
+                  title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
                 >
-                  {enviandoWA ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                  <span>Enviar Consentimiento WA</span>
+                  <Send size={14} />
+                  <span>
+                    {turno?.consentimiento_estado === 'enviado_whatsapp'
+                      ? 'Reenviar Consentimiento WA'
+                      : 'Enviar Consentimiento WA'}
+                  </span>
                 </button>
 
                 {/* Botón Enviar Preparación Prequirúrgica */}
@@ -2062,6 +2076,24 @@ export default function FichaTurnoModal({
             isOpen={mostrarModalPulsera}
             onClose={() => setMostrarModalPulsera(false)}
             turnoId={turno.id}
+          />
+        )}
+
+        {/* MODAL ENVIAR CONSENTIMIENTO INFORMADO WHATSAPP */}
+        {modalConsentimientoWhatsAppOpen && turno?.id && (
+          <ModalEnviarConsentimientoWhatsApp
+            isOpen={modalConsentimientoWhatsAppOpen}
+            onClose={() => setModalConsentimientoWhatsAppOpen(false)}
+            turnoId={turno.id}
+            casoId={turno.asesoria_id || undefined}
+            pacienteId={formData.paciente_id}
+            pacienteNombreDefault={formData.paciente_nombre}
+            pacienteTelefonoDefault={formData.paciente_telefono}
+            onConsentimientoEnviado={() => {
+              setMensajeExito('✔ Consentimiento enviado al WhatsApp del paciente.')
+              onSaved()
+              setTimeout(() => setMensajeExito(null), 3500)
+            }}
           />
         )}
         {/* MODAL RÁPIDO PARA REGISTRAR / ADMINISTRAR MODELOS DE LIO */}

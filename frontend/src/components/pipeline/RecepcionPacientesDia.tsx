@@ -29,6 +29,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
@@ -104,6 +105,7 @@ export default function RecepcionPacientesDia() {
   const [scanVerifRawQR, setScanVerifRawQR] = useState<string>('')
   const [mostrarModalCamara, setMostrarModalCamara] = useState<boolean>(false)
   const [mostrarModalGuiaS224, setMostrarModalGuiaS224] = useState<boolean>(false)
+  const [consentimientoModalTurno, setConsentimientoModalTurno] = useState<TurnoRecepcion | null>(null)
 
   // Motor universal de escáner inteligente (ProSoft S224 / USB HID / Bluetooth)
   const { estaEscaneando } = useSmartScannerEngine({
@@ -814,12 +816,13 @@ export default function RecepcionPacientesDia() {
                           )}
                           <button
                             type="button"
-                            disabled={procesandoId === t.id || !telefonoValido}
-                            onClick={() => handleReenviarConsentimientoWA(t.id)}
-                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50 transition"
+                            disabled={!telefonoValido}
+                            onClick={() => setConsentimientoModalTurno(t)}
+                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50 transition cursor-pointer"
+                            title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
                           >
                             <Send size={11} />
-                            <span>Reenviar WhatsApp</span>
+                            <span>Enviar por WhatsApp</span>
                           </button>
 
                           <button
@@ -948,6 +951,20 @@ export default function RecepcionPacientesDia() {
         <ModalGuiaEscanerS224
           isOpen={mostrarModalGuiaS224}
           onClose={() => setMostrarModalGuiaS224(false)}
+        />
+      )}
+
+      {consentimientoModalTurno && (
+        <ModalEnviarConsentimientoWhatsApp
+          isOpen={!!consentimientoModalTurno}
+          onClose={() => setConsentimientoModalTurno(null)}
+          turnoId={consentimientoModalTurno.id}
+          pacienteId={consentimientoModalTurno.paciente_id}
+          pacienteNombreDefault={consentimientoModalTurno.pacientes?.nombre || consentimientoModalTurno.paciente_nombre}
+          pacienteTelefonoDefault={consentimientoModalTurno.pacientes?.telefono || consentimientoModalTurno.paciente_telefono}
+          onConsentimientoEnviado={() => {
+            fetchTurnosHoy()
+          }}
         />
       )}
     </div>

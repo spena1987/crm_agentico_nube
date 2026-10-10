@@ -869,6 +869,90 @@ async def handle_automated_interactive_action(
     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 
     # =========================================================================
+    # CASO 0: ENTREGA DIFERIDA DE CONSENTIMIENTO INFORMADO (TRAS APERTURA DE VENTANA)
+    # =========================================================================
+    if crm_conv_id:
+        try:
+            last_msgs = supabase.table("mensajes")\
+                .select("id, metadata_json")\
+                .eq("conversacion_id", crm_conv_id)\
+                .neq("emisor", "paciente")\
+                .order("created_at", desc=True)\
+                .limit(5)\
+                .execute()
+            for m_row in (last_msgs.data or []):
+                m_meta = m_row.get("metadata_json") or {}
+                pending_ci = m_meta.get("pending_consentimiento_delivery")
+                if pending_ci and isinstance(pending_ci, dict):
+                    enlace_firma = pending_ci.get("enlace_firma")
+                    msg_prep = pending_ci.get("mensaje_preparado")
+                    t_id = pending_ci.get("turno_id")
+                    as_id = pending_ci.get("asesoria_id")
+
+                    texto_a_enviar = msg_prep or (
+                        f"Muchas gracias por comunicarse. Le compartimos el enlace oficial para leer con tranquilidad "
+                        f"y firmar digitalmente su Consentimiento Informado Quirúrgico:\n{enlace_firma}\n\n"
+                        f"Quedamos a su entera disposición ante cualquier duda."
+                    )
+
+                    phone_id, token_waba = get_whatsapp_cloud_credentials()
+                    if phone_id and token_waba:
+                        wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token_waba)
+                        try:
+                            res_ci = await wa_client.send_free_text(normalized_phone, texto_a_enviar)
+                            ci_wamid = res_ci.get("wamid")
+
+                            supabase.table("mensajes").insert({
+                                "conversacion_id": crm_conv_id,
+                                "emisor": "bot",
+                                "contenido": texto_a_enviar,
+                                "metadata_json": {
+                                    "wamid": ci_wamid,
+                                    "tipo": "text",
+                                    "consentimiento_entrega_diferida": True,
+                                    "enlace_firma": enlace_firma,
+                                    "delivery_status": "enviado",
+                                    "provider": "meta_cloud_api"
+                                }
+                            }).execute()
+
+                            supabase.table("conversaciones").update({
+                                "ultimo_mensaje": texto_a_enviar,
+                                "updated_at": datetime.now(timezone.utc).isoformat()
+                            }).eq("id", crm_conv_id).execute()
+
+                            if t_id:
+                                supabase.table("turnos_quirofano").update({
+                                    "consentimiento_estado": "enviado_whatsapp",
+                                    "updated_at": datetime.now(timezone.utc).isoformat()
+                                }).eq("id", t_id).execute()
+
+                            if as_id:
+                                cas_res = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico").eq("id", as_id).limit(1).execute()
+                                if cas_res.data:
+                                    c_chk = cas_res.data[0].get("checklist_prequirurgico") or {}
+                                    if not isinstance(c_chk, dict):
+                                        c_chk = {}
+                                    if "_consentimiento_qx" in c_chk:
+                                        c_chk["_consentimiento_qx"]["estado"] = "enviado_whatsapp"
+                                        c_chk["_consentimiento_qx"]["entregado_diferido_at"] = datetime.now(timezone.utc).isoformat()
+                                        supabase.table("asesorias_quirurgicas").update({
+                                            "checklist_prequirurgico": c_chk,
+                                            "updated_at": datetime.now(timezone.utc).isoformat()
+                                        }).eq("id", as_id).execute()
+
+                            # Limpiar pending_consentimiento_delivery para no reenviar
+                            m_meta.pop("pending_consentimiento_delivery", None)
+                            supabase.table("mensajes").update({"metadata_json": m_meta}).eq("id", m_row["id"]).execute()
+
+                            logger.info(f"[Interactive Consentimiento] Enlace de firma entregado con éxito a {normalized_phone} tras apertura de ventana.")
+                            return True
+                        finally:
+                            await wa_client.close()
+        except Exception as ci_err:
+            logger.error(f"[Interactive Consentimiento] Error despachando consentimiento diferido: {ci_err}")
+
+    # =========================================================================
     # CASO 1: SOLICITUD / RECEPCIÓN DE PRESUPUESTO EN PDF DIRECTO EN WHATSAPP
     # =========================================================================
     is_presupuesto = any(k in title_str or k in btn_id for k in [

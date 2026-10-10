@@ -48,6 +48,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
@@ -106,6 +107,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   } | null>(null)
   const [justificacionExcepcion, setJustificacionExcepcion] = useState<string>('')
   const [reenviandoConsentimientoId, setReenviandoConsentimientoId] = useState<string | null>(null)
+  const [consentimientoModalTurno, setConsentimientoModalTurno] = useState<any | null>(null)
 
   // Cargar preferencia de modo oscuro clínico y listener de fullscreen
   useEffect(() => {
@@ -420,7 +422,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
   // Interceptor con Salvaguarda de Consentimiento Informado
   const solicitarPasoAPreQuirofano = (t: any) => {
-    if (t.consentimiento_estado !== 'firmado_digital') {
+    if (t.consentimiento_estado !== 'firmado_digital' && t.consentimiento_estado !== 'firmado_papel') {
       setAlertaConsentimiento({ turno: t, nuevoEstado: 'pre_quirofano' })
       return
     }
@@ -437,24 +439,9 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     setJustificacionExcepcion('')
   }
 
-  const handleReenviarConsentimientoDesdeAlerta = async () => {
+  const handleReenviarConsentimientoDesdeAlerta = () => {
     if (!alertaConsentimiento) return
-    const tId = alertaConsentimiento.turno.id
-    try {
-      setReenviandoConsentimientoId(tId)
-      const res = await apiFetch(`/api/turnos-quirofano/${tId}/enviar-consentimiento-wa`, { method: 'POST' })
-      const data = await res.json()
-      if (res.ok && data.success) {
-        alert('✔ Enlace de consentimiento enviado por WhatsApp al paciente exitosamente.')
-      } else {
-        alert(data.detail || 'Error al enviar WhatsApp.')
-      }
-    } catch (e) {
-      console.error(e)
-      alert('Error de conexión al enviar WhatsApp.')
-    } finally {
-      setReenviandoConsentimientoId(null)
-    }
+    setConsentimientoModalTurno(alertaConsentimiento.turno)
   }
 
   // Subir Protocolo Quirúrgico Oficial a Geclisa
@@ -1266,11 +1253,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     )}
 
                     {/* Estado del Consentimiento & Geclisa */}
-                    {t.consentimiento_estado === 'firmado_digital' ? (
+                    {t.consentimiento_estado === 'firmado_digital' || t.consentimiento_estado === 'firmado_papel' ? (
                       <div className="flex items-center gap-1">
                         <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 text-[11px] font-bold flex items-center gap-1">
                           <ShieldCheck size={12} />
-                          <span>Consentimiento Firmado</span>
+                          <span>{t.consentimiento_estado === 'firmado_papel' ? 'C.I. Firmado (Papel)' : 'Consentimiento Firmado'}</span>
                         </span>
 
                         {/* Botón o Badge de Subida de Consentimiento a Geclisa */}
@@ -1311,10 +1298,31 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         )}
                       </div>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-800 text-[11px] font-bold flex items-center gap-1">
-                        <AlertCircle size={12} />
-                        <span>Consentimiento Pendiente</span>
-                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setConsentimientoModalTurno(t)
+                        }}
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center gap-1 border transition hover:opacity-85 ${
+                          t.consentimiento_estado === 'enviado_wa' || t.consentimiento_estado === 'enviado_whatsapp'
+                            ? 'bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                            : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800'
+                        }`}
+                        title="Clic para gestionar o enviar Consentimiento por WhatsApp"
+                      >
+                        {t.consentimiento_estado === 'enviado_wa' || t.consentimiento_estado === 'enviado_whatsapp' ? (
+                          <>
+                            <Clock size={11} className="text-amber-600 animate-pulse" />
+                            <span>C.I. Enviado (Pendiente Firma)</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle size={11} />
+                            <span>C.I. Pendiente (Enviar WA)</span>
+                          </>
+                        )}
+                      </button>
                     )}
                   </div>
                 </div>
@@ -1634,12 +1642,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             <div className="flex flex-col sm:flex-row gap-2 pt-2">
               <button
                 type="button"
-                disabled={reenviandoConsentimientoId === alertaConsentimiento.turno.id}
                 onClick={handleReenviarConsentimientoDesdeAlerta}
-                className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
+                className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-sm"
               >
-                {reenviandoConsentimientoId ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                <span>Reenviar por WhatsApp</span>
+                <Send size={14} />
+                <span>Enviar / Gestionar por WhatsApp</span>
               </button>
 
               <button
@@ -1664,6 +1671,23 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             </div>
           </div>
         </div>
+      )}
+
+      {/* 7. MODAL DE ENVÍO DE CONSENTIMIENTO INFORMADO POR WHATSAPP */}
+      {consentimientoModalTurno && (
+        <ModalEnviarConsentimientoWhatsApp
+          isOpen={!!consentimientoModalTurno}
+          onClose={() => setConsentimientoModalTurno(null)}
+          turnoId={consentimientoModalTurno.id}
+          casoId={consentimientoModalTurno.asesoria_id || undefined}
+          pacienteId={consentimientoModalTurno.paciente_id}
+          pacienteNombreDefault={consentimientoModalTurno.pacientes?.nombre || consentimientoModalTurno.paciente_nombre}
+          pacienteTelefonoDefault={consentimientoModalTurno.pacientes?.telefono || consentimientoModalTurno.paciente_telefono}
+          onConsentimientoEnviado={() => {
+            fetchTurnosDia()
+            setAlertaConsentimiento(null)
+          }}
+        />
       )}
     </div>
   )

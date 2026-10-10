@@ -41,6 +41,7 @@ interface VistaVerticalPipelineProps {
   onCambiarEtapa: (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => Promise<void>
   onAbrirWhatsApp: (caso: AsesoriaCasoPipeline) => void
   onAbrirRecordatorioQx?: (caso: AsesoriaCasoPipeline) => void
+  onAbrirConsentimientoQx?: (caso: AsesoriaCasoPipeline) => void
   onMarcarContactadoHoy: (caso: AsesoriaCasoPipeline) => Promise<void>
   actualizandoCasoId: string | null
   canChangeStage: boolean
@@ -52,6 +53,7 @@ export default function VistaVerticalPipeline({
   onCambiarEtapa,
   onAbrirWhatsApp,
   onAbrirRecordatorioQx,
+  onAbrirConsentimientoQx,
   onMarcarContactadoHoy,
   actualizandoCasoId,
   canChangeStage
@@ -370,15 +372,30 @@ export default function VistaVerticalPipeline({
                               >
                                 {checklist.lente_seleccionado ? '✓ LIO' : 'LIO'}
                               </span>
-                              <span
-                                className={`px-1.5 py-0.5 rounded border ${
-                                  checklist.consentimiento_firmado
-                                    ? 'bg-emerald-950/40 text-emerald-300 border-emerald-500/30 font-semibold'
-                                    : 'bg-neutral-800 text-gray-500 border-neutral-700'
+                              <button
+                                type="button"
+                                onClick={() => onAbrirConsentimientoQx?.(caso)}
+                                className={`px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                                  checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                    ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 font-bold hover:bg-emerald-900'
+                                    : caso.consentimiento_info?.estado === 'enviado_whatsapp' || caso.consentimiento_info?.estado === 'esperando_apertura' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                    ? 'bg-amber-950/70 text-amber-300 border-amber-500/50 font-semibold hover:bg-amber-900'
+                                    : 'bg-neutral-800 text-gray-400 border-neutral-700 hover:text-white hover:border-gray-500'
                                 }`}
+                                title={
+                                  checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                    ? 'Consentimiento firmado digitalmente o en papel'
+                                    : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                    ? 'Consentimiento enviado por WhatsApp (esperando firma del paciente)'
+                                    : 'Enviar Consentimiento Informado al paciente'
+                                }
                               >
-                                {checklist.consentimiento_firmado ? '✓ C.I.' : 'C.I.'}
-                              </span>
+                                {checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                  ? '✓ C.I. Firmado'
+                                  : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                  ? '⏳ C.I. Enviado'
+                                  : 'C.I.'}
+                              </button>
                             </div>
 
                             {/* Badge Semáforo de Recordatorio Quirúrgico de WhatsApp */}
@@ -506,6 +523,25 @@ export default function VistaVerticalPipeline({
                                   <CalendarClock size={13} />
                                   <span>{caso.estado === 'programado' ? 'Turno Qx' : 'Agendar'}</span>
                                 </Link>
+                              )}
+
+                              {/* Botón Acción Rápida: Consentimiento Informado (WhatsApp / Digital) */}
+                              {(caso.estado === 'programado' || caso.estado === 'confirmado' || caso.fecha_definitiva_cirugia) && (
+                                <button
+                                  type="button"
+                                  onClick={() => onAbrirConsentimientoQx?.(caso)}
+                                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
+                                    checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                      ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/50 text-emerald-300 hover:text-white'
+                                      : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                      ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/50 text-amber-300 hover:text-white'
+                                      : 'bg-teal-950/80 hover:bg-teal-900 border-teal-500/40 text-teal-300 hover:text-white'
+                                  }`}
+                                  title="Enviar o verificar Consentimiento Informado por WhatsApp con firma digital"
+                                >
+                                  <FileCheck2 size={13} className={checklist.consentimiento_firmado || caso.consentimiento_info?.firmado ? "text-emerald-400" : "text-teal-400"} />
+                                  <span>{checklist.consentimiento_firmado || caso.consentimiento_info?.firmado ? 'C.I. Firmado' : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp' ? 'C.I. Enviado' : 'Consentimiento'}</span>
+                                </button>
                               )}
 
                               {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado */}

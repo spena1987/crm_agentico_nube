@@ -40,6 +40,7 @@ import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQu
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 import CasoPagosWidget from './CasoPagosWidget'
+import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
@@ -248,6 +249,7 @@ export default function CasoFormularioActivo({
   const [consentimiento, setConsentimiento] = useState<any>(null)
   const [cargandoConsentimiento, setCargandoConsentimiento] = useState(false)
   const [enviandoConsentimientoWa, setEnviandoConsentimientoWa] = useState(false)
+  const [modalConsentimientoWhatsAppOpen, setModalConsentimientoWhatsAppOpen] = useState(false)
   const [mostrandoModalFirmaPapel, setMostrandoModalFirmaPapel] = useState(false)
   const [obsFirmaPapel, setObsFirmaPapel] = useState('')
   const [guardandoFirmaPapel, setGuardandoFirmaPapel] = useState(false)
@@ -2228,10 +2230,10 @@ export default function CasoFormularioActivo({
                   <CheckCircle2 size={11} />
                   {consentimiento.modo_firma === 'papel' ? 'Firmado en Papel' : 'Firmado Digitalmente'}
                 </span>
-              ) : consentimiento?.estado === 'enviado_wa' ? (
+              ) : (consentimiento?.estado === 'enviado_wa' || consentimiento?.estado === 'enviado_whatsapp' || consentimiento?.estado === 'esperando_apertura') ? (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-400">
                   <Clock size={11} />
-                  Enviado WhatsApp (Pendiente)
+                  {consentimiento?.estado === 'esperando_apertura' ? 'Esperando Respuesta' : 'Enviado WhatsApp (Pendiente Firma)'}
                 </span>
               ) : (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-neutral-800 border border-neutral-700 text-gray-400">
@@ -2262,17 +2264,17 @@ export default function CasoFormularioActivo({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={handleEnviarConsentimientoWA}
-                disabled={enviandoConsentimientoWa || guardando}
+                onClick={() => setModalConsentimientoWhatsAppOpen(true)}
+                disabled={guardando}
                 className="px-2.5 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-emerald-500/30 cursor-pointer shadow-sm"
-                title="Enviar link al portal de firma digital por WhatsApp al paciente"
+                title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
               >
-                {enviandoConsentimientoWa ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Send size={12} />
-                )}
-                <span>{consentimiento?.estado === 'enviado_wa' ? 'Reenviar WhatsApp' : 'Enviar por WhatsApp'}</span>
+                <Send size={12} />
+                <span>
+                  {consentimiento?.estado === 'enviado_wa' || consentimiento?.estado === 'enviado_whatsapp'
+                    ? 'Reenviar WhatsApp'
+                    : 'Enviar por WhatsApp'}
+                </span>
               </button>
 
               <button
@@ -2740,6 +2742,21 @@ export default function CasoFormularioActivo({
           </button>
         </div>
       </div>
+
+      {modalConsentimientoWhatsAppOpen && caso?.id && (
+        <ModalEnviarConsentimientoWhatsApp
+          isOpen={modalConsentimientoWhatsAppOpen}
+          onClose={() => setModalConsentimientoWhatsAppOpen(false)}
+          casoId={caso.id}
+          pacienteId={pacienteId}
+          pacienteNombreDefault={pacienteNombre}
+          pacienteTelefonoDefault={pacienteTelefono || undefined}
+          onConsentimientoEnviado={() => {
+            fetchConsentimientoCaso()
+            setFeedbackConsentimiento({ tipo: 'ok', mensaje: 'Consentimiento Informado enviado por WhatsApp con éxito.' })
+          }}
+        />
+      )}
     </div>
   )
 }

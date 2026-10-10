@@ -5264,6 +5264,18 @@ def obtener_datos_consentimiento_publico(token: str):
         ojo = turno.get("ojo") or "OD"
         ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
         
+        # Jerarquía de fecha: 1° fecha_definitiva_cirugia del expediente, 2° fecha_cirugia del turno
+        fecha_cirugia_val = str(turno.get("fecha_cirugia") or "")
+        if turno.get("asesoria_id"):
+            try:
+                res_a_f = supabase.table("asesorias_quirurgicas").select("fecha_definitiva_cirugia, fecha_probable_cirugia").eq("id", turno["asesoria_id"]).limit(1).execute()
+                if res_a_f.data and res_a_f.data[0].get("fecha_definitiva_cirugia"):
+                    fecha_cirugia_val = str(res_a_f.data[0]["fecha_definitiva_cirugia"])
+                elif res_a_f.data and not fecha_cirugia_val and res_a_f.data[0].get("fecha_probable_cirugia"):
+                    fecha_cirugia_val = str(res_a_f.data[0]["fecha_probable_cirugia"])
+            except Exception:
+                pass
+
         cuerpo_renderizado = render_consent_template(
             cuerpo_template,
             {
@@ -5276,8 +5288,8 @@ def obtener_datos_consentimiento_publico(token: str):
                 "ojo_intervenido": ojo_desc,
                 "ojo": ojo_desc,
                 "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
-                "fecha": str(turno.get("fecha_cirugia") or ""),
-                "fecha_cirugia": str(turno.get("fecha_cirugia") or ""),
+                "fecha": fecha_cirugia_val,
+                "fecha_cirugia": fecha_cirugia_val,
                 "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
                 "hora_inicio": str(turno.get("hora_inicio") or "")[:5]
             }
@@ -5294,7 +5306,7 @@ def obtener_datos_consentimiento_publico(token: str):
             "success": True,
             "turno": {
                 "id": turno.get("id"),
-                "fecha_cirugia": turno.get("fecha_cirugia"),
+                "fecha_cirugia": fecha_cirugia_val,
                 "hora_inicio": turno.get("hora_inicio"),
                 "practica_nombre": turno.get("practica_nombre"),
                 "ojo": turno.get("ojo"),
@@ -5551,17 +5563,23 @@ def eliminar_prestador_endpoint(prestador_id: str):
 @app.get("/api/asesorias-quirurgicas/{asesoria_id}/consentimiento")
 def obtener_consentimiento_asesoria(asesoria_id: str):
     if not supabase:
-        return {"success": False, "consentimiento": None}
+        return {"success": False, "ok": False, "consentimiento": None}
     try:
         from app.db import asegurar_turno_para_consentimiento_asesoria
         t = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
         if not t:
-            return {"success": False, "consentimiento": None}
+            return {"success": False, "ok": False, "consentimiento": None}
+        c_est = t.get("consentimiento_estado") or "pendiente_envio"
+        esta_firmado = c_est in ("firmado_digital", "firmado_papel")
+        modo_firma = "papel" if c_est == "firmado_papel" else ("digital" if c_est == "firmado_digital" else None)
         return {
             "success": True,
+            "ok": True,
             "consentimiento": {
                 "turno_id": t.get("id"),
-                "estado": t.get("consentimiento_estado") or "pendiente_envio",
+                "estado": c_est,
+                "firmado": esta_firmado,
+                "modo_firma": modo_firma,
                 "token": t.get("consentimiento_token"),
                 "pdf_url": t.get("consentimiento_pdf_url"),
                 "firmado_at": t.get("consentimiento_firmado_at"),
@@ -5574,7 +5592,7 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
         }
     except Exception as e:
         logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
-        return {"success": False, "error": str(e)}
+        return {"success": False, "ok": False, "error": str(e)}
 
 @app.post("/api/asesorias-quirurgicas/{asesoria_id}/enviar-consentimiento-wa")
 async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
@@ -5658,6 +5676,231 @@ async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
     except Exception as e:
         logger.error(f"Error al enviar consentimiento de asesoría {asesoria_id} por WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
+# ENDPOINTS: ACCIÓN RÁPIDA CONSENTIMIENTO INFORMADO (META CLOUD API)
+# ====================================================================
+
+@app.get("/api/asesorias-quirurgicas/{asesoria_id}/datos-consentimiento-whatsapp")
+def obtener_datos_consentimiento_asesoria_endpoint(asesoria_id: str):
+    """
+    Recupera los datos sugeridos y el enlace de firma para el Consentimiento Informado,
+    resolviendo la jerarquía de fecha y el estado de la ventana de 24h de Meta.
+    """
+    try:
+        from app.db import get_datos_consentimiento_whatsapp
+        datos = get_datos_consentimiento_whatsapp(asesoria_id=asesoria_id)
+        if not datos:
+            raise HTTPException(status_code=404, detail="No se pudo resolver el caso quirúrgico para consentimiento.")
+        return {"success": True, "ok": True, **datos}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al obtener datos de consentimiento para asesoría {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/turnos-quirofano/{turno_id}/datos-consentimiento-whatsapp")
+def obtener_datos_consentimiento_turno_endpoint(turno_id: str):
+    """
+    Recupera los datos sugeridos y el enlace de firma para el Consentimiento Informado
+    a partir del turno de quirófano, priorizando la fecha definitiva si existe asesoría.
+    """
+    try:
+        from app.db import get_datos_consentimiento_whatsapp
+        datos = get_datos_consentimiento_whatsapp(turno_id=turno_id)
+        if not datos:
+            raise HTTPException(status_code=404, detail="Turno de quirófano no encontrado para consentimiento.")
+        return {"success": True, "ok": True, **datos}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al obtener datos de consentimiento para turno {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class EnviarConsentimientoWhatsAppPayload(BaseModel):
+    asesoria_id: Optional[str] = None
+    turno_id: Optional[str] = None
+    paciente_id: Optional[str] = None
+    telefono: str
+    modo_envio: str = "template"  # "template" | "free_text"
+    template_name: Optional[str] = "consentimiento_informado_quirurgico_v1"
+    language_code: Optional[str] = "es_AR"
+    variables: Dict[str, Any] = {}
+    texto_renderizado: Optional[str] = None
+    enlace_firma: Optional[str] = None
+    token: Optional[str] = None
+
+@app.post("/api/consentimiento-whatsapp/enviar")
+async def enviar_consentimiento_whatsapp_endpoint(
+    payload: EnviarConsentimientoWhatsAppPayload,
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Despacha el Consentimiento Informado por WhatsApp con verificación estricta de ventana 24h:
+    - Modo free_text: si la ventana está abierta, envía el texto con enlace directo.
+    - Modo template con consentimiento_informado_quirurgico_v1: envía la plantilla oficial con sus 5 parámetros.
+    - Modo template con apertura_conversacion: envía plantilla de apertura y encola el envío automático del link al responder.
+    """
+    to_phone = payload.telefono
+    if not to_phone or len(to_phone.strip()) < 8:
+        raise HTTPException(status_code=400, detail="El teléfono de WhatsApp es obligatorio.")
+
+    from app.db import (
+        asegurar_turno_para_consentimiento_asesoria,
+        get_turno_quirofano_by_id,
+        registrar_envio_consentimiento_quirurgico,
+        check_patient_24h_window
+    )
+    from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+    from app.services.whatsapp_cloud.client import (
+        WhatsAppCloudClient,
+        get_whatsapp_cloud_credentials,
+        ConversationWindowClosedError
+    )
+
+    t_id = payload.turno_id
+    as_id = payload.asesoria_id
+    token = payload.token
+    enlace = payload.enlace_firma
+
+    if as_id and not t_id:
+        t_obj = asegurar_turno_para_consentimiento_asesoria(as_id)
+        if t_obj:
+            t_id = t_obj.get("id")
+            if not token:
+                token = t_obj.get("consentimiento_token")
+    elif t_id and not as_id:
+        t_obj = get_turno_quirofano_by_id(t_id)
+        if t_obj and t_obj.get("asesoria_id"):
+            as_id = t_obj["asesoria_id"]
+            if not token:
+                token = t_obj.get("consentimiento_token")
+
+    if not t_id:
+        raise HTTPException(status_code=400, detail="No se pudo asociar un turno quirúrgico para el consentimiento.")
+
+    if not enlace and token:
+        try:
+            from app.services.urgencias_service import obtener_base_crm_url
+            base_app_url = obtener_base_crm_url()
+        except Exception:
+            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm-agentico-nube.vercel.app"
+        enlace = f"{base_app_url.rstrip('/')}/consentimiento/{token}"
+
+    normalized_to = normalize_to_meta_e164(to_phone)
+    phone_id, token_waba = get_whatsapp_cloud_credentials()
+    if not phone_id or not token_waba:
+        raise HTTPException(status_code=500, detail="Credenciales de Meta WhatsApp Cloud API no configuradas.")
+
+    client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token_waba)
+    wamid = None
+    modo_envio = payload.modo_envio or "template"
+    template_name = payload.template_name or "consentimiento_informado_quirurgico_v1"
+    en_espera_apertura = False
+
+    try:
+        import re
+        def _sanitize(v: Any, fallback: str = "") -> str:
+            s = str(v or fallback).strip()
+            s = re.sub(r"[\r\n\t]+", " ", s)
+            return re.sub(r"\s{2,}", " ", s).strip()
+
+        p_nombre = _sanitize(payload.variables.get("paciente_nombre"), "Estimado/a")
+        p_cirugia = _sanitize(payload.variables.get("cirugia"), "Cirugía Oftalmológica")
+        p_fecha = _sanitize(payload.variables.get("fecha"), "Fecha programada")
+        p_cirujano = _sanitize(payload.variables.get("cirujano_nombre"), "Médico Cirujano")
+        p_enlace = str(enlace or payload.variables.get("enlace_firma") or "").strip()
+
+        cuerpo_renderizado = payload.texto_renderizado or (
+            f"Hola {p_nombre}, le escribimos de Centrovisión respecto a su cirugía de {p_cirugia} "
+            f"programada para el día {p_fecha} con el/la Dr/a. {p_cirujano}.\n\n"
+            f"📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, "
+            f"le compartimos su Consentimiento Informado oficial:\n{p_enlace}\n\n"
+            f"Ante cualquier consulta, estamos a su disposición."
+        )
+
+        if modo_envio == "free_text":
+            win = check_patient_24h_window(payload.paciente_id, to_phone)
+            if not win.get("is_open", False):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La ventana de 24 horas de WhatsApp para este paciente se encuentra cerrada. Debe enviar una plantilla oficial autorizada por Meta."
+                )
+            res_ft = await client.send_free_text(normalized_to, cuerpo_renderizado)
+            wamid = res_ft.get("wamid")
+        else:
+            if template_name == "apertura_conversacion":
+                body_params = [{"type": "text", "text": p_nombre}]
+                res_tpl = await client.send_template(
+                    to_phone=normalized_to,
+                    template_name=template_name,
+                    language_code=payload.language_code or "es_AR",
+                    components=[{"type": "body", "parameters": body_params}]
+                )
+                wamid = res_tpl.get("wamid")
+                en_espera_apertura = True
+            elif template_name in ["consentimiento_informado_quirurgico_v1", "consentimiento_informado"]:
+                body_params = [
+                    {"type": "text", "text": p_nombre},
+                    {"type": "text", "text": p_cirugia},
+                    {"type": "text", "text": p_fecha},
+                    {"type": "text", "text": p_cirujano},
+                    {"type": "text", "text": p_enlace}
+                ]
+                res_tpl = await client.send_template(
+                    to_phone=normalized_to,
+                    template_name=template_name,
+                    language_code=payload.language_code or "es_AR",
+                    components=[{"type": "body", "parameters": body_params}]
+                )
+                wamid = res_tpl.get("wamid")
+            else:
+                body_params = [{"type": "text", "text": p_nombre}]
+                res_tpl = await client.send_template(
+                    to_phone=normalized_to,
+                    template_name=template_name,
+                    language_code=payload.language_code or "es_AR",
+                    components=[{"type": "body", "parameters": body_params}]
+                )
+                wamid = res_tpl.get("wamid")
+
+        registrar_envio_consentimiento_quirurgico(
+            turno_id=t_id,
+            asesoria_id=as_id,
+            paciente_id=payload.paciente_id or "",
+            telefono=to_phone,
+            modo_envio=modo_envio,
+            enlace_firma=p_enlace,
+            token=token or "",
+            template_name=template_name if modo_envio == "template" else None,
+            wamid=wamid,
+            texto_renderizado=cuerpo_renderizado,
+            en_espera_apertura=en_espera_apertura
+        )
+
+        return {
+            "success": True,
+            "ok": True,
+            "mensaje": "Plantilla de apertura enviada con éxito. El link de consentimiento se despachará automáticamente al responder el paciente." if en_espera_apertura else "Consentimiento Informado enviado por WhatsApp exitosamente.",
+            "en_espera_apertura": en_espera_apertura,
+            "wamid": wamid,
+            "enlace_firma": p_enlace,
+            "estado": "esperando_apertura" if en_espera_apertura else "enviado_whatsapp"
+        }
+
+    except ConversationWindowClosedError:
+        raise HTTPException(
+            status_code=400,
+            detail="La ventana de 24 horas está cerrada para este paciente. Seleccione una plantilla oficial aprobada por Meta para comunicarse."
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al despachar consentimiento por WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        await client.close()
 
 @app.get("/api/asesorias-quirurgicas/{asesoria_id}/consentimiento-pdf")
 def descargar_consentimiento_asesoria_pdf(asesoria_id: str, modo: Optional[str] = None):
