@@ -52,7 +52,8 @@ import {
   AlertTriangle,
   Plus,
   Link2,
-  FolderOpen
+  FolderOpen,
+  Forward
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
@@ -71,6 +72,7 @@ import ModalEditarPaciente from './ModalEditarPaciente'
 import ModalSelectorPlantillasMeta from './chat/ModalSelectorPlantillasMeta'
 import ModalIniciarConversacionWhatsApp from './chat/ModalIniciarConversacionWhatsApp'
 import ModalBuscarGeclisa from './ModalBuscarGeclisa'
+import ModalReenviarMensaje from './chat/ModalReenviarMensaje'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { 
   getCalendarDayKey,
@@ -425,6 +427,7 @@ export default function ChatInbox() {
   const [contextMenu, setContextMenu] = useState<{ message: Mensaje; position: { x: number; y: number } } | null>(null)
   const [contactContextMenu, setContactContextMenu] = useState<{ conversacion: Conversacion; position: { x: number; y: number } } | null>(null)
   const [showTemplateModal, setShowTemplateModal] = useState<boolean>(false)
+  const [forwardingMessage, setForwardingMessage] = useState<Mensaje | null>(null)
 
   const messagesCacheRef = useRef<Record<string, Mensaje[]>>({})
   const conversacionesRef = useRef<Conversacion[]>([])
@@ -2969,6 +2972,14 @@ export default function ChatInbox() {
                                 <ChevronDown size={13} />
                               </button>
 
+                              {/* Indicador de Mensaje Reenviado (Estilo WhatsApp Web) */}
+                              {msg.metadata_json?.es_reenviado && (
+                                <div className="flex items-center gap-1 text-[10.5px] text-slate-300/80 italic mb-1 select-none">
+                                  <Forward size={12} className="text-slate-400 shrink-0" />
+                                  <span>Reenviado</span>
+                                </div>
+                              )}
+
                               {/* Renderizado de Mensaje Citado (Reply preview dentro de la burbuja) */}
                               {msg.metadata_json?.quoted_message && (
                                 <div className="mb-1.5 p-1.5 rounded-lg bg-black/30 border-l-4 border-blue-400 text-[11px] select-none flex flex-col gap-0.5">
@@ -3564,6 +3575,7 @@ export default function ChatInbox() {
           onClose={() => setContextMenu(null)}
           onReply={handleReplyMessage}
           onCopy={handleCopyText}
+          onForward={(msg) => setForwardingMessage(msg)}
           onReact={handleReactToMessage}
           onSaveClinicalNote={handleSaveClinicalNote}
           onConvertToInternalNote={handleConvertToInternalNote}
@@ -3723,6 +3735,23 @@ export default function ChatInbox() {
         onClose={() => setShowModalVincularGeclisa(false)}
         onPacienteImportado={handlePacienteVinculadoGeclisa}
       />
+
+      {/* Modal Reenviar Mensaje a otra(s) conversación(es) (Estilo WhatsApp Web) */}
+      {forwardingMessage && (
+        <ModalReenviarMensaje
+          isOpen={Boolean(forwardingMessage)}
+          onClose={() => setForwardingMessage(null)}
+          message={forwardingMessage}
+          conversaciones={conversaciones}
+          currentConvId={selectedConvId}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
+          onForwardSuccess={() => {
+            fetchConversaciones(true)
+            if (selectedConvId) fetchMensajes(selectedConvId)
+          }}
+        />
+      )}
     </div>
   )
 }

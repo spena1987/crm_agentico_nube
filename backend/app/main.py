@@ -310,6 +310,13 @@ class SendMessageRequest(BaseModel):
     usuario_id: Optional[str] = None
     usuario_nombre: Optional[str] = None
 
+class ForwardMessageRequest(BaseModel):
+    mensaje_id: str
+    conversaciones_destino_ids: List[str]
+    como_nota_interna_si_cerrada: Optional[bool] = True
+    usuario_id: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+
 class ReactMessageRequest(BaseModel):
     emoji: str
 
@@ -1447,6 +1454,183 @@ def send_message_api(payload: SendMessageRequest):
     if isinstance(result, dict):
         result["caso_autoasignado"] = caso_autoasignado
     return result
+
+@app.post("/api/whatsapp/forward-message")
+def forward_message_api(payload: ForwardMessageRequest):
+    """
+    Reenvía un mensaje existente hacia una o varias conversaciones destino.
+    Soporta texto libre y archivos multimedia (imágenes, documentos, audios).
+    Si la ventana de 24h está abierta en la conversación destino, envía el mensaje por WhatsApp.
+    Si está cerrada, lo asienta como Nota Interna privada (si como_nota_interna_si_cerrada=True).
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+
+    if not payload.mensaje_id:
+        raise HTTPException(status_code=400, detail="Debe especificar el ID del mensaje a reenviar.")
+
+    if not payload.conversaciones_destino_ids:
+        raise HTTPException(status_code=400, detail="Debe seleccionar al menos una conversación destino.")
+
+    # 1. Recuperar mensaje original
+    m_res = supabase.table("mensajes").select("*").eq("id", payload.mensaje_id).execute()
+    if not m_res.data or len(m_res.data) == 0:
+        raise HTTPException(status_code=404, detail="Mensaje original no encontrado en la base de datos.")
+
+    msg_orig = m_res.data[0]
+    contenido_orig = (msg_orig.get("contenido") or "").strip()
+    meta_orig = msg_orig.get("metadata_json") or {}
+
+    media_url = meta_orig.get("media_url")
+    media_tipo = meta_orig.get("tipo") or "document"
+    file_name = meta_orig.get("file_name") or ""
+    caption = meta_orig.get("caption") or contenido_orig or ""
+
+    destinos_resultados = []
+
+    for dest_conv_id in payload.conversaciones_destino_ids:
+        try:
+            # Obtener conversación destino y paciente
+            c_res = supabase.table("conversaciones").select("id, paciente_id, metadata_json, pacientes(id, nombre, telefono)").eq("id", dest_conv_id).execute()
+            if not c_res.data or len(c_res.data) == 0:
+                destinos_resultados.append({
+                    "conversacion_id": dest_conv_id,
+                    "success": False,
+                    "error": "Conversación destino no encontrada"
+                })
+                continue
+
+            c_row = c_res.data[0]
+            p_data = c_row.get("pacientes") or {}
+            if isinstance(p_data, list) and len(p_data) > 0:
+                p_data = p_data[0]
+            elif not isinstance(p_data, dict):
+                p_data = {}
+
+            paciente_id = c_row.get("paciente_id")
+            paciente_nombre = p_data.get("nombre") or "Paciente"
+
+            # Resolver teléfono destino (priorizar wa_chat_id de patient_conversations)
+            tel_dest = None
+            try:
+                pc_res = supabase.table("patient_conversations").select("wa_chat_id").eq("paciente_id", paciente_id).execute()
+                if pc_res.data and len(pc_res.data) > 0 and pc_res.data[0].get("wa_chat_id"):
+                    tel_dest = pc_res.data[0].get("wa_chat_id")
+            except Exception:
+                pass
+
+            if not tel_dest:
+                tel_dest = p_data.get("telefono")
+
+            clean_tel_dest = normalize_phone_number(tel_dest) if tel_dest else ""
+
+            # Verificar ventana de 24 horas
+            win_info = check_patient_24h_window(paciente_id, clean_tel_dest) if clean_tel_dest else {"is_open": False}
+            ventana_abierta = win_info.get("is_open", False)
+
+            if ventana_abierta and clean_tel_dest:
+                # Caso A: Ventana de 24h abierta -> Enviar a WhatsApp real
+                if media_url:
+                    disp_res = whatsapp_manager.enviar_multimedia(
+                        telefono=clean_tel_dest,
+                        media_url=media_url,
+                        media_type=media_tipo,
+                        caption=caption,
+                        filename=file_name,
+                        conversacion_id=dest_conv_id
+                    )
+                else:
+                    disp_res = whatsapp_manager.enviar_mensaje(
+                        telefono_o_jid=clean_tel_dest,
+                        texto=contenido_orig,
+                        conversacion_id=dest_conv_id,
+                        emisor="operador",
+                        usuario_id=payload.usuario_id,
+                        usuario_nombre=payload.usuario_nombre
+                    )
+
+                # Marcar metadata_json con es_reenviado
+                msg_creado = disp_res.get("mensaje") or {}
+                if msg_creado and msg_creado.get("id"):
+                    m_id_new = msg_creado.get("id")
+                    meta_new = msg_creado.get("metadata_json") or {}
+                    meta_new["es_reenviado"] = True
+                    meta_new["reenviado_desde_mensaje_id"] = payload.mensaje_id
+                    meta_new["operador_nombre"] = payload.usuario_nombre
+                    meta_new["operador_id"] = payload.usuario_id
+                    supabase.table("mensajes").update({"metadata_json": meta_new}).eq("id", m_id_new).execute()
+
+                destinos_resultados.append({
+                    "conversacion_id": dest_conv_id,
+                    "paciente_nombre": paciente_nombre,
+                    "telefono": clean_tel_dest,
+                    "success": True,
+                    "tipo_envio": "WHATSAPP_REAL",
+                    "ventana_24h": "ABIERTA"
+                })
+            else:
+                # Caso B: Ventana de 24h cerrada o sin teléfono
+                if payload.como_nota_interna_si_cerrada:
+                    # Guardar como Nota Interna privada
+                    meta_nota = {
+                        **meta_orig,
+                        "is_internal_note": True,
+                        "tipo": "nota_interna",
+                        "es_reenviado": True,
+                        "reenviado_desde_mensaje_id": payload.mensaje_id,
+                        "operador_nombre": payload.usuario_nombre,
+                        "operador_id": payload.usuario_id,
+                        "motivo_nota": "Mensaje reenviado registrado como nota interna por ventana 24h vencida"
+                    }
+                    nota_guardada = guardar_mensaje(
+                        conversacion_id=dest_conv_id,
+                        emisor="operador",
+                        contenido=f"↗️ [Reenviado]\n{contenido_orig}" if contenido_orig else "↗️ [Archivo Reenviado]",
+                        metadata_json=meta_nota
+                    )
+                    destinos_resultados.append({
+                        "conversacion_id": dest_conv_id,
+                        "paciente_nombre": paciente_nombre,
+                        "telefono": clean_tel_dest,
+                        "success": True,
+                        "tipo_envio": "NOTA_INTERNA",
+                        "ventana_24h": "CERRADA",
+                        "mensaje_id": nota_guardada.get("id") if nota_guardada else None
+                    })
+                else:
+                    destinos_resultados.append({
+                        "conversacion_id": dest_conv_id,
+                        "paciente_nombre": paciente_nombre,
+                        "telefono": clean_tel_dest,
+                        "success": False,
+                        "error": "Ventana de 24 horas cerrada y no se configuró envío como nota interna",
+                        "ventana_24h": "CERRADA"
+                    })
+
+            # Actualizar último mensaje de la conversación destino
+            preview_txt = (contenido_orig[:40] + "...") if len(contenido_orig) > 40 else contenido_orig
+            if not preview_txt and media_url:
+                preview_txt = f"[{file_name or media_tipo}]"
+            supabase.table("conversaciones").update({
+                "ultimo_mensaje": f"↗️ Reenviado: {preview_txt}",
+                "ultimo_mensaje_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", dest_conv_id).execute()
+
+        except Exception as dest_err:
+            logger.error(f"Error reenviando mensaje a conversación {dest_conv_id}: {dest_err}")
+            destinos_resultados.append({
+                "conversacion_id": dest_conv_id,
+                "success": False,
+                "error": str(dest_err)
+            })
+
+    return {
+        "success": True,
+        "total_destinos": len(payload.conversaciones_destino_ids),
+        "enviados": sum(1 for d in destinos_resultados if d.get("success")),
+        "resultados": destinos_resultados
+    }
 
 @app.post("/api/mensajes/{mensaje_id}/reaccionar")
 def reaccionar_mensaje_api(mensaje_id: str, payload: ReactMessageRequest):

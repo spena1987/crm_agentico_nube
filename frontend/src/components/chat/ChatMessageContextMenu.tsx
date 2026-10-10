@@ -7,7 +7,8 @@ import {
   FileText, 
   Lock, 
   Trash2, 
-  Check
+  Check,
+  Forward
 } from 'lucide-react'
 
 export interface Mensaje {
@@ -25,6 +26,7 @@ interface ChatMessageContextMenuProps {
   onClose: () => void
   onReply: (msg: any) => void
   onCopy: (text: string) => void
+  onForward?: (msg: any) => void
   onReact: (msg: any, emoji: string) => void | Promise<any>
   onSaveClinicalNote: (msg: any) => void | Promise<any>
   onConvertToInternalNote: (msg: any) => void | Promise<any>
@@ -39,6 +41,7 @@ export default function ChatMessageContextMenu({
   onClose,
   onReply,
   onCopy,
+  onForward,
   onReact,
   onSaveClinicalNote,
   onConvertToInternalNote,
@@ -158,6 +161,22 @@ export default function ChatMessageContextMenu({
                   <span>Copiar texto</span>
                 </>
               )}
+            </button>
+          )}
+
+          {/* 3. Reenviar Mensaje a otra conversación (Estilo WhatsApp Web) */}
+          {onForward && (
+            <button
+              type="button"
+              onClick={() => {
+                onForward(message)
+                onClose()
+              }}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-indigo-600/20 hover:text-indigo-300 transition-colors text-left w-full cursor-pointer font-medium"
+              title="Reenviar este mensaje a otra conversación o contacto"
+            >
+              <Forward size={15} className="text-indigo-400 shrink-0" />
+              <span>Reenviar mensaje</span>
             </button>
           )}
 
