@@ -337,6 +337,29 @@ class TestMessageRequest(BaseModel):
     telefono: str
     mensaje: Optional[str] = "¡Hola desde MedCRM! Prueba de vinculación exitosa. 🩺"
 
+from app.services.seguimiento_quirurgico_service import (
+    evaluar_y_ejecutar_seguimiento_automatizado,
+    actualizar_control_seguimiento,
+    obtener_analitica_causas_pareto
+)
+
+async def cron_seguimiento_automatico_quirurgico():
+    """
+    Cron periódico (cada 2 horas en horario de atención): Revisa casos quirúrgicos
+    en asesoramiento o análisis y envía toques según la cadencia aprobada.
+    """
+    while True:
+        try:
+            await asyncio.sleep(180) # 3 minutos tras inicio
+            logger.info("Verificando cadencias de seguimiento automatizado quirúrgico...")
+            # Ejecutar en threadpool para no bloquear el bucle de eventos
+            res = await asyncio.to_thread(evaluar_y_ejecutar_seguimiento_automatizado)
+            logger.info(f"Resultado escaneo seguimiento quirúrgico: {res}")
+        except Exception as e:
+            logger.error(f"Error en cron de seguimiento automatizado quirúrgico: {e}")
+
+        await asyncio.sleep(2 * 3600) # Cada 2 horas
+
 # Ciclo de vida de la aplicación FastAPI
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -344,6 +367,7 @@ async def lifespan(app: FastAPI):
     iniciar_daemon_whatsapp()
     asyncio.create_task(cron_limpieza_diaria_media())
     asyncio.create_task(cron_envio_automatico_consentimientos_anticipados())
+    asyncio.create_task(cron_seguimiento_automatico_quirurgico())
     yield
     logger.info("Deteniendo aplicación CRM Médico...")
 
@@ -4622,6 +4646,55 @@ def obtener_pipeline():
         return {"success": True, **data}
     except Exception as e:
         logger.error(f"Error al obtener pipeline quirúrgico: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/pipeline-quirurgico/ejecutar-seguimiento-auto")
+async def disparar_seguimiento_auto_endpoint():
+    """
+    Permite gatillar manualmente o por cron el escaneo de cadencias de recontacto.
+    """
+    try:
+        resultado = await asyncio.to_thread(evaluar_y_ejecutar_seguimiento_automatizado)
+        return {"success": True, "resultado": resultado}
+    except Exception as e:
+        logger.error(f"Error al ejecutar seguimiento automático: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/pipeline-quirurgico/analitica-causas")
+def obtener_analitica_causas_endpoint():
+    """
+    Retorna la agregación de Pareto de causas de demora, desistimiento y objeciones de presupuestos.
+    """
+    try:
+        data = obtener_analitica_causas_pareto()
+        return {"success": True, **data}
+    except Exception as e:
+        logger.error(f"Error al obtener analítica de causas: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/seguimiento-accion")
+def actualizar_accion_seguimiento_endpoint(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Permite pausar/activar seguimiento, aplicar snooze o tipificar causa desde la UI.
+    """
+    try:
+        activo = payload.get("activo", True)
+        snooze_dias = payload.get("snooze_dias")
+        snooze_hasta = payload.get("snooze_hasta")
+        categoria_causa = payload.get("categoria_causa")
+        motivo_demora = payload.get("motivo_demora")
+
+        res = actualizar_control_seguimiento(
+            caso_id=asesoria_id,
+            activo=activo,
+            snooze_dias=snooze_dias,
+            snooze_hasta=snooze_hasta,
+            categoria_causa=categoria_causa,
+            motivo_demora=motivo_demora
+        )
+        return {"success": True, "resultado": res}
+    except Exception as e:
+        logger.error(f"Error al actualizar seguimiento de asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

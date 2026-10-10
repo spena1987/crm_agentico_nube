@@ -259,6 +259,22 @@ export default function VistaVerticalPipeline({
                                   {caso.dias_sin_contacto === 0 ? 'Hoy' : `${caso.dias_sin_contacto}d sin contacto`}
                                 </span>
                               )}
+                              {caso.snooze_hasta && (
+                                <span 
+                                  className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 flex items-center gap-1 bg-purple-950/80 text-purple-300 border-purple-500/40"
+                                  title={`Seguimiento pausado hasta: ${caso.snooze_hasta}`}
+                                >
+                                  ⏸️ Snooze: {caso.snooze_hasta}
+                                </span>
+                              )}
+                              {Boolean(caso.seguimiento_etapa && caso.seguimiento_etapa > 0) && (
+                                <span
+                                  className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border shrink-0 flex items-center gap-1 bg-indigo-950/80 text-indigo-300 border-indigo-500/40"
+                                  title="Toque de cadencia asistida enviado al paciente"
+                                >
+                                  Toque #{caso.seguimiento_etapa}
+                                </span>
+                              )}
                             </div>
 
                             <div className="min-w-0">

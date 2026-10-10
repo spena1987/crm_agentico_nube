@@ -195,6 +195,38 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     buttons: [
       { type: 'QUICK_REPLY', text: 'Confirmar Asistencia' }
     ]
+  },
+  {
+    title: 'Seguimiento Asesoramiento (D+3 - Toque 1)',
+    name: 'seguimiento_asesoramiento_t1',
+    category: 'UTILITY' as const,
+    header_content: 'Seguimiento Asistencial',
+    body_text: 'Hola {{1}}, le escribimos desde el equipo quirúrgico de Centrovisión. Queríamos consultarle si le quedó alguna duda sobre la indicación médica para {{2}} o si desea coordinar una fecha tentativa.',
+    footer_text: 'Centrovisión • Asesoramiento Quirúrgico',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Quiero operarme' },
+      { type: 'QUICK_REPLY', text: 'Tengo dudas' }
+    ]
+  },
+  {
+    title: 'Seguimiento Análisis (D+13 - Vencimiento Presupuesto)',
+    name: 'seguimiento_analisis_t3',
+    category: 'UTILITY' as const,
+    header_content: 'Aviso de Vigencia Arancelaria',
+    body_text: 'Estimado/a {{1}}, le recordamos que el presupuesto emitido para {{2}} se encuentra a 48 hs de cumplir su plazo de validez arancelaria de 15 días.\n\nSi desea congelar el valor y reservar su fecha en quirófano, responda a este mensaje.',
+    footer_text: 'Centrovisión • Área Quirúrgica',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Congelar arancel' },
+      { type: 'QUICK_REPLY', text: 'Pausar seguimiento' }
+    ]
   }
 ]
 

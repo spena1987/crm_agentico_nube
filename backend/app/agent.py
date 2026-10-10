@@ -163,6 +163,27 @@ def bind_tools_to_context(
         generic_tool_wrapper.__name__ = getattr(fn_callable, "__name__", fn_name)
         return generic_tool_wrapper
 
+    def _build_seguimiento_qx(fn):
+        def registrar_seguimiento_o_postergacion_quirurgica(
+            accion: str,
+            snooze_dias: Optional[int] = 30,
+            categoria_causa: Optional[str] = None,
+            motivo_demora: Optional[str] = None
+        ) -> dict:
+            """
+            Registra la confirmación, postergación (snooze), objeción o desistimiento del paciente en su seguimiento quirúrgico.
+            """
+            record_call("registrar_seguimiento_o_postergacion_quirurgica")
+            return fn(
+                accion=accion,
+                paciente_id=paciente_id,
+                snooze_dias=snooze_dias,
+                categoria_causa=categoria_causa,
+                motivo_demora=motivo_demora
+            )
+        registrar_seguimiento_o_postergacion_quirurgica.__doc__ = fn.__doc__ or registrar_seguimiento_o_postergacion_quirurgica.__doc__
+        return registrar_seguimiento_o_postergacion_quirurgica
+
     builders = {
         "vincular_paciente_geclisa": _build_vincular_geclisa,
         "crear_borrador_presupuesto": _build_crear_borrador,
@@ -173,6 +194,7 @@ def bind_tools_to_context(
         "escalar_a_operador_humano": _build_escalar_humano,
         "finalizar_y_cerrar_consulta": _build_finalizar_consulta,
         "reportar_urgencia_postquirurgica": _build_reportar_urgencia,
+        "registrar_seguimiento_o_postergacion_quirurgica": _build_seguimiento_qx,
     }
 
     for name in enabled_names:

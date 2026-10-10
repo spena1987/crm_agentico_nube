@@ -934,4 +934,144 @@ def reportar_urgencia_postquirurgica(
         return {"error": f"Error activando protocolo de urgencia: {str(e)}"}
 
 
+def registrar_seguimiento_o_postergacion_quirurgica(
+    accion: str,
+    paciente_id: Optional[str] = None,
+    caso_id: Optional[str] = None,
+    snooze_dias: Optional[int] = 30,
+    categoria_causa: Optional[str] = None,
+    motivo_demora: Optional[str] = None,
+    **kwargs
+) -> dict:
+    """
+    Registra determinísticamente la decisión del paciente respecto a su seguimiento quirúrgico
+    (cuando responde a una cadencia de recontacto o manifiesta su intención en el chat).
+
+    Args:
+        accion: Una de las siguientes acciones:
+            - 'confirmar': El paciente confirma que se operará. Pasa el caso a confirmado.
+            - 'snooze': El paciente pide posponer o contactar más adelante (ej: en 15, 30, 60 días).
+            - 'desistir': El paciente cancela / desiste de la cirugía (ej: económico, miedo, operado en otro lugar).
+            - 'objecion': El paciente manifiesta una objeción que requiere seguimiento o respuesta explicativa.
+        paciente_id: ID del paciente asociado a la conversación.
+        caso_id: ID específico de la asesoría quirúrgica (opcional si se infiere del paciente).
+        snooze_dias: Días para pausar el seguimiento si accion=='snooze' (por defecto 30).
+        categoria_causa: Tipificación estandarizada ('economico', 'tiempos_personales', 'miedo_dudas', 'eligio_otro_centro', 'medico_no_indica', 'otros').
+        motivo_demora: Detalle textual expresado por el paciente.
+    """
+    logger.info(f"Herramienta: registrar_seguimiento_o_postergacion_quirurgica accion={accion}, paciente={paciente_id}, caso={caso_id}")
+    if not supabase:
+        return {"error": "Base de datos no disponible"}
+
+    target_caso_id = caso_id
+    if not target_caso_id and paciente_id:
+        try:
+            resp_as = supabase.table("asesorias_quirurgicas")\
+                .select("id")\
+                .eq("paciente_id", paciente_id)\
+                .in_("estado", ["en_asesoramiento", "en_analisis", "derivado"])\
+                .order("created_at", desc=True)\
+                .limit(1)\
+                .execute()
+            if resp_as.data:
+                target_caso_id = resp_as.data[0]["id"]
+        except Exception as e:
+            logger.warning(f"Error buscando asesoría activa para paciente {paciente_id}: {e}")
+
+    if not target_caso_id:
+        return {"error": "No se encontró un caso quirúrgico activo en asesoramiento o análisis para este paciente."}
+
+    from app.services.seguimiento_quirurgico_service import actualizar_control_seguimiento
+    from app.db import cambiar_estado_presupuesto
+
+    if accion == "confirmar":
+        # Confirmar asesoría
+        actualizar_control_seguimiento(
+            caso_id=target_caso_id,
+            activo=False
+        )
+        supabase.table("asesorias_quirurgicas").update({
+            "estado": "confirmado",
+            "seguimiento_estado_actual": "convertido",
+            "canal_resolucion": "agente_gemini"
+        }).eq("id", target_caso_id).execute()
+
+        # Si hay presupuestos activos, pasarlos a aprobado
+        try:
+            resp_p = supabase.table("presupuestos")\
+                .select("id")\
+                .eq("caso_quirurgico_id", target_caso_id)\
+                .in_("estado", ["en_analisis", "emitido", "enviado"])\
+                .execute()
+            for p in (resp_p.data or []):
+                cambiar_estado_presupuesto(
+                    presupuesto_id=p["id"],
+                    nuevo_estado="aprobado",
+                    asesoria_id=target_caso_id,
+                    origen="IA_WHATSAPP",
+                    canal_resolucion="agente_gemini"
+                )
+        except Exception as ep:
+            logger.warning(f"Error aprobando presupuesto asociado a caso {target_caso_id}: {ep}")
+
+        return {
+            "success": True,
+            "caso_id": target_caso_id,
+            "estado": "confirmado",
+            "mensaje": "El caso quirúrgico fue confirmado exitosamente. Felicta al paciente cordialmente y dile que la secretaría de quirófano se contactará para coordinar la fecha."
+        }
+
+    elif accion == "snooze":
+        res = actualizar_control_seguimiento(
+            caso_id=target_caso_id,
+            activo=True,
+            snooze_dias=snooze_dias or 30,
+            motivo_demora=motivo_demora or f"Pospuesto {snooze_dias} días por el paciente"
+        )
+        return {
+            "success": True,
+            "caso_id": target_caso_id,
+            "snooze_dias": snooze_dias,
+            "mensaje": f"Se pospuso el seguimiento quirúrgico por {snooze_dias} días. Agradece al paciente y dile que con gusto retomaremos el contacto más adelante."
+        }
+
+    elif accion in ["desistir", "cancelar"]:
+        actualizar_control_seguimiento(
+            caso_id=target_caso_id,
+            activo=False,
+            categoria_causa=categoria_causa or "otros",
+            motivo_demora=motivo_demora or "Desistimiento informado por el paciente"
+        )
+        supabase.table("asesorias_quirurgicas").update({
+            "estado": "cancelado",
+            "seguimiento_estado_actual": "desistido",
+            "motivo_cancelacion": motivo_demora or f"Desistido ({categoria_causa})",
+            "canal_resolucion": "agente_gemini"
+        }).eq("id", target_caso_id).execute()
+
+        return {
+            "success": True,
+            "caso_id": target_caso_id,
+            "categoria_causa": categoria_causa,
+            "mensaje": "Se registró el desistimiento y la causa del paciente. Agradece cordialmente su respuesta y déjale las puertas abiertas ante futuras necesidades."
+        }
+
+    elif accion == "objecion":
+        actualizar_control_seguimiento(
+            caso_id=target_caso_id,
+            activo=True,
+            categoria_causa=categoria_causa or "otros",
+            motivo_demora=motivo_demora
+        )
+        return {
+            "success": True,
+            "caso_id": target_caso_id,
+            "categoria_causa": categoria_causa,
+            "mensaje": "Se registró la objeción del paciente para su seguimiento asistencial. Responde aclarando sus dudas o inquietudes."
+        }
+
+    return {"error": f"Acción '{accion}' no reconocida."}
+
+
+
 

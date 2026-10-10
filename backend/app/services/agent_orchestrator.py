@@ -13,7 +13,8 @@ from app.services.tools import (
     consultar_presupuestos_paciente,
     vincular_paciente_geclisa,
     consultar_preparacion_cirugia,
-    reportar_urgencia_postquirurgica
+    reportar_urgencia_postquirurgica,
+    registrar_seguimiento_o_postergacion_quirurgica
 )
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,8 @@ AVAILABLE_TOOLS_MAP = {
     "consultar_presupuestos_paciente": consultar_presupuestos_paciente,
     "vincular_paciente_geclisa": vincular_paciente_geclisa,
     "consultar_preparacion_cirugia": consultar_preparacion_cirugia,
-    "reportar_urgencia_postquirurgica": reportar_urgencia_postquirurgica
+    "reportar_urgencia_postquirurgica": reportar_urgencia_postquirurgica,
+    "registrar_seguimiento_o_postergacion_quirurgica": registrar_seguimiento_o_postergacion_quirurgica
 }
 
 # Fallbacks predeterminados en memoria por si Supabase no responde

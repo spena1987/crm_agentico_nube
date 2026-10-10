@@ -40,10 +40,11 @@ import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhat
 import ModalRecordatorioCirugiaWhatsApp from '@/components/ModalRecordatorioCirugiaWhatsApp'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
+import { ModalAnaliticaCausasQuirurgicas } from '@/components/pipeline/ModalAnaliticaCausasQuirurgicas'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
 import { Columns3, AlignJustify } from 'lucide-react'
-import { Radio, Users, BellRing, FileCheck2 } from 'lucide-react'
+import { Radio, Users, BellRing, FileCheck2, BarChart2, PauseCircle, Flame } from 'lucide-react'
 
 export interface PacienteData {
   id: string
@@ -104,6 +105,14 @@ export interface AsesoriaCasoPipeline {
     pdf_url?: string | null
     token?: string | null
   }
+  seguimiento_auto_activo?: boolean
+  seguimiento_etapa?: number
+  seguimiento_ultimo_toque_at?: string | null
+  seguimiento_estado_actual?: string | null
+  snooze_hasta?: string | null
+  categoria_causa?: string | null
+  motivo_demora?: string | null
+  canal_resolucion?: string | null
   created_at: string
   updated_at?: string
 }
@@ -112,6 +121,8 @@ interface MetricasPipeline {
   total_casos: number
   casos_activos: number
   casos_en_alerta: number
+  casos_snooze?: number
+  casos_reactivados_hoy?: number
   casos_operados?: number
   casos_cancelados?: number
   tasa_conversion?: number
@@ -208,6 +219,9 @@ export default function PipelineQuirurgicoPage() {
   const [filtroRecordatorio, setFiltroRecordatorio] = useState<
     'todos' | 'confirmados' | 'enviados' | 'con_consulta' | 'sin_enviar'
   >('todos')
+  const [filtroSeguimiento, setFiltroSeguimiento] = useState<
+    'todos' | 'activos' | 'snooze' | 'reactivados'
+  >('activos')
   const [fechaDesde, setFechaDesde] = useState<string>('')
   const [fechaHasta, setFechaHasta] = useState<string>('')
   const [soloAlertas, setSoloAlertas] = useState(false)
@@ -219,6 +233,7 @@ export default function PipelineQuirurgicoPage() {
   // Feedback y estados de acción
   const [actualizandoCasoId, setActualizandoCasoId] = useState<string | null>(null)
   const [notificacionExito, setNotificacionExito] = useState<string | null>(null)
+  const [ejecutandoSeguimientoAuto, setEjecutandoSeguimientoAuto] = useState<boolean>(false)
 
   // Modales
   const [modalWhatsAppOpen, setModalWhatsAppOpen] = useState(false)
@@ -230,6 +245,8 @@ export default function PipelineQuirurgicoPage() {
 
   const [modalCierreOpen, setModalCierreOpen] = useState(false)
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
+
+  const [modalAnaliticaOpen, setModalAnaliticaOpen] = useState<boolean>(false)
 
   // Cargar Pipeline (con apiFetch autenticado y fallback resiliente a Supabase)
   const fetchPipeline = async () => {
@@ -653,7 +670,23 @@ export default function PipelineQuirurgicoPage() {
       }
     }
 
-    return matchTexto && matchCirujano && matchObraSocial && matchPractica && matchFecha && matchRecordatorio
+    // Filtro por Seguimiento Automatizado y Snooze
+    let matchSeguimiento = true
+    if (filtroSeguimiento !== 'todos') {
+      const hoyStr = new Date().toISOString().slice(0, 10)
+      const esSnooze = Boolean(caso.snooze_hasta && caso.snooze_hasta > hoyStr)
+      const esReactivado = caso.seguimiento_estado_actual === 'reactivado' || Boolean(caso.snooze_hasta && caso.snooze_hasta <= hoyStr)
+
+      if (filtroSeguimiento === 'activos') {
+        matchSeguimiento = !esSnooze
+      } else if (filtroSeguimiento === 'snooze') {
+        matchSeguimiento = esSnooze
+      } else if (filtroSeguimiento === 'reactivados') {
+        matchSeguimiento = esReactivado
+      }
+    }
+
+    return matchTexto && matchCirujano && matchObraSocial && matchPractica && matchFecha && matchRecordatorio && matchSeguimiento
   }
 
   // Casos activos filtrados por columna
@@ -678,6 +711,7 @@ export default function PipelineQuirurgicoPage() {
     filtroPractica,
     filtroFechaTipo,
     filtroRecordatorio,
+    filtroSeguimiento,
     fechaDesde,
     fechaHasta,
     soloAlertas
@@ -837,6 +871,22 @@ export default function PipelineQuirurgicoPage() {
                     {metricas.casos_en_alerta}
                   </strong>
                 </div>
+
+                {Boolean(metricas.casos_snooze) && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-300 text-[11px]">
+                    <PauseCircle size={13} className="text-purple-400" />
+                    <span>Postergados (Snooze):</span>
+                    <strong className="font-mono font-black">{metricas.casos_snooze}</strong>
+                  </div>
+                )}
+
+                {Boolean(metricas.casos_reactivados_hoy) && (
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-950/40 border border-amber-500/30 text-amber-300 text-[11px]">
+                    <Flame size={13} className="text-amber-400" />
+                    <span>Reactivados:</span>
+                    <strong className="font-mono font-black">{metricas.casos_reactivados_hoy}</strong>
+                  </div>
+                )}
               </>
             ) : (
               <>
@@ -867,14 +917,52 @@ export default function PipelineQuirurgicoPage() {
           </div>
         )}
 
-        {/* Lado Derecho: Configuración SLA y Refrescar */}
+        {/* Lado Derecho: Analítica de Pareto, Escaneo y Refrescar */}
         <div className="flex items-center gap-2 self-end xl:self-auto">
+          <button
+            type="button"
+            onClick={() => setModalAnaliticaOpen(true)}
+            className="px-2.5 py-1 rounded-xl bg-indigo-950/60 border border-indigo-500/40 hover:bg-indigo-900/60 text-[11px] font-bold text-indigo-200 transition-all flex items-center gap-1.5 shadow-xs"
+            title="Ver Análisis de Causas Raíz y Diagrama de Pareto (80/20)"
+          >
+            <BarChart2 size={13} className="text-indigo-400" />
+            <span>Pareto de Causas</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                setEjecutandoSeguimientoAuto(true)
+                const res = await apiFetch('/api/pipeline-quirurgico/ejecutar-seguimiento-auto', { method: 'POST' })
+                if (res.ok) {
+                  const data = await res.json()
+                  if (data.success) {
+                    setNotificacionExito(`Cadencias evaluadas: ${data.resultado?.enviados || 0} recontactos enviados.`)
+                    setTimeout(() => setNotificacionExito(null), 4000)
+                    fetchPipeline()
+                  }
+                }
+              } catch (e: any) {
+                console.error('Error ejecutando seguimiento auto:', e)
+              } finally {
+                setEjecutandoSeguimientoAuto(false)
+              }
+            }}
+            disabled={ejecutandoSeguimientoAuto}
+            className="px-2.5 py-1 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-[11px] font-bold text-gray-300 transition-all flex items-center gap-1.5"
+            title="Ejecutar escaneo de cadencias de recontacto asistido por WhatsApp"
+          >
+            <RefreshCw size={12} className={ejecutandoSeguimientoAuto ? 'animate-spin text-amber-400' : 'text-blue-400'} />
+            <span>{ejecutandoSeguimientoAuto ? 'Escaneando...' : 'Recontactar'}</span>
+          </button>
+
           <Link
             href="/ajustes"
             className="px-2.5 py-1 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-[11px] font-bold text-gray-300 transition-all flex items-center gap-1.5"
           >
             <Stethoscope size={12} className="text-blue-400" />
-            <span>Configurar SLA</span>
+            <span>SLA</span>
           </Link>
 
           <button
@@ -1002,6 +1090,24 @@ export default function PipelineQuirurgicoPage() {
               <option value="sin_enviar">🔔 Pendientes de envío</option>
             </select>
           </div>
+
+          {/* Filtro Específico de Seguimiento y Snooze (Cadencias Asistidas) */}
+          {vistaActual === 'activos' && (
+            <div className="flex items-center gap-1 min-w-[160px] max-w-[220px]">
+              <PauseCircle size={12} className="text-purple-400 shrink-0" />
+              <select
+                value={filtroSeguimiento}
+                onChange={(e) => setFiltroSeguimiento(e.target.value as any)}
+                className="w-full text-xs bg-neutral-950 border border-purple-500/30 text-purple-200 rounded-xl px-2 py-1 focus:outline-none focus:border-purple-500 cursor-pointer truncate font-medium"
+                title="Filtrar casos según estado de seguimiento asistido y postergaciones"
+              >
+                <option value="activos">🎯 Activos en Gestión</option>
+                <option value="snooze">⏸️ Postergados (Snooze)</option>
+                <option value="reactivados">🔥 Reactivados / Atención</option>
+                <option value="todos">Todos los Estados</option>
+              </select>
+            </div>
+          )}
 
           {/* En vista Activa: Toggle Alertas SLA */}
           {vistaActual === 'activos' && (
@@ -1789,6 +1895,13 @@ export default function PipelineQuirurgicoPage() {
             mostrarToast(`El caso fue cerrado como ${casoAct.estado}.`)
             fetchPipeline()
           }}
+        />
+      )}
+
+      {modalAnaliticaOpen && (
+        <ModalAnaliticaCausasQuirurgicas
+          isOpen={modalAnaliticaOpen}
+          onClose={() => setModalAnaliticaOpen(false)}
         />
       )}
 

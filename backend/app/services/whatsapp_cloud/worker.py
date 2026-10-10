@@ -1539,6 +1539,28 @@ async def handle_automated_interactive_action(
 
         return True
 
+    # =========================================================================
+    # CASO 5: SEGUIMIENTO QUIRÚRGICO AUTOMATIZADO (CONFIRMAR, SNOOZE, DESISTIR)
+    # =========================================================================
+    if (
+        btn_id.startswith("caso_confirmar_") or 
+        btn_id.startswith("caso_snooze_") or 
+        btn_id.startswith("caso_desistir_") or
+        btn_id.startswith("caso_objecion_")
+    ):
+        logger.info(f"[Interactive Seguimiento] Procesando botón quirúrgico: {btn_id} para {normalized_phone}")
+        try:
+            from app.services.seguimiento_quirurgico_service import procesar_respuesta_interactiva_seguimiento
+            resultado = procesar_respuesta_interactiva_seguimiento(
+                payload_boton=btn_id.upper(),
+                telefono=normalized_phone,
+                texto_usuario=text_content
+            )
+            return True
+        except Exception as e_seg:
+            logger.error(f"[Interactive Seguimiento] Error procesando acción: {e_seg}", exc_info=True)
+            return True
+
     return False
 
 

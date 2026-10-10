@@ -245,6 +245,14 @@ export default function CasoFormularioActivo({
   const [situacionPaciente, setSituacionPaciente] = useState(caso.situacion_paciente || '')
   const [avisoValidacion, setAvisoValidacion] = useState<string | null>(null)
 
+  // Seguimiento Automatizado, Snooze y Causa
+  const [seguimientoAutoActivo, setSeguimientoAutoActivo] = useState<boolean>(caso.seguimiento_auto_activo ?? true)
+  const [snoozeHasta, setSnoozeHasta] = useState<string>(caso.snooze_hasta || '')
+  const [categoriaCausa, setCategoriaCausa] = useState<string>(caso.categoria_causa || '')
+  const [motivoDemora, setMotivoDemora] = useState<string>(caso.motivo_demora || '')
+  const [guardandoSeguimiento, setGuardandoSeguimiento] = useState<boolean>(false)
+  const [feedbackSeguimiento, setFeedbackSeguimiento] = useState<string | null>(null)
+
   // Consentimiento Informado (Dual: WhatsApp Digital & Impresión en Papel)
   const [consentimiento, setConsentimiento] = useState<any>(null)
   const [cargandoConsentimiento, setCargandoConsentimiento] = useState(false)
@@ -2648,6 +2656,176 @@ export default function CasoFormularioActivo({
                   )}
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Card: Automatización de Cadencias de Seguimiento y Snooze (Gestión por Excepción) */}
+          <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-neutral-900/90 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  <Sparkles size={14} />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center gap-2">
+                    Seguimiento Asistido Automatizado
+                    {seguimientoAutoActivo ? (
+                      <span className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.2 rounded font-mono font-semibold">
+                        Activo
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-neutral-800 text-gray-400 border border-[var(--border)] px-1.5 py-0.2 rounded font-mono font-semibold">
+                        Pausado
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[10.5px] text-gray-400">
+                    Cadencia oficial por WhatsApp ({caso.estado === 'en_analisis' ? 'Cadencia B: D+2, D+6, D+13, D+25' : 'Cadencia A: D+3, D+8, D+18'})
+                  </p>
+                </div>
+              </div>
+
+              {/* Switch On/Off */}
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={seguimientoAutoActivo}
+                  onChange={(e) => setSeguimientoAutoActivo(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-8 h-4 bg-neutral-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+
+            {/* Controles de Snooze (Pausa programada) */}
+            <div className="pt-2 border-t border-[var(--border)]/60 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-300 font-semibold text-[11px] flex items-center gap-1.5">
+                  <Clock size={12} className="text-purple-400" />
+                  Postergación Programada (Snooze):
+                </span>
+                {snoozeHasta && (
+                  <span className="text-[10px] text-purple-300 font-mono font-bold bg-purple-950/60 px-2 py-0.5 rounded border border-purple-500/30">
+                    Pausado hasta: {snoozeHasta}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date()
+                    d.setDate(d.getDate() + 30)
+                    setSnoozeHasta(d.toISOString().slice(0, 10))
+                  }}
+                  className="px-2 py-1 text-[10.5px] rounded-lg bg-neutral-800 hover:bg-neutral-700 text-purple-300 border border-purple-500/20 font-medium transition-colors"
+                >
+                  ⏸️ +30 días
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date()
+                    d.setDate(d.getDate() + 60)
+                    setSnoozeHasta(d.toISOString().slice(0, 10))
+                  }}
+                  className="px-2 py-1 text-[10.5px] rounded-lg bg-neutral-800 hover:bg-neutral-700 text-purple-300 border border-purple-500/20 font-medium transition-colors"
+                >
+                  ⏸️ +60 días
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const d = new Date()
+                    d.setDate(d.getDate() + 90)
+                    setSnoozeHasta(d.toISOString().slice(0, 10))
+                  }}
+                  className="px-2 py-1 text-[10.5px] rounded-lg bg-neutral-800 hover:bg-neutral-700 text-purple-300 border border-purple-500/20 font-medium transition-colors"
+                >
+                  ⏸️ +90 días
+                </button>
+                {snoozeHasta && (
+                  <button
+                    type="button"
+                    onClick={() => setSnoozeHasta('')}
+                    className="px-2 py-1 text-[10.5px] text-rose-400 hover:underline ml-auto"
+                  >
+                    Quitar pausa
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Tipificación de Causa de Demora o Desestimiento para Pareto */}
+            <div className="pt-2 border-t border-[var(--border)]/60 space-y-1.5">
+              <label className="text-[11px] font-semibold text-gray-300 block">
+                Causa Raíz de Demora u Objeción (Pareto):
+              </label>
+              <select
+                value={categoriaCausa}
+                onChange={(e) => setCategoriaCausa(e.target.value)}
+                className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-200 rounded-lg p-1.5 focus:outline-none focus:border-indigo-500"
+              >
+                <option value="">Seleccionar causa raíz...</option>
+                <option value="economico">Económico / Costo Arancel</option>
+                <option value="tiempos_personales">Tiempos / Compromisos Personales</option>
+                <option value="miedo_dudas">Miedo / Dudas Asistenciales</option>
+                <option value="eligio_otro_centro">Eligió Otra Clínica / Centro</option>
+                <option value="medico_no_indica">Criterio Clínico / No Indica Aún</option>
+                <option value="otros">Otras Causas / Sin Especificar</option>
+              </select>
+              <input
+                type="text"
+                placeholder="Detalle o comentario sobre la demora..."
+                value={motivoDemora}
+                onChange={(e) => setMotivoDemora(e.target.value)}
+                className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-200 rounded-lg p-1.5 focus:outline-none focus:border-indigo-500 placeholder-gray-500"
+              />
+            </div>
+
+            {/* Guardar Configuración de Seguimiento */}
+            <div className="pt-1 flex justify-end">
+              <button
+                type="button"
+                disabled={guardandoSeguimiento}
+                onClick={async () => {
+                  setGuardandoSeguimiento(true)
+                  try {
+                    const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/seguimiento-accion`, {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        activo: seguimientoAutoActivo,
+                        snooze_hasta: snoozeHasta || null,
+                        categoria_causa: categoriaCausa || null,
+                        motivo_demora: motivoDemora || null
+                      })
+                    })
+                    if (res.ok) {
+                      const data = await res.json()
+                      if (data.success) {
+                        setFeedbackSeguimiento('Seguimiento guardado correctamente.')
+                        setTimeout(() => setFeedbackSeguimiento(null), 3000)
+                        if (onGuardar) onGuardar({})
+                      }
+                    }
+                  } catch (e: any) {
+                    console.error('Error guardando seguimiento:', e)
+                    setFeedbackSeguimiento('Error al guardar seguimiento.')
+                    setTimeout(() => setFeedbackSeguimiento(null), 3000)
+                  } finally {
+                    setGuardandoSeguimiento(false)
+                  }
+                }}
+                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-all shadow cursor-pointer disabled:opacity-50"
+              >
+                {guardandoSeguimiento ? 'Guardando...' : 'Aplicar Seguimiento'}
+              </button>
+            </div>
+            {feedbackSeguimiento && (
+              <p className="text-[11px] text-emerald-400 font-medium text-right animate-in fade-in">
+                {feedbackSeguimiento}
+              </p>
             )}
           </div>
 

@@ -95,6 +95,14 @@ export interface AsesoriaQuirurgica {
   lio_calculado?: boolean
   lente_tipo?: string | null
   lente_dioptria?: string | null
+  seguimiento_auto_activo?: boolean
+  seguimiento_etapa?: number
+  seguimiento_ultimo_toque_at?: string | null
+  seguimiento_estado_actual?: string | null
+  snooze_hasta?: string | null
+  categoria_causa?: string | null
+  motivo_demora?: string | null
+  canal_resolucion?: string | null
   created_at: string
   updated_at: string
 }

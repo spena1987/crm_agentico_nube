@@ -82,10 +82,29 @@ export default function ModalCerrarCasoQuirurgico({
         ? `[${motivoPrincipal}] ${detalle.trim()}`
         : motivoPrincipal
 
+      // Mapear motivo a categoría de Pareto estandarizada
+      let categoriaCausa = 'otros'
+      if (motivoPrincipal.includes('costos') || motivoPrincipal.includes('copago')) {
+        categoriaCausa = 'economico'
+      } else if (motivoPrincipal.includes('personal') || motivoPrincipal.includes('postergación')) {
+        categoriaCausa = 'tiempos_personales'
+      } else if (motivoPrincipal.includes('cobertura') || motivoPrincipal.includes('rechazo')) {
+        categoriaCausa = 'economico'
+      } else if (motivoPrincipal.includes('conservador') || motivoPrincipal.includes('contraindicación')) {
+        categoriaCausa = 'medico_no_indica'
+      } else if (motivoPrincipal.includes('otro centro')) {
+        categoriaCausa = 'eligio_otro_centro'
+      }
+
       // 1. Actualizar estado del caso en Backend / Supabase
       const payloadCaso = {
         estado: tipoCierre,
-        motivo_cancelacion: motivoCompleto
+        motivo_cancelacion: motivoCompleto,
+        seguimiento_auto_activo: false,
+        seguimiento_estado_actual: tipoCierre === 'operado' ? 'convertido' : 'desistido',
+        categoria_causa: tipoCierre === 'cancelado' ? categoriaCausa : null,
+        motivo_demora: tipoCierre === 'cancelado' ? motivoCompleto : null,
+        canal_resolucion: 'presencial'
       }
 
       let casoActualizado = null
@@ -106,10 +125,9 @@ export default function ModalCerrarCasoQuirurgico({
         const { data: sbData, error: sbErr } = await supabase
           .from('asesorias_quirurgicas')
           .update({
-            estado: tipoCierre,
-            motivo_cancelacion: motivoCompleto,
+            ...payloadCaso,
             updated_at: new Date().toISOString()
-          })
+          } as any)
           .eq('id', casoId)
           .select()
         if (!sbErr && sbData && sbData.length > 0) {

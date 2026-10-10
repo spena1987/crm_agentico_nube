@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import ModalVisorPdfPresupuesto from '@/components/ModalVisorPdfPresupuesto'
+import { ModalAnaliticaCausasQuirurgicas } from '@/components/pipeline/ModalAnaliticaCausasQuirurgicas'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -14,7 +15,8 @@ import {
   RefreshCw,
   AlertCircle,
   Eye,
-  Info
+  Info,
+  BarChart2
 } from 'lucide-react'
 
 interface Paciente {
@@ -60,6 +62,7 @@ export default function PresupuestosPage() {
   // Estado para el visor de PDF integrado
   const [selectedPresupuestoVisor, setSelectedPresupuestoVisor] = useState<Presupuesto | null>(null)
   const [isVisorModalOpen, setIsVisorModalOpen] = useState(false)
+  const [isParetoModalOpen, setIsParetoModalOpen] = useState(false)
 
   const fetchPresupuestos = async () => {
     try {
@@ -244,6 +247,15 @@ export default function PresupuestosPage() {
 
         {/* Acciones Globales */}
         <div className="flex items-center gap-2 self-start md:self-auto">
+          <button
+            type="button"
+            onClick={() => setIsParetoModalOpen(true)}
+            className="px-3.5 py-2 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-500 dark:text-indigo-400 border border-indigo-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+            title="Ver Análisis de Pareto de Objeciones de Presupuestos y Motivos de Rechazo"
+          >
+            <BarChart2 size={13} className="text-indigo-400" />
+            Pareto de Objeciones
+          </button>
           <button
             type="button"
             onClick={handleConciliarConQuirofano}
@@ -504,6 +516,14 @@ export default function PresupuestosPage() {
           onEnviarWhatsApp={() => {
             handleOpenWhatsApp(selectedPresupuestoVisor)
           }}
+        />
+      )}
+
+      {/* Modal de Pareto de Causas y Objeciones */}
+      {isParetoModalOpen && (
+        <ModalAnaliticaCausasQuirurgicas
+          isOpen={isParetoModalOpen}
+          onClose={() => setIsParetoModalOpen(false)}
         />
       )}
 

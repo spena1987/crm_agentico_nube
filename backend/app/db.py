@@ -3011,7 +3011,14 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             "checklist_prequirurgico": chk_init,
             "proxima_accion_fecha": payload.get("proxima_accion_fecha") or None,
             "proxima_accion_texto": payload.get("proxima_accion_texto") or None,
-            "ultimo_contacto_at": payload.get("ultimo_contacto_at") or "now()"
+            "ultimo_contacto_at": payload.get("ultimo_contacto_at") or "now()",
+            "seguimiento_auto_activo": payload.get("seguimiento_auto_activo", True),
+            "seguimiento_etapa": payload.get("seguimiento_etapa", 0),
+            "seguimiento_estado_actual": payload.get("seguimiento_estado_actual", "en_curso"),
+            "snooze_hasta": payload.get("snooze_hasta") or None,
+            "categoria_causa": payload.get("categoria_causa") or None,
+            "motivo_demora": payload.get("motivo_demora") or None,
+            "canal_resolucion": payload.get("canal_resolucion") or None
         }
         
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
@@ -3039,7 +3046,9 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             "control_postop_24h", "control_postop_7d", "alta_medica_definitiva",
             "estado", "situacion_paciente", "motivo_cancelacion",
             "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at",
-            "ojo"
+            "ojo",
+            "seguimiento_auto_activo", "seguimiento_etapa", "seguimiento_ultimo_toque_at",
+            "seguimiento_estado_actual", "snooze_hasta", "categoria_causa", "motivo_demora", "canal_resolucion"
         ]
         
         for k in campos_permitidos:
@@ -3817,7 +3826,10 @@ def cambiar_estado_presupuesto(
     nuevo_estado: str, 
     asesoria_id: Optional[str] = None,
     motivo: Optional[str] = None,
-    origen: str = "IA_WHATSAPP"
+    origen: str = "IA_WHATSAPP",
+    categoria_objecion: Optional[str] = None,
+    toque_resolucion: Optional[int] = None,
+    canal_resolucion: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Actualiza el estado de un presupuesto ('borrador', 'enviado', 'aprobado', 'rechazado').
@@ -3830,6 +3842,13 @@ def cambiar_estado_presupuesto(
         estado_normalizado = "rechazado" if nuevo_estado in ["desestimado", "rechazado", "cancelado"] else nuevo_estado
         
         datos_update = {"estado": estado_normalizado}
+        if categoria_objecion:
+            datos_update["categoria_objecion"] = categoria_objecion
+        if toque_resolucion is not None:
+            datos_update["toque_resolucion"] = toque_resolucion
+        if canal_resolucion:
+            datos_update["canal_resolucion"] = canal_resolucion
+
         if estado_normalizado == "rechazado":
             datos_update["motivo_desistimiento"] = motivo or "Desistido por el paciente"
             datos_update["desestimado_at"] = "now()"
@@ -3892,6 +3911,9 @@ def cambiar_estado_presupuesto(
                         "presupuesto_id": presupuesto_id,
                         "monto_extra": float(presupuesto.get("total") or 0.0),
                         "checklist_prequirurgico": curr_checklist,
+                        "seguimiento_auto_activo": False,
+                        "seguimiento_estado_actual": "convertido",
+                        "canal_resolucion": canal_resolucion or ("whatsapp_bot" if origen == "IA_WHATSAPP" else "presencial"),
                         "updated_at": "now()"
                     }) \
                     .eq("id", target_asesoria_id) \
@@ -3936,12 +3958,21 @@ def cambiar_estado_presupuesto(
                     .execute()
 
             elif estado_normalizado == "rechazado":
+                update_as_cancel = {
+                    "estado": "cancelado",
+                    "motivo_cancelacion": motivo or "Presupuesto desistido / rechazado por el paciente",
+                    "seguimiento_auto_activo": False,
+                    "seguimiento_estado_actual": "desistido",
+                    "canal_resolucion": canal_resolucion or ("whatsapp_bot" if origen == "IA_WHATSAPP" else "presencial"),
+                    "updated_at": "now()"
+                }
+                if categoria_objecion:
+                    update_as_cancel["categoria_causa"] = categoria_objecion
+                if motivo:
+                    update_as_cancel["motivo_demora"] = motivo
+
                 supabase.table("asesorias_quirurgicas") \
-                    .update({
-                        "estado": "cancelado",
-                        "motivo_cancelacion": motivo or "Presupuesto desistido / rechazado por el paciente",
-                        "updated_at": "now()"
-                    }) \
+                    .update(update_as_cancel) \
                     .eq("id", target_asesoria_id) \
                     .execute()
 
@@ -5611,12 +5642,19 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
             else:
                 total_operado_ars += m
 
+        # Métricas de seguimiento y snooze
+        hoy_str = now.strftime("%Y-%m-%d")
+        casos_snooze_count = sum(1 for c in casos if c.get("snooze_hasta") and str(c.get("snooze_hasta")) > hoy_str)
+        casos_reactivados_count = sum(1 for c in casos if c.get("seguimiento_estado_actual") == "reactivado" or (c.get("snooze_hasta") and str(c.get("snooze_hasta")) <= hoy_str))
+
         return {
             "etapas": etapas_map,
             "metricas": {
                 "total_casos": len(casos),
                 "casos_activos": casos_activos_count,
                 "casos_en_alerta": casos_en_alerta_count,
+                "casos_snooze": casos_snooze_count,
+                "casos_reactivados_hoy": casos_reactivados_count,
                 "casos_operados": casos_operados_count,
                 "casos_cancelados": casos_cancelados_count,
                 "tasa_conversion": tasa_conversion,
