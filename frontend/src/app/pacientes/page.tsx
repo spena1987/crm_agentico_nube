@@ -18,7 +18,6 @@ import {
   ShieldCheck, 
   MapPin, 
   MessageSquare, 
-  Receipt,
   Sparkles,
   Calendar,
   Stethoscope,
@@ -38,9 +37,6 @@ import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
 import ModalEditarPaciente from '@/components/ModalEditarPaciente'
 import ModalConfirmarEliminar from '@/components/ModalConfirmarEliminar'
 import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
-import ModalHistorialPresupuestosPaciente from '@/components/ModalHistorialPresupuestosPaciente'
-import ModalCrearPresupuestoPaciente from '@/components/ModalCrearPresupuestoPaciente'
-import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import PanelAsesoriaQuirurgica from '@/components/PanelAsesoriaQuirurgica'
 import { getAuthHeaders, BACKEND_URL } from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -102,14 +98,10 @@ function PacientesContent() {
   const [mostrarModalEliminar, setMostrarModalEliminar] = useState(false)
   const [eliminandoPaciente, setEliminandoPaciente] = useState(false)
 
-  // Modales de alta, Historia Clínica y Presupuestos
+  // Modales de alta e Historia Clínica
   const [mostrarModalGeclisa, setMostrarModalGeclisa] = useState(false)
   const [mostrarModalManual, setMostrarModalManual] = useState(false)
   const [mostrarModalHC, setMostrarModalHC] = useState(false)
-  const [mostrarModalHistorialPresupuestos, setMostrarModalHistorialPresupuestos] = useState(false)
-  const [mostrarModalCrearPresupuesto, setMostrarModalCrearPresupuesto] = useState(false)
-  const [mostrarModalWhatsAppPresupuesto, setMostrarModalWhatsAppPresupuesto] = useState(false)
-  const [presupuestoParaWhatsApp, setPresupuestoParaWhatsApp] = useState<any>(null)
 
   // Formulario manual
   const [nuevoNombre, setNuevoNombre] = useState('')
@@ -1002,19 +994,6 @@ function PacientesContent() {
                     Historia Clínica
                   </button>
 
-                  {/* Presupuestos del Paciente y sus Casos */}
-                  {canAccess('presupuestos') && (
-                    <button
-                      type="button"
-                      onClick={() => setMostrarModalHistorialPresupuestos(true)}
-                      className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-gray-200 border border-[var(--border)] rounded-xl font-semibold text-xs flex items-center gap-1.5 transition-colors"
-                      title="Consultar historial de presupuestos del paciente y sus cirugías"
-                    >
-                      <Receipt size={14} className="text-blue-400" />
-                      Presupuestos
-                    </button>
-                  )}
-
                   {/* Sincronizar desde Geclisa */}
                   <button
                     type="button"
@@ -1257,102 +1236,7 @@ function PacientesContent() {
         paciente={pacienteSeleccionado}
       />
 
-      {/* Modal Historial Panorámico de Presupuestos del Paciente */}
-      {pacienteSeleccionado && (
-        <ModalHistorialPresupuestosPaciente
-          isOpen={mostrarModalHistorialPresupuestos}
-          onClose={() => setMostrarModalHistorialPresupuestos(false)}
-          pacienteId={pacienteSeleccionado.id}
-          pacienteNombre={pacienteSeleccionado.nombre}
-          pacienteDni={pacienteSeleccionado.dni || ''}
-          pacienteTelefono={pacienteSeleccionado.telefono || ''}
-          casosQuirurgicos={(pacienteSeleccionado.asesorias_quirurgicas || []).map((a: any) => ({
-            id: a.id,
-            practica_nombre: a.practica_nombre,
-            practica_codigo: a.practica_codigo,
-            estado: a.estado
-          }))}
-          onAbrirEmisorPresupuesto={() => {
-            setMostrarModalHistorialPresupuestos(false)
-            setMostrarModalCrearPresupuesto(true)
-          }}
-          onEnviarPresupuestoWhatsApp={(pres) => {
-            setPresupuestoParaWhatsApp(pres)
-            setMostrarModalWhatsAppPresupuesto(true)
-          }}
-        />
-      )}
 
-      {/* Modal Crear Presupuesto desde el expediente */}
-      {pacienteSeleccionado && mostrarModalCrearPresupuesto && (
-        <ModalCrearPresupuestoPaciente
-          isOpen={mostrarModalCrearPresupuesto}
-          onClose={() => setMostrarModalCrearPresupuesto(false)}
-          pacienteId={pacienteSeleccionado.id}
-          pacienteNombre={pacienteSeleccionado.nombre}
-          pacienteTelefono={pacienteSeleccionado.telefono}
-          obraSocial={pacienteSeleccionado.obra_social}
-          asesoriaId={
-            pacienteSeleccionado.asesorias_quirurgicas?.find(
-              (a: any) => a.estado !== 'operado' && a.estado !== 'cancelado'
-            )?.id || null
-          }
-          practicaInicial={(() => {
-            const act = pacienteSeleccionado.asesorias_quirurgicas?.find(
-              (a: any) => a.estado !== 'operado' && a.estado !== 'cancelado'
-            ) as any
-            if (act && act.practica_nombre) {
-              return {
-                codigo: act.practica_codigo || '',
-                nombre: act.practica_nombre,
-                precio: Number(act.monto_extra) || 0,
-                moneda: act.moneda_extra || 'ARS'
-              }
-            }
-            return undefined
-          })()}
-          onPresupuestoCreado={(nuevoPresupuesto) => {
-            setMostrarModalCrearPresupuesto(false)
-            if (nuevoPresupuesto) {
-              setPresupuestoParaWhatsApp(nuevoPresupuesto)
-              setMostrarModalWhatsAppPresupuesto(true)
-            } else {
-              setMostrarModalHistorialPresupuestos(true)
-            }
-          }}
-        />
-      )}
-
-      {/* Modal Enviar Presupuesto por WhatsApp */}
-      {pacienteSeleccionado && presupuestoParaWhatsApp && mostrarModalWhatsAppPresupuesto && (
-        <ModalEnviarPresupuestoWhatsApp
-          isOpen={mostrarModalWhatsAppPresupuesto}
-          onClose={() => {
-            setMostrarModalWhatsAppPresupuesto(false)
-            setPresupuestoParaWhatsApp(null)
-          }}
-          presupuestoId={presupuestoParaWhatsApp.id}
-          pacienteNombre={pacienteSeleccionado.nombre}
-          telefonoDefault={pacienteSeleccionado.telefono || ''}
-          pdfUrl={presupuestoParaWhatsApp.pdf_url}
-          totalArs={presupuestoParaWhatsApp.total_ars || presupuestoParaWhatsApp.total || 0}
-          totalUsd={presupuestoParaWhatsApp.total_usd || 0}
-          onSuccess={(resData) => {
-            const asId = presupuestoParaWhatsApp.asesoria_id || (resData && resData.asesoria_id)
-            if (asId) {
-              setPacientes((prev) =>
-                prev.map((p) => {
-                  if (p.id !== pacienteSeleccionado.id) return p
-                  const asesoriasActualizadas = (p.asesorias_quirurgicas || []).map((as) =>
-                    as.id === asId ? { ...as, estado: 'en_analisis', presupuesto_id: presupuestoParaWhatsApp.id } : as
-                  )
-                  return { ...p, asesorias_quirurgicas: asesoriasActualizadas }
-                })
-              )
-            }
-          }}
-        />
-      )}
 
       {/* Modal para Crear Paciente Manual */}
       {mostrarModalManual && (

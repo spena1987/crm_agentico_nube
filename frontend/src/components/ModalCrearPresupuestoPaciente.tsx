@@ -557,6 +557,11 @@ export default function ModalCrearPresupuestoPaciente({
       return
     }
 
+    if (!asesoriaId) {
+      setError('La cotización médica debe estar vinculada obligatoriamente a un caso quirúrgico del paciente.')
+      return
+    }
+
     setGuardando(true)
     setError(null)
 

@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import BudgetGenerator from '@/components/BudgetGenerator'
 import ModalEnviarPresupuestoWhatsApp from '@/components/ModalEnviarPresupuestoWhatsApp'
 import ModalVisorPdfPresupuesto from '@/components/ModalVisorPdfPresupuesto'
 import { supabase } from '@/lib/supabase'
@@ -9,21 +8,13 @@ import { BACKEND_URL } from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
   FileText,
-  PlusCircle,
-  History,
-  Download,
   Trash2,
   Send,
-  CheckCircle,
   CheckCircle2,
   RefreshCw,
-  Clock,
   AlertCircle,
-  Sparkles,
-  User,
-  Copy,
   Eye,
-  MessageSquareHeart
+  Info
 } from 'lucide-react'
 
 interface Paciente {
@@ -54,23 +45,13 @@ interface Presupuesto {
 
 export default function PresupuestosPage() {
   const { can, canAccess } = usePermissions()
-  const canCreate = can('presupuestos', 'crear')
   const canApprove = can('presupuestos', 'aprobar_presupuesto')
   const canDelete = can('presupuestos', 'eliminar')
 
-  const [activeTab, setActiveTab] = useState<'create' | 'list'>('create')
   const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [loading, setLoading] = useState(false)
   const [conciliando, setConciliando] = useState(false)
   const [mensajeConciliacion, setMensajeConciliacion] = useState<string | null>(null)
-  const [presupuestoParaClonar, setPresupuestoParaClonar] = useState<any | null>(null)
-
-  // Ajustar tab si no tiene permiso de crear
-  useEffect(() => {
-    if (!canCreate && activeTab === 'create') {
-      setActiveTab('list')
-    }
-  }, [canCreate, activeTab])
 
   // Estado para el modal de WhatsApp
   const [selectedPresupuestoWhatsApp, setSelectedPresupuestoWhatsApp] = useState<Presupuesto | null>(null)
@@ -162,7 +143,7 @@ export default function PresupuestosPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [activeTab])
+  }, [])
 
   // Cambiar estado del presupuesto con sincronización bidireccional
   const updateEstado = async (id: string, nuevoEstado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado') => {
@@ -202,75 +183,6 @@ export default function PresupuestosPage() {
   const handleOpenVisor = (pres: Presupuesto) => {
     setSelectedPresupuestoVisor(pres)
     setIsVisorModalOpen(true)
-  }
-
-  // Duplicar / Re-cotizar presupuesto con fallback dual resiliente
-  const handleDuplicarPresupuesto = async (pres: Presupuesto) => {
-    try {
-      setLoading(true)
-      let dataToClone: any = null
-
-      // 1. Intentar vía API Backend
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/presupuestos/${pres.id}/duplicar`)
-        if (res.ok) {
-          const apiData = await res.json()
-          if (apiData.success) {
-            dataToClone = apiData
-          }
-        }
-      } catch (apiErr) {
-        console.warn('API Backend duplicar no disponible, intentando vía Supabase:', apiErr)
-      }
-
-      // 2. Fallback robusto directo de Supabase
-      if (!dataToClone) {
-        const { data: pData, error } = await supabase
-          .from('presupuestos')
-          .select('*, pacientes(*), items_presupuesto(*, servicios_precios(*))')
-          .eq('id', pres.id)
-          .single()
-
-        if (error) throw error
-
-        if (pData) {
-          const itemsRaw = pData.items_presupuesto || []
-          const parsedItems = itemsRaw.map((it: any) => {
-            const srv = it.servicios_precios || {}
-            return {
-              id: srv.id || it.id || String(Math.random()),
-              codigo: srv.codigo || 'PRACT',
-              nombre: srv.nombre_prestacion || 'Prestación Médica',
-              cantidad: Number(it.cantidad || 1),
-              precio_unitario: Number(it.precio_unitario || 0),
-              moneda: String(it.moneda || srv.moneda || 'ARS').toUpperCase(),
-              subtotal: Number(it.subtotal || (Number(it.cantidad || 1) * Number(it.precio_unitario || 0)))
-            }
-          })
-
-          const pAny = pData as any
-          dataToClone = {
-            paciente: pAny.pacientes,
-            paciente_id: pAny.paciente_id,
-            total_ars: Number(pAny.total_ars || 0),
-            total_usd: Number(pAny.total_usd || 0),
-            items: parsedItems
-          }
-        }
-      }
-
-      if (dataToClone) {
-        setPresupuestoParaClonar(dataToClone)
-        setActiveTab('create')
-      } else {
-        alert('No se pudieron obtener los datos para duplicar el presupuesto.')
-      }
-    } catch (err) {
-      console.error('Error al clonar presupuesto:', err)
-      alert('No se pudo duplicar el presupuesto. Revisa la conexión con el servidor.')
-    } finally {
-      setLoading(false)
-    }
   }
 
   // Eliminar presupuesto
@@ -326,58 +238,48 @@ export default function PresupuestosPage() {
             Presupuestos Médicos & Cotizaciones
           </h1>
           <p className="text-xs text-[var(--secondary)]">
-            Genera presupuestos multi-moneda en PDF membretado, envíalos por WhatsApp con 1 clic y realiza seguimiento comercial.
+            Historial oficial y repositorio de presupuestos médicos multi-moneda. Las cotizaciones se emiten y gestionan directamente desde el caso quirúrgico del paciente.
           </p>
         </div>
 
-        {/* Tabs de Selección */}
-        <div className="flex bg-slate-100 dark:bg-slate-800/40 p-1.5 rounded-xl border border-[var(--border)] self-start md:self-auto">
-          {canCreate && (
-            <button
-              onClick={() => setActiveTab('create')}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-                activeTab === 'create'
-                  ? 'bg-white dark:bg-slate-800 shadow text-blue-600'
-                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-              }`}
-            >
-              <PlusCircle size={15} />
-              {presupuestoParaClonar ? 'Re-cotizar Presupuesto' : 'Crear Presupuesto'}
-            </button>
-          )}
+        {/* Acciones Globales */}
+        <div className="flex items-center gap-2 self-start md:self-auto">
           <button
-            onClick={() => {
-              setPresupuestoParaClonar(null)
-              setActiveTab('list')
-            }}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
-              activeTab === 'list'
-                ? 'bg-white dark:bg-slate-800 shadow text-blue-600'
-                : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-            }`}
+            type="button"
+            onClick={handleConciliarConQuirofano}
+            disabled={conciliando}
+            className="px-3.5 py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-500 dark:text-blue-400 border border-blue-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+            title="Sincronizar automáticamente estados de presupuestos con cirugías confirmadas y turnos de quirófano"
           >
-            <History size={15} />
-            Historial Emitidos ({presupuestos.length})
+            <RefreshCw size={13} className={conciliando ? 'animate-spin' : ''} />
+            {conciliando ? 'Sincronizando...' : 'Sincronizar con Quirófano'}
+          </button>
+          <button 
+            type="button"
+            onClick={fetchPresupuestos}
+            className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-[var(--secondary)] hover:text-blue-600 transition-colors flex items-center gap-1.5 text-xs font-bold border border-[var(--border)]"
+            title="Recargar listado"
+          >
+            <RefreshCw size={13} /> Recargar
           </button>
         </div>
       </div>
 
-      {/* Contenido según el Tab Activo */}
-      {activeTab === 'create' ? (
-        <BudgetGenerator
-          presupuestoInicial={presupuestoParaClonar}
-          onPresupuestoEmitido={() => {
-            setPresupuestoParaClonar(null)
-            fetchPresupuestos()
-          }}
-        />
-      ) : (
-        <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-[var(--border)]">
-            <h2 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
-              <FileText className="text-blue-600" size={18} />
-              Historial de Presupuestos ({presupuestos.length})
-            </h2>
+      {/* Banner Informativo de Trazabilidad Quirúrgica */}
+      <div className="p-3.5 rounded-xl bg-blue-950/20 border border-blue-500/20 text-xs text-blue-200/90 flex items-center gap-2.5">
+        <Info size={16} className="text-blue-400 shrink-0" />
+        <span>
+          <strong>Trazabilidad Quirúrgica Activa:</strong> Para garantizar la continuidad clínica, prequirúrgica y el control de ojos/procedimientos, la emisión de presupuestos se realiza exclusivamente desde el <strong>Sector de Asesoramiento Quirúrgico & Cirugías</strong> en el expediente de cada paciente.
+        </span>
+      </div>
+
+      {/* Historial de Presupuestos Emitidos */}
+      <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-2 border-b border-[var(--border)]">
+          <h2 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+            <FileText className="text-blue-600" size={18} />
+            Historial de Presupuestos ({presupuestos.length})
+          </h2>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -539,15 +441,6 @@ export default function PresupuestosPage() {
                           )}
                         </td>
                         <td className="py-3 text-right pr-2 space-x-1">
-                          {canCreate && (
-                            <button
-                              onClick={() => handleDuplicarPresupuesto(pres)}
-                              className="p-1.5 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 hover:bg-indigo-100 dark:hover:bg-indigo-900/40 rounded-lg transition inline-flex items-center"
-                              title="Duplicar / Re-cotizar este presupuesto"
-                            >
-                              <Copy size={14} />
-                            </button>
-                          )}
                           {canAccess('chat') && (
                             <button
                               onClick={() => handleOpenWhatsApp(pres)}
@@ -575,7 +468,6 @@ export default function PresupuestosPage() {
             </div>
           )}
         </div>
-      )}
 
       {/* Modal de Envío por WhatsApp */}
       {selectedPresupuestoWhatsApp && (
