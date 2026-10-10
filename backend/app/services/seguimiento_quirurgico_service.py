@@ -10,8 +10,10 @@ from typing import Dict, Any, List, Optional
 import os
 import requests
 
-from app.db import get_supabase
-from app.services.whatsapp_cloud.client import whatsapp_client
+from app.db import supabase, crear_evolucion_asesoria
+from app.whatsapp import whatsapp_manager
+from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials
+from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 
 logger = logging.getLogger("seguimiento_quirurgico")
 
@@ -48,7 +50,7 @@ def evaluar_y_ejecutar_seguimiento_automatizado() -> Dict[str, Any]:
     Si cumplen el tiempo de inactividad, no están en snooze y tienen seguimiento activo,
     dispara el siguiente toque por WhatsApp.
     """
-    sb = get_supabase()
+    sb = supabase
     if not sb:
         return {"error": "Base de datos no conectada", "procesados": 0}
 
@@ -138,11 +140,10 @@ def evaluar_y_ejecutar_seguimiento_automatizado() -> Dict[str, Any]:
                 procedimiento = caso.get("procedimiento") or caso.get("practica_nombre") or "su procedimiento"
                 
                 # Obtener presupuesto si está en análisis
-                dias_restantes_presupuesto = "48 horas"
                 if estado == "en_analisis":
                     resp_presu = sb.table("presupuestos")\
                         .select("*")\
-                        .eq("caso_quirurgico_id", caso_id)\
+                        .eq("asesoria_id", caso_id)\
                         .order("created_at", desc=True)\
                         .limit(1)\
                         .execute()
@@ -167,17 +168,15 @@ def evaluar_y_ejecutar_seguimiento_automatizado() -> Dict[str, Any]:
                         "seguimiento_estado_actual": "en_curso"
                     }).eq("id", caso_id).execute()
 
-                    # Registrar hito en notas_evolucion / auditoría
+                    # Registrar hito en la bitácora oficial de evoluciones del expediente quirúrgico
                     nota_log = (
                         f"🤖 [Seguimiento Auto] Enviado Toque #{siguiente_toque_num} ({plantilla_nombre}) "
                         f"tras {int(dias_transcurridos)} días de inactividad."
                     )
-                    notas_previas = caso.get("notas_evolucion") or ""
-                    nuevas_notas = (notas_previas + "\n" + nota_log).strip() if notas_previas else nota_log
-
-                    sb.table("asesorias_quirurgicas").update({
-                        "notas_evolucion": nuevas_notas
-                    }).eq("id", caso_id).execute()
+                    try:
+                        crear_evolucion_asesoria(caso_id, nota_log, autor="Bot Seguimiento")
+                    except Exception as ev_err:
+                        logger.warning(f"No se pudo registrar evolución para caso {caso_id}: {ev_err}")
 
                     resultados["enviados"] += 1
                     resultados["detalles"].append({
@@ -195,6 +194,51 @@ def evaluar_y_ejecutar_seguimiento_automatizado() -> Dict[str, Any]:
         return {"error": str(e), "evaluados": resultados["evaluados"]}
 
 
+def _enviar_plantilla_meta_sync(
+    telefono: str,
+    template_name: str,
+    parametros_body: List[Dict[str, Any]],
+    language_code: str = "es_AR"
+) -> Dict[str, Any]:
+    """Helper síncrono para enviar plantillas vía WhatsApp Cloud API."""
+    creds = get_whatsapp_cloud_credentials()
+    phone_number_id = creds.get("phone_number_id")
+    access_token = creds.get("access_token")
+    if not phone_number_id or not access_token:
+        return {"error": "Sin credenciales de WhatsApp Cloud configuradas"}
+
+    to_norm = normalize_to_meta_e164(telefono)
+    if not to_norm:
+        return {"error": f"Teléfono inválido: {telefono}"}
+
+    url = f"https://graph.facebook.com/v22.0/{phone_number_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to_norm,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": language_code},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": parametros_body
+                }
+            ]
+        }
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=15)
+    data = resp.json() if resp.content else {}
+    if resp.status_code not in (200, 201) or "error" in data:
+        return {"error": data.get("error", f"HTTP {resp.status_code}")}
+    return data
+
+
 def enviar_toque_seguimiento_whatsapp(
     telefono: str,
     nombre_paciente: str,
@@ -209,40 +253,49 @@ def enviar_toque_seguimiento_whatsapp(
     o fallback a plantilla genérica de contacto.
     """
     try:
+        primer_nombre = nombre_paciente.split()[0] if nombre_paciente else "Estimado/a"
         # Formatear parámetros del body según la plantilla
         # Todas las plantillas de seguimiento toman {{1}}: nombre_paciente, {{2}}: procedimiento
         parametros_body = [
-            {"type": "text", "text": nombre_paciente.split()[0] if nombre_paciente else "Estimado/a"},
+            {"type": "text", "text": primer_nombre},
             {"type": "text", "text": procedimiento[:40]}
         ]
 
         logger.info(f"Enviando toque #{toque_num} al paciente {nombre_paciente} ({telefono}) con plantilla {plantilla_nombre}")
 
         # Intentar envío con plantilla oficial
-        res = whatsapp_client.send_template(
-            to=telefono,
+        res = _enviar_plantilla_meta_sync(
+            telefono=telefono,
             template_name=plantilla_nombre,
-            language_code="es_AR",
-            body_parameters=parametros_body
+            parametros_body=parametros_body,
+            language_code="es_AR"
         )
 
         if res and not res.get("error"):
             return True
 
-        # Si hubo error (ej. plantilla no aprobada aún en Meta), intentar con template genérico de apertura o mensaje de texto si ventana de 24hs está abierta
+        # Si hubo error (ej. plantilla no aprobada aún en Meta), intentar con template genérico de apertura
         logger.warning(f"Fallo envío de plantilla {plantilla_nombre}: {res}. Intentando fallback.")
         
-        # Intentar plantilla genérica 'apertura_conversacion' o similar si existe
-        res_fallback = whatsapp_client.send_template(
-            to=telefono,
+        res_fallback = _enviar_plantilla_meta_sync(
+            telefono=telefono,
             template_name="apertura_conversacion",
-            language_code="es_AR",
-            body_parameters=[
-                {"type": "text", "text": nombre_paciente.split()[0]},
-                {"type": "text", "text": f"su consulta sobre {procedimiento}"}
-            ]
+            parametros_body=[
+                {"type": "text", "text": primer_nombre},
+                {"type": "text", "text": f"su consulta sobre {procedimiento[:30]}"}
+            ],
+            language_code="es_AR"
         )
-        return bool(res_fallback and not res_fallback.get("error"))
+        if res_fallback and not res_fallback.get("error"):
+            return True
+
+        # Último fallback si la ventana de 24hs estuviera abierta
+        msg_texto = (
+            f"Hola {primer_nombre}, nos comunicamos del área de Asesoría Quirúrgica de Clínica de la Visión "
+            f"para saber si pudiste evaluar la información sobre {procedimiento} o si tenés alguna duda en la que podamos ayudarte."
+        )
+        res_txt = whatsapp_manager.enviar_mensaje(telefono, msg_texto)
+        return bool(res_txt and res_txt.get("status") in ("sent", "queued", "simulated", "ok") and not res_txt.get("error"))
 
     except Exception as e:
         logger.error(f"Excepción enviando toque de seguimiento a {telefono}: {e}")
@@ -262,7 +315,7 @@ def procesar_respuesta_interactiva_seguimiento(
     - CASO_DESISTIR_{caso_id}_{causa} (ej: CASO_DESISTIR_uuid_economico)
     - CASO_OBJECION_{caso_id}_{tipo}
     """
-    sb = get_supabase()
+    sb = supabase
     if not sb:
         return {"error": "Sin base de datos"}
 
@@ -289,11 +342,11 @@ def procesar_respuesta_interactiva_seguimiento(
         sb.table("presupuestos").update({
             "estado": "aprobado",
             "canal_resolucion": "whatsapp_bot"
-        }).eq("caso_quirurgico_id", caso_id).in_("estado", ["en_analisis", "emitido"]).execute()
+        }).eq("asesoria_id", caso_id).in_("estado", ["en_analisis", "emitido"]).execute()
 
         # Enviar confirmación cordial
         msg = "¡Excelente noticia! 🎉 Hemos registrado tu confirmación. Tu asesora quirúrgica te contactará a la brevedad para coordinar la fecha quirúrgica y los estudios prequirúrgicos."
-        whatsapp_client.send_text_message(to=telefono, body=msg)
+        whatsapp_manager.enviar_mensaje(telefono, msg)
         return {"status": "success", "accion": "confirmado", "caso_id": caso_id}
 
     elif accion == "SNOOZE":
@@ -312,7 +365,7 @@ def procesar_respuesta_interactiva_seguimiento(
         }).eq("id", caso_id).execute()
 
         msg = f"Entendido perfectamente. Hemos pausado los recordatorios y nos volveremos a contactar en {dias} días para retomar cuando te quede más cómodo. ¡Que tengas un excelente día!"
-        whatsapp_client.send_text_message(to=telefono, body=msg)
+        whatsapp_manager.enviar_mensaje(telefono, msg)
         return {"status": "success", "accion": "snooze", "snooze_hasta": fecha_reactivacion}
 
     elif accion == "DESISTIR":
@@ -337,10 +390,10 @@ def procesar_respuesta_interactiva_seguimiento(
             "estado": "rechazado",
             "categoria_objecion": causa,
             "canal_resolucion": "whatsapp_bot"
-        }).eq("caso_quirurgico_id", caso_id).in_("estado", ["en_analisis", "emitido"]).execute()
+        }).eq("asesoria_id", caso_id).in_("estado", ["en_analisis", "emitido"]).execute()
 
         msg = "Muchas gracias por informarnos. Dejamos el caso cerrado en nuestro sistema. Quedamos a tu entera disposición ante cualquier consulta futura."
-        whatsapp_client.send_text_message(to=telefono, body=msg)
+        whatsapp_manager.enviar_mensaje(telefono, msg)
         return {"status": "success", "accion": "desistido", "causa": causa}
 
     return {"status": "ignorado", "motivo": "Payload no reconocido"}
@@ -358,7 +411,7 @@ def actualizar_control_seguimiento(
     Endpoint backend para que la asesora quirúrgica pause, reanude, posponga (snooze)
     o tipifique la causa del caso quirúrgico desde el expediente en la UI.
     """
-    sb = get_supabase()
+    sb = supabase
     if not sb:
         return {"error": "Sin base de datos"}
 
@@ -392,7 +445,7 @@ def obtener_analitica_causas_pareto() -> Dict[str, Any]:
     Calcula la distribución de causas de demora/desistimiento para el Diagrama de Pareto,
     tanto a nivel de Asesorías Quirúrgicas como de Presupuestos Rechazados.
     """
-    sb = get_supabase()
+    sb = supabase
     if not sb:
         return {"error": "Sin base de datos"}
 
@@ -405,7 +458,7 @@ def obtener_analitica_causas_pareto() -> Dict[str, Any]:
 
         # 2. Presupuestos rechazados o con objeción
         resp_presu = sb.table("presupuestos")\
-            .select("id, estado, categoria_objecion, toque_resolucion, total, moneda, canal_resolucion")\
+            .select("id, estado, categoria_objecion, toque_resolucion, total, total_ars, total_usd, canal_resolucion")\
             .execute()
         presupuestos = resp_presu.data or []
 
@@ -423,12 +476,10 @@ def obtener_analitica_causas_pareto() -> Dict[str, Any]:
             objecion = p.get("categoria_objecion")
             if objecion:
                 conteo_objeciones_presu[objecion] = conteo_objeciones_presu.get(objecion, 0) + 1
-                total = float(p.get("total") or 0)
-                moneda = p.get("moneda") or "ARS"
-                if moneda == "USD":
-                    monto_perdido_por_causa_usd[objecion] = monto_perdido_por_causa_usd.get(objecion, 0.0) + total
-                else:
-                    monto_perdido_por_causa_ars[objecion] = monto_perdido_por_causa_ars.get(objecion, 0.0) + total
+                total_ars = float(p.get("total_ars") or p.get("total") or 0)
+                total_usd = float(p.get("total_usd") or 0)
+                monto_perdido_por_causa_ars[objecion] = monto_perdido_por_causa_ars.get(objecion, 0.0) + total_ars
+                monto_perdido_por_causa_usd[objecion] = monto_perdido_por_causa_usd.get(objecion, 0.0) + total_usd
 
         # Armar lista ordenada para Pareto
         pareto_casos = sorted(

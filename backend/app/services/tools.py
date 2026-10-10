@@ -1000,7 +1000,7 @@ def registrar_seguimiento_o_postergacion_quirurgica(
         try:
             resp_p = supabase.table("presupuestos")\
                 .select("id")\
-                .eq("caso_quirurgico_id", target_caso_id)\
+                .eq("asesoria_id", target_caso_id)\
                 .in_("estado", ["en_analisis", "emitido", "enviado"])\
                 .execute()
             for p in (resp_p.data or []):
