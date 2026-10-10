@@ -18,7 +18,8 @@ import {
   Info,
   Check,
   RefreshCw,
-  Zap
+  Zap,
+  Phone
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
@@ -97,6 +98,7 @@ interface ModalSelectorPlantillasMetaProps {
   onClose: () => void
   pacienteNombre: string
   pacienteTelefono: string
+  telefonoAlternativo?: string | null
   pacienteId?: string
   conversacionId?: string | null
   isWindowOpen?: boolean
@@ -111,6 +113,7 @@ export default function ModalSelectorPlantillasMeta({
   onClose,
   pacienteNombre,
   pacienteTelefono,
+  telefonoAlternativo,
   pacienteId,
   conversacionId,
   isWindowOpen = true,
@@ -119,6 +122,7 @@ export default function ModalSelectorPlantillasMeta({
   currentUserId,
   currentUserName
 }: ModalSelectorPlantillasMetaProps) {
+  const [targetPhone, setTargetPhone] = useState<string>(pacienteTelefono || '')
   const [templates, setTemplates] = useState<MetaTemplateData[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplateData | null>(null)
   const [paramValues, setParamValues] = useState<string[]>([])
@@ -128,6 +132,12 @@ export default function ModalSelectorPlantillasMeta({
   const [copiadoTexto, setCopiadoTexto] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (pacienteTelefono) {
+      setTargetPhone(pacienteTelefono)
+    }
+  }, [pacienteTelefono])
 
   // 1. Cargar plantillas desde Backend / Supabase
   const loadTemplates = async () => {
@@ -334,7 +344,8 @@ export default function ModalSelectorPlantillasMeta({
 
   // 6. Acción Opción 2: Enviar como plantilla oficial de Meta Cloud API
   const handleSendOfficialTemplate = async () => {
-    if (!pacienteTelefono) {
+    const phoneToSend = (targetPhone || pacienteTelefono || '').trim()
+    if (!phoneToSend) {
       setErrorMsg('El paciente no tiene un número de teléfono registrado en el CRM.')
       return
     }
@@ -394,7 +405,7 @@ export default function ModalSelectorPlantillasMeta({
       }
 
       const payload = {
-        to_phone: pacienteTelefono,
+        to_phone: phoneToSend,
         template_name: selectedTemplate.name,
         language_code: selectedTemplate.language || 'es_AR',
         components: components.length > 0 ? components : undefined
@@ -472,9 +483,24 @@ export default function ModalSelectorPlantillasMeta({
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 Plantillas Oficiales de WhatsApp (Meta Cloud API)
               </h2>
-              <p className="text-xs text-slate-400">
-                Destinatario: <span className="text-slate-200 font-semibold">{pacienteNombre}</span> ({pacienteTelefono})
-              </p>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <span className="text-xs text-slate-400">Destinatario:</span>
+                <span className="text-xs text-slate-200 font-semibold">{pacienteNombre}</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 flex items-center gap-1 font-semibold">
+                  <Phone size={10} />
+                  {targetPhone}
+                </span>
+                {telefonoAlternativo && (
+                  <button
+                    type="button"
+                    onClick={() => setTargetPhone(targetPhone === pacienteTelefono ? (telefonoAlternativo || '') : pacienteTelefono)}
+                    className="text-[10.5px] text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                    title="Alternar entre número de WhatsApp activo y número de la ficha"
+                  >
+                    (Cambiar a: {targetPhone === pacienteTelefono ? telefonoAlternativo : pacienteTelefono})
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <button

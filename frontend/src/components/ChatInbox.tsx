@@ -128,6 +128,7 @@ interface Conversacion {
   window_hours_left?: number
   window_minutes_left?: number
   last_inbound_at?: string | null
+  wa_chat_id?: string | null
 }
 
 interface Mensaje {
@@ -3592,7 +3593,8 @@ export default function ChatInbox() {
           isOpen={showTemplateModal}
           onClose={() => setShowTemplateModal(false)}
           pacienteNombre={currentPaciente.nombre}
-          pacienteTelefono={currentPaciente.telefono}
+          pacienteTelefono={selectedConv?.wa_chat_id || currentPaciente.telefono}
+          telefonoAlternativo={selectedConv?.wa_chat_id && currentPaciente.telefono && selectedConv.wa_chat_id !== currentPaciente.telefono ? currentPaciente.telefono : undefined}
           pacienteId={currentPaciente.id}
           conversacionId={selectedConvId}
           isWindowOpen={!metaWindow.isExpired}

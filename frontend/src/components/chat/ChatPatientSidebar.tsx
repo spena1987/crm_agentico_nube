@@ -346,9 +346,16 @@ export default function ChatPatientSidebar({
 
           <div className="space-y-1.5 text-slate-300 text-[11px]">
             <div className="flex items-center gap-2">
-              <Phone size={13} className="text-slate-400 shrink-0" />
-              <span>{formatPhoneDisplay(pacienteInfo.telefono || paciente.telefono)}</span>
+              <Phone size={13} className="text-emerald-400 shrink-0" />
+              <span className="font-semibold">{formatPhoneDisplay(pacienteInfo.telefono || paciente.telefono)}</span>
             </div>
+
+            {(pacienteInfo.telefono_fijo || paciente.telefono_fijo) && (
+              <div className="flex items-center gap-2 text-slate-400 text-[10px]">
+                <Phone size={11} className="text-slate-500 shrink-0" />
+                <span>Tel. Fijo / Geclisa: {pacienteInfo.telefono_fijo || paciente.telefono_fijo}</span>
+              </div>
+            )}
 
             {(pacienteInfo.dni || paciente.dni) && (
               <div className="flex items-center gap-2">

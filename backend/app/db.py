@@ -275,6 +275,10 @@ def crear_o_actualizar_paciente_geclisa(payload: dict):
         if paciente_existente:
             # Actualizar paciente existente
             p_id = paciente_existente["id"]
+            # Protección de WhatsApp: si el paciente ya tenía un teléfono verificado en el CRM (no temp_), no pisarlo
+            p_tel_actual = (paciente_existente.get("telefono") or "").strip()
+            if p_tel_actual and not p_tel_actual.startswith("temp_"):
+                datos_limpios["telefono"] = p_tel_actual
             resp = supabase.table("pacientes").update(datos_limpios).eq("id", p_id).execute()
             paciente = resp.data[0] if resp.data else paciente_existente
         else:
@@ -693,7 +697,7 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
         pc_map = {}
         try:
             from datetime import datetime, timezone
-            pc_res = supabase.table("patient_conversations").select("paciente_id, window_expires_at, session_status, last_inbound_at").execute()
+            pc_res = supabase.table("patient_conversations").select("paciente_id, window_expires_at, session_status, last_inbound_at, wa_chat_id").execute()
             if pc_res.data:
                 now_utc = datetime.now(timezone.utc)
                 for pc in pc_res.data:
@@ -713,7 +717,8 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
                         "window_remaining_minutes": rem_sec // 60,
                         "window_hours_left": rem_sec // 3600,
                         "window_minutes_left": (rem_sec % 3600) // 60,
-                        "last_inbound_at": pc.get("last_inbound_at")
+                        "last_inbound_at": pc.get("last_inbound_at"),
+                        "wa_chat_id": pc.get("wa_chat_id")
                     }
         except Exception as pc_e:
             logger.warning(f"Error consultando patient_conversations para ventana 24h: {pc_e}")
@@ -727,7 +732,8 @@ def obtener_conversaciones(incluir_archivadas: bool = True):
                 "window_remaining_minutes": 0,
                 "window_hours_left": 0,
                 "window_minutes_left": 0,
-                "last_inbound_at": None
+                "last_inbound_at": None,
+                "wa_chat_id": None
             })
             c.update(w_info)
             op_id = str(c.get("asignado_a_usuario_id") or "")

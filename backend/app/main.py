@@ -2468,14 +2468,27 @@ def sincronizar_paciente_geclisa(paciente_id: str):
             raise HTTPException(status_code=404, detail=msg or "No se encontraron datos en Geclisa para este paciente.")
 
         # 2. Mezclar datos preservando campos propios del CRM si no vienen de Geclisa
+        # Protección de Canal WhatsApp: si el paciente ya tiene un teléfono válido en el CRM (no temp_),
+        # NO sobreescribirlo con el teléfono de Geclisa, ya que podría ser una línea fija o administrativa.
+        tel_crm_actual = (paciente_actual.get("telefono") or "").strip()
+        tel_geclisa_raw = (datos_geclisa.get("telefono") or datos_geclisa.get("celular") or "").strip()
+        es_tel_valido_crm = bool(tel_crm_actual and not tel_crm_actual.startswith("temp_"))
+
+        telefono_final = tel_crm_actual if es_tel_valido_crm else (tel_geclisa_raw or tel_crm_actual)
+
+        # Si el teléfono de Geclisa es diferente del teléfono de WhatsApp verificado, resguardarlo en telefono_fijo si está libre
+        tel_fijo_actual = paciente_actual.get("telefono_fijo") or datos_geclisa.get("telefono_fijo")
+        if es_tel_valido_crm and tel_geclisa_raw and tel_geclisa_raw != tel_crm_actual and not tel_fijo_actual:
+            tel_fijo_actual = tel_geclisa_raw
+
         payload_actualizado = {
             "id": paciente_id,
             "geclisa_ficha_id": datos_geclisa.get("ficha_id") or ficha_id,
             "dni": datos_geclisa.get("dni") or dni,
             "nombre_completo": datos_geclisa.get("nombre_completo") or paciente_actual.get("nombre"),
             "nombre": datos_geclisa.get("nombre") or paciente_actual.get("nombre"),
-            "telefono": datos_geclisa.get("telefono") or paciente_actual.get("telefono"),
-            "telefono_fijo": datos_geclisa.get("telefono_fijo") or paciente_actual.get("telefono_fijo"),
+            "telefono": telefono_final,
+            "telefono_fijo": tel_fijo_actual,
             "email": datos_geclisa.get("email") or paciente_actual.get("email"),
             "nro_hc": datos_geclisa.get("nro_hc") or paciente_actual.get("nro_hc"),
             "obra_social": datos_geclisa.get("obra_social") or paciente_actual.get("obra_social"),
