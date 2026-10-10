@@ -203,13 +203,42 @@ async def sync_templates_from_meta():
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
 
+        # Mapeos predeterminados para plantillas homologadas del CRM
+        DEFAULT_MAPPINGS = {
+            "consentimiento_informado_quirurgico_v1": {
+                "1": "paciente_nombre",
+                "2": "practica_nombre",
+                "3": "turno_fecha",
+                "4": "medico_nombre",
+                "5": "enlace_consentimiento"
+            },
+            "recordatorio_cirugia_preparacion_v1": {
+                "1": "paciente_nombre",
+                "2": "practica_nombre",
+                "3": "turno_fecha",
+                "4": "turno_hora",
+                "5": "preparacion_texto"
+            },
+            "apertura_conversacion": {
+                "1": "paciente_nombre"
+            },
+            "presupuesto_entrega_pdf": {
+                "1": "paciente_nombre",
+                "2": "practica_nombre",
+                "3": "presupuesto_monto"
+            }
+        }
+
         try:
             exist_check = supabase.table("whatsapp_templates").select("id, variable_mappings").eq("name", tpl_name).execute()
             if exist_check.data and len(exist_check.data) > 0:
+                cur_maps = exist_check.data[0].get("variable_mappings")
+                if not cur_maps and tpl_name in DEFAULT_MAPPINGS:
+                    tpl_record["variable_mappings"] = DEFAULT_MAPPINGS[tpl_name]
                 supabase.table("whatsapp_templates").update(tpl_record).eq("name", tpl_name).execute()
             else:
                 tpl_record["created_at"] = datetime.now(timezone.utc).isoformat()
-                tpl_record["variable_mappings"] = {}
+                tpl_record["variable_mappings"] = DEFAULT_MAPPINGS.get(tpl_name, {})
                 supabase.table("whatsapp_templates").insert(tpl_record).execute()
             synced_count += 1
         except Exception as up_err:

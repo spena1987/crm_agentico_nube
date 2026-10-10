@@ -3464,7 +3464,10 @@ def get_datos_consentimiento_whatsapp(
 
         # 1. Resolver turno y asesoría según el origen
         if asesoria_id:
-            turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+            try:
+                turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+            except Exception as e_t:
+                logger.warning(f"Aviso asegurando turno para asesoria {asesoria_id}: {e_t}")
             res_c = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("id", asesoria_id).limit(1).execute()
             if res_c.data:
                 caso = res_c.data[0]
@@ -3481,10 +3484,34 @@ def get_datos_consentimiento_whatsapp(
                         if not paciente:
                             paciente = caso.get("pacientes") or {}
 
-        if not turno:
+        if not turno and not caso:
             return None
 
-        paciente_id = (paciente.get("id") if paciente else None) or turno.get("paciente_id")
+        # Si no hay turno aún pero existe asesoría, generar un objeto de contexto quirúrgico
+        if not turno and caso:
+            tok = caso.get("consentimiento_token")
+            if not tok:
+                import secrets
+                tok = secrets.token_urlsafe(24)
+                try:
+                    supabase.table("asesorias_quirurgicas").update({"consentimiento_token": tok, "updated_at": "now()"}).eq("id", caso["id"]).execute()
+                except Exception:
+                    pass
+            turno = {
+                "id": None,
+                "asesoria_id": caso.get("id"),
+                "paciente_id": caso.get("paciente_id"),
+                "consentimiento_token": tok,
+                "consentimiento_estado": caso.get("consentimiento_estado") or "pendiente_envio",
+                "practica_nombre": caso.get("practica_nombre"),
+                "practica_codigo": caso.get("practica_codigo"),
+                "ojo": caso.get("ojo"),
+                "cirujano_nombre": caso.get("medico_cirujano_nombre"),
+                "fecha_cirugia": caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia"),
+                "hora_inicio": "08:00:00"
+            }
+
+        paciente_id = (paciente.get("id") if paciente else None) or (turno.get("paciente_id") if turno else None)
         paciente_nombre = (paciente.get("nombre") if paciente else "") or ""
         telefono_paciente = (paciente.get("telefono") if paciente else "") or ""
 
@@ -3500,12 +3527,19 @@ def get_datos_consentimiento_whatsapp(
             saludo_nombre = paciente_nombre.title()
 
         # Token y Enlace de firma
-        token = turno.get("consentimiento_token")
+        token = turno.get("consentimiento_token") if turno else None
         if not token:
             import secrets
             token = secrets.token_urlsafe(24)
-            supabase.table("turnos_quirofano").update({"consentimiento_token": token, "updated_at": "now()"}).eq("id", turno["id"]).execute()
-            turno["consentimiento_token"] = token
+            if turno and turno.get("id"):
+                supabase.table("turnos_quirofano").update({"consentimiento_token": token, "updated_at": "now()"}).eq("id", turno["id"]).execute()
+            elif caso and caso.get("id"):
+                try:
+                    supabase.table("asesorias_quirurgicas").update({"consentimiento_token": token, "updated_at": "now()"}).eq("id", caso["id"]).execute()
+                except Exception:
+                    pass
+            if turno:
+                turno["consentimiento_token"] = token
         
         enlace_firma = f"{base_app_url.rstrip('/')}/consentimiento/{token}"
 
@@ -3516,7 +3550,7 @@ def get_datos_consentimiento_whatsapp(
         if caso and caso.get("fecha_definitiva_cirugia"):
             fecha_cirugia = caso.get("fecha_definitiva_cirugia")
             fecha_origen = "expediente_definitiva"
-        elif turno.get("fecha_cirugia"):
+        elif turno and turno.get("fecha_cirugia"):
             fecha_cirugia = turno.get("fecha_cirugia")
             fecha_origen = "turno_quirofano"
         elif caso and caso.get("fecha_probable_cirugia"):
@@ -6563,7 +6597,7 @@ def asegurar_turno_para_consentimiento_asesoria(asesoria_id: str) -> Dict[str, A
                 turno["consentimiento_token"] = tok
             
             # Sincronizar fecha definitiva si el turno tiene fecha distinta y no está en curso o completado
-            if fecha_oficial and str(turno.get("fecha_cirugia") or "") != str(fecha_oficial) and turno.get("estado") in ("solicitado", "pendiente", "agendado"):
+            if fecha_oficial and str(turno.get("fecha_cirugia") or "") != str(fecha_oficial) and turno.get("estado") in ("programado", "solicitado", "pendiente", "agendado"):
                 upd_payload["fecha_cirugia"] = str(fecha_oficial)
                 turno["fecha_cirugia"] = str(fecha_oficial)
 
@@ -6624,7 +6658,7 @@ def asegurar_turno_para_consentimiento_asesoria(asesoria_id: str) -> Dict[str, A
             "practica_nombre": as_data.get("practica_nombre") or "Cirugía Oftalmológica",
             "obra_social": as_data.get("cobertura_obra_social") or pac.get("obra_social") or "Particular",
             "plan_obra_social": pac.get("plan_cobertura") or None,
-            "estado": "solicitado",
+            "estado": "programado",
             "consentimiento_estado": "pendiente_envio",
             "consentimiento_token": tok,
             "created_at": "now()",

@@ -403,14 +403,25 @@ export default function ModalEnviarConsentimientoWhatsApp({
 
                       <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
                         <span className="text-slate-500">Estado en Meta:</span>
-                        <span className={`font-semibold px-1.5 py-0.2 rounded text-[10px] ${
+                        <span className={`font-semibold px-2 py-0.5 rounded text-[10px] ${
                           isAprobadaMeta
                             ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            : templateStatus === 'PENDING'
+                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
                             : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
                         }`}>
-                          {templateStatus}
+                          {isAprobadaMeta
+                            ? 'APROBADA (Oficial Meta v21+)'
+                            : templateStatus === 'PENDING'
+                            ? 'EN REVISIÓN (Meta evaluando)'
+                            : templateStatus}
                         </span>
-                        {!isAprobadaMeta && plantillaSeleccionada === 'consentimiento_informado_quirurgico_v1' && (
+                        {templateStatus === 'PENDING' && plantillaSeleccionada === 'consentimiento_informado_quirurgico_v1' && (
+                          <span className="text-blue-600 dark:text-blue-400 text-[10px]">
+                            (Meta está evaluando la plantilla. Puede usar 'apertura_conversacion' si desea enviar ahora)
+                          </span>
+                        )}
+                        {!isAprobadaMeta && templateStatus !== 'PENDING' && plantillaSeleccionada === 'consentimiento_informado_quirurgico_v1' && (
                           <span className="text-amber-600 dark:text-amber-400 text-[10px]">
                             (Si Meta la rechaza, use 'apertura_conversacion')
                           </span>
