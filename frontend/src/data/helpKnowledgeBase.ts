@@ -127,11 +127,12 @@ export const HELP_KNOWLEDGE_BASE: HelpModule[] = [
         'Ingresar a "Asesoramiento > Pipeline" para visualizar el tablero Kanban.',
         'Revisar las 5 columnas: 1. Derivados, 2. En Asesoramiento, 3. En Análisis, 4. Confirmados, 5. Programados Qx.',
         'Arrastrar la tarjeta del paciente a la siguiente fase según el progreso del contacto.',
-        'Auditar los marcos de las tarjetas: amarillo o rojo indican casos con días sin contacto (SLA vencido).'
+        'Auditar los marcos de las tarjetas: amarillo o rojo indican casos con días sin contacto (SLA vencido).',
+        'Usar el filtro superior "Postergados (Snooze)" para auditar casos pausados temporalmente a pedido del paciente.'
       ],
       secundarias: [
-        'Abrir la tarjeta del paciente para agregar notas de llamadas o mensajes.',
-        'Si el paciente no desea operarse, presionar "Cerrar Caso" y registrar el motivo de cancelación obligatorio.'
+        'Abrir la tarjeta del paciente para agregar notas de llamadas, auditar los toques automáticos de WhatsApp o activar/pausar el seguimiento.',
+        'Si el paciente no desea operarse, presionar "Cerrar Caso" y registrar la categoría de causa obligatoria para el Diagrama de Pareto.'
       ]
     },
     fields: [
@@ -139,7 +140,8 @@ export const HELP_KNOWLEDGE_BASE: HelpModule[] = [
       { name: 'Práctica Quirúrgica', type: 'Selector', required: true, description: 'Cirugía prescripta (Faco, LASIK, etc.).' },
       { name: 'Lateralidad (Ojo)', type: 'Selector (OD/OI/AO)', required: true, description: 'Ojo Derecho, Izquierdo o Ambos Ojos.' },
       { name: 'Etapa del Embudo', type: 'Selector', required: true, description: 'Fase actual en el ciclo de conversión.' },
-      { name: 'Motivo de Cancelación', type: 'Selector normalizado', required: false, description: 'Obligatorio si se cierra el caso como desistido.' }
+      { name: 'Filtro Postergados (Snooze)', type: 'Selector de vista', required: false, description: 'Filtra oportunidades en pausa programada con fecha de reactivación futura.' },
+      { name: 'Motivo de Cancelación', type: 'Selector normalizado', required: false, description: 'Obligatorio si se cierra el caso como desistido (alimenta análisis de Pareto).' }
     ],
     faqs: [
       {
@@ -151,30 +153,109 @@ export const HELP_KNOWLEDGE_BASE: HelpModule[] = [
         question: 'No se puede cerrar una oportunidad desistida.',
         cause: 'No se seleccionó el motivo de cierre obligatorio en el modal.',
         solution: 'Elegir el motivo formal en el desplegable (Económico, Prefiere postergar, etc.) y confirmar.'
+      },
+      {
+        question: '¿Cómo ver los casos pausados por el paciente sin saturar el Kanban?',
+        cause: 'Los casos en "Snooze" se ocultan del flujo principal para evitar dispersión operativa.',
+        solution: 'Seleccionar "Postergados (Snooze)" en los filtros del Pipeline para consultar su fecha de despertar.'
+      }
+    ]
+  },
+  {
+    id: 'seguimiento-automatizado',
+    code: 'seguimiento-automatizado',
+    title: 'Automatismo de Seguimiento Quirúrgico & Presupuestos (Cadencias & Pareto)',
+    route: '/pipeline-quirurgico',
+    badgeCategory: 'Automatización & IA',
+    category: 'administracion',
+    oneLiner: 'Cadencias programadas por WhatsApp, gestión de Snooze (postergación), confirmaciones en 1 clic y Diagrama de Pareto de objeciones.',
+    screenshotTag: '[CAPTURA: Expediente quirúrgico con tarjeta de Control de Seguimiento, selector de Snooze y Diagrama de Pareto de causas]',
+    howTo: {
+      habitual: [
+        'Paso 1 - Activación Automática: Al crear un caso quirúrgico o emitir un presupuesto oficial (estados "En Asesoramiento" o "En Análisis"), el sistema activa por defecto el switch "Seguimiento Automático".',
+        'Paso 2 - Ejecución Silenciosa de Cadencias: El cron escanea periódicamente la inactividad del paciente y despacha toques homologados por Meta WhatsApp Cloud API según el estado del caso:',
+        '   • En Asesoramiento (Cadencia A): Toque #1 (D+3: Dudas iniciales), Toque #2 (D+8: Información médica/prequirúrgica), Toque #3 (D+18: Recontacto asistido).',
+        '   • En Análisis / Presupuesto Emitido (Cadencia B): Toque #1 (D+2: Recepción y dudas del PDF), Toque #2 (D+6: Medios de pago y cobertura), Toque #3 (D+13: Aviso urgente a 48h del vencimiento del arancel cotizado), Toque #4 (D+25: Cierre cordial de la propuesta).',
+        'Paso 3 - Intervención del Paciente vía WhatsApp: El paciente puede presionar botones oficiales (Confirmar, Posponer, Desistir) o responder con texto libre, el cual es atendido por el bot Gemini.',
+        'Paso 4 - Confirmación Inmediata: Si el paciente confirma, la asesoría pasa a "Confirmado", el presupuesto a "Aprobado" y se alerta al equipo para coordinar fecha de quirófano.',
+        'Paso 5 - Gestión de Postergaciones (Snooze): Si el paciente solicita esperar (por viaje, cobro o motivos personales), seleccionar la opción Snooze (15, 30, 45 o 60 días). El caso se pausará temporalmente y saldrá del pipeline activo al filtro "Postergados (Snooze)". Cumplida la fecha, se reactivará solo.',
+        'Paso 6 - Tipificación Obligatoria de Cierre: Si el paciente desiste, seleccionar la causa formal en el modal (Económico, Cobertura Obra Social, Miedo Quirúrgico, Prefiere Postergar, Operado en Otro Centro, Otros).',
+        'Paso 7 - Análisis Estratégico (Pareto): Consultar la sección de Analítica Pareto para visualizar qué 20% de las causas genera el 80% de las pérdidas arancelarias en pesos y dólares.'
+      ],
+      secundarias: [
+        'Pausa Manual: Si la asesora está conversando telefónicamente con el paciente, puede apagar el interruptor "Seguimiento Automático" para evitar mensajes simultáneos.',
+        'Trazabilidad en Bitácora: Cada toque enviado por WhatsApp se registra automáticamente como una evolución formal con autor "Bot Seguimiento" en el expediente quirúrgico.',
+        'Congelamiento de Arancel: Ante el aviso del Toque D+13 (48h antes de vencer), la asesora puede contactar al paciente para ofrecer reservar el turno y congelar el precio vigente.'
+      ]
+    },
+    fields: [
+      { name: 'Seguimiento Automático', type: 'Interruptor Booleano', required: true, description: 'Habilita o deshabilita los envíos programados de la cadencia de recontacto (Activo por defecto).' },
+      { name: 'Estado de Seguimiento', type: 'Badge indicador', required: true, description: 'Indica el estado actual del proceso: "en_curso", "snooze" (pausado), "convertido" o "desistido".' },
+      { name: 'Etapa / Toque Actual', type: 'Numérico (1 al 4)', required: true, description: 'Número de toque de la cadencia despachado al paciente.' },
+      { name: 'Último Toque Enviado', type: 'Fecha y Hora (ISO)', required: false, description: 'Marca temporal exacta del último mensaje de seguimiento emitido.' },
+      { name: 'Snooze Hasta (Pausa)', type: 'Fecha (YYYY-MM-DD)', required: false, description: 'Fecha límite de la pausa asistida. El sistema silencia los toques hasta este día.' },
+      { name: 'Categoría de Causa / Objeción', type: 'Selector Normalizado', required: true, description: 'Motivo tipificado: economico, cobertura_obra_social, miedo_cirugia, posterga_tiempo, operado_otro_centro, otros.' },
+      { name: 'Motivo de Demora / Detalle', type: 'Texto libre', required: false, description: 'Aclaración específica provista por el paciente o la asesora.' },
+      { name: 'Validez del Presupuesto', type: 'Numérico (Días)', required: true, description: 'Días de vigencia arancelaria (15 días por defecto). El toque #3 se dispara a las 48h previas (D+13).' },
+      { name: 'Canal de Resolución', type: 'Texto / Origen', required: true, description: 'Registra si el caso se cerró por "whatsapp_bot", "agente_gemini" o "asesora_humana".' },
+      { name: 'Toque de Resolución', type: 'Numérico', required: false, description: 'Identifica en qué número de toque el paciente tomó la decisión de aprobar o rechazar.' }
+    ],
+    faqs: [
+      {
+        question: '¿Qué ocurre si el paciente contesta un mensaje de la cadencia con dudas o preguntas?',
+        cause: 'El paciente interactuó enviando un mensaje de texto dentro de la ventana de 24 horas de WhatsApp.',
+        solution: 'El agente de IA Gemini responde aclarando dudas y registra la objeción si la detecta. La asesora puede tomar el control del chat en cualquier momento desactivando el bot con el botón "Toggle Human".'
+      },
+      {
+        question: 'El paciente pide que lo llamemos dentro de un mes: ¿cómo evitamos que el bot lo siga contactando?',
+        cause: 'El paciente tiene interés genuino pero requiere posponer el avance quirúrgico.',
+        solution: 'Abrir el expediente en el Pipeline, ir al bloque "Control de Seguimiento", seleccionar "Posponer 30 días" (Snooze) y guardar. El caso dejará de recibir toques hasta la fecha señalada y se archivará en la vista "Postergados".'
+      },
+      {
+        question: '¿Por qué el Toque #3 de presupuestos se envía exactamente a los 13 días (D+13)?',
+        cause: 'Los presupuestos médicos tienen una validez de 15 días corridos garantizados.',
+        solution: 'El Toque #3 actúa como un aviso preventivo 48 horas antes de la caducidad del presupuesto, dándole al paciente la oportunidad de congelar el valor cotizado antes de una actualización arancelaria.'
+      },
+      {
+        question: '¿Dónde encuentro los casos que fueron puestos en "Snooze"?',
+        cause: 'Para mantener limpio el embudo Kanban principal, los casos dormidos no saturan las columnas activas.',
+        solution: 'En "Asesoramiento > Pipeline", utilizar el selector de filtros superior y elegir "Postergados (Snooze)" para ver la lista completa con sus fechas de despertar.'
+      },
+      {
+        question: '¿Qué información aporta el Diagrama de Pareto de Objeciones?',
+        cause: 'Necesidad de comprender las causas principales de pérdida de presupuestos para fijar estrategias.',
+        solution: 'El diagrama ordena las causas de mayor a menor impacto acumulado (80/20) y detalla la suma monetaria perdida en ARS y USD, permitiendo renegociar convenios con prepagas o ajustar planes de cuotas.'
+      },
+      {
+        question: '¿Qué sucede si una plantilla oficial de seguimiento aún no está aprobada en Meta?',
+        cause: 'Meta puede demorar la revisión de nuevas plantillas comerciales.',
+        solution: 'El servicio cuenta con un mecanismo de fallback inteligente que envía la plantilla genérica aprobada "apertura_conversacion" o un mensaje de texto libre si la ventana de 24 horas sigue abierta, asegurando que el paciente nunca quede desatendido.'
       }
     ]
   },
   {
     id: 'presupuestos',
     code: 'presupuestos',
-    title: 'Presupuestos Médicos Formales',
+    title: 'Presupuestos Médicos Formales & Validez Arancelaria',
     route: '/presupuestos',
     badgeCategory: 'Facturación',
     category: 'administracion',
-    oneLiner: 'Cotizador automático en pesos y dólares con catálogo LIO Alcon y despacho de PDF por WhatsApp.',
-    screenshotTag: '[CAPTURA: Cotizador de presupuestos con cálculo multimoneda y botón Enviar por WhatsApp]',
+    oneLiner: 'Cotizador automático en pesos y dólares con catálogo LIO Alcon, validez de 15 días y seguimiento cadencial.',
+    screenshotTag: '[CAPTURA: Cotizador de presupuestos con cálculo multimoneda, indicador de validez y botón Enviar por WhatsApp]',
     howTo: {
       habitual: [
         'Ingresar a "Presupuestos" y seleccionar la pestaña "Crear Presupuesto".',
         'Buscar al paciente en el selector o crearlo en el momento.',
         'Elegir el Ojo (OD/OI/AO), la práctica médica y el modelo de Lente Intraocular (LIO) si aplica.',
-        'Verificar el cálculo automático en ARS y USD.',
+        'Verificar el cálculo automático en ARS y USD, y la validez arancelaria establecida en 15 días.',
         'Presionar "Generar Presupuesto Formal" para compilar el PDF con membrete y QR.',
-        'Hacer clic en "Enviar por WhatsApp" para remitir la propuesta en 1 clic al paciente.'
+        'Hacer clic en "Enviar por WhatsApp" para remitir la propuesta en 1 clic al paciente.',
+        'Al enviarse, el presupuesto y la asesoría quedan vinculados a la Cadencia B de seguimiento automatizado.'
       ],
       secundarias: [
         'Previsualizar el documento generado con el visor de PDF.',
-        'Marcar como "Aprobado" cuando el paciente confirme la fecha quirúrgica.'
+        'Marcar como "Aprobado" cuando el paciente confirme la fecha quirúrgica.',
+        'Si el presupuesto expira o es rechazado, seleccionar la categoría de objeción para alimentar el Pareto.'
       ]
     },
     fields: [
@@ -182,13 +263,20 @@ export const HELP_KNOWLEDGE_BASE: HelpModule[] = [
       { name: 'Ojo', type: 'Selector (OD/OI/AO)', required: true, description: 'Lateralidad a presupuestar.' },
       { name: 'Práctica Médica', type: 'Selector', required: true, description: 'Código nomenclado del procedimiento quirúrgico.' },
       { name: 'Modelo de LIO', type: 'Selector Alcon', required: false, description: 'Lente intraocular Alcon que define el costo del insumo.' },
-      { name: 'Total ARS / USD', type: 'Numérico', required: true, description: 'Importe final liquidable calculado por el sistema.' }
+      { name: 'Total ARS / USD', type: 'Numérico', required: true, description: 'Importe final liquidable calculado por el sistema.' },
+      { name: 'Validez Arancelaria', type: 'Numérico (15 días)', required: true, description: 'Período en el cual se garantiza el valor monetario antes de reajustes.' },
+      { name: 'Categoría de Objeción', type: 'Selector Normalizado', required: false, description: 'Motivo de rechazo o no aprobación para el análisis Pareto.' }
     ],
     faqs: [
       {
         question: 'Al enviar por WhatsApp indica "Número de teléfono inválido".',
         cause: 'El número no tiene el prefijo de país internacional o contiene espacios/guiones.',
         solution: 'Editar los datos del paciente y colocar el formato completo (ej. +5491144556677).'
+      },
+      {
+        question: 'El presupuesto venció los 15 días de validez: ¿cómo proceder?',
+        cause: 'Se superó el plazo de garantía arancelaria estipulado institucionalmente.',
+        solution: 'Generar una actualización o clon del presupuesto con los valores vigentes o consultar con dirección para extender la validez.'
       }
     ]
   },
