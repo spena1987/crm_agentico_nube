@@ -549,7 +549,8 @@ def servir_archivo_estatico(filename: str):
         filename=safe_filename,
         headers={
             "Content-Disposition": f"inline; filename={safe_filename}",
-            "X-Content-Type-Options": "nosniff"
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-cache, no-store, must-revalidate"
         }
     )
 
@@ -4358,7 +4359,7 @@ def listar_todos_presupuestos_api():
         if not supabase:
             return {"success": False, "presupuestos": []}
         resp = supabase.table("presupuestos")\
-            .select("id, paciente_id, asesoria_id, estado, total, total_ars, total_usd, pdf_url, created_at, pacientes(id, nombre, telefono, dni), items_presupuesto(id, cantidad, precio_unitario, subtotal, servicios_precios(id, codigo, nombre_prestacion))")\
+            .select("id, paciente_id, asesoria_id, estado, total, total_ars, total_usd, pdf_url, created_at, pacientes(id, nombre, telefono, dni), items_presupuesto(id, cantidad, precio_unitario, subtotal, moneda, en_convenio, codigo, nombre_prestacion, servicios_precios(id, codigo, nombre_prestacion))")\
             .order("created_at", desc=True)\
             .execute()
         return {"success": True, "presupuestos": resp.data or []}
@@ -4388,12 +4389,13 @@ def obtener_mensaje_sugerido_presupuesto_api(presupuesto_id: str):
         for it in items_raw:
             srv = it.get("servicios_precios") or {}
             items.append({
-                "codigo": srv.get("codigo") or "",
-                "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+                "codigo": it.get("codigo") or srv.get("codigo") or "",
+                "nombre": it.get("nombre_prestacion") or it.get("nombre") or srv.get("nombre_prestacion") or "Prestación Médica",
                 "precio_unitario": float(it.get("precio_unitario") or 0.0),
                 "cantidad": int(it.get("cantidad") or 1),
                 "subtotal": float(it.get("subtotal") or 0.0),
-                "moneda": "USD" if float(presupuesto.get("total_usd") or 0) > 0 and float(presupuesto.get("total_ars") or 0) == 0 else "ARS"
+                "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper(),
+                "en_convenio": bool(it.get("en_convenio", False))
             })
             
         mensaje = generar_mensaje_ameno_presupuesto(presupuesto, paciente, items)
@@ -4477,12 +4479,13 @@ def obtener_mensaje_seguimiento_presupuesto_api(presupuesto_id: str, tipo: str =
         for it in items_raw:
             srv = it.get("servicios_precios") or {}
             items.append({
-                "codigo": srv.get("codigo") or "",
-                "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+                "codigo": it.get("codigo") or srv.get("codigo") or "",
+                "nombre": it.get("nombre_prestacion") or it.get("nombre") or srv.get("nombre_prestacion") or "Prestación Médica",
                 "precio_unitario": float(it.get("precio_unitario") or 0.0),
                 "cantidad": int(it.get("cantidad") or 1),
                 "subtotal": float(it.get("subtotal") or 0.0),
-                "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper()
+                "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper(),
+                "en_convenio": bool(it.get("en_convenio", False))
             })
             
         mensaje = generar_mensaje_seguimiento_presupuesto(presupuesto, paciente, items, tipo=tipo)

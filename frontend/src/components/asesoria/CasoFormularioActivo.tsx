@@ -34,7 +34,8 @@ import {
   Info,
   Printer,
   FileSignature,
-  BellRing
+  BellRing,
+  Plus
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
@@ -1134,9 +1135,11 @@ export default function CasoFormularioActivo({
                 placeholder="Buscar código o nombre en el Nomenclador..."
                 value={busquedaPractica}
                 onChange={(e) => {
-                  setBusquedaPractica(e.target.value)
-                  setPracticaNombre(e.target.value)
-                  buscarPracticasNomenclador(e.target.value)
+                  const val = e.target.value
+                  setBusquedaPractica(val)
+                  setPracticaNombre(val)
+                  setPracticaCodigo('')
+                  buscarPracticasNomenclador(val)
                   setMostrarDropdownPractica(true)
                 }}
                 onFocus={(e) => {
@@ -1159,8 +1162,10 @@ export default function CasoFormularioActivo({
                     type="button"
                     onClick={() => {
                       setBusquedaPractica('')
+                      setPracticaNombre('')
+                      setPracticaCodigo('')
                       buscarPracticasNomenclador('')
-                      setMostrarDropdownPractica(true)
+                      setMostrarDropdownPractica(false)
                     }}
                     className="p-1 text-gray-500 hover:text-white rounded-md hover:bg-neutral-800 transition-colors"
                     title="Limpiar y buscar otra práctica"
@@ -1174,7 +1179,7 @@ export default function CasoFormularioActivo({
               </div>
 
               {mostrarDropdownPractica && (
-                <div className="absolute top-full left-0 right-0 mt-1 max-h-52 overflow-y-auto bg-neutral-900 border border-indigo-500/40 rounded-xl shadow-2xl z-50 divide-y divide-[var(--border)]">
+                <div className="absolute top-full left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-neutral-900 border border-indigo-500/40 rounded-xl shadow-2xl z-50 divide-y divide-[var(--border)]">
                   {buscandoPractica && practicasNomenclador.length === 0 ? (
                     <div className="p-3 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
                       <Loader2 size={13} className="animate-spin text-indigo-400" />
@@ -1182,7 +1187,7 @@ export default function CasoFormularioActivo({
                     </div>
                   ) : practicasNomenclador.length === 0 ? (
                     <div className="p-3 text-center text-xs text-gray-500">
-                      No se encontraron prácticas con &quot;{busquedaPractica}&quot;
+                      No se encontraron prácticas oficiales con &quot;{busquedaPractica}&quot;
                     </div>
                   ) : (
                     practicasNomenclador.map((p) => (
@@ -1213,6 +1218,26 @@ export default function CasoFormularioActivo({
                         </span>
                       </button>
                     ))
+                  )}
+
+                  {/* Opción para usar la búsqueda como Práctica Manual (Fuera de Nomenclador) */}
+                  {busquedaPractica.trim().length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cleanNom = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
+                        setPracticaNombre(cleanNom)
+                        setPracticaCodigo('')
+                        setBusquedaPractica(cleanNom)
+                        setMostrarDropdownPractica(false)
+                      }}
+                      className="w-full text-left p-2.5 bg-neutral-950/80 hover:bg-neutral-800 text-xs text-indigo-300 hover:text-white transition-colors flex items-center gap-2 border-t border-neutral-800"
+                    >
+                      <Plus size={13} className="text-indigo-400 shrink-0" />
+                      <span className="truncate">
+                        Usar como práctica manual: <strong>&quot;{busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()}&quot;</strong> <span className="text-[10px] text-gray-400 font-normal">(Fuera de Nomenclador)</span>
+                      </span>
+                    </button>
                   )}
                 </div>
               )}
@@ -1948,7 +1973,7 @@ export default function CasoFormularioActivo({
                             {p.items_presupuesto && p.items_presupuesto.length > 0 && (
                               <div className="mt-2 space-y-1 bg-neutral-900/70 rounded-lg p-2 border border-neutral-800/60">
                                 {p.items_presupuesto.map((it: any, idx: number) => {
-                                  const nombrePrestacion = it.servicios_precios?.nombre_prestacion || it.nombre || it.descripcion || 'Práctica Médica'
+                                  const nombrePrestacion = it.nombre_prestacion || it.nombre || it.servicios_precios?.nombre_prestacion || it.descripcion || 'Práctica Médica'
                                   const monedaItem = it.moneda || it.servicios_precios?.moneda || (Number(p.total_usd) > 0 && !Number(p.total_ars) ? 'USD' : 'ARS')
                                   const subtotalNum = Number(it.subtotal || (Number(it.precio_unitario || 0) * (it.cantidad || 1)))
                                   return (

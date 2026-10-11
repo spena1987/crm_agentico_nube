@@ -816,14 +816,15 @@ def asegurar_pdf_presupuesto_canonica(presupuesto_id: str, forzar_regeneracion: 
     items_raw = presupuesto.get("items_presupuesto") or []
     items_normalizados = []
     
+    codigos_genericos = {"EXTRA", "MANUAL", "QUIR-01", "PRAC", "S/C", "SC", "VARIOS", "OTRO", "OTRA"}
     for it in items_raw:
         srv = it.get("servicios_precios") or {}
         srv_cod = str(it.get("codigo") or it.get("codigo_servicio") or srv.get("codigo") or "").strip().upper()
         srv_nom = str(it.get("nombre_prestacion") or it.get("nombre") or srv.get("nombre_prestacion") or "").strip()
         it_moneda = it.get("moneda") or srv.get("moneda")
         
-        # Fallback a nomenclador si aún faltara
-        if (not srv_nom or not srv_cod or not it_moneda) and srv_cod:
+        # Fallback a nomenclador solo si no es código genérico/manual y falta descripción o moneda
+        if (not srv_nom or not it_moneda) and srv_cod and (srv_cod not in codigos_genericos) and not srv_cod.startswith("PRACT-") and not srv_cod.startswith("PRAC-"):
             try:
                 p_find = supabase.table("nomenclador_practicas").select("nombre, categoria, nomencladores(moneda_default)").eq("codigo", srv_cod).limit(1).execute()
                 if p_find.data:
@@ -836,7 +837,7 @@ def asegurar_pdf_presupuesto_canonica(presupuesto_id: str, forzar_regeneracion: 
                 pass
                 
         if not srv_nom:
-            srv_nom = f"Práctica {srv_cod}" if srv_cod else "Prestación Médica"
+            srv_nom = f"Práctica {srv_cod}" if (srv_cod and srv_cod not in codigos_genericos) else "Prestación Médica"
         if not srv_cod:
             srv_cod = "PRAC"
         if not it_moneda:
@@ -847,6 +848,7 @@ def asegurar_pdf_presupuesto_canonica(presupuesto_id: str, forzar_regeneracion: 
         pu = float(it.get("precio_unitario") or 0.0)
         cant = int(it.get("cantidad") or 1)
         sub = float(it.get("subtotal") or (pu * cant))
+        en_conv = bool(it.get("en_convenio", False))
         
         items_normalizados.append({
             "codigo": srv_cod,
@@ -855,7 +857,8 @@ def asegurar_pdf_presupuesto_canonica(presupuesto_id: str, forzar_regeneracion: 
             "precio_unitario": pu,
             "cantidad": cant,
             "subtotal": sub,
-            "moneda": str(it_moneda).upper()
+            "moneda": str(it_moneda).upper(),
+            "en_convenio": en_conv
         })
         
     # Resolver y asegurar cobertura médica del presupuesto o de la asesoría quirúrgica

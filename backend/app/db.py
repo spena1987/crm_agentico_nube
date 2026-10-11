@@ -4344,26 +4344,43 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
                 else:
                     total_ars += sub
             
-            nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
+            nombre_item = item.get("nombre_prestacion") or item.get("nombre") or "Prestación Médica"
             codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or f"PRACT-{idx+1}").strip().upper()
             
-            # Registrar o actualizar en servicios_precios para preservar nombre, código real y moneda
+            # Códigos genéricos/manuales que nunca deben sobreescribir el catálogo de servicios
+            codigos_genericos = {"EXTRA", "MANUAL", "QUIR-01", "PRAC", "S/C", "SC", "VARIOS", "OTRO", "OTRA"}
+            es_manual = (codigo_item in codigos_genericos) or codigo_item.startswith("PRACT-") or codigo_item.startswith("PRAC-")
+            
             srv_id = default_servicio_id
             try:
-                ins_srv = supabase.table("servicios_precios").upsert({
-                    "codigo": codigo_item,
-                    "nombre_prestacion": nombre_item,
-                    "precio": pu,
-                    "moneda": item_moneda,
-                    "activo": True
-                }, on_conflict="codigo").execute()
-                if ins_srv.data:
-                    srv_id = ins_srv.data[0]["id"]
+                if not es_manual:
+                    # Si es un código oficial, consultar si ya existe para reusar su ID sin pisar el maestro
+                    srv_existente = supabase.table("servicios_precios").select("id").eq("codigo", codigo_item).limit(1).execute()
+                    if srv_existente.data:
+                        srv_id = srv_existente.data[0]["id"]
+                    else:
+                        # Si no existe, crearlo como nueva prestación de catálogo
+                        ins_srv = supabase.table("servicios_precios").insert({
+                            "codigo": codigo_item,
+                            "nombre_prestacion": nombre_item,
+                            "precio": pu,
+                            "moneda": item_moneda,
+                            "activo": True
+                        }).execute()
+                        if ins_srv.data:
+                            srv_id = ins_srv.data[0]["id"]
+                else:
+                    # Para ítems manuales o fuera de nomenclador, asociar al servicio base genérico si existe
+                    srv_manual = supabase.table("servicios_precios").select("id").eq("codigo", "EXTRA").limit(1).execute()
+                    if srv_manual.data:
+                        srv_id = srv_manual.data[0]["id"]
             except Exception as srv_err:
-                logger.warning(f"No se pudo registrar servicio {codigo_item}: {srv_err}")
+                logger.warning(f"No se pudo resolver servicio {codigo_item}: {srv_err}")
 
             items_db.append({
                 "servicio_id": srv_id,
+                "codigo": codigo_item,
+                "nombre_prestacion": nombre_item,
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
@@ -4555,25 +4572,40 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
                 else:
                     total_ars += sub
 
-            nombre_item = item.get("nombre") or item.get("nombre_prestacion") or "Prestación Médica"
+            nombre_item = item.get("nombre_prestacion") or item.get("nombre") or "Prestación Médica"
             codigo_item = str(item.get("codigo") or item.get("codigo_servicio") or f"PRACT-{idx+1}").strip().upper()
+
+            # Códigos genéricos/manuales que nunca deben sobreescribir el catálogo de servicios
+            codigos_genericos = {"EXTRA", "MANUAL", "QUIR-01", "PRAC", "S/C", "SC", "VARIOS", "OTRO", "OTRA"}
+            es_manual = (codigo_item in codigos_genericos) or codigo_item.startswith("PRACT-") or codigo_item.startswith("PRAC-")
 
             srv_id = default_servicio_id
             try:
-                ins_srv = supabase.table("servicios_precios").upsert({
-                    "codigo": codigo_item,
-                    "nombre_prestacion": nombre_item,
-                    "precio": pu,
-                    "moneda": item_moneda,
-                    "activo": True
-                }, on_conflict="codigo").execute()
-                if ins_srv.data:
-                    srv_id = ins_srv.data[0]["id"]
+                if not es_manual:
+                    srv_existente = supabase.table("servicios_precios").select("id").eq("codigo", codigo_item).limit(1).execute()
+                    if srv_existente.data:
+                        srv_id = srv_existente.data[0]["id"]
+                    else:
+                        ins_srv = supabase.table("servicios_precios").insert({
+                            "codigo": codigo_item,
+                            "nombre_prestacion": nombre_item,
+                            "precio": pu,
+                            "moneda": item_moneda,
+                            "activo": True
+                        }).execute()
+                        if ins_srv.data:
+                            srv_id = ins_srv.data[0]["id"]
+                else:
+                    srv_manual = supabase.table("servicios_precios").select("id").eq("codigo", "EXTRA").limit(1).execute()
+                    if srv_manual.data:
+                        srv_id = srv_manual.data[0]["id"]
             except Exception as srv_err:
-                logger.warning(f"No se pudo registrar servicio {codigo_item}: {srv_err}")
+                logger.warning(f"No se pudo resolver servicio {codigo_item} en actualización: {srv_err}")
 
             items_db.append({
                 "servicio_id": srv_id,
+                "codigo": codigo_item,
+                "nombre_prestacion": nombre_item,
                 "cantidad": cant,
                 "precio_unitario": pu,
                 "subtotal": sub,
@@ -4813,12 +4845,13 @@ def obtener_datos_duplicar_presupuesto(presupuesto_id: str) -> dict:
         srv = it.get("servicios_precios") or {}
         items.append({
             "id": srv.get("id") or str(uuid.uuid4()),
-            "codigo": srv.get("codigo") or "PRACT",
-            "nombre": srv.get("nombre_prestacion") or "Prestación Médica",
+            "codigo": it.get("codigo") or srv.get("codigo") or "PRACT",
+            "nombre": it.get("nombre_prestacion") or it.get("nombre") or srv.get("nombre_prestacion") or "Prestación Médica",
             "cantidad": int(it.get("cantidad") or 1),
             "precio_unitario": float(it.get("precio_unitario") or 0.0),
             "moneda": str(it.get("moneda") or srv.get("moneda") or "ARS").upper(),
-            "subtotal": float(it.get("subtotal") or 0.0)
+            "subtotal": float(it.get("subtotal") or 0.0),
+            "en_convenio": bool(it.get("en_convenio", False))
         })
         
     return {
@@ -4926,12 +4959,13 @@ def enviar_presupuesto_por_whatsapp(
     items = []
     for it in items_raw:
         srv = it.get("servicios_precios") or {}
-        srv_cod = srv.get("codigo") or ""
-        srv_nom = srv.get("nombre_prestacion") or "Prestación Médica"
+        srv_cod = it.get("codigo") or srv.get("codigo") or ""
+        srv_nom = it.get("nombre_prestacion") or it.get("nombre") or srv.get("nombre_prestacion") or "Prestación Médica"
         
         # Detectar moneda real de la práctica
         it_moneda = it.get("moneda") or srv.get("moneda")
-        if not it_moneda and srv_cod:
+        codigos_genericos = {"EXTRA", "MANUAL", "QUIR-01", "PRAC", "S/C", "SC", "VARIOS", "OTRO", "OTRA"}
+        if not it_moneda and srv_cod and srv_cod not in codigos_genericos and not srv_cod.startswith("PRACT-"):
             try:
                 p_find = supabase.table("nomenclador_practicas")\
                     .select("nombre, categoria, nomencladores(moneda_default)")\

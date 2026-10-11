@@ -157,22 +157,42 @@ def crear_borrador_presupuesto(paciente_id: str, items: list[ItemPresupuesto]) -
             subtotal = precio_unitario * cantidad
             total_acumulado += subtotal
             
-            # Asegurar registro en servicios_precios para satisfacer FK de items_presupuesto
-            ins_serv = supabase.table("servicios_precios").upsert({
-                "codigo": codigo,
-                "nombre_prestacion": nombre_pres,
-                "precio": precio_unitario,
-                "activo": True
-            }, on_conflict="codigo").execute()
+            # Códigos genéricos/manuales que nunca deben sobreescribir el catálogo de servicios
+            codigos_genericos = {"EXTRA", "MANUAL", "QUIR-01", "PRAC", "S/C", "SC", "VARIOS", "OTRO", "OTRA"}
+            es_manual = (codigo in codigos_genericos) or codigo.startswith("PRACT-") or codigo.startswith("PRAC-")
             
-            servicio_id = ins_serv.data[0]["id"] if ins_serv.data else None
+            servicio_id = None
+            try:
+                if not es_manual:
+                    srv_existente = supabase.table("servicios_precios").select("id").eq("codigo", codigo).limit(1).execute()
+                    if srv_existente.data:
+                        servicio_id = srv_existente.data[0]["id"]
+                    else:
+                        ins_serv = supabase.table("servicios_precios").insert({
+                            "codigo": codigo,
+                            "nombre_prestacion": nombre_pres,
+                            "precio": precio_unitario,
+                            "moneda": moneda.upper(),
+                            "activo": True
+                        }).execute()
+                        if ins_serv.data:
+                            servicio_id = ins_serv.data[0]["id"]
+                else:
+                    srv_manual = supabase.table("servicios_precios").select("id").eq("codigo", "EXTRA").limit(1).execute()
+                    if srv_manual.data:
+                        servicio_id = srv_manual.data[0]["id"]
+            except Exception as srv_err:
+                logger.warning(f"No se pudo resolver servicio {codigo} en tools: {srv_err}")
             
             item_data = {
                 "presupuesto_id": presupuesto_id,
                 "servicio_id": servicio_id,
+                "codigo": codigo,
+                "nombre_prestacion": nombre_pres,
                 "cantidad": cantidad,
                 "precio_unitario": precio_unitario,
-                "subtotal": subtotal
+                "subtotal": subtotal,
+                "moneda": moneda.upper()
             }
             item_resp = supabase.table("items_presupuesto").insert(item_data).execute()
             

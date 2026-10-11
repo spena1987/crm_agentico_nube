@@ -437,7 +437,7 @@ export default function ItemCasoQuirurgicoAcordeon({
     if (nuevoPresupuesto.items_presupuesto && nuevoPresupuesto.items_presupuesto.length > 0) {
       const primerItem: any = nuevoPresupuesto.items_presupuesto[0]
       const cod = primerItem.codigo || primerItem.servicios_precios?.codigo
-      const nom = primerItem.nombre || primerItem.servicios_precios?.nombre_prestacion
+      const nom = primerItem.nombre_prestacion || primerItem.nombre || primerItem.servicios_precios?.nombre_prestacion
       if (cod) codPrac = cod
       if (nom && nom !== 'Prestación médica') nomPrac = nom
     }

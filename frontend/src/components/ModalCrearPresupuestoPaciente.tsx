@@ -254,7 +254,7 @@ export default function ModalCrearPresupuestoPaciente({
         const procesarListaItems = (lista: any[]) => {
           const itemsCargados: ItemPresupuestoForm[] = []
           lista.forEach((it: any) => {
-            const nom = it.nombre || it.nombre_prestacion || it.servicios_precios?.nombre_prestacion || it.descripcion || 'Prestación Médica'
+            const nom = it.nombre_prestacion || it.nombre || it.servicios_precios?.nombre_prestacion || it.descripcion || 'Prestación Médica'
             const cod = it.codigo || it.codigo_servicio || it.servicios_precios?.codigo || ''
             const mon = (it.moneda || it.servicios_precios?.moneda || 'ARS') as 'ARS' | 'USD'
             const pu = Number(it.precio_unitario || 0)
@@ -322,8 +322,12 @@ export default function ModalCrearPresupuestoPaciente({
       if (practicaInicial && practicaInicial.nombre) {
         const pPrecio = Number(practicaInicial.precio) || 0
         const pMoneda = (practicaInicial.moneda === 'USD' ? 'USD' : 'ARS') as 'ARS' | 'USD'
-        const pCodigo = practicaInicial.codigo || 'QUIR-01'
-        const pNombre = practicaInicial.nombre
+        const rawCodigo = (practicaInicial.codigo || '').trim().toUpperCase()
+        const pNombre = practicaInicial.nombre.trim()
+
+        const codigosGenericos = ['EXTRA', 'MANUAL', 'QUIR-01', 'PRAC', 'S/C', 'SC', '']
+        const esManual = !rawCodigo || codigosGenericos.includes(rawCodigo) || rawCodigo.startsWith('PRACT-')
+        const pCodigo = rawCodigo || (esManual ? 'EXTRA' : 'QUIR-01')
 
         const nomLow = pNombre.toLowerCase()
         const codLow = (pCodigo || '').toLowerCase()
@@ -334,7 +338,7 @@ export default function ModalCrearPresupuestoPaciente({
         if (esCatarata && targetCod) {
           cargarLiosParaPractica(targetCod)
         }
-        if (targetCod && targetCod !== 'QUIR-01') {
+        if (targetCod && !esManual && targetCod !== 'QUIR-01') {
           consultarRelaciones(targetCod, pNombre, pCodigo)
         }
 
@@ -351,9 +355,9 @@ export default function ModalCrearPresupuestoPaciente({
           setMonedaDefault('USD')
         }
 
-        // Buscar en nomenclador para resolver precio sugerido e ID de práctica para Smart Bundle
-        if (pNombre !== 'Nueva Cirugía / Procedimiento') {
-          fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(pCodigo || pNombre)}`)
+        // Buscar en nomenclador SOLO si es un código de nomenclador oficial y no una práctica manual libre
+        if (!esManual && pNombre !== 'Nueva Cirugía / Procedimiento') {
+          fetch(`${BACKEND_URL}/api/nomenclador/buscar-presupuesto?q=${encodeURIComponent(pCodigo)}`)
             .then((r) => r.json())
             .then((data) => {
               if (data.success && data.resultados && data.resultados.length > 0) {
@@ -366,7 +370,7 @@ export default function ModalCrearPresupuestoPaciente({
                   setItems([{
                     servicio_id: sugerido.id,
                     codigo: sugerido.codigo || pCodigo,
-                    nombre: sugerido.nombre || pNombre,
+                    nombre: pNombre || sugerido.nombre,
                     cantidad: 1,
                     precio_unitario: sugerido.precio,
                     subtotal: sugerido.precio,
@@ -374,9 +378,8 @@ export default function ModalCrearPresupuestoPaciente({
                   }])
                   if (sugerido.moneda === 'USD') setMonedaDefault('USD')
                 }
-                // Si la práctica tiene ID o código, verificar si posee prácticas vinculadas (Anestesia, Quirófano, Insumos)
                 if (sugerido.id || sugerido.codigo) {
-                  consultarRelaciones(sugerido.id || sugerido.codigo, sugerido.nombre || pNombre, sugerido.codigo || pCodigo)
+                  consultarRelaciones(sugerido.id || sugerido.codigo, pNombre || sugerido.nombre, sugerido.codigo || pCodigo)
                 }
               }
             })
