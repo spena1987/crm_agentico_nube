@@ -43,6 +43,7 @@ import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import { ModalAnaliticaCausasQuirurgicas } from '@/components/pipeline/ModalAnaliticaCausasQuirurgicas'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
+import { usePipelineSessionState } from '@/hooks/usePipelineSessionState'
 import { Columns3, AlignJustify } from 'lucide-react'
 import { Radio, Users, BellRing, FileCheck2, BarChart2, PauseCircle, Flame } from 'lucide-react'
 
@@ -182,49 +183,56 @@ export default function PipelineQuirurgicoPage() {
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Vista activa: 'activos' (Pipeline Kanban de 4 etapas) o 'cerrados' (Historial Operados y Cancelados)
-  const [vistaActual, setVistaActual] = useState<'activos' | 'cerrados'>('activos')
-  const [subfiltroCerrados, setSubfiltroCerrados] = useState<'todos' | 'operado' | 'cancelado'>('todos')
-  const [modoVisualizacion, setModoVisualizacion] = useState<'vertical' | 'kanban'>('vertical')
+  // Hook de estado de sesión del Pipeline (persistencia inter-módulo y auto-reset diario/re-login)
+  const {
+    isLoaded: sessionLoaded,
+    modoVisualizacion,
+    setModoVisualizacion,
+    vistaActual,
+    setVistaActual,
+    subfiltroCerrados,
+    setSubfiltroCerrados,
+    etapasColapsadas,
+    toggleColapsoEtapa,
+    colapsarTodasEtapas,
+    expandirTodasEtapas,
+    filtros,
+    actualizarFiltro,
+    limpiarFiltros
+  } = usePipelineSessionState()
 
-  // Cargar preferencia guardada de visualización
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('crm_pipeline_view_mode')
-      if (saved === 'kanban' || saved === 'vertical') {
-        setModoVisualizacion(saved)
-      }
-    } catch (e) {
-      // Ignorar
-    }
-  }, [])
+  // Desestructuración y atajos reactivos para filtros
+  const filtroTexto = filtros.texto
+  const filtroCirujano = filtros.cirujano
+  const filtroObraSocial = filtros.obraSocial
+  const filtroPractica = filtros.practica
+  const filtroFechaTipo = filtros.fechaTipo
+  const filtroRecordatorio = filtros.recordatorio
+  const filtroSeguimiento = filtros.seguimiento
+  const fechaDesde = filtros.fechaDesde
+  const fechaHasta = filtros.fechaHasta
+  const soloAlertas = filtros.soloAlertas
 
-  const handleCambiarModoVisualizacion = (modo: 'vertical' | 'kanban') => {
-    setModoVisualizacion(modo)
-    try {
-      localStorage.setItem('crm_pipeline_view_mode', modo)
-    } catch (e) {
-      // Ignorar
+  const setFiltroTexto = (val: string) => actualizarFiltro('texto', val)
+  const setFiltroCirujano = (val: string) => actualizarFiltro('cirujano', val)
+  const setFiltroObraSocial = (val: string) => actualizarFiltro('obraSocial', val)
+  const setFiltroPractica = (val: string) => actualizarFiltro('practica', val)
+  const setFiltroFechaTipo = (val: any) => actualizarFiltro('fechaTipo', val)
+  const setFiltroRecordatorio = (val: any) => actualizarFiltro('recordatorio', val)
+  const setFiltroSeguimiento = (val: any) => actualizarFiltro('seguimiento', val)
+  const setFechaDesde = (val: string) => actualizarFiltro('fechaDesde', val)
+  const setFechaHasta = (val: string) => actualizarFiltro('fechaHasta', val)
+  const setSoloAlertas = (val: boolean | ((prev: boolean) => boolean)) => {
+    if (typeof val === 'function') {
+      actualizarFiltro('soloAlertas', val(filtros.soloAlertas))
+    } else {
+      actualizarFiltro('soloAlertas', val)
     }
   }
 
-  // Filtros
-  const [filtroTexto, setFiltroTexto] = useState('')
-  const [filtroCirujano, setFiltroCirujano] = useState<string>('todos')
-  const [filtroObraSocial, setFiltroObraSocial] = useState<string>('todos')
-  const [filtroPractica, setFiltroPractica] = useState<string>('todas')
-  const [filtroFechaTipo, setFiltroFechaTipo] = useState<
-    'todas' | 'vencidas' | '7dias' | '30dias' | 'sin_fecha' | 'personalizado'
-  >('todas')
-  const [filtroRecordatorio, setFiltroRecordatorio] = useState<
-    'todos' | 'confirmados' | 'enviados' | 'con_consulta' | 'sin_enviar'
-  >('todos')
-  const [filtroSeguimiento, setFiltroSeguimiento] = useState<
-    'todos' | 'activos' | 'snooze' | 'reactivados'
-  >('activos')
-  const [fechaDesde, setFechaDesde] = useState<string>('')
-  const [fechaHasta, setFechaHasta] = useState<string>('')
-  const [soloAlertas, setSoloAlertas] = useState(false)
+  const handleCambiarModoVisualizacion = (modo: 'vertical' | 'kanban') => {
+    setModoVisualizacion(modo)
+  }
 
   // Estados de Drag & Drop
   const [draggedCaso, setDraggedCaso] = useState<AsesoriaCasoPipeline | null>(null)
@@ -485,26 +493,36 @@ export default function PipelineQuirurgicoPage() {
     }
   }, [etapas])
 
-  // Indicador si hay algún filtro activo y función para restablecer
-  const hayFiltrosActivos =
-    filtroTexto !== '' ||
-    filtroCirujano !== 'todos' ||
-    filtroObraSocial !== 'todos' ||
-    filtroPractica !== 'todas' ||
-    filtroFechaTipo !== 'todas' ||
-    soloAlertas ||
-    fechaDesde !== '' ||
-    fechaHasta !== ''
+  // Indicador y conteo de filtros activos con restablecimiento
+  const conteoFiltrosActivos = useMemo(() => {
+    let c = 0
+    if (filtroTexto !== '') c++
+    if (filtroCirujano !== 'todos') c++
+    if (filtroObraSocial !== 'todos') c++
+    if (filtroPractica !== 'todas') c++
+    if (filtroFechaTipo !== 'todas') c++
+    if (filtroRecordatorio !== 'todos') c++
+    if (filtroSeguimiento !== 'activos') c++
+    if (soloAlertas) c++
+    if (fechaDesde !== '' || fechaHasta !== '') c++
+    return c
+  }, [
+    filtroTexto,
+    filtroCirujano,
+    filtroObraSocial,
+    filtroPractica,
+    filtroFechaTipo,
+    filtroRecordatorio,
+    filtroSeguimiento,
+    soloAlertas,
+    fechaDesde,
+    fechaHasta
+  ])
+
+  const hayFiltrosActivos = conteoFiltrosActivos > 0
 
   const handleLimpiarFiltros = () => {
-    setFiltroTexto('')
-    setFiltroCirujano('todos')
-    setFiltroObraSocial('todos')
-    setFiltroPractica('todas')
-    setFiltroFechaTipo('todas')
-    setFechaDesde('')
-    setFechaHasta('')
-    setSoloAlertas(false)
+    limpiarFiltros()
   }
 
   // Cambiar etapa directamente desde el Kanban o abrir modal de cierre si es operado/cancelado
@@ -1180,17 +1198,22 @@ export default function PipelineQuirurgicoPage() {
             </div>
           )}
 
-          {/* Botón Limpiar Filtros */}
+          {/* Badge interactivo y Botón Limpiar Filtros */}
           {hayFiltrosActivos && (
-            <button
-              type="button"
-              onClick={handleLimpiarFiltros}
-              className="px-2 py-1 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1 transition-all shrink-0"
-              title="Restablecer todos los filtros"
-            >
-              <RotateCcw size={11} className="text-blue-400" />
-              <span>Limpiar</span>
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0 animate-in fade-in duration-200">
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-950/70 border border-blue-500/30 text-blue-300 font-medium">
+                {conteoFiltrosActivos} filtro{conteoFiltrosActivos > 1 ? 's' : ''} activo{conteoFiltrosActivos > 1 ? 's' : ''}
+              </span>
+              <button
+                type="button"
+                onClick={handleLimpiarFiltros}
+                className="px-2 py-1 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1 transition-all"
+                title="Restablecer todos los filtros al estado predeterminado"
+              >
+                <RotateCcw size={11} className="text-blue-400" />
+                <span>Limpiar</span>
+              </button>
+            </div>
           )}
 
         </div>
@@ -1251,6 +1274,10 @@ export default function PipelineQuirurgicoPage() {
           onMarcarContactadoHoy={handleMarcarContactadoHoy}
           actualizandoCasoId={actualizandoCasoId}
           canChangeStage={canChangeStage}
+          etapasColapsadas={etapasColapsadas}
+          onToggleColapso={toggleColapsoEtapa}
+          onExpandirTodas={() => expandirTodasEtapas(ETAPAS_COLUMNAS_ACTIVAS.map((c) => c.id))}
+          onColapsarTodas={colapsarTodasEtapas}
         />
       )}
 

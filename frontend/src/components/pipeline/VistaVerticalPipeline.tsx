@@ -45,6 +45,10 @@ interface VistaVerticalPipelineProps {
   onMarcarContactadoHoy: (caso: AsesoriaCasoPipeline) => Promise<void>
   actualizandoCasoId: string | null
   canChangeStage: boolean
+  etapasColapsadas?: Record<string, boolean>
+  onToggleColapso?: (colId: string) => void
+  onExpandirTodas?: () => void
+  onColapsarTodas?: () => void
 }
 
 export default function VistaVerticalPipeline({
@@ -56,48 +60,90 @@ export default function VistaVerticalPipeline({
   onAbrirConsentimientoQx,
   onMarcarContactadoHoy,
   actualizandoCasoId,
-  canChangeStage
+  canChangeStage,
+  etapasColapsadas: etapasColapsadasProp,
+  onToggleColapso: onToggleColapsoProp,
+  onExpandirTodas: onExpandirTodasProp,
+  onColapsarTodas: onColapsarTodasProp
 }: VistaVerticalPipelineProps) {
-  // Estado para colapsar o expandir cada etapa (todas abiertas por defecto)
-  const [etapasColapsadas, setEtapasColapsadas] = useState<Record<string, boolean>>({})
+  // Estado local como fallback (por defecto TODAS las etapas contraídas = true)
+  const [etapasColapsadasLocal, setEtapasColapsadasLocal] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {}
+    columnasEtapas.forEach((c) => {
+      init[c.id] = true
+    })
+    return init
+  })
+
+  const colapsadasActivas = etapasColapsadasProp ?? etapasColapsadasLocal
 
   const toggleColapso = (colId: string) => {
-    setEtapasColapsadas((prev) => ({
-      ...prev,
-      [colId]: !prev[colId]
-    }))
+    if (onToggleColapsoProp) {
+      onToggleColapsoProp(colId)
+    } else {
+      setEtapasColapsadasLocal((prev) => ({
+        ...prev,
+        [colId]: !prev[colId]
+      }))
+    }
   }
 
-  const expandirTodas = () => setEtapasColapsadas({})
-  const colapsarTodas = () => {
-    const todas: Record<string, boolean> = {}
-    columnasEtapas.forEach((c) => {
-      todas[c.id] = true
-    })
-    setEtapasColapsadas(todas)
+  const expandirTodas = () => {
+    if (onExpandirTodasProp) {
+      onExpandirTodasProp()
+    } else {
+      const abiertas: Record<string, boolean> = {}
+      columnasEtapas.forEach((c) => {
+        abiertas[c.id] = false
+      })
+      setEtapasColapsadasLocal(abiertas)
+    }
   }
+
+  const colapsarTodas = () => {
+    if (onColapsarTodasProp) {
+      onColapsarTodasProp()
+    } else {
+      const todas: Record<string, boolean> = {}
+      columnasEtapas.forEach((c) => {
+        todas[c.id] = true
+      })
+      setEtapasColapsadasLocal(todas)
+    }
+  }
+
+  const totalEtapas = columnasEtapas.length
+  const etapasAbiertasCount = columnasEtapas.filter((c) => !colapsadasActivas[c.id]).length
 
   return (
     <div className="w-full space-y-4 pb-12">
       {/* Barra de control rápido de acordeones */}
       <div className="flex items-center justify-between px-1 text-xs text-gray-400">
-        <span className="flex items-center gap-1.5 font-medium">
+        <span className="flex items-center gap-2 font-medium">
           <Layers size={14} className="text-blue-400" />
-          Vista Vertical de Flujo Continuo por Etapas
+          <span>Vista Vertical de Flujo Continuo por Etapas</span>
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-neutral-900 border border-neutral-800 text-gray-400 font-normal">
+            {etapasAbiertasCount === 0
+              ? 'Todas contraídas'
+              : etapasAbiertasCount === totalEtapas
+              ? 'Todas desplegadas'
+              : `${etapasAbiertasCount} de ${totalEtapas} desplegadas`}
+          </span>
         </span>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={expandirTodas}
-            className="text-[11px] hover:text-white transition-colors underline"
+            className="text-[11px] px-2 py-0.5 rounded-lg bg-neutral-900/80 hover:bg-neutral-800 text-gray-300 hover:text-white border border-neutral-800 transition-colors"
+            title="Desplegar todas las etapas simultáneamente"
           >
             Expandir todas
           </button>
-          <span>•</span>
           <button
             type="button"
             onClick={colapsarTodas}
-            className="text-[11px] hover:text-white transition-colors underline"
+            className="text-[11px] px-2 py-0.5 rounded-lg bg-neutral-900/80 hover:bg-neutral-800 text-gray-300 hover:text-white border border-neutral-800 transition-colors"
+            title="Contraer todas las etapas para vista compacta"
           >
             Colapsar todas
           </button>
@@ -107,7 +153,7 @@ export default function VistaVerticalPipeline({
       {/* Lista de Secciones Verticales por Etapa */}
       {columnasEtapas.map((col) => {
         const casos = etapasActivasFiltradas[col.id] || []
-        const isColapsada = !!etapasColapsadas[col.id]
+        const isColapsada = !!colapsadasActivas[col.id]
 
         const montoARS = casos
           .filter((c) => c.moneda_extra !== 'USD')

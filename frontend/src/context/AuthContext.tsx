@@ -47,6 +47,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
+        if (_event === 'SIGNED_OUT') {
+          try {
+            sessionStorage.removeItem('crm_pipeline_session_v1')
+          } catch (_) {}
+        }
       }
     )
 
@@ -70,6 +75,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
+      try {
+        sessionStorage.removeItem('crm_pipeline_session_v1')
+      } catch (_) {}
       await supabase.auth.signOut()
     } catch (error) {
       console.error('Error al cerrar sesión:', error)
