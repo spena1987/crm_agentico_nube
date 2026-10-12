@@ -5627,51 +5627,45 @@ def eliminar_prestador_endpoint(prestador_id: str):
 
 
 
+class EnviarConsentimientoAsesoriaPayload(BaseModel):
+    ojo_objetivo: Optional[str] = "primer_ojo"
+
 @app.get("/api/asesorias-quirurgicas/{asesoria_id}/consentimiento")
 def obtener_consentimiento_asesoria(asesoria_id: str):
     if not supabase:
         return {"success": False, "ok": False, "consentimiento": None}
     try:
-        from app.db import asegurar_turno_para_consentimiento_asesoria
-        t = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
-        if not t:
+        from app.db import asegurar_turnos_para_consentimiento_asesoria
+        info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id)
+        if not info_dual:
             return {"success": False, "ok": False, "consentimiento": None}
-        c_est = t.get("consentimiento_estado") or "pendiente_envio"
-        esta_firmado = c_est in ("firmado_digital", "firmado_papel")
-        modo_firma = "papel" if c_est == "firmado_papel" else ("digital" if c_est == "firmado_digital" else None)
         return {
             "success": True,
             "ok": True,
-            "consentimiento": {
-                "turno_id": t.get("id"),
-                "estado": c_est,
-                "firmado": esta_firmado,
-                "modo_firma": modo_firma,
-                "token": t.get("consentimiento_token"),
-                "pdf_url": t.get("consentimiento_pdf_url"),
-                "firmado_at": t.get("consentimiento_firmado_at"),
-                "firma_ip": t.get("consentimiento_firma_ip"),
-                "fecha_cirugia": t.get("fecha_cirugia"),
-                "hora_inicio": t.get("hora_inicio"),
-                "practica_nombre": t.get("practica_nombre"),
-                "cirujano_nombre": t.get("cirujano_nombre")
-            }
+            **info_dual
         }
     except Exception as e:
         logger.error(f"Error al obtener consentimiento de asesoría {asesoria_id}: {e}")
         return {"success": False, "ok": False, "error": str(e)}
 
 @app.post("/api/asesorias-quirurgicas/{asesoria_id}/enviar-consentimiento-wa")
-async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
+async def enviar_consentimiento_asesoria_whatsapp(
+    asesoria_id: str,
+    ojo_objetivo: Optional[str] = Query(None),
+    payload: Optional[EnviarConsentimientoAsesoriaPayload] = Body(None)
+):
     """
     Envía el consentimiento informado por WhatsApp directamente desde el caso de asesoría quirúrgica
     usando el Enrutador Inteligente (Smart Template Router) para respetar la ventana de 24h de Meta.
+    Soporta cirugías bilaterales escalonadas especificando 'ojo_objetivo' ('primer_ojo', 'segundo_ojo', 'ambos').
     """
     try:
         from app.services.seguimiento_quirurgico_service import despachar_consentimiento_informado_inteligente
+        obj = ojo_objetivo or (payload.ojo_objetivo if payload else None) or "primer_ojo"
         res = await despachar_consentimiento_informado_inteligente(
             asesoria_id=asesoria_id,
-            operador_nombre="Asesoría Quirúrgica"
+            operador_nombre="Asesoría Quirúrgica",
+            ojo_objetivo=obj
         )
         return res
     except ValueError as ve:
@@ -5688,14 +5682,15 @@ async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
 # ====================================================================
 
 @app.get("/api/asesorias-quirurgicas/{asesoria_id}/datos-consentimiento-whatsapp")
-def obtener_datos_consentimiento_asesoria_endpoint(asesoria_id: str):
+def obtener_datos_consentimiento_asesoria_endpoint(asesoria_id: str, ojo: Optional[str] = Query(None)):
     """
     Recupera los datos sugeridos y el enlace de firma para el Consentimiento Informado,
     resolviendo la jerarquía de fecha y el estado de la ventana de 24h de Meta.
+    Soporta filtro por ojo en cirugías bilaterales escalonadas (?ojo=OD o ?ojo=OI).
     """
     try:
         from app.db import get_datos_consentimiento_whatsapp
-        datos = get_datos_consentimiento_whatsapp(asesoria_id=asesoria_id)
+        datos = get_datos_consentimiento_whatsapp(asesoria_id=asesoria_id, ojo=ojo)
         if not datos:
             raise HTTPException(status_code=404, detail="No se pudo resolver el caso quirúrgico para consentimiento.")
         return {"success": True, "ok": True, **datos}
@@ -5735,6 +5730,8 @@ class EnviarConsentimientoWhatsAppPayload(BaseModel):
     texto_renderizado: Optional[str] = None
     enlace_firma: Optional[str] = None
     token: Optional[str] = None
+    ojo: Optional[str] = None
+    ojo_objetivo: Optional[str] = None
 
 @app.post("/api/consentimiento-whatsapp/enviar")
 async def enviar_consentimiento_whatsapp_endpoint(
@@ -5770,7 +5767,8 @@ async def enviar_consentimiento_whatsapp_endpoint(
     enlace = payload.enlace_firma
 
     if as_id and not t_id:
-        t_obj = asegurar_turno_para_consentimiento_asesoria(as_id)
+        target_ojo = payload.ojo or payload.ojo_objetivo
+        t_obj = asegurar_turno_para_consentimiento_asesoria(as_id, ojo=target_ojo)
         if t_obj:
             t_id = t_obj.get("id")
             if not token:
@@ -5908,24 +5906,52 @@ async def enviar_consentimiento_whatsapp_endpoint(
         await client.close()
 
 @app.get("/api/asesorias-quirurgicas/{asesoria_id}/consentimiento-pdf")
-def descargar_consentimiento_asesoria_pdf(asesoria_id: str, modo: Optional[str] = None):
+def descargar_consentimiento_asesoria_pdf(
+    asesoria_id: str, 
+    modo: Optional[str] = None,
+    ojo: Optional[str] = Query(None),
+    turno_id: Optional[str] = Query(None)
+):
     """
     Sirve el PDF oficial de consentimiento informado:
+    - Soporta cirugías bilaterales escalonadas con ?ojo=OD o ?ojo=OI o ?turno_id=...
     - Si está firmado digitalmente, sirve el PDF certificado con firma, hash y QR.
     - Si no está firmado (o si modo='papel'), genera y sirve el PDF en blanco para firma manuscrita en papel.
     """
     try:
-        from app.db import asegurar_turno_para_consentimiento_asesoria, generar_pdf_consentimiento_papel
-        turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+        from app.db import (
+            asegurar_turno_para_consentimiento_asesoria,
+            asegurar_turnos_para_consentimiento_asesoria,
+            get_turno_quirofano_by_id,
+            generar_pdf_consentimiento_papel
+        )
+        turno = None
+        if turno_id:
+            turno = get_turno_quirofano_by_id(turno_id)
+        elif ojo:
+            info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id)
+            if info_dual.get("es_bilateral_escalonada"):
+                obj_l = ojo.lower()
+                p2 = info_dual.get("segundo_ojo") or {}
+                if obj_l in ["segundo_ojo", "2do_ojo", (p2.get("ojo") or "").lower()]:
+                    turno = get_turno_quirofano_by_id(p2.get("turno_id"))
+                else:
+                    p1 = info_dual.get("primer_ojo") or {}
+                    turno = get_turno_quirofano_by_id(p1.get("turno_id"))
+            else:
+                turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id, ojo=ojo)
+
+        if not turno:
+            turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
         if not turno:
             raise HTTPException(status_code=404, detail="Caso quirúrgico no encontrado.")
             
-        turno_id = turno["id"]
+        t_id = turno["id"]
         estado_c = turno.get("consentimiento_estado")
         
         # Si ya está firmado digitalmente y no se pide explícitamente papel en blanco
         if estado_c == "firmado_digital" and modo != "papel":
-            return servir_archivo_estatico(f"consentimiento_{turno_id}.pdf")
+            return servir_archivo_estatico(f"consentimiento_{t_id}.pdf")
             
         # Si no está firmado o es para papel, generar PDF en blanco
         filename_papel = generar_pdf_consentimiento_papel(turno)
@@ -5938,11 +5964,13 @@ def descargar_consentimiento_asesoria_pdf(asesoria_id: str, modo: Optional[str] 
 def registrar_firma_papel_endpoint(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
     """
     Registra que el paciente firmó el consentimiento informado en formato físico/papel en la clínica.
+    Soporta 'ojo_objetivo' ('primer_ojo', 'segundo_ojo', 'ambos', 'OD', 'OI').
     """
     try:
         from app.db import registrar_firma_papel_asesoria
         obs = payload.get("observaciones") or payload.get("notas") or ""
-        res = registrar_firma_papel_asesoria(asesoria_id, observaciones=obs)
+        ojo_obj = payload.get("ojo_objetivo") or payload.get("ojo")
+        res = registrar_firma_papel_asesoria(asesoria_id, observaciones=obs, ojo_objetivo=ojo_obj)
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error") or "Error al registrar firma en papel.")
         return res

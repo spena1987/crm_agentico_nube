@@ -550,29 +550,23 @@ async def despachar_consentimiento_informado_inteligente(
     turno_id: Optional[str] = None,
     asesoria_id: Optional[str] = None,
     operador_nombre: Optional[str] = None,
-    forzar_plantilla: bool = False
+    forzar_plantilla: bool = False,
+    ojo_objetivo: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Enrutador Inteligente (Smart Template Router) para Consentimientos Informados de WhatsApp.
-    1. Si la ventana de 24h de Meta está abierta (o el operador no fuerza plantilla):
-       Intenta enviar texto libre detallado con el enlace directo.
+    1. Si es bilateral escalonada y se pasa 'ambos', despacha ambos actos quirúrgicos secuencialmente.
+    2. Si se especifica ojo_objetivo ('primer_ojo', 'segundo_ojo', 'OD', 'OI'), despacha el turno correspondiente a ese acto.
+    3. Si la ventana de 24h de Meta está abierta, intenta texto libre con enlace directo.
        Si Meta rechaza por ventana cerrada (error 131047 / 131026), conmuta automáticamente a la plantilla oficial.
-    2. Si la ventana de 24h de Meta está cerrada:
-       Despacha directamente la plantilla oficial de Meta aprobada 'consentimiento_informado_quirurgico_v1'
-       (categoría UTILITY, idioma es_AR) con sus 5 parámetros sanitizados:
-         {{1}}: paciente_nombre
-         {{2}}: practica_nombre (+ ojo)
-         {{3}}: turno_fecha
-         {{4}}: cirujano_nombre
-         {{5}}: enlace_firma
-    3. Registra el impacto en turnos_quirofano, asesorias_quirurgicas, bitácora de evolución
-       y en la tabla de mensajes con badge de plantilla oficial y wamid para tildes de entrega.
+    4. Si la ventana de 24h está cerrada, despacha directamente 'consentimiento_informado_quirurgico_v1'.
     """
     import re
     import secrets
     from datetime import datetime, timezone, timedelta
     from app.db import (
         asegurar_turno_para_consentimiento_asesoria,
+        asegurar_turnos_para_consentimiento_asesoria,
         get_turno_quirofano_by_id,
         actualizar_turno_quirofano,
         check_patient_24h_window,
@@ -585,15 +579,45 @@ async def despachar_consentimiento_informado_inteligente(
     )
     from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 
+    # Manejo de despacho para ambos ojos si se solicita 'ambos'
+    if asesoria_id and not turno_id and (ojo_objetivo or "").lower() in ["ambos", "ambos_ojos", "ao"]:
+        info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id)
+        if info_dual.get("es_bilateral_escalonada"):
+            tid1 = (info_dual.get("primer_ojo") or {}).get("turno_id")
+            tid2 = (info_dual.get("segundo_ojo") or {}).get("turno_id")
+            res1 = await despachar_consentimiento_informado_inteligente(turno_id=tid1, operador_nombre=operador_nombre, forzar_plantilla=forzar_plantilla) if tid1 else None
+            res2 = await despachar_consentimiento_informado_inteligente(turno_id=tid2, operador_nombre=operador_nombre, forzar_plantilla=forzar_plantilla) if tid2 else None
+            return {
+                "success": bool(res1 and res1.get("success")),
+                "ok": True,
+                "mensaje": "Consentimientos informados de ambos ojos despachados por WhatsApp.",
+                "despacho_primer_ojo": res1,
+                "despacho_segundo_ojo": res2
+            }
+
     # 1. Resolver Turno y Asesoría
     turno = None
     t_id = turno_id
     as_id = asesoria_id
 
     if as_id and not t_id:
-        turno = asegurar_turno_para_consentimiento_asesoria(as_id)
-        if turno:
-            t_id = turno.get("id")
+        info_dual = asegurar_turnos_para_consentimiento_asesoria(as_id)
+        if info_dual.get("es_bilateral_escalonada"):
+            obj_l = (ojo_objetivo or "primer_ojo").lower()
+            p2 = info_dual.get("segundo_ojo") or {}
+            p2_ojo = (p2.get("ojo") or "OI").lower()
+            if obj_l in ["segundo_ojo", "2do_ojo", p2_ojo] and p2.get("turno_id"):
+                t_id = p2["turno_id"]
+                turno = get_turno_quirofano_by_id(t_id)
+            else:
+                p1 = info_dual.get("primer_ojo") or {}
+                t_id = p1.get("turno_id")
+                if t_id:
+                    turno = get_turno_quirofano_by_id(t_id)
+        else:
+            turno = asegurar_turno_para_consentimiento_asesoria(as_id)
+            if turno:
+                t_id = turno.get("id")
     elif t_id:
         turno = get_turno_quirofano_by_id(t_id)
         if turno and turno.get("asesoria_id") and not as_id:

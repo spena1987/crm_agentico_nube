@@ -257,10 +257,15 @@ export default function CasoFormularioActivo({
 
   // Consentimiento Informado (Dual: WhatsApp Digital & Impresión en Papel)
   const [consentimiento, setConsentimiento] = useState<any>(null)
+  const [esBilateralConsentimiento, setEsBilateralConsentimiento] = useState<boolean>(false)
+  const [primerOjoConsentimiento, setPrimerOjoConsentimiento] = useState<any>(null)
+  const [segundoOjoConsentimiento, setSegundoOjoConsentimiento] = useState<any>(null)
   const [cargandoConsentimiento, setCargandoConsentimiento] = useState(false)
   const [enviandoConsentimientoWa, setEnviandoConsentimientoWa] = useState(false)
   const [modalConsentimientoWhatsAppOpen, setModalConsentimientoWhatsAppOpen] = useState(false)
+  const [modalOjoObjetivo, setModalOjoObjetivo] = useState<string | undefined>(undefined)
   const [mostrandoModalFirmaPapel, setMostrandoModalFirmaPapel] = useState(false)
+  const [ojoObjetivoFirmaPapel, setOjoObjetivoFirmaPapel] = useState<'primer_ojo' | 'segundo_ojo' | 'ambos'>('ambos')
   const [obsFirmaPapel, setObsFirmaPapel] = useState('')
   const [guardandoFirmaPapel, setGuardandoFirmaPapel] = useState(false)
   const [feedbackConsentimiento, setFeedbackConsentimiento] = useState<{ tipo: 'ok' | 'err'; mensaje: string } | null>(null)
@@ -349,8 +354,11 @@ export default function CasoFormularioActivo({
       const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/consentimiento`)
       if (res.ok) {
         const data = await res.json()
-        if (data?.ok && data.consentimiento) {
-          setConsentimiento(data.consentimiento)
+        if (data?.ok) {
+          setEsBilateralConsentimiento(Boolean(data.es_bilateral_escalonada))
+          setPrimerOjoConsentimiento(data.primer_ojo || null)
+          setSegundoOjoConsentimiento(data.segundo_ojo || null)
+          setConsentimiento(data.consentimiento || null)
         }
       }
     } catch (err: any) {
@@ -364,17 +372,17 @@ export default function CasoFormularioActivo({
     fetchConsentimientoCaso()
   }, [caso?.id])
 
-  const handleEnviarConsentimientoWA = async () => {
+  const handleEnviarConsentimientoWA = async (ojoObjetivo: string = 'ambos') => {
     if (!caso?.id) return
     try {
       setEnviandoConsentimientoWa(true)
       setFeedbackConsentimiento(null)
-      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/enviar-consentimiento-wa`, {
+      const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/enviar-consentimiento-wa?ojo_objetivo=${encodeURIComponent(ojoObjetivo)}`, {
         method: 'POST'
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data?.ok) {
-        setFeedbackConsentimiento({ tipo: 'ok', mensaje: 'Consentimiento enviado por WhatsApp con éxito.' })
+        setFeedbackConsentimiento({ tipo: 'ok', mensaje: data.mensaje || 'Consentimiento enviado por WhatsApp con éxito.' })
         await fetchConsentimientoCaso()
       } else {
         setFeedbackConsentimiento({ tipo: 'err', mensaje: data?.detail || 'Error al enviar por WhatsApp.' })
@@ -393,7 +401,10 @@ export default function CasoFormularioActivo({
       setFeedbackConsentimiento(null)
       const res = await apiFetch(`/api/asesorias-quirurgicas/${caso.id}/registrar-firma-papel`, {
         method: 'POST',
-        body: JSON.stringify({ observaciones: obsFirmaPapel.trim() })
+        body: JSON.stringify({
+          observaciones: obsFirmaPapel.trim(),
+          ojo_objetivo: ojoObjetivoFirmaPapel
+        })
       })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data?.ok) {
@@ -416,16 +427,30 @@ export default function CasoFormularioActivo({
     }
   }
 
-  const handleImprimirConsentimientoPapel = () => {
+  const handleImprimirConsentimientoPapel = (ojo?: string) => {
     const backendUrl = BACKEND_URL || ''
-    const url = `${backendUrl}/api/asesorias-quirurgicas/${caso.id}/consentimiento-pdf?modo=papel`
+    const url = `${backendUrl}/api/asesorias-quirurgicas/${caso.id}/consentimiento-pdf?modo=papel${ojo ? `&ojo=${ojo}` : ''}`
     window.open(url, '_blank')
   }
 
-  const handleVerConsentimientoFirmado = () => {
+  const handleVerConsentimientoFirmado = (ojo?: string, turnoId?: string) => {
     const backendUrl = BACKEND_URL || ''
-    const url = `${backendUrl}/api/asesorias-quirurgicas/${caso.id}/consentimiento-pdf`
+    const query = [
+      ojo ? `ojo=${ojo}` : null,
+      turnoId ? `turno_id=${turnoId}` : null
+    ].filter(Boolean).join('&')
+    const url = `${backendUrl}/api/asesorias-quirurgicas/${caso.id}/consentimiento-pdf${query ? `?${query}` : ''}`
     window.open(url, '_blank')
+  }
+
+  const abrirModalWhatsApp = (ojo?: string) => {
+    setModalOjoObjetivo(ojo)
+    setModalConsentimientoWhatsAppOpen(true)
+  }
+
+  const abrirModalFirmaPapel = (ojoObjetivo: 'primer_ojo' | 'segundo_ojo' | 'ambos' = 'ambos') => {
+    setOjoObjetivoFirmaPapel(ojoObjetivo)
+    setMostrandoModalFirmaPapel(true)
   }
 
   // Turnos activos en Quirófano
@@ -2814,26 +2839,51 @@ export default function CasoFormularioActivo({
             onChange={(nuevoChecklist) => setChecklist(nuevoChecklist)}
           />
 
-          {/* Card: Consentimiento Informado Quirúrgico (Dual: Digital WhatsApp / Papel Físico) */}
+          {/* Card: Consentimiento Informado Quirúrgico (Dual Bilateral Escalonado o Unitario) */}
           <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-3">
+            {/* Header de la Tarjeta */}
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                <div className={`p-1.5 rounded-lg border ${
+                  esBilateralConsentimiento
+                    ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+                    : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
+                }`}>
                   <FileSignature size={16} />
                 </div>
                 <div>
                   <div className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
-                    Consentimiento Informado
+                    {esBilateralConsentimiento ? 'Consentimiento Informado Dual' : 'Consentimiento Informado'}
                     {cargandoConsentimiento && <Loader2 size={12} className="animate-spin text-gray-400" />}
                   </div>
                   <p className="text-[10px] text-gray-400">
-                    Firma digital anticipada por WhatsApp o impresión en papel
+                    {esBilateralConsentimiento
+                      ? 'Cirugía Bilateral: 1 consentimiento independiente por cada ojo / acto quirúrgico'
+                      : 'Firma digital anticipada por WhatsApp o impresión en papel'}
                   </p>
                 </div>
               </div>
 
-              {/* Badge de Estado del Consentimiento */}
-              {consentimiento?.firmado ? (
+              {/* Badge de Estado Global / Resumen */}
+              {esBilateralConsentimiento ? (
+                primerOjoConsentimiento?.firmado && segundoOjoConsentimiento?.firmado ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                    <CheckCircle2 size={11} /> Ambos Ojos Firmados
+                  </span>
+                ) : primerOjoConsentimiento?.firmado || segundoOjoConsentimiento?.firmado ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                    <Clock size={11} /> 1 de 2 Firmado
+                  </span>
+                ) : (primerOjoConsentimiento?.estado?.includes('enviado') || segundoOjoConsentimiento?.estado?.includes('enviado')) ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 bg-sky-500/10 border border-sky-500/30 text-sky-400">
+                    <Clock size={11} /> Enviado WhatsApp
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-neutral-800 border border-neutral-700 text-gray-400">
+                    Pendientes
+                  </span>
+                )
+              ) : consentimiento?.firmado ? (
                 <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 border ${
                   consentimiento.modo_firma === 'papel'
                     ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
@@ -2872,71 +2922,261 @@ export default function CasoFormularioActivo({
               </div>
             )}
 
-            {/* Acciones Rápidas de Consentimiento */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setModalConsentimientoWhatsAppOpen(true)}
-                disabled={guardando}
-                className="px-2.5 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-emerald-500/30 cursor-pointer shadow-sm"
-                title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
-              >
-                <Send size={12} />
-                <span>
-                  {consentimiento?.estado === 'enviado_wa' || consentimiento?.estado === 'enviado_whatsapp'
-                    ? 'Reenviar WhatsApp'
-                    : 'Enviar por WhatsApp'}
-                </span>
-              </button>
+            {/* VISTA DUAL: CIRUGÍA BILATERAL ESCALONADA */}
+            {esBilateralConsentimiento ? (
+              <div className="space-y-2.5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {/* SUB-CARD 1: PRIMER OJO */}
+                  <div className="p-2.5 rounded-lg bg-neutral-950/70 border border-neutral-800 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-[11px] font-bold text-gray-200">
+                          1° {primerOjoConsentimiento?.ojo_desc || 'Primer Ojo'} ({primerOjoConsentimiento?.ojo || 'OD'})
+                        </span>
+                        {primerOjoConsentimiento?.firmado ? (
+                          <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-semibold border ${
+                            primerOjoConsentimiento.modo_firma === 'papel'
+                              ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                          }`}>
+                            {primerOjoConsentimiento.modo_firma === 'papel' ? 'Papel' : 'Digital'}
+                          </span>
+                        ) : primerOjoConsentimiento?.estado?.includes('enviado') ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                            Enviado WA
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[9.5px] font-medium bg-neutral-800 text-gray-400">
+                            Pendiente
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-gray-400 flex items-center gap-1">
+                        <Calendar size={11} className="text-gray-500" />
+                        <span>{primerOjoConsentimiento?.fecha || 'Fecha no definida'}</span>
+                      </div>
+                    </div>
 
-              <button
-                type="button"
-                onClick={handleImprimirConsentimientoPapel}
-                disabled={guardando}
-                className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-neutral-700 cursor-pointer"
-                title="Abrir e imprimir el consentimiento oficial en blanco para firma manuscrita"
-              >
-                <Printer size={12} className="text-gray-300" />
-                <span>Imprimir p/ Papel</span>
-              </button>
-            </div>
+                    <div className="space-y-1.5 pt-1 border-t border-neutral-800/80">
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => abrirModalWhatsApp(primerOjoConsentimiento?.ojo || 'OD')}
+                          disabled={guardando}
+                          className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-emerald-500/30 cursor-pointer"
+                          title="Enviar consentimiento del 1° ojo por WhatsApp"
+                        >
+                          <Send size={11} />
+                          <span>WA 1° Ojo</span>
+                        </button>
 
-            {/* Acciones Secundarias: Registrar Firma Papel o Ver PDF Firmado */}
-            <div className="pt-1 flex items-center justify-between text-[11px] gap-2">
-              {!consentimiento?.firmado ? (
-                <button
-                  type="button"
-                  onClick={() => setMostrandoModalFirmaPapel(!mostrandoModalFirmaPapel)}
-                  className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <CheckCircle2 size={12} />
-                  <span>¿Firmó en papel en clínica? Asentar aquí</span>
-                </button>
-              ) : (
-                <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleImprimirConsentimientoPapel(primerOjoConsentimiento?.ojo || 'OD')}
+                          disabled={guardando}
+                          className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-neutral-700 cursor-pointer"
+                          title="Imprimir documento oficial en blanco del 1° ojo"
+                        >
+                          <Printer size={11} className="text-gray-300" />
+                          <span>Papel</span>
+                        </button>
+                      </div>
+
+                      {primerOjoConsentimiento?.firmado ? (
+                        <button
+                          type="button"
+                          onClick={() => handleVerConsentimientoFirmado(primerOjoConsentimiento?.ojo, primerOjoConsentimiento?.turno_id)}
+                          className="w-full py-0.5 text-center text-[10.5px] text-emerald-400 hover:text-emerald-300 hover:underline flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Download size={11} />
+                          <span>Ver PDF Firmado (1° Ojo)</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => abrirModalFirmaPapel('primer_ojo')}
+                          className="w-full py-0.5 text-center text-[10px] text-blue-400 hover:text-blue-300 hover:underline flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <CheckCircle2 size={11} />
+                          <span>Asentar firma física 1° ojo</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SUB-CARD 2: SEGUNDO OJO */}
+                  <div className="p-2.5 rounded-lg bg-neutral-950/70 border border-neutral-800 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-[11px] font-bold text-gray-200">
+                          2° {segundoOjoConsentimiento?.ojo_desc || 'Segundo Ojo'} ({segundoOjoConsentimiento?.ojo || 'OI'})
+                        </span>
+                        {segundoOjoConsentimiento?.firmado ? (
+                          <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-semibold border ${
+                            segundoOjoConsentimiento.modo_firma === 'papel'
+                              ? 'bg-blue-500/10 border-blue-500/30 text-blue-400'
+                              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                          }`}>
+                            {segundoOjoConsentimiento.modo_firma === 'papel' ? 'Papel' : 'Digital'}
+                          </span>
+                        ) : segundoOjoConsentimiento?.estado?.includes('enviado') ? (
+                          <span className="px-1.5 py-0.5 rounded text-[9.5px] font-semibold bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                            Enviado WA
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[9.5px] font-medium bg-neutral-800 text-gray-400">
+                            Pendiente
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-gray-400 flex items-center gap-1">
+                        <Calendar size={11} className="text-gray-500" />
+                        <span>{segundoOjoConsentimiento?.fecha || 'Fecha no definida'}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1 border-t border-neutral-800/80">
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => abrirModalWhatsApp(segundoOjoConsentimiento?.ojo || 'OI')}
+                          disabled={guardando}
+                          className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-emerald-500/30 cursor-pointer"
+                          title="Enviar consentimiento del 2° ojo por WhatsApp"
+                        >
+                          <Send size={11} />
+                          <span>WA 2° Ojo</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleImprimirConsentimientoPapel(segundoOjoConsentimiento?.ojo || 'OI')}
+                          disabled={guardando}
+                          className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-neutral-700 cursor-pointer"
+                          title="Imprimir documento oficial en blanco del 2° ojo"
+                        >
+                          <Printer size={11} className="text-gray-300" />
+                          <span>Papel</span>
+                        </button>
+                      </div>
+
+                      {segundoOjoConsentimiento?.firmado ? (
+                        <button
+                          type="button"
+                          onClick={() => handleVerConsentimientoFirmado(segundoOjoConsentimiento?.ojo, segundoOjoConsentimiento?.turno_id)}
+                          className="w-full py-0.5 text-center text-[10.5px] text-emerald-400 hover:text-emerald-300 hover:underline flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Download size={11} />
+                          <span>Ver PDF Firmado (2° Ojo)</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => abrirModalFirmaPapel('segundo_ojo')}
+                          className="w-full py-0.5 text-center text-[10px] text-blue-400 hover:text-blue-300 hover:underline flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <CheckCircle2 size={11} />
+                          <span>Asentar firma física 2° ojo</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Acciones Masivas Unificadas Bilaterales */}
+                <div className="pt-1 border-t border-neutral-800/80 flex items-center justify-between text-[11px] gap-2">
                   <button
                     type="button"
-                    onClick={handleVerConsentimientoFirmado}
-                    className="text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer"
+                    onClick={() => abrirModalWhatsApp('ambos')}
+                    className="text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
                   >
-                    <Download size={12} />
-                    <span>Ver PDF Oficial Firmado</span>
+                    <Send size={11} />
+                    <span>Asistente WhatsApp (Ambos Ojos)</span>
                   </button>
-                  {consentimiento.modo_firma === 'papel' && (
-                    <span className="text-[10px] text-gray-400 italic">
-                      ({consentimiento.observaciones_papel || 'Firma física manuscrita'})
-                    </span>
+
+                  {(!primerOjoConsentimiento?.firmado || !segundoOjoConsentimiento?.firmado) && (
+                    <button
+                      type="button"
+                      onClick={() => abrirModalFirmaPapel('ambos')}
+                      className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                    >
+                      <CheckCircle2 size={11} />
+                      <span>Asentar Ambos en Papel</span>
+                    </button>
                   )}
                 </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              /* VISTA ESTÁNDAR: CIRUGÍA UNILATERAL O ACTO ÚNICO */
+              <div className="space-y-3">
+                {/* Acciones Rápidas de Consentimiento */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => abrirModalWhatsApp()}
+                    disabled={guardando}
+                    className="px-2.5 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-emerald-500/30 cursor-pointer shadow-sm"
+                    title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
+                  >
+                    <Send size={12} />
+                    <span>
+                      {consentimiento?.estado === 'enviado_wa' || consentimiento?.estado === 'enviado_whatsapp'
+                        ? 'Reenviar WhatsApp'
+                        : 'Enviar por WhatsApp'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleImprimirConsentimientoPapel()}
+                    disabled={guardando}
+                    className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-neutral-700 cursor-pointer"
+                    title="Abrir e imprimir el consentimiento oficial en blanco para firma manuscrita"
+                  >
+                    <Printer size={12} className="text-gray-300" />
+                    <span>Imprimir p/ Papel</span>
+                  </button>
+                </div>
+
+                {/* Acciones Secundarias: Registrar Firma Papel o Ver PDF Firmado */}
+                <div className="pt-1 flex items-center justify-between text-[11px] gap-2">
+                  {!consentimiento?.firmado ? (
+                    <button
+                      type="button"
+                      onClick={() => abrirModalFirmaPapel('ambos')}
+                      className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <CheckCircle2 size={12} />
+                      <span>¿Firmó en papel en clínica? Asentar aquí</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleVerConsentimientoFirmado()}
+                        className="text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download size={12} />
+                        <span>Ver PDF Oficial Firmado</span>
+                      </button>
+                      {consentimiento.modo_firma === 'papel' && (
+                        <span className="text-[10px] text-gray-400 italic">
+                          ({consentimiento.observaciones_papel || 'Firma física manuscrita'})
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Panel Desplegable para Asentar Firma en Papel */}
-            {mostrandoModalFirmaPapel && !consentimiento?.firmado && (
+            {mostrandoModalFirmaPapel && (
               <div className="p-3 bg-neutral-950 border border-blue-500/40 rounded-lg space-y-2.5 animate-fade-in shadow-inner">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5">
-                    <CheckCircle2 size={13} /> Asentar Consentimiento Firmado en Papel
+                    <CheckCircle2 size={13} />
+                    Asentar Consentimiento Firmado en Papel
                   </span>
                   <button
                     type="button"
@@ -2946,8 +3186,49 @@ export default function CasoFormularioActivo({
                     <X size={13} />
                   </button>
                 </div>
+
+                {/* Si es bilateral escalonada, selector de objetivo */}
+                {esBilateralConsentimiento && (
+                  <div className="flex items-center gap-2 text-[10.5px]">
+                    <span className="text-gray-400">Acto objetivo:</span>
+                    <button
+                      type="button"
+                      onClick={() => setOjoObjetivoFirmaPapel('primer_ojo')}
+                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${
+                        ojoObjetivoFirmaPapel === 'primer_ojo'
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-neutral-900 text-gray-400 border-neutral-700'
+                      }`}
+                    >
+                      1° Ojo ({primerOjoConsentimiento?.ojo || 'OD'})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOjoObjetivoFirmaPapel('segundo_ojo')}
+                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${
+                        ojoObjetivoFirmaPapel === 'segundo_ojo'
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-neutral-900 text-gray-400 border-neutral-700'
+                      }`}
+                    >
+                      2° Ojo ({segundoOjoConsentimiento?.ojo || 'OI'})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOjoObjetivoFirmaPapel('ambos')}
+                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${
+                        ojoObjetivoFirmaPapel === 'ambos'
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-neutral-900 text-gray-400 border-neutral-700'
+                      }`}
+                    >
+                      Ambos Ojos
+                    </button>
+                  </div>
+                )}
+
                 <p className="text-[10.5px] text-gray-300">
-                  Esta acción registrará que el paciente firmó físicamente el documento impreso, marcará el ítem en el Checklist Prequirúrgico y actualizará Quirófano.
+                  Esta acción registrará que el paciente firmó físicamente el documento impreso, marcará el ítem en el Checklist Prequirúrgico y sincronizará con Quirófano.
                 </p>
                 <input
                   type="text"
@@ -2968,7 +3249,7 @@ export default function CasoFormularioActivo({
                     type="button"
                     onClick={handleRegistrarFirmaPapel}
                     disabled={guardandoFirmaPapel}
-                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-bold flex items-center gap-1"
+                    className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                   >
                     {guardandoFirmaPapel ? (
                       <Loader2 size={12} className="animate-spin" />
@@ -3528,11 +3809,15 @@ export default function CasoFormularioActivo({
       {modalConsentimientoWhatsAppOpen && caso?.id && (
         <ModalEnviarConsentimientoWhatsApp
           isOpen={modalConsentimientoWhatsAppOpen}
-          onClose={() => setModalConsentimientoWhatsAppOpen(false)}
+          onClose={() => {
+            setModalConsentimientoWhatsAppOpen(false)
+            setModalOjoObjetivo(undefined)
+          }}
           casoId={caso.id}
           pacienteId={pacienteId}
           pacienteNombreDefault={pacienteNombre}
           pacienteTelefonoDefault={pacienteTelefono || undefined}
+          ojoDefault={modalOjoObjetivo}
           onConsentimientoEnviado={() => {
             fetchConsentimientoCaso()
             setFeedbackConsentimiento({ tipo: 'ok', mensaje: 'Consentimiento Informado enviado por WhatsApp con éxito.' })

@@ -39,6 +39,18 @@ interface TemplateInfo {
   body_text?: string
 }
 
+interface InfoOjoBilateral {
+  ojo: string
+  ojo_desc: string
+  fecha: string
+  fecha_iso?: string
+  cirugia: string
+  enlace_firma: string
+  turno_id?: string
+  token?: string
+  quirofano_nombre?: string
+}
+
 interface DatosConsentimientoBackend {
   caso_id?: string
   turno_id?: string
@@ -65,6 +77,9 @@ interface DatosConsentimientoBackend {
   plantilla_recomendada: string
   consentimiento_estado?: string
   pdf_url?: string
+  es_bilateral_escalonada?: boolean
+  primer_ojo?: InfoOjoBilateral
+  segundo_ojo?: InfoOjoBilateral
 }
 
 interface ModalEnviarConsentimientoWhatsAppProps {
@@ -75,6 +90,7 @@ interface ModalEnviarConsentimientoWhatsAppProps {
   pacienteId?: string
   pacienteNombreDefault?: string
   pacienteTelefonoDefault?: string
+  ojoDefault?: string
   onConsentimientoEnviado?: () => void
 }
 
@@ -86,6 +102,7 @@ export default function ModalEnviarConsentimientoWhatsApp({
   pacienteId,
   pacienteNombreDefault,
   pacienteTelefonoDefault,
+  ojoDefault,
   onConsentimientoEnviado
 }: ModalEnviarConsentimientoWhatsAppProps) {
   const [cargando, setCargando] = useState<boolean>(true)
@@ -96,6 +113,9 @@ export default function ModalEnviarConsentimientoWhatsApp({
 
   // Datos de origen devueltos por el backend
   const [datosOriginales, setDatosOriginales] = useState<DatosConsentimientoBackend | null>(null)
+
+  // Selección de ojo en cirugías bilaterales escalonadas
+  const [ojoSeleccionado, setOjoSeleccionado] = useState<'primer_ojo' | 'segundo_ojo' | 'ambos'>('primer_ojo')
 
   // Campos editables
   const [telefono, setTelefono] = useState<string>('')
@@ -136,11 +156,34 @@ export default function ModalEnviarConsentimientoWhatsApp({
           setDatosOriginales(d)
           setTelefono(d.telefono || pacienteTelefonoDefault || '')
           setPacienteNombre(d.saludo_nombre || d.paciente_nombre || pacienteNombreDefault || '')
-          setCirugia(d.cirugia || 'Cirugía Oftalmológica')
-          setFecha(d.fecha || 'Fecha programada')
           setCirujanoNombre(d.cirujano_nombre || 'Médico Cirujano')
-          setEnlaceFirma(d.enlace_firma || '')
           setPlantillasDisponibles(d.plantillas || [])
+
+          let targetOjo: 'primer_ojo' | 'segundo_ojo' | 'ambos' = 'primer_ojo'
+          if (d.es_bilateral_escalonada) {
+            if (ojoDefault === 'OI' || ojoDefault === 'segundo_ojo') {
+              targetOjo = 'segundo_ojo'
+            } else if (ojoDefault === 'ambos') {
+              targetOjo = 'ambos'
+            } else {
+              targetOjo = 'primer_ojo'
+            }
+          }
+          setOjoSeleccionado(targetOjo)
+
+          if (d.es_bilateral_escalonada && targetOjo === 'segundo_ojo' && d.segundo_ojo) {
+            setCirugia(d.segundo_ojo.cirugia || d.cirugia || 'Cirugía Oftalmológica')
+            setFecha(d.segundo_ojo.fecha || d.fecha || 'Fecha programada')
+            setEnlaceFirma(d.segundo_ojo.enlace_firma || d.enlace_firma || '')
+          } else if (d.es_bilateral_escalonada && d.primer_ojo) {
+            setCirugia(d.primer_ojo.cirugia || d.cirugia || 'Cirugía Oftalmológica')
+            setFecha(d.primer_ojo.fecha || d.fecha || 'Fecha programada')
+            setEnlaceFirma(d.primer_ojo.enlace_firma || d.enlace_firma || '')
+          } else {
+            setCirugia(d.cirugia || 'Cirugía Oftalmológica')
+            setFecha(d.fecha || 'Fecha programada')
+            setEnlaceFirma(d.enlace_firma || '')
+          }
 
           // Modo de envío inicial según estado de la ventana 24h
           if (d.is_window_open) {
@@ -170,7 +213,7 @@ export default function ModalEnviarConsentimientoWhatsApp({
     return () => {
       isMounted = false
     }
-  }, [isOpen, casoId, turnoId, pacienteNombreDefault, pacienteTelefonoDefault])
+  }, [isOpen, casoId, turnoId, pacienteNombreDefault, pacienteTelefonoDefault, ojoDefault])
 
   if (!isOpen) return null
 
@@ -181,14 +224,46 @@ export default function ModalEnviarConsentimientoWhatsApp({
     setTimeout(() => setCopiado(false), 2500)
   }
 
+  const handleCambiarOjoObjetivo = (nuevoOjo: 'primer_ojo' | 'segundo_ojo' | 'ambos') => {
+    setOjoSeleccionado(nuevoOjo)
+    setErrorMsg(null)
+    if (!datosOriginales) return
+
+    if (nuevoOjo === 'primer_ojo' && datosOriginales.primer_ojo) {
+      setCirugia(datosOriginales.primer_ojo.cirugia || datosOriginales.cirugia || '')
+      setFecha(datosOriginales.primer_ojo.fecha || datosOriginales.fecha || '')
+      setEnlaceFirma(datosOriginales.primer_ojo.enlace_firma || datosOriginales.enlace_firma || '')
+    } else if (nuevoOjo === 'segundo_ojo' && datosOriginales.segundo_ojo) {
+      setCirugia(datosOriginales.segundo_ojo.cirugia || datosOriginales.cirugia || '')
+      setFecha(datosOriginales.segundo_ojo.fecha || datosOriginales.fecha || '')
+      setEnlaceFirma(datosOriginales.segundo_ojo.enlace_firma || datosOriginales.enlace_firma || '')
+    } else if (nuevoOjo === 'ambos') {
+      setCirugia(datosOriginales.primer_ojo?.cirugia || datosOriginales.cirugia || '')
+      setFecha(datosOriginales.primer_ojo?.fecha || datosOriginales.fecha || '')
+      setEnlaceFirma(datosOriginales.primer_ojo?.enlace_firma || datosOriginales.enlace_firma || '')
+    }
+  }
+
   const handleRestablecer = () => {
     if (!datosOriginales) return
     setTelefono(datosOriginales.telefono || '')
     setPacienteNombre(datosOriginales.saludo_nombre || datosOriginales.paciente_nombre || '')
-    setCirugia(datosOriginales.cirugia || '')
-    setFecha(datosOriginales.fecha || '')
     setCirujanoNombre(datosOriginales.cirujano_nombre || '')
-    setEnlaceFirma(datosOriginales.enlace_firma || '')
+    if (datosOriginales.es_bilateral_escalonada) {
+      if (ojoSeleccionado === 'segundo_ojo' && datosOriginales.segundo_ojo) {
+        setCirugia(datosOriginales.segundo_ojo.cirugia || '')
+        setFecha(datosOriginales.segundo_ojo.fecha || '')
+        setEnlaceFirma(datosOriginales.segundo_ojo.enlace_firma || '')
+      } else {
+        setCirugia(datosOriginales.primer_ojo?.cirugia || datosOriginales.cirugia || '')
+        setFecha(datosOriginales.primer_ojo?.fecha || datosOriginales.fecha || '')
+        setEnlaceFirma(datosOriginales.primer_ojo?.enlace_firma || datosOriginales.enlace_firma || '')
+      }
+    } else {
+      setCirugia(datosOriginales.cirugia || '')
+      setFecha(datosOriginales.fecha || '')
+      setEnlaceFirma(datosOriginales.enlace_firma || '')
+    }
     setErrorMsg(null)
   }
 
@@ -204,6 +279,13 @@ export default function ModalEnviarConsentimientoWhatsApp({
     ? `Hola ${pacienteNombre || '[Paciente]'}, nos comunicamos de Centrovisión respecto a su cirugía programada. Por favor responda a este mensaje para activar el canal y enviarle la documentación prequirúrgica.`
     : `Hola ${pacienteNombre || '[Paciente]'}, le escribimos de Centrovisión respecto a su cirugía de ${cirugia || '[Cirugía]'} programada para el día ${fecha || '[Fecha]'} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, le compartimos su Consentimiento Informado oficial:\n${enlaceFirma || '[Enlace de firma]'}\n\nAnte cualquier consulta, estamos a su disposición.`
 
+  // Mensaje secundario en caso de previsualizar envío de ambos
+  const cuerpoTextoSegundoMensaje = datosOriginales?.es_bilateral_escalonada && datosOriginales.segundo_ojo
+    ? (modoEnvio === 'template' && plantillaSeleccionada === 'apertura_conversacion'
+        ? `[2° Acto Quirúrgico] Apertura para ${datosOriginales.segundo_ojo.cirugia} programada para el ${datosOriginales.segundo_ojo.fecha}.`
+        : `Hola ${pacienteNombre || '[Paciente]'}, le compartimos también el Consentimiento Informado para el 2° Acto Quirúrgico (${datosOriginales.segundo_ojo.cirugia}) programado para el día ${datosOriginales.segundo_ojo.fecha} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Enlace oficial para firma digital:\n${datosOriginales.segundo_ojo.enlace_firma}\n\nMuchas gracias.`)
+    : ''
+
   const handleEnviar = async () => {
     if (!telefono || telefono.trim().length < 8) {
       setErrorMsg('Debe especificar un número de WhatsApp válido.')
@@ -215,39 +297,70 @@ export default function ModalEnviarConsentimientoWhatsApp({
       setErrorMsg(null)
       setExitoMsg(null)
 
-      const payload = {
-        asesoria_id: casoId || datosOriginales?.caso_id || null,
-        turno_id: turnoId || datosOriginales?.turno_id || null,
-        paciente_id: pacienteId || datosOriginales?.paciente_id || null,
-        telefono: telefono.trim(),
-        modo_envio: modoEnvio,
-        template_name: modoEnvio === 'template' ? plantillaSeleccionada : null,
-        language_code: 'es_AR',
-        enlace_firma: enlaceFirma,
-        token: datosOriginales?.token,
-        variables: {
-          paciente_nombre: pacienteNombre,
-          cirugia: cirugia,
-          fecha: fecha,
-          cirujano_nombre: cirujanoNombre,
-          enlace_firma: enlaceFirma
-        },
-        texto_renderizado: cuerpoTextoRenderizado
+      if (datosOriginales?.es_bilateral_escalonada && ojoSeleccionado === 'ambos' && casoId) {
+        // Envío correlativo de ambos actos quirúrgicos
+        const res = await apiFetch(`/api/asesorias-quirurgicas/${casoId}/enviar-consentimiento-wa?ojo_objetivo=ambos`, {
+          method: 'POST'
+        })
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}))
+          throw new Error(errJson.detail || 'Error al despachar consentimientos de ambos ojos.')
+        }
+        const data = await res.json()
+        setExitoMsg(data.mensaje || 'Consentimientos informados de ambos ojos despachados por WhatsApp.')
+      } else {
+        // Envío individual de acto quirúrgico
+        let targetTurnoId = turnoId || datosOriginales?.turno_id || null
+        let targetToken = datosOriginales?.token
+        let targetOjo: string | undefined = undefined
+
+        if (datosOriginales?.es_bilateral_escalonada) {
+          if (ojoSeleccionado === 'segundo_ojo' && datosOriginales.segundo_ojo) {
+            targetTurnoId = datosOriginales.segundo_ojo.turno_id || targetTurnoId
+            targetToken = datosOriginales.segundo_ojo.token || targetToken
+            targetOjo = datosOriginales.segundo_ojo.ojo
+          } else if (datosOriginales.primer_ojo) {
+            targetTurnoId = datosOriginales.primer_ojo.turno_id || targetTurnoId
+            targetToken = datosOriginales.primer_ojo.token || targetToken
+            targetOjo = datosOriginales.primer_ojo.ojo
+          }
+        }
+
+        const payload = {
+          asesoria_id: casoId || datosOriginales?.caso_id || null,
+          turno_id: targetTurnoId,
+          paciente_id: pacienteId || datosOriginales?.paciente_id || null,
+          telefono: telefono.trim(),
+          modo_envio: modoEnvio,
+          template_name: modoEnvio === 'template' ? plantillaSeleccionada : null,
+          language_code: 'es_AR',
+          enlace_firma: enlaceFirma,
+          token: targetToken,
+          ojo: targetOjo,
+          variables: {
+            paciente_nombre: pacienteNombre,
+            cirugia: cirugia,
+            fecha: fecha,
+            cirujano_nombre: cirujanoNombre,
+            enlace_firma: enlaceFirma
+          },
+          texto_renderizado: cuerpoTextoRenderizado
+        }
+
+        const res = await apiFetch('/api/consentimiento-whatsapp/enviar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}))
+          throw new Error(errJson.detail || 'Error al despachar el consentimiento por WhatsApp.')
+        }
+
+        const data = await res.json()
+        setExitoMsg(data.mensaje || 'Consentimiento Informado enviado por WhatsApp exitosamente.')
       }
-
-      const res = await apiFetch('/api/consentimiento-whatsapp/enviar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}))
-        throw new Error(errJson.detail || 'Error al despachar el consentimiento por WhatsApp.')
-      }
-
-      const data = await res.json()
-      setExitoMsg(data.mensaje || 'Consentimiento Informado enviado por WhatsApp exitosamente.')
 
       if (onConsentimientoEnviado) {
         onConsentimientoEnviado()
@@ -339,6 +452,78 @@ export default function ModalEnviarConsentimientoWhatsApp({
             <>
               {/* Columna Izquierda: Formulario de Configuración (7 cols) */}
               <div className="lg:col-span-7 space-y-4">
+                {/* Selector de Acto Quirúrgico si es Bilateral Escalonada */}
+                {datosOriginales?.es_bilateral_escalonada && (
+                  <div className="p-3 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 shadow-xs">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        Cirugía Bilateral Escalonada (2 Actos Independientes)
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-indigo-200/70 dark:bg-indigo-900/80 text-indigo-900 dark:text-indigo-200 border border-indigo-300 dark:border-indigo-800">
+                        1 Consentimiento por Ojo / Fecha
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCambiarOjoObjetivo('primer_ojo')}
+                        className={`p-2 rounded-lg text-xs font-semibold text-left transition-all border cursor-pointer ${
+                          ojoSeleccionado === 'primer_ojo'
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold truncate">
+                          1° {datosOriginales.primer_ojo?.ojo_desc || 'Primer Ojo'}
+                        </div>
+                        <div className={`text-[10px] truncate ${ojoSeleccionado === 'primer_ojo' ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                          📅 {datosOriginales.primer_ojo?.fecha || 'Sin fecha'}
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCambiarOjoObjetivo('segundo_ojo')}
+                        className={`p-2 rounded-lg text-xs font-semibold text-left transition-all border cursor-pointer ${
+                          ojoSeleccionado === 'segundo_ojo'
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold truncate">
+                          2° {datosOriginales.segundo_ojo?.ojo_desc || 'Segundo Ojo'}
+                        </div>
+                        <div className={`text-[10px] truncate ${ojoSeleccionado === 'segundo_ojo' ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                          📅 {datosOriginales.segundo_ojo?.fecha || 'Sin fecha'}
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleCambiarOjoObjetivo('ambos')}
+                        className={`p-2 rounded-lg text-xs font-semibold text-left transition-all border cursor-pointer ${
+                          ojoSeleccionado === 'ambos'
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400'
+                        }`}
+                      >
+                        <div className="text-[11px] font-bold">Ambos Ojos</div>
+                        <div className={`text-[10px] ${ojoSeleccionado === 'ambos' ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                          Envío Conjunto (2 msgs)
+                        </div>
+                      </button>
+                    </div>
+
+                    {ojoSeleccionado === 'ambos' && (
+                      <p className="mt-2 text-[10.5px] text-indigo-900 dark:text-indigo-300 bg-white/70 dark:bg-slate-900/60 p-2 rounded-md border border-indigo-200 dark:border-indigo-800">
+                        ℹ️ Se despacharán 2 mensajes independientes con el consentimiento y fecha correspondiente a cada ojo quirúrgico de manera correlativa.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Selector de Modo de Envío */}
                 <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-xl border border-slate-200 dark:border-slate-700/60">
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-2">
@@ -582,8 +767,13 @@ export default function ModalEnviarConsentimientoWhatsApp({
 
                   {/* WhatsApp Chat Body */}
                   <div className="bg-[#efeae2] dark:bg-[#0b141a] p-3 min-h-[340px] max-h-[380px] overflow-y-auto rounded-b-2xl space-y-2 flex flex-col justify-end">
-                    {/* Burbuja del mensaje */}
+                    {/* Burbuja del mensaje principal (1° Acto o mensaje único) */}
                     <div className="bg-[#dcf8c6] dark:bg-[#005c4b] text-slate-900 dark:text-slate-100 p-2.5 rounded-lg rounded-tr-none shadow-sm text-xs space-y-2 self-end max-w-[92%]">
+                      {datosOriginales?.es_bilateral_escalonada && (
+                        <div className="text-[9.5px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 border-b border-black/10 dark:border-white/10 pb-1">
+                          {ojoSeleccionado === 'segundo_ojo' ? 'Acto Quirúrgico: 2° Ojo' : 'Acto Quirúrgico: 1° Ojo'}
+                        </div>
+                      )}
                       <div className="whitespace-pre-line text-[11px] leading-relaxed">
                         {cuerpoTextoRenderizado}
                       </div>
@@ -593,6 +783,23 @@ export default function ModalEnviarConsentimientoWhatsApp({
                         <CheckCheck className="w-3 h-3 text-sky-500" />
                       </div>
                     </div>
+
+                    {/* Burbuja del segundo mensaje si se seleccionó 'ambos' */}
+                    {datosOriginales?.es_bilateral_escalonada && ojoSeleccionado === 'ambos' && cuerpoTextoSegundoMensaje && (
+                      <div className="bg-[#dcf8c6] dark:bg-[#005c4b] text-slate-900 dark:text-slate-100 p-2.5 rounded-lg rounded-tr-none shadow-sm text-xs space-y-2 self-end max-w-[92%] animate-in fade-in duration-300">
+                        <div className="text-[9.5px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 border-b border-black/10 dark:border-white/10 pb-1">
+                          Acto Quirúrgico: 2° Ojo
+                        </div>
+                        <div className="whitespace-pre-line text-[11px] leading-relaxed">
+                          {cuerpoTextoSegundoMensaje}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-1 text-[9px] text-slate-500 dark:text-slate-300">
+                          <span>10:31</span>
+                          <CheckCheck className="w-3 h-3 text-sky-500" />
+                        </div>
+                      </div>
+                    )}
 
                     {modoEnvio === 'template' && plantillaSeleccionada === 'apertura_conversacion' && (
                       <div className="text-[10px] text-center text-slate-500 dark:text-slate-400 bg-white/70 dark:bg-slate-800/70 p-1.5 rounded-md border border-slate-300 dark:border-slate-700">
@@ -647,7 +854,15 @@ export default function ModalEnviarConsentimientoWhatsApp({
               ) : (
                 <>
                   <Send className="w-4 h-4" />
-                  <span>Enviar por WhatsApp</span>
+                  <span>
+                    {datosOriginales?.es_bilateral_escalonada && ojoSeleccionado === 'ambos'
+                      ? 'Enviar Ambos por WhatsApp (2 msgs)'
+                      : datosOriginales?.es_bilateral_escalonada && ojoSeleccionado === 'segundo_ojo'
+                      ? 'Enviar 2° Ojo por WhatsApp'
+                      : datosOriginales?.es_bilateral_escalonada && ojoSeleccionado === 'primer_ojo'
+                      ? 'Enviar 1° Ojo por WhatsApp'
+                      : 'Enviar por WhatsApp'}
+                  </span>
                 </>
               )}
             </button>
