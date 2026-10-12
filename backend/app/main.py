@@ -5676,9 +5676,13 @@ async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
     Envía el consentimiento informado por WhatsApp directamente desde el caso de asesoría quirúrgica.
     """
     try:
-        from app.db import asegurar_turno_para_consentimiento_asesoria, actualizar_turno_quirofano, crear_evolucion_asesoria
-        from app.services.quirofano_service import get_configuracion_quirofano
-        from app.services.whatsapp_baileys import whatsapp_manager
+        from app.db import (
+            asegurar_turno_para_consentimiento_asesoria,
+            actualizar_turno_quirofano,
+            crear_evolucion_asesoria,
+            get_configuracion_quirofano
+        )
+        from app.whatsapp import whatsapp_manager
         
         turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
         if not turno:

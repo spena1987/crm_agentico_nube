@@ -7045,8 +7045,6 @@ def generar_pdf_consentimiento_papel(turno_o_asesoria: Dict[str, Any]) -> str:
     (sin firma digital, con líneas punteadas para paciente y cirujano).
     """
     from app.services.pdf_service import generar_pdf_consentimiento_informado
-    from app.services.nomenclador_multidimensional import get_practica_resumen_operativo, render_consent_template
-    from app.services.quirofano_service import get_configuracion_quirofano
     
     turno = turno_o_asesoria
     paciente = turno.get("pacientes") or {}
