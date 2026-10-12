@@ -238,10 +238,10 @@ export default function SurgicalSettingsCard() {
             </div>
             <p className="text-xs text-[var(--secondary)] max-w-2xl leading-relaxed">
               {seguimientoAutoActivo ? (
-                <>Control central de envíos programados: el motor escanea periódicamente las inactividades y despacha las <strong>Cadencias A (D+3, D+8, D+18)</strong> y <strong>Cadencias B (D+2, D+6, D+13 aviso arancel, D+25)</strong> a través de Meta WhatsApp Cloud API.</>
+                <>Control central de envíos programados: el motor escanea periódicamente las inactividades y despacha las <strong>Cadencias A (D+3, D+8, D+18)</strong> y <strong>Cadencias B (D+2, D+6, D+13 aviso arancel, D+25)</strong> a través de Meta WhatsApp Cloud API. También puedes gobernarlo desde el <a href="/ajustes?tab=automatismos" className="text-blue-400 underline font-semibold hover:text-blue-300">Centro de Automatismos</a>.</>
               ) : (
                 <span className="text-amber-300/90 font-medium">
-                  ⚠️ <strong>Automatismo desactivado centralmente:</strong> No se despachará ningún toque programado a ningún paciente, independientemente del estado de su caso. Ideal para frenar mensajes durante pruebas, feriados o mantenimiento asistencial.
+                  ⚠️ <strong>Automatismo desactivado centralmente:</strong> No se despachará ningún toque programado a ningún paciente. Puedes reactivarlo aquí o en el <a href="/ajustes?tab=automatismos" className="text-amber-200 underline font-semibold">Centro de Automatismos</a>.
                 </span>
               )}
             </p>

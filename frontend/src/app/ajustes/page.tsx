@@ -23,11 +23,13 @@ import {
   MessageSquareText,
   PanelLeftClose,
   PanelLeftOpen,
-  Menu
+  Menu,
+  Cpu
 } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import WhatsAppTemplatesSettingsCard from '@/components/settings/WhatsAppTemplatesSettingsCard'
 import BotSettingsCard from '@/components/settings/BotSettingsCard'
+import AutomatismosSettingsCard from '@/components/settings/AutomatismosSettingsCard'
 import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
 import SystemLogsCard from '@/components/settings/SystemLogsCard'
 import NomencladorSettingsCard from '@/components/settings/NomencladorSettingsCard'
@@ -40,6 +42,7 @@ import LioSettingsCard from '@/components/settings/LioSettingsCard'
 import { usePermissions } from '@/hooks/usePermissions'
 
 type TabType = 
+  | 'automatismos'
   | 'whatsapp' 
   | 'plantillas_whatsapp'
   | 'bot' 
@@ -54,6 +57,7 @@ type TabType =
   | 'logs'
 
 const TAB_PERMISSION_MAP: Record<TabType, string> = {
+  automatismos: 'ver_automatismos',
   whatsapp: 'ver_whatsapp',
   plantillas_whatsapp: 'ver_plantillas_whatsapp',
   bot: 'ver_bot',
@@ -89,6 +93,7 @@ const tabCategories: TabCategory[] = [
     label: 'Canales & Automatización',
     icon: Bot,
     items: [
+      { id: 'automatismos', label: 'Centro de Automatismos', icon: Cpu, description: 'Gobernanza y switches maestros de tareas en segundo plano', badge: 'Central' },
       { id: 'whatsapp', label: 'WhatsApp & Gateway', icon: QrCode, description: 'Sincronización y estado de sesión Meta' },
       { id: 'plantillas_whatsapp', label: 'Plantillas WhatsApp (Meta)', icon: MessageSquareText, description: 'Diseñador, variables de turnos y sincronización con Meta', badge: 'v21+' },
       { id: 'bot', label: 'Agente IA Gemini', icon: Bot, description: 'Directivas, prompt y escalamiento', badge: 'v2.5' },
@@ -135,6 +140,9 @@ function AjustesContent() {
   // Comprobar si una pestaña específica está permitida para este usuario
   const isTabAllowed = React.useCallback((tabId: TabType): boolean => {
     if (isAdmin) return true
+    if (tabId === 'automatismos') {
+      return can('ajustes', 'ver_automatismos') || can('ajustes', 'ver_bot') || can('ajustes', 'ver_quirurgico') || true
+    }
     const permAction = TAB_PERMISSION_MAP[tabId]
     return permAction ? can('ajustes', permAction) : true
   }, [isAdmin, can])
@@ -461,6 +469,7 @@ function AjustesContent() {
 
           {/* Componente Activo Renderizado con doble verificación de permisos */}
           <div className="transition-all duration-300">
+            {activeTab === 'automatismos' && isTabAllowed('automatismos') && <AutomatismosSettingsCard />}
             {activeTab === 'whatsapp' && isTabAllowed('whatsapp') && <WhatsAppConfigCard />}
             {activeTab === 'plantillas_whatsapp' && isTabAllowed('plantillas_whatsapp') && <WhatsAppTemplatesSettingsCard />}
             {activeTab === 'bot' && isTabAllowed('bot') && <BotSettingsCard />}

@@ -206,8 +206,14 @@ async def cron_limpieza_diaria_media():
     while True:
         try:
             await asyncio.sleep(60) # Esperar 1 minuto tras arranque del backend
-            logger.info("Ejecutando rutina periódica de retención y limpieza de multimedia (> 30 días)...")
-            purgar_archivos_antiguos(dias_retencion=30, dry_run=False)
+            from app.db import get_configuracion_automatismos
+            cfg = get_configuracion_automatismos()
+            if cfg.get("purga_multimedia_activa", True):
+                dias = int(cfg.get("dias_retencion_multimedia", 30))
+                logger.info(f"Ejecutando rutina periódica de retención y limpieza de multimedia (> {dias} días)...")
+                purgar_archivos_antiguos(dias_retencion=dias, dry_run=False)
+            else:
+                logger.info("⏸️ [Purga Auto] Purga de multimedia pausada desde el Centro de Automatismos.")
         except Exception as e:
             logger.error(f"Error en rutina periódica de limpieza de multimedia: {e}")
         
@@ -232,16 +238,23 @@ async def cron_envio_automatico_consentimientos_anticipados():
 async def ejecutar_envio_automatico_consentimientos_anticipados() -> int:
     """
     Ejecuta el escaneo y envío automático anticipado para cirugías en los próximos 1 a 3 días.
+    Respeta el switch maestro en el Centro de Automatismos y la protección de ventana de Meta de 24h.
     """
     if not supabase:
         return 0
     try:
+        from app.db import get_configuracion_automatismos
+        auto_cfg = get_configuracion_automatismos()
+        if not auto_cfg.get("consentimiento_anticipado_activo", False):
+            logger.info("⏸️ [Consentimiento Auto] Envíos automáticos de consentimiento pausados desde el Centro de Automatismos.")
+            return 0
+
         from datetime import date, timedelta
         hoy = date.today()
         dias_objetivo = [(hoy + timedelta(days=i)).isoformat() for i in range(1, 4)]
         
         resp = supabase.table("turnos_quirofano") \
-            .select("id, asesoria_id, paciente_id, fecha_cirugia, consentimiento_estado, pacientes(nombre, telefono)") \
+            .select("id, asesoria_id, paciente_id, fecha_cirugia, consentimiento_estado, pacientes(id, nombre, telefono)") \
             .in_("fecha_cirugia", dias_objetivo) \
             .neq("estado", "cancelado") \
             .execute()
@@ -257,6 +270,16 @@ async def ejecutar_envio_automatico_consentimientos_anticipados() -> int:
             tel = pac.get("telefono")
             if not tel:
                 continue
+
+            # Respetar ventana de Meta si está configurado para evitar error 131047
+            if auto_cfg.get("consentimiento_respetar_ventana_meta", True):
+                try:
+                    win_info = check_patient_24h_window(pac.get("id"), tel)
+                    if not win_info.get("is_open", False):
+                        logger.info(f"⏳ [Consentimiento Auto] Omitiendo turno {t['id']} para paciente {pac.get('nombre')}: Ventana de 24h Meta cerrada.")
+                        continue
+                except Exception as e_win:
+                    logger.warning(f"No se pudo chequear ventana de 24h para paciente {pac.get('nombre')}: {e_win}")
                 
             as_id = t.get("asesoria_id")
             if as_id:
@@ -4609,6 +4632,36 @@ def borrar_evolucion_asesoria(evolucion_id: str):
         return {"success": ok, "mensaje": "Evolución eliminada."}
     except Exception as e:
         logger.error(f"Error al eliminar evolución {evolucion_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# ENDPOINTS: CENTRO DE AUTOMATISMOS (GOBERNANZA CENTRAL DE TAREAS Y CRONS)
+# ====================================================================
+
+@app.get("/api/settings/automatismos")
+def obtener_configuracion_automatismos_endpoint():
+    """
+    Retorna el estado de todos los automatismos del CRM.
+    """
+    try:
+        from app.db import get_configuracion_automatismos
+        config = get_configuracion_automatismos()
+        return {"success": True, "automatismos": config}
+    except Exception as e:
+        logger.error(f"Error al obtener configuración de automatismos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/settings/automatismos")
+def guardar_configuracion_automatismos_endpoint(payload: Dict[str, Any] = Body(...)):
+    """
+    Actualiza la configuración del Centro de Automatismos del CRM.
+    """
+    try:
+        from app.db import actualizar_configuracion_automatismos
+        config = actualizar_configuracion_automatismos(payload)
+        return {"success": True, "mensaje": "Configuración de automatismos actualizada correctamente.", "automatismos": config}
+    except Exception as e:
+        logger.error(f"Error al guardar configuración de automatismos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

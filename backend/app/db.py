@@ -5493,6 +5493,93 @@ def actualizar_configuracion_quirurgica(payload: dict) -> Dict[str, Any]:
         logger.error(f"Error al actualizar configuración quirúrgica: {e}")
         raise
 
+# ====================================================================
+# CENTRO DE AUTOMATISMOS: GOBERNANZA CENTRALIZADA DE TAREAS Y CRONS
+# ====================================================================
+
+DEFAULT_AUTOMATISMOS_CONFIG: Dict[str, Any] = {
+    "seguimiento_quirurgico_activo": True,
+    "consentimiento_anticipado_activo": False,
+    "consentimiento_respetar_ventana_meta": True,
+    "bot_gemini_activo": True,
+    "purga_multimedia_activa": True,
+    "dias_retencion_multimedia": 30
+}
+
+def get_configuracion_automatismos() -> Dict[str, Any]:
+    """
+    Recupera el estado de todos los automatismos del CRM desde configuracion_sistema.
+    Sincroniza dinámicamente con configuracion_quirurgica (seguimiento).
+    """
+    config = dict(DEFAULT_AUTOMATISMOS_CONFIG)
+    if not supabase:
+        return config
+    try:
+        resp = supabase.table("configuracion_sistema").select("valor").eq("clave", "automatismos_crm").limit(1).execute()
+        if resp.data and len(resp.data) > 0 and resp.data[0].get("valor"):
+            stored = resp.data[0]["valor"]
+            if isinstance(stored, dict):
+                config.update(stored)
+        
+        # Sincronizar bidireccionalmente con configuracion_quirurgica para seguimiento
+        try:
+            cq = get_configuracion_quirurgica()
+            if "seguimiento_automatizado_activo" in cq:
+                config["seguimiento_quirurgico_activo"] = bool(cq["seguimiento_automatizado_activo"])
+        except Exception:
+            pass
+
+        return config
+    except Exception as e:
+        logger.error(f"Error al obtener configuración de automatismos: {e}")
+        return config
+
+def actualizar_configuracion_automatismos(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Actualiza la configuración central de automatismos en configuracion_sistema y
+    replica cambios en los módulos dependientes (quirúrgico, bot, etc.).
+    """
+    if not supabase:
+        raise RuntimeError("Supabase no está conectado.")
+    try:
+        actual = get_configuracion_automatismos()
+        for k in DEFAULT_AUTOMATISMOS_CONFIG.keys():
+            if k in payload:
+                actual[k] = payload[k]
+
+        # Guardar en configuracion_sistema
+        resp = supabase.table("configuracion_sistema").upsert({
+            "clave": "automatismos_crm",
+            "valor": actual,
+            "updated_at": "now()"
+        }, on_conflict="clave").execute()
+
+        # Si cambió seguimiento_quirurgico_activo, sincronizar con configuracion_quirurgica
+        if "seguimiento_quirurgico_activo" in payload:
+            try:
+                actualizar_configuracion_quirurgica({
+                    "seguimiento_automatizado_activo": bool(payload["seguimiento_quirurgico_activo"])
+                })
+            except Exception as e_q:
+                logger.warning(f"No se pudo sincronizar switch de seguimiento con configuracion_quirurgica: {e_q}")
+
+        # Si cambió bot_gemini_activo, sincronizar con settings del bot
+        if "bot_gemini_activo" in payload:
+            try:
+                from app.services.config_service import load_settings, save_settings
+                s = load_settings()
+                if s.get("bot", {}).get("enabled") != bool(payload["bot_gemini_activo"]):
+                    save_settings({"bot": {"enabled": bool(payload["bot_gemini_activo"])}})
+            except Exception as e_b:
+                logger.warning(f"No se pudo sincronizar switch del bot en config_service: {e_b}")
+
+        return actual
+    except Exception as e:
+        logger.error(f"Error al actualizar configuración de automatismos: {e}")
+        raise
+
+
+
 def get_pipeline_quirurgico() -> Dict[str, Any]:
     """
     Retorna el tablero global del embudo quirúrgico (Lead-to-Surgery):
