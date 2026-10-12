@@ -1641,21 +1641,28 @@ export default function CasoFormularioActivo({
               )}
             </div>
 
-            {/* 2. Selector Ergonómico de Lateralidad / Ojo Quirúrgico */}
-            <div className="p-3 bg-neutral-950/70 border border-blue-500/20 rounded-xl space-y-2.5">
+            {/* ========================================================================================= */}
+            {/* 1. MÓDULO UNIFICADO: LATERALIDAD & PROGRAMACIÓN QUIRÚRGICA                                 */}
+            {/*    La lateralidad define la estructura médica y la programación de fechas y quirófanos.   */}
+            {/* ========================================================================================= */}
+            <div className="p-3 bg-neutral-950/70 border border-indigo-500/30 rounded-xl space-y-3 shadow-sm">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                  <Eye size={14} className="text-blue-400" />
-                  Lateralidad / Ojo a Operar
+                <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                  <Eye size={14} className="text-indigo-400" />
+                  <span>Lateralidad & Programación Quirúrgica</span>
                 </label>
-                {ojo === 'AO' && (
+                {ojo === 'AO' ? (
                   <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
                     {modalidadBilateral === 'escalonada' ? 'Bilateral Escalonada (2 Días)' : 'Bilateral Simultánea (Mismo Día)'}
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    {ojo === 'OD' ? 'Ojo Derecho (OD)' : 'Ojo Izquierdo (OI)'}
                   </span>
                 )}
               </div>
 
-              {/* 3 Botones Principales de Selección Directa */}
+              {/* Selector Directo de Ojo */}
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
@@ -1699,265 +1706,577 @@ export default function CasoFormularioActivo({
                 </button>
               </div>
 
-              {/* Opciones Avanzadas si es Ambos Ojos (AO) */}
+              {/* Selector de Modalidad si es Bilateral (AO) */}
               {ojo === 'AO' && (
-                <div className="pt-2 border-t border-gray-800 space-y-3 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-gray-400 font-medium">Modalidad:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setModalidadBilateral('escalonada')
-                        if (!fechaProbable2doOjo && fechaProbable) {
-                          setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, 7))
-                        }
-                      }}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-                        modalidadBilateral === 'escalonada'
-                          ? 'bg-purple-600 text-white border-purple-500'
-                          : 'bg-neutral-900 text-gray-400 border-[var(--border)] hover:text-white'
-                      }`}
-                    >
-                      2 Días Separados (Escalonada)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setModalidadBilateral('simultanea')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
-                        modalidadBilateral === 'simultanea'
-                          ? 'bg-purple-600 text-white border-purple-500'
-                          : 'bg-neutral-900 text-gray-400 border-[var(--border)] hover:text-white'
-                      }`}
-                    >
-                      Mismo Acto (Simultánea)
-                    </button>
+                <div className="pt-2 border-t border-gray-800/80 flex items-center gap-2">
+                  <span className="text-[11px] text-gray-400 font-medium">Modalidad Bilateral:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalidadBilateral('escalonada')
+                      if (!fechaProbable2doOjo && fechaProbable) {
+                        setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, 7))
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                      modalidadBilateral === 'escalonada'
+                        ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                        : 'bg-neutral-900 text-gray-400 border-[var(--border)] hover:text-white'
+                    }`}
+                  >
+                    2 Días Separados (Escalonada)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModalidadBilateral('simultanea')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                      modalidadBilateral === 'simultanea'
+                        ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                        : 'bg-neutral-900 text-gray-400 border-[var(--border)] hover:text-white'
+                    }`}
+                  >
+                    Mismo Acto (Simultánea)
+                  </button>
+                </div>
+              )}
+
+              {/* --------------------------------------------------------------------------------- */}
+              {/* CASO A: UNILATERAL (OD / OI) O BILATERAL SIMULTÁNEA (AO MISMO ACTO)               */}
+              {/* --------------------------------------------------------------------------------- */}
+              {(ojo !== 'AO' || modalidadBilateral === 'simultanea') && (
+                <div className="p-3 bg-neutral-900/60 border border-[var(--border)] rounded-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-gray-300 flex items-center gap-1.5">
+                      <Calendar size={13} className="text-amber-400" />
+                      {ojo === 'AO' ? 'Programación Quirúrgica - Ambos Ojos (Mismo Día)' : `Programación Quirúrgica - Ojo ${ojo === 'OD' ? 'Derecho (OD)' : 'Izquierdo (OI)'}`}
+                    </span>
+                    {fechaDefinitiva ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                        <CheckCircle2 size={10} /> Fijada en Quirófano
+                      </span>
+                    ) : fechaProbable ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        Fecha Estimada
+                      </span>
+                    ) : null}
                   </div>
 
-                  {modalidadBilateral === 'escalonada' && (
-                    <div className="p-3 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-3">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[11px] text-gray-400 font-medium block mb-1">
+                        Fecha Probable / Tentativa:
+                      </label>
+                      <input
+                        type="date"
+                        disabled={guardando}
+                        value={fechaProbable}
+                        onChange={(e) => setFechaProbable(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-amber-500 rounded-xl text-white font-mono focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-emerald-400 font-bold block mb-1">
+                        Fecha Definitiva (Fijada en Qx):
+                      </label>
+                      <input
+                        type="date"
+                        disabled={guardando}
+                        value={fechaDefinitiva}
+                        onChange={(e) => setFechaDefinitiva(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-emerald-300 font-mono font-bold focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Asignación de Quirófano y Horario (Activo solo con fecha definitiva fijada) */}
+                  {fechaDefinitiva ? (
+                    <div className="pt-2.5 border-t border-neutral-800 bg-neutral-950/40 p-2.5 rounded-xl space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                          <Building2 size={13} className="text-amber-400" />
+                          Asignación de Agenda y Quirófano
+                        </span>
+                        <span className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
+                          {cargandoAgendaFecha ? (
+                            <Loader2 size={11} className="animate-spin text-amber-400" />
+                          ) : (
+                            <span className="text-emerald-400">● Sincronizado en tiempo real</span>
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        {/* Quirófano / Sala */}
                         <div>
-                          <label className="text-[10px] font-bold text-purple-300 block mb-1">
-                            Orden de Intervención:
+                          <label className="text-[10px] text-gray-400 block mb-1 font-semibold">
+                            Quirófano / Sala:
                           </label>
                           <select
-                            value={ordenOjos}
-                            onChange={(e) => setOrdenOjos(e.target.value as any)}
-                            className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-purple-500"
+                            disabled={guardando}
+                            value={quirofanoId}
+                            onChange={(e) => setQuirofanoId(e.target.value)}
+                            className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-semibold"
                           >
-                            <option value="OD_primero">1° Ojo Derecho (OD) ➔ 2° Ojo Izquierdo (OI)</option>
-                            <option value="OI_primero">1° Ojo Izquierdo (OI) ➔ 2° Ojo Derecho (OD)</option>
+                            <option value="">-- Seleccionar Quirófano / Sala --</option>
+                            {quirofanos.map((q: any) => (
+                              <option key={q.id} value={q.id}>
+                                {q.nombre} ({q.codigo || 'Qx'})
+                              </option>
+                            ))}
                           </select>
                         </div>
 
-                        {/* Resumen fecha 1er ojo tomada de la fecha elegida arriba */}
-                        <div className="p-2 rounded-lg bg-neutral-900/80 border border-[var(--border)] flex flex-col justify-center">
-                          <span className="text-[10px] text-gray-400">
-                            Fecha 1° Ojo ({ordenOjos === 'OD_primero' ? 'OD' : 'OI'}):
-                          </span>
-                          <span className="font-mono text-xs font-bold text-amber-300">
-                            {fechaProbable
-                              ? `${fechaProbable.split('-').reverse().join('/')} ${fechaDefinitiva ? '(Fijada Qx)' : '(Probable)'}`
-                              : '⚠️ Sin fecha probable definida arriba'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Configuración de Fecha para el 2do Ojo con relación directa a la 1ra fecha */}
-                      <div className="space-y-2 pt-2 border-t border-purple-500/20">
-                        <div className="flex flex-wrap items-center justify-between gap-1.5">
-                          <label className="text-[11px] font-bold text-purple-200 flex items-center gap-1">
-                            <span>Fecha Estimada 2° Ojo ({ordenOjos === 'OD_primero' ? 'OI' : 'OD'}):</span>
-                          </label>
-
-                          {/* Botones de cálculo rápido basados en la fecha 1 */}
-                          {fechaProbable && (
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] text-gray-400 mr-0.5">Sugerir intervalo:</span>
-                              {[7, 14, 21, 30].map((dias) => (
-                                <button
-                                  key={dias}
-                                  type="button"
-                                  onClick={() => setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, dias))}
-                                  className="px-2 py-0.5 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/30 text-[10px] font-bold transition"
-                                  title={`Fijar a ${dias} días de la fecha del 1° ojo`}
+                        {/* Hora de Inicio con slots en vivo */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] text-gray-400 font-semibold">
+                              Hora de Inicio:
+                            </label>
+                            {(() => {
+                              const slotEstado = getSlotInfo(horaInicio, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha)
+                              if (slotEstado.estado === 'sin_asignar') {
+                                return <span className="text-[9px] font-medium text-gray-500">Pendiente</span>
+                              }
+                              return (
+                                <span
+                                  className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                    slotEstado.estado === 'libre'
+                                      ? 'bg-emerald-500/20 text-emerald-300'
+                                      : slotEstado.estado === 'ocupado'
+                                      ? 'bg-red-500/20 text-red-300'
+                                      : 'bg-amber-500/20 text-amber-300'
+                                  }`}
                                 >
-                                  +{dias}d
-                                </button>
-                              ))}
-                            </div>
-                          )}
+                                  {slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
+                                </span>
+                              )
+                            })()}
+                          </div>
+                          {(() => {
+                            const qActual = quirofanos.find((q: any) => q.id === quirofanoId) || quirofanos[0]
+                            const slots = generarSlotsHorarios(qActual)
+                            return (
+                              <select
+                                disabled={guardando || !quirofanoId}
+                                value={horaInicio}
+                                onChange={(e) => setHoraInicio(e.target.value)}
+                                className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-mono font-bold disabled:opacity-50"
+                              >
+                                <option value="">-- Seleccionar Horario --</option>
+                                {slots.map((s) => {
+                                  const info = getSlotInfo(s, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha)
+                                  return (
+                                    <option key={s} value={s}>
+                                      {info.label}
+                                    </option>
+                                  )
+                                })}
+                              </select>
+                            )
+                          })()}
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                          <div>
-                            <label className="text-[10px] text-gray-400 block mb-1">Fecha Probable 2° Ojo:</label>
-                            <input
-                              type="date"
-                              value={fechaProbable2doOjo}
-                              min={fechaProbable || undefined}
-                              onChange={(e) => setFechaProbable2doOjo(e.target.value)}
-                              className="w-full p-2 rounded-xl bg-neutral-900 border border-purple-500/40 text-xs text-white font-mono outline-none focus:border-purple-400"
-                            />
+                        {/* Duración */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] text-gray-400 font-semibold">
+                              Duración Estimada:
+                            </label>
+                            <span className="text-[9px] font-mono text-gray-400">
+                              Fin: {horaInicio ? `${minutosAHora(horaAMinutos(horaInicio) + Number(duracionMinutos))} hs` : '--:--'}
+                            </span>
                           </div>
-
-                          <div>
-                            <div className="flex items-center justify-between mb-1">
-                              <label className="text-[10px] text-emerald-400 font-bold">Fecha Definitiva 2° Ojo (Qx):</label>
-                              {fechaDefinitiva2doOjo && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                                  <CheckCircle2 size={9} /> Fijada en Qx
-                                </span>
-                              )}
-                            </div>
-                            <input
-                              type="date"
-                              value={fechaDefinitiva2doOjo}
-                              min={fechaDefinitiva || fechaProbable || undefined}
-                              onChange={(e) => setFechaDefinitiva2doOjo(e.target.value)}
-                              className="w-full p-2 rounded-xl bg-neutral-900 border border-emerald-500/40 text-xs text-emerald-300 font-mono font-bold outline-none focus:border-emerald-400"
-                            />
-                          </div>
-
-                          {/* Asignación de Quirófano y Horario para 2° Ojo */}
-                          {fechaDefinitiva2doOjo && (
-                            <div className="mt-2 pt-2 border-t border-purple-500/20 bg-purple-950/20 p-2.5 rounded-xl space-y-2 sm:col-span-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-purple-300 flex items-center gap-1.5">
-                                  <Building2 size={13} className="text-purple-400" />
-                                  Asignación de Agenda 2° Ojo ({ordenOjos === 'OD_primero' ? 'OI' : 'OD'})
-                                </span>
-                                <span className="text-[10px] text-gray-400 font-mono flex items-center gap-1">
-                                  {cargandoAgendaFecha2doOjo ? (
-                                    <Loader2 size={11} className="animate-spin text-purple-400" />
-                                  ) : (
-                                    <span className="text-emerald-400">● Sincronizado en tiempo real</span>
-                                  )}
-                                </span>
-                              </div>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                                <div>
-                                  <label className="text-[10px] text-gray-400 block mb-1 font-semibold">
-                                    Quirófano / Sala 2° Ojo:
-                                  </label>
-                                  <select
-                                    disabled={guardando}
-                                    value={quirofanoId2doOjo || quirofanoId}
-                                    onChange={(e) => setQuirofanoId2doOjo(e.target.value)}
-                                    className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
-                                  >
-                                    {quirofanos.map((q: any) => (
-                                      <option key={q.id} value={q.id}>
-                                        {q.nombre} ({q.codigo || 'Qx'})
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-
-                                <div>
-                                  <div className="flex items-center justify-between mb-1">
-                                    <label className="text-[10px] text-gray-400 font-semibold">
-                                      Hora de Inicio 2° Ojo:
-                                    </label>
-                                    {(() => {
-                                      const slotEstado2 = getSlotInfo(horaInicio2doOjo, quirofanoId2doOjo || quirofanoId, fechaDefinitiva2doOjo, turnosFecha2doOjo, bloqueosFecha2doOjo)
-                                      return (
-                                        <span
-                                          className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                            slotEstado2.estado === 'libre'
-                                              ? 'bg-emerald-500/20 text-emerald-300'
-                                              : slotEstado2.estado === 'ocupado'
-                                              ? 'bg-red-500/20 text-red-300'
-                                              : 'bg-amber-500/20 text-amber-300'
-                                          }`}
-                                        >
-                                          {slotEstado2.estado === 'libre' ? '🟢 Libre' : slotEstado2.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
-                                        </span>
-                                      )
-                                    })()}
-                                  </div>
-                                  {(() => {
-                                    const qActual2 = quirofanos.find((q: any) => q.id === (quirofanoId2doOjo || quirofanoId)) || quirofanos[0]
-                                    const slots2 = generarSlotsHorarios(qActual2)
-                                    return (
-                                      <select
-                                        disabled={guardando}
-                                        value={horaInicio2doOjo}
-                                        onChange={(e) => setHoraInicio2doOjo(e.target.value)}
-                                        className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-mono font-bold"
-                                      >
-                                        {slots2.map((s) => {
-                                          const info = getSlotInfo(s, quirofanoId2doOjo || quirofanoId, fechaDefinitiva2doOjo, turnosFecha2doOjo, bloqueosFecha2doOjo)
-                                          return (
-                                            <option key={s} value={s}>
-                                              {info.label}
-                                            </option>
-                                          )
-                                        })}
-                                      </select>
-                                    )
-                                  })()}
-                                </div>
-
-                                <div>
-                                  <div className="flex items-center justify-between mb-1">
-                                    <label className="text-[10px] text-gray-400 font-semibold">
-                                      Duración 2° Ojo:
-                                    </label>
-                                    <span className="text-[9px] font-mono text-gray-400">
-                                      Fin: {minutosAHora(horaAMinutos(horaInicio2doOjo) + Number(duracionMinutos2doOjo))} hs
-                                    </span>
-                                  </div>
-                                  <select
-                                    disabled={guardando}
-                                    value={duracionMinutos2doOjo}
-                                    onChange={(e) => setDuracionMinutos2doOjo(Number(e.target.value))}
-                                    className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
-                                  >
-                                    <option value={15}>15 minutos</option>
-                                    <option value={20}>20 minutos</option>
-                                    <option value={30}>30 minutos</option>
-                                    <option value={45}>45 minutos</option>
-                                    <option value={60}>60 minutos (1 hora)</option>
-                                    <option value={90}>90 minutos (1h 30m)</option>
-                                    <option value={120}>120 minutos (2 horas)</option>
-                                  </select>
-                                </div>
-                              </div>
-                            </div>
-                          )}
+                          <select
+                            disabled={guardando}
+                            value={duracionMinutos}
+                            onChange={(e) => setDuracionMinutos(Number(e.target.value))}
+                            className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-semibold"
+                          >
+                            <option value={15}>15 minutos</option>
+                            <option value={20}>20 minutos</option>
+                            <option value={30}>30 minutos</option>
+                            <option value={45}>45 minutos</option>
+                            <option value={60}>60 minutos (1 hora)</option>
+                            <option value={90}>90 minutos (1h 30m)</option>
+                            <option value={120}>120 minutos (2 horas)</option>
+                          </select>
                         </div>
-
-                        {/* Indicador de relación de intervalo entre ambos ojos */}
-                        {(() => {
-                          const diff = calcularDiferenciaDias(fechaProbable, fechaProbable2doOjo)
-                          if (diff === null) return null
-                          if (diff > 0) {
-                            return (
-                              <p className="text-[11px] text-purple-300 flex items-center gap-1 font-medium bg-purple-950/40 px-2 py-1 rounded-lg border border-purple-500/20">
-                                <span>✔ Programado con un intervalo de <strong>{diff} días</strong> entre el 1° y 2° ojo.</span>
-                              </p>
-                            )
-                          } else if (diff === 0) {
-                            return (
-                              <p className="text-[11px] text-amber-300 flex items-center gap-1 font-medium bg-amber-950/40 px-2 py-1 rounded-lg border border-amber-500/20">
-                                <span>⚠️ Ambas fechas son el mismo día. Si opera en simultáneo, puedes elegir la modalidad &quot;Mismo Acto&quot;.</span>
-                              </p>
-                            )
-                          } else {
-                            return (
-                              <p className="text-[11px] text-red-400 flex items-center gap-1 font-medium bg-red-950/40 px-2 py-1 rounded-lg border border-red-500/20">
-                                <span>⚠️ La fecha del 2° ojo no puede ser anterior a la del 1° ojo.</span>
-                              </p>
-                            )
-                          }
-                        })()}
                       </div>
+
+                      <div className="text-[10.5px] text-gray-400 flex items-center gap-1.5 pt-0.5">
+                        <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                        <span>
+                          {quirofanoId && horaInicio
+                            ? 'Al guardar, se creará o actualizará el turno en la Agenda de Quirófano.'
+                            : 'Seleccione Quirófano y Horario cuando la cirugía esté lista para impactar en la agenda.'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-2 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[10.5px] text-gray-400 flex items-center gap-1.5">
+                      <Info size={12} className="text-amber-400/80 shrink-0" />
+                      <span>Fije la <strong>Fecha Definitiva</strong> para habilitar la asignación de quirófano y franja horaria.</span>
                     </div>
                   )}
                 </div>
               )}
+
+              {/* --------------------------------------------------------------------------------- */}
+              {/* CASO B: BILATERAL ESCALONADA (AO EN 2 DÍAS SEPARADOS)                             */}
+              {/* --------------------------------------------------------------------------------- */}
+              {ojo === 'AO' && modalidadBilateral === 'escalonada' && (
+                <div className="space-y-3 pt-1">
+                  {/* Selector de Orden Quirúrgico */}
+                  <div className="p-2.5 rounded-xl bg-purple-950/20 border border-purple-500/30 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-purple-300">Orden de Intervención:</span>
+                      <select
+                        value={ordenOjos}
+                        onChange={(e) => setOrdenOjos(e.target.value as any)}
+                        className="p-1.5 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
+                      >
+                        <option value="OD_primero">1° Ojo Derecho (OD) ➔ 2° Ojo Izquierdo (OI)</option>
+                        <option value="OI_primero">1° Ojo Izquierdo (OI) ➔ 2° Ojo Derecho (OD)</option>
+                      </select>
+                    </div>
+
+                    {/* Botones de sugerencia rápida de intervalo */}
+                    {fechaProbable && (
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] text-gray-400">Sugerir intervalo 2° ojo:</span>
+                        {[7, 14, 21, 30].map((dias) => (
+                          <button
+                            key={dias}
+                            type="button"
+                            onClick={() => setFechaProbable2doOjo(sumarDiasFecha(fechaProbable, dias))}
+                            className="px-2 py-0.5 rounded bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-500/30 text-[10px] font-bold transition"
+                            title={`Fijar fecha probable a ${dias} días del 1° ojo`}
+                          >
+                            +{dias}d
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sub-Tarjeta 1: 1° Ojo */}
+                  <div className="p-3 bg-neutral-900/60 border border-blue-500/30 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-blue-300 flex items-center gap-1.5">
+                        <Calendar size={13} className="text-blue-400" />
+                        1° Ojo a Operar: {ordenOjos === 'OD_primero' ? 'Ojo Derecho (OD)' : 'Ojo Izquierdo (OI)'}
+                      </span>
+                      {fechaDefinitiva ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <CheckCircle2 size={10} /> Fijada en Qx
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-gray-500 font-medium">1° Fecha</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-gray-400 font-medium block mb-1">
+                          Fecha Probable (1° Ojo):
+                        </label>
+                        <input
+                          type="date"
+                          disabled={guardando}
+                          value={fechaProbable}
+                          onChange={(e) => {
+                            const nueva = e.target.value
+                            setFechaProbable(nueva)
+                            if (nueva && !fechaProbable2doOjo) {
+                              setFechaProbable2doOjo(sumarDiasFecha(nueva, 7))
+                            }
+                          }}
+                          className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white font-mono focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-emerald-400 font-bold block mb-1">
+                          Fecha Definitiva (1° Ojo):
+                        </label>
+                        <input
+                          type="date"
+                          disabled={guardando}
+                          value={fechaDefinitiva}
+                          onChange={(e) => setFechaDefinitiva(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-emerald-300 font-mono font-bold focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Asignación Quirófano 1° Ojo */}
+                    {fechaDefinitiva ? (
+                      <div className="pt-2 border-t border-neutral-800 bg-neutral-950/40 p-2.5 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10.5px] font-bold text-blue-300 flex items-center gap-1.5">
+                            <Building2 size={12} className="text-blue-400" />
+                            Quirófano y Horario (1° Ojo)
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-mono">
+                            {cargandoAgendaFecha ? <Loader2 size={10} className="animate-spin text-blue-400" /> : '● En vivo'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 block mb-1 font-semibold">Quirófano / Sala:</label>
+                            <select
+                              disabled={guardando}
+                              value={quirofanoId}
+                              onChange={(e) => setQuirofanoId(e.target.value)}
+                              className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-semibold"
+                            >
+                              <option value="">-- Seleccionar Quirófano --</option>
+                              {quirofanos.map((q: any) => (
+                                <option key={q.id} value={q.id}>
+                                  {q.nombre} ({q.codigo || 'Qx'})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[10px] text-gray-400 font-semibold">Hora Inicio:</label>
+                              {(() => {
+                                const slotEstado = getSlotInfo(horaInicio, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha)
+                                if (slotEstado.estado === 'sin_asignar') return <span className="text-[9px] text-gray-500">Pendiente</span>
+                                return (
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                    slotEstado.estado === 'libre' ? 'bg-emerald-500/20 text-emerald-300' : slotEstado.estado === 'ocupado' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
+                                  }`}>
+                                    {slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
+                                  </span>
+                                )
+                              })()}
+                            </div>
+                            {(() => {
+                              const qActual = quirofanos.find((q: any) => q.id === quirofanoId) || quirofanos[0]
+                              const slots = generarSlotsHorarios(qActual)
+                              return (
+                                <select
+                                  disabled={guardando || !quirofanoId}
+                                  value={horaInicio}
+                                  onChange={(e) => setHoraInicio(e.target.value)}
+                                  className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-mono font-bold disabled:opacity-50"
+                                >
+                                  <option value="">-- Seleccionar Horario --</option>
+                                  {slots.map((s) => (
+                                    <option key={s} value={s}>{getSlotInfo(s, quirofanoId, fechaDefinitiva, turnosFecha, bloqueosFecha).label}</option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[10px] text-gray-400 font-semibold">Duración:</label>
+                              <span className="text-[9px] font-mono text-gray-400">
+                                Fin: {horaInicio ? `${minutosAHora(horaAMinutos(horaInicio) + Number(duracionMinutos))} hs` : '--:--'}
+                              </span>
+                            </div>
+                            <select
+                              disabled={guardando}
+                              value={duracionMinutos}
+                              onChange={(e) => setDuracionMinutos(Number(e.target.value))}
+                              className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-semibold"
+                            >
+                              <option value={15}>15 minutos</option>
+                              <option value={20}>20 minutos</option>
+                              <option value={30}>30 minutos</option>
+                              <option value={45}>45 minutos</option>
+                              <option value={60}>60 minutos (1 hora)</option>
+                              <option value={90}>90 minutos (1h 30m)</option>
+                              <option value={120}>120 minutos (2 horas)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-2 rounded-lg bg-neutral-950/40 border border-neutral-800/80 text-[10.5px] text-gray-400 flex items-center gap-1.5">
+                        <Info size={11} className="text-blue-400 shrink-0" />
+                        <span>Fije la <strong>Fecha Definitiva del 1° ojo</strong> para habilitar su asignación en quirófano.</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Sub-Tarjeta 2: 2° Ojo */}
+                  <div className="p-3 bg-neutral-900/60 border border-purple-500/30 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                        <Calendar size={13} className="text-purple-400" />
+                        2° Ojo a Operar: {ordenOjos === 'OD_primero' ? 'Ojo Izquierdo (OI)' : 'Ojo Derecho (OD)'}
+                      </span>
+                      {fechaDefinitiva2doOjo ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <CheckCircle2 size={10} /> Fijada en Qx
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-gray-500 font-medium">2° Fecha</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-gray-400 font-medium block mb-1">
+                          Fecha Probable (2° Ojo):
+                        </label>
+                        <input
+                          type="date"
+                          disabled={guardando}
+                          value={fechaProbable2doOjo}
+                          min={fechaProbable || undefined}
+                          onChange={(e) => setFechaProbable2doOjo(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-neutral-900 border border-purple-500/40 focus:border-purple-400 rounded-xl text-white font-mono focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] text-emerald-400 font-bold block mb-1">
+                          Fecha Definitiva (2° Ojo):
+                        </label>
+                        <input
+                          type="date"
+                          disabled={guardando}
+                          value={fechaDefinitiva2doOjo}
+                          min={fechaDefinitiva || fechaProbable || undefined}
+                          onChange={(e) => setFechaDefinitiva2doOjo(e.target.value)}
+                          className="w-full px-3 py-2 text-xs bg-neutral-900 border border-emerald-500/40 focus:border-emerald-500 rounded-xl text-emerald-300 font-mono font-bold focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Asignación Quirófano 2° Ojo */}
+                    {fechaDefinitiva2doOjo ? (
+                      <div className="pt-2 border-t border-purple-500/20 bg-purple-950/20 p-2.5 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10.5px] font-bold text-purple-300 flex items-center gap-1.5">
+                            <Building2 size={12} className="text-purple-400" />
+                            Quirófano y Horario (2° Ojo)
+                          </span>
+                          <span className="text-[10px] text-gray-400 font-mono">
+                            {cargandoAgendaFecha2doOjo ? <Loader2 size={10} className="animate-spin text-purple-400" /> : '● En vivo'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[10px] text-gray-400 block mb-1 font-semibold">Quirófano / Sala:</label>
+                            <select
+                              disabled={guardando}
+                              value={quirofanoId2doOjo}
+                              onChange={(e) => setQuirofanoId2doOjo(e.target.value)}
+                              className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
+                            >
+                              <option value="">-- Seleccionar Quirófano --</option>
+                              {quirofanos.map((q: any) => (
+                                <option key={q.id} value={q.id}>
+                                  {q.nombre} ({q.codigo || 'Qx'})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[10px] text-gray-400 font-semibold">Hora Inicio:</label>
+                              {(() => {
+                                const slotEstado2 = getSlotInfo(horaInicio2doOjo, quirofanoId2doOjo, fechaDefinitiva2doOjo, turnosFecha2doOjo, bloqueosFecha2doOjo)
+                                if (slotEstado2.estado === 'sin_asignar') return <span className="text-[9px] text-gray-500">Pendiente</span>
+                                return (
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                    slotEstado2.estado === 'libre' ? 'bg-emerald-500/20 text-emerald-300' : slotEstado2.estado === 'ocupado' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
+                                  }`}>
+                                    {slotEstado2.estado === 'libre' ? '🟢 Libre' : slotEstado2.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
+                                  </span>
+                                )
+                              })()}
+                            </div>
+                            {(() => {
+                              const qActual2 = quirofanos.find((q: any) => q.id === quirofanoId2doOjo) || quirofanos[0]
+                              const slots2 = generarSlotsHorarios(qActual2)
+                              return (
+                                <select
+                                  disabled={guardando || !quirofanoId2doOjo}
+                                  value={horaInicio2doOjo}
+                                  onChange={(e) => setHoraInicio2doOjo(e.target.value)}
+                                  className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-mono font-bold disabled:opacity-50"
+                                >
+                                  <option value="">-- Seleccionar Horario --</option>
+                                  {slots2.map((s) => (
+                                    <option key={s} value={s}>{getSlotInfo(s, quirofanoId2doOjo, fechaDefinitiva2doOjo, turnosFecha2doOjo, bloqueosFecha2doOjo).label}</option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[10px] text-gray-400 font-semibold">Duración:</label>
+                              <span className="text-[9px] font-mono text-gray-400">
+                                Fin: {horaInicio2doOjo ? `${minutosAHora(horaAMinutos(horaInicio2doOjo) + Number(duracionMinutos2doOjo))} hs` : '--:--'}
+                              </span>
+                            </div>
+                            <select
+                              disabled={guardando}
+                              value={duracionMinutos2doOjo}
+                              onChange={(e) => setDuracionMinutos2doOjo(Number(e.target.value))}
+                              className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
+                            >
+                              <option value={15}>15 minutos</option>
+                              <option value={20}>20 minutos</option>
+                              <option value={30}>30 minutos</option>
+                              <option value={45}>45 minutos</option>
+                              <option value={60}>60 minutos (1 hora)</option>
+                              <option value={90}>90 minutos (1h 30m)</option>
+                              <option value={120}>120 minutos (2 horas)</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="p-2 rounded-lg bg-neutral-950/40 border border-purple-500/20 text-[10.5px] text-gray-400 flex items-center gap-1.5">
+                        <Info size={11} className="text-purple-400 shrink-0" />
+                        <span>Fije la <strong>Fecha Definitiva del 2° ojo</strong> para habilitar su asignación en quirófano.</span>
+                      </div>
+                    )}
+
+                    {/* Validación visual de intervalo */}
+                    {(() => {
+                      const diff = calcularDiferenciaDias(fechaProbable, fechaProbable2doOjo)
+                      if (diff === null) return null
+                      if (diff > 0) {
+                        return (
+                          <p className="text-[11px] text-purple-300 flex items-center gap-1 font-medium bg-purple-950/40 px-2 py-1 rounded-lg border border-purple-500/20">
+                            <span>✔ Intervalo programado: <strong>{diff} días</strong> entre el 1° y 2° ojo.</span>
+                          </p>
+                        )
+                      } else if (diff === 0) {
+                        return (
+                          <p className="text-[11px] text-amber-300 flex items-center gap-1 font-medium bg-amber-950/40 px-2 py-1 rounded-lg border border-amber-500/20">
+                            <span>⚠️ Ambas fechas son el mismo día. Si opera en simultáneo, elija la modalidad &quot;Mismo Acto&quot;.</span>
+                          </p>
+                        )
+                      } else {
+                        return (
+                          <p className="text-[11px] text-red-400 flex items-center gap-1 font-medium bg-red-950/40 px-2 py-1 rounded-lg border border-red-500/20">
+                            <span>⚠️ La fecha del 2° ojo no puede ser anterior a la del 1° ojo.</span>
+                          </p>
+                        )
+                      }
+                    })()}
+                  </div>
+                </div>
+              )}
+
 
               {/* Sub-bloque LIO Comercial Acordado / Propuesto */}
               {practicaRequiereLente && (

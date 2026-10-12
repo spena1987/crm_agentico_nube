@@ -6575,7 +6575,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
 
         fecha_p1 = payload_agenda.get("fecha_definitiva_cirugia") if "fecha_definitiva_cirugia" in payload_agenda else asesoria_db.get("fecha_definitiva_cirugia")
         quirofano_p1 = payload_agenda.get("quirofano_id") or (turno_p1.get("quirofano_id") if turno_p1 else None)
-        hora_p1 = payload_agenda.get("hora_inicio") or (turno_p1.get("hora_inicio") if turno_p1 else "08:00")
+        hora_p1 = payload_agenda.get("hora_inicio") or (turno_p1.get("hora_inicio") if turno_p1 else None)
         dur_p1 = int(payload_agenda.get("duracion_minutos") or (turno_p1.get("duracion_minutos") if turno_p1 else 45) or 45)
 
         # Si se borró la fecha definitiva o se pide cancelar
@@ -6583,7 +6583,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
             if turno_p1:
                 supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", turno_p1["id"]).execute()
                 logger.info(f"Turno de quirófano {turno_p1['id']} cancelado al limpiar fecha en asesoría {asesoria_id}")
-        elif fecha_p1 and quirofano_p1:
+        elif fecha_p1 and quirofano_p1 and hora_p1:
             datos_turno_1 = {
                 "asesoria_id": asesoria_id,
                 "paciente_id": asesoria_db.get("paciente_id"),
@@ -6624,15 +6624,15 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     break
 
             fecha_p2 = payload_agenda.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo")
-            quirofano_p2 = payload_agenda.get("quirofano_id_2do_ojo") or meta_bilateral.get("quirofano_id_2do_ojo") or (turno_p2.get("quirofano_id") if turno_p2 else quirofano_p1)
-            hora_p2 = payload_agenda.get("hora_inicio_2do_ojo") or meta_bilateral.get("hora_inicio_2do_ojo") or (turno_p2.get("hora_inicio") if turno_p2 else hora_p1)
+            quirofano_p2 = payload_agenda.get("quirofano_id_2do_ojo") or meta_bilateral.get("quirofano_id_2do_ojo") or (turno_p2.get("quirofano_id") if turno_p2 else None)
+            hora_p2 = payload_agenda.get("hora_inicio_2do_ojo") or meta_bilateral.get("hora_inicio_2do_ojo") or (turno_p2.get("hora_inicio") if turno_p2 else None)
             dur_p2 = int(payload_agenda.get("duracion_minutos_2do_ojo") or meta_bilateral.get("duracion_minutos_2do_ojo") or dur_p1 or 45)
 
             if ("fecha_definitiva_2do_ojo" in payload_agenda and not payload_agenda["fecha_definitiva_2do_ojo"]) or payload_agenda.get("cancelar_turno_2"):
                 if turno_p2:
                     supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", turno_p2["id"]).execute()
                     logger.info(f"Turno de 2° ojo {turno_p2['id']} cancelado al limpiar fecha en asesoría {asesoria_id}")
-            elif fecha_p2 and quirofano_p2:
+            elif fecha_p2 and quirofano_p2 and hora_p2:
                 datos_turno_2 = {
                     "asesoria_id": asesoria_id,
                     "paciente_id": asesoria_db.get("paciente_id"),
