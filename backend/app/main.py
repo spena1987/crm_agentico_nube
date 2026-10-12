@@ -5636,7 +5636,7 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
         return {"success": False, "ok": False, "consentimiento": None}
     try:
         from app.db import asegurar_turnos_para_consentimiento_asesoria
-        info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id)
+        info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id, crear_si_no_existe=False)
         if not info_dual:
             return {"success": False, "ok": False, "consentimiento": None}
         return {
@@ -5768,7 +5768,7 @@ async def enviar_consentimiento_whatsapp_endpoint(
 
     if as_id and not t_id:
         target_ojo = payload.ojo or payload.ojo_objetivo
-        t_obj = asegurar_turno_para_consentimiento_asesoria(as_id, ojo=target_ojo)
+        t_obj = asegurar_turno_para_consentimiento_asesoria(as_id, ojo=target_ojo, crear_si_no_existe=True)
         if t_obj:
             t_id = t_obj.get("id")
             if not token:
@@ -5929,7 +5929,7 @@ def descargar_consentimiento_asesoria_pdf(
         if turno_id:
             turno = get_turno_quirofano_by_id(turno_id)
         elif ojo:
-            info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id)
+            info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id, crear_si_no_existe=True)
             if info_dual.get("es_bilateral_escalonada"):
                 obj_l = ojo.lower()
                 p2 = info_dual.get("segundo_ojo") or {}
@@ -5939,10 +5939,10 @@ def descargar_consentimiento_asesoria_pdf(
                     p1 = info_dual.get("primer_ojo") or {}
                     turno = get_turno_quirofano_by_id(p1.get("turno_id"))
             else:
-                turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id, ojo=ojo)
+                turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id, ojo=ojo, crear_si_no_existe=True)
 
         if not turno:
-            turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
+            turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id, crear_si_no_existe=True)
         if not turno:
             raise HTTPException(status_code=404, detail="Caso quirúrgico no encontrado.")
             

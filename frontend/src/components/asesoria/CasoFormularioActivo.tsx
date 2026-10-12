@@ -530,10 +530,8 @@ export default function CasoFormularioActivo({
           if (turnoUnico.duracion_minutos) setDuracionMinutos(Number(turnoUnico.duracion_minutos))
         }
       }
-    } else if (quirofanos.length > 0 && !quirofanoId) {
-      setQuirofanoId(quirofanos[0].id)
     }
-  }, [turnosActivos, ojo, modalidadBilateral, ordenOjos, quirofanos])
+  }, [turnosActivos, ojo, modalidadBilateral, ordenOjos])
 
   // Cargar agenda de la fecha definitiva (1° ojo / Principal)
   useEffect(() => {

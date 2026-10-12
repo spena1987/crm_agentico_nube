@@ -581,7 +581,7 @@ async def despachar_consentimiento_informado_inteligente(
 
     # Manejo de despacho para ambos ojos si se solicita 'ambos'
     if asesoria_id and not turno_id and (ojo_objetivo or "").lower() in ["ambos", "ambos_ojos", "ao"]:
-        info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id)
+        info_dual = asegurar_turnos_para_consentimiento_asesoria(asesoria_id, crear_si_no_existe=True)
         if info_dual.get("es_bilateral_escalonada"):
             tid1 = (info_dual.get("primer_ojo") or {}).get("turno_id")
             tid2 = (info_dual.get("segundo_ojo") or {}).get("turno_id")
@@ -601,7 +601,7 @@ async def despachar_consentimiento_informado_inteligente(
     as_id = asesoria_id
 
     if as_id and not t_id:
-        info_dual = asegurar_turnos_para_consentimiento_asesoria(as_id)
+        info_dual = asegurar_turnos_para_consentimiento_asesoria(as_id, crear_si_no_existe=True)
         if info_dual.get("es_bilateral_escalonada"):
             obj_l = (ojo_objetivo or "primer_ojo").lower()
             p2 = info_dual.get("segundo_ojo") or {}
@@ -615,7 +615,7 @@ async def despachar_consentimiento_informado_inteligente(
                 if t_id:
                     turno = get_turno_quirofano_by_id(t_id)
         else:
-            turno = asegurar_turno_para_consentimiento_asesoria(as_id)
+            turno = asegurar_turno_para_consentimiento_asesoria(as_id, crear_si_no_existe=True)
             if turno:
                 t_id = turno.get("id")
     elif t_id:
