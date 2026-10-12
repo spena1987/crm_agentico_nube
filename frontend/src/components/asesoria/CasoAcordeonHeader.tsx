@@ -236,18 +236,47 @@ export default function CasoAcordeonHeader({
           </span>
         )}
 
-        {/* Fecha Quirúrgica */}
-        {caso.fecha_definitiva_cirugia ? (
-          <span className="text-xs font-mono font-bold px-2.5 py-1 rounded-xl bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5 shadow-sm">
-            <Calendar size={12} className="text-emerald-400" />
-            {caso.fecha_definitiva_cirugia}
-          </span>
-        ) : caso.fecha_probable_cirugia ? (
-          <span className="text-xs font-mono px-2 py-1 rounded-xl bg-neutral-800 text-amber-300 border border-amber-500/20 flex items-center gap-1.5">
-            <Calendar size={12} className="text-amber-400" />
-            Probable: {caso.fecha_probable_cirugia}
-          </span>
-        ) : null}
+        {/* Fecha y Horario de Quirófano */}
+        {(() => {
+          const turnos = (caso.turnos_activos || (caso as any).turnos_quirofano || []).filter((t: any) => t.estado !== 'cancelado')
+          const turnoPrincipal = turnos[0]
+
+          if (caso.fecha_definitiva_cirugia) {
+            const horaStr = turnoPrincipal?.hora_inicio ? `${turnoPrincipal.hora_inicio.slice(0, 5)} hs` : null
+            const salaStr = turnoPrincipal?.quirofanos?.nombre || null
+
+            return (
+              <span
+                className="text-xs font-mono font-bold px-2.5 py-1 rounded-xl bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5 shadow-sm"
+                title={salaStr ? `Asignado en ${salaStr}` : 'Fecha fijada en Quirófano'}
+              >
+                <Calendar size={12} className="text-emerald-400" />
+                <span>{caso.fecha_definitiva_cirugia}</span>
+                {horaStr && (
+                  <span className="text-emerald-400 font-sans font-semibold text-[11px] bg-emerald-900/60 px-1 rounded">
+                    {horaStr}
+                  </span>
+                )}
+                {salaStr && (
+                  <span className="text-gray-400 font-sans font-normal text-[10px] hidden lg:inline">
+                    ({salaStr})
+                  </span>
+                )}
+              </span>
+            )
+          }
+
+          if (caso.fecha_probable_cirugia) {
+            return (
+              <span className="text-xs font-mono px-2 py-1 rounded-xl bg-neutral-800 text-amber-300 border border-amber-500/20 flex items-center gap-1.5">
+                <Calendar size={12} className="text-amber-400" />
+                Probable: {caso.fecha_probable_cirugia}
+              </span>
+            )
+          }
+
+          return null
+        })()}
 
         {/* Etapa actual */}
         <span

@@ -69,9 +69,14 @@ export interface AsesoriaQuirurgica {
   alta_medica_definitiva?: boolean
   ojo?: 'OD' | 'OI' | 'AO'
   modalidad_bilateral?: 'escalonada' | 'simultanea' | null
-  orden_ojos_escalonada?: 'OD_primero' | 'OI_primero' | null
   fecha_probable_2do_ojo?: string | null
   fecha_definitiva_2do_ojo?: string | null
+  quirofano_id?: string | null
+  hora_inicio?: string | null
+  duracion_minutos?: number | null
+  quirofano_id_2do_ojo?: string | null
+  hora_inicio_2do_ojo?: string | null
+  duracion_minutos_2do_ojo?: number | null
   estado:
     | 'derivado'
     | 'en_asesoramiento'

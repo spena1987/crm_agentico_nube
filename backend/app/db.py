@@ -3101,6 +3101,16 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 except Exception as e_t:
                     logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
 
+        # 2.b Sincronizar asignación de fecha/quirofano/hora si viene en payload o si cambió fecha definitiva
+        if any(k in payload for k in [
+            "quirofano_id", "hora_inicio", "duracion_minutos", "fecha_definitiva_cirugia", "cancelar_turno_1",
+            "quirofano_id_2do_ojo", "hora_inicio_2do_ojo", "duracion_minutos_2do_ojo", "fecha_definitiva_2do_ojo", "cancelar_turno_2"
+        ]):
+            try:
+                sincronizar_turno_quirofano_desde_asesoria(asesoria_id, payload, resp.data[0])
+            except Exception as e_sq:
+                logger.warning(f"Aviso al sincronizar turno de quirófano desde asesoría {asesoria_id}: {e_sq}")
+
         # 3. Sincronizar automáticamente hacia la tabla presupuestos
         try:
             sincronizar_presupuesto_desde_caso_quirurgico(
@@ -3111,6 +3121,21 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             )
         except Exception as e_sync:
             logger.warning(f"Aviso al sincronizar presupuesto desde asesoría {asesoria_id}: {e_sync}")
+
+        # Cargar asesoría con turnos activos actualizados para respuesta atómica
+        try:
+            res_full = supabase.table("asesorias_quirurgicas") \
+                .select("*, turnos_quirofano(*, quirofanos(nombre, codigo, color))") \
+                .eq("id", asesoria_id) \
+                .limit(1) \
+                .execute()
+            if res_full.data:
+                caso_res = res_full.data[0]
+                t_list = caso_res.get("turnos_quirofano") or []
+                caso_res["turnos_activos"] = [t for t in t_list if t.get("estado") != "cancelado"]
+                return caso_res
+        except Exception:
+            pass
 
         return resp.data[0]
     except Exception as e:
@@ -6305,7 +6330,26 @@ def sincronizar_asesoria_desde_quirofano(asesoria_id: str, datos_turno: Dict[str
 
         payload_asesoria: Dict[str, Any] = {"updated_at": "now()"}
 
-        if fecha_turno:
+        estado_turno = datos_turno.get("estado")
+        if estado_turno == "cancelado":
+            # Si el turno se canceló en quirófano, verificar si quedan otros turnos activos
+            res_rest = supabase.table("turnos_quirofano").select("id, fecha_cirugia, ojo").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+            turnos_rest = [t for t in (res_rest.data or []) if t.get("id") != datos_turno.get("id")]
+            if es_bilateral:
+                if ojo_turno == segundo_ojo:
+                    meta_bilateral["fecha_definitiva_2do_ojo"] = None
+                    checklist["_meta_bilateral"] = meta_bilateral
+                    payload_asesoria["checklist_prequirurgico"] = checklist
+                else:
+                    payload_asesoria["fecha_definitiva_cirugia"] = None
+            else:
+                payload_asesoria["fecha_definitiva_cirugia"] = None
+
+            if not turnos_rest:
+                payload_asesoria["fecha_definitiva_cirugia"] = None
+                payload_asesoria["estado"] = "confirmado"
+                nuevo_estado = "confirmado"
+        elif fecha_turno:
             if es_bilateral:
                 if ojo_turno == segundo_ojo:
                     # El turno corresponde al segundo ojo
@@ -6430,24 +6474,187 @@ def eliminar_turno_quirofano(turno_id: str) -> bool:
         return False
     try:
         # Obtener turno antes de borrar para saber si tenía asesoría vinculada
-        res_t = supabase.table("turnos_quirofano").select("asesoria_id").eq("id", turno_id).limit(1).execute()
-        asesoria_id = res_t.data[0].get("asesoria_id") if res_t.data else None
+        res_t = supabase.table("turnos_quirofano").select("asesoria_id, ojo").eq("id", turno_id).limit(1).execute()
+        turno_previo = res_t.data[0] if res_t.data else None
+        asesoria_id = turno_previo.get("asesoria_id") if turno_previo else None
 
         supabase.table("turnos_quirofano").delete().eq("id", turno_id).execute()
 
-        # Si tenía asesoría, revertir su estado a 'confirmado' y limpiar fecha
+        # Si tenía asesoría, evaluar si quedan otros turnos activos o revertir estado
         if asesoria_id:
-            supabase.table("asesorias_quirurgicas").update({
-                "estado": "confirmado",
-                "fecha_definitiva_cirugia": None,
-                "updated_at": "now()"
-            }).eq("id", asesoria_id).execute()
-            logger.info(f"Asesoría {asesoria_id} revertida a 'confirmado' tras eliminar turno.")
+            res_rest = supabase.table("turnos_quirofano").select("id, fecha_cirugia, ojo, quirofano_id, hora_inicio").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+            turnos_rest = res_rest.data or []
+            if not turnos_rest:
+                supabase.table("asesorias_quirurgicas").update({
+                    "estado": "confirmado",
+                    "fecha_definitiva_cirugia": None,
+                    "updated_at": "now()"
+                }).eq("id", asesoria_id).execute()
+                logger.info(f"Asesoría {asesoria_id} revertida a 'confirmado' tras eliminar todos sus turnos.")
+            else:
+                # Si aún queda un turno activo (ej: quedó el 1° ojo), sincronizar
+                sincronizar_asesoria_desde_quirofano(asesoria_id, turnos_rest[0], nuevo_estado="programado")
 
         return True
     except Exception as e:
         logger.error(f"Error al eliminar turno de quirófano: {e}")
         return False
+
+def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda: Dict[str, Any], asesoria_db: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    Sincroniza atómicamente la agenda de quirófano (turnos_quirofano) cuando la asesora
+    asigna o actualiza la fecha definitiva, quirofano, hora de inicio y duración en el expediente quirúrgico.
+    Soporta:
+    - Casos unilaterales (OD o OI).
+    - Casos bilaterales simultáneos (AO - mismo día).
+    - Casos bilaterales escalonados (AO - 1° y 2° ojo independientes).
+    - Auto-promoción del estado a 'programado' cuando hay turno y fecha asignada.
+    - Cancelación de turno si la asesora borra o cancela la fecha definitiva.
+    """
+    if not supabase or not asesoria_id:
+        return []
+    
+    try:
+        if not asesoria_db:
+            res_as = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+            if not res_as.data:
+                return []
+            asesoria_db = res_as.data[0]
+
+        ojo_caso = (asesoria_db.get("ojo") or "OD").upper()
+        checklist = asesoria_db.get("checklist_prequirurgico") or {}
+        if not isinstance(checklist, dict):
+            checklist = {}
+        meta_bilateral = checklist.get("_meta_bilateral") or {}
+        if not isinstance(meta_bilateral, dict):
+            meta_bilateral = {}
+        modalidad = meta_bilateral.get("modalidad") or asesoria_db.get("modalidad_bilateral")
+        es_bilateral_escalonada = (ojo_caso == "AO" and modalidad == "escalonada")
+
+        orden = meta_bilateral.get("orden") or "OD_primero"
+        primer_ojo = "OI" if orden == "OI_primero" else "OD"
+        segundo_ojo = "OD" if primer_ojo == "OI" else "OI"
+
+        # Buscar turnos existentes activos de esta asesoría
+        res_t = supabase.table("turnos_quirofano").select("*").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+        turnos_existentes = res_t.data or []
+
+        turnos_procesados = []
+
+        # -------------------------------------------------------------
+        # 1. PROCESAR TURNO PRINCIPAL / 1° OJO
+        # -------------------------------------------------------------
+        ojo_p1 = primer_ojo if es_bilateral_escalonada else ojo_caso
+        turno_p1 = None
+        for t in turnos_existentes:
+            t_ojo = (t.get("ojo") or "").upper()
+            if es_bilateral_escalonada:
+                if t_ojo == primer_ojo:
+                    turno_p1 = t
+                    break
+            else:
+                turno_p1 = t
+                break
+
+        fecha_p1 = payload_agenda.get("fecha_definitiva_cirugia") if "fecha_definitiva_cirugia" in payload_agenda else asesoria_db.get("fecha_definitiva_cirugia")
+        quirofano_p1 = payload_agenda.get("quirofano_id") or (turno_p1.get("quirofano_id") if turno_p1 else None)
+        hora_p1 = payload_agenda.get("hora_inicio") or (turno_p1.get("hora_inicio") if turno_p1 else "08:00")
+        dur_p1 = int(payload_agenda.get("duracion_minutos") or (turno_p1.get("duracion_minutos") if turno_p1 else 45) or 45)
+
+        # Si se borró la fecha definitiva o se pide cancelar
+        if ("fecha_definitiva_cirugia" in payload_agenda and not payload_agenda["fecha_definitiva_cirugia"]) or payload_agenda.get("cancelar_turno_1"):
+            if turno_p1:
+                supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", turno_p1["id"]).execute()
+                logger.info(f"Turno de quirófano {turno_p1['id']} cancelado al limpiar fecha en asesoría {asesoria_id}")
+        elif fecha_p1 and quirofano_p1:
+            datos_turno_1 = {
+                "asesoria_id": asesoria_id,
+                "paciente_id": asesoria_db.get("paciente_id"),
+                "quirofano_id": quirofano_p1,
+                "fecha_cirugia": fecha_p1,
+                "hora_inicio": hora_p1,
+                "duracion_minutos": dur_p1,
+                "ojo": ojo_p1,
+                "es_bilateral_escalonada": es_bilateral_escalonada,
+                "cirujano_id": asesoria_db.get("medico_cirujano_id"),
+                "cirujano_nombre": asesoria_db.get("medico_cirujano_nombre"),
+                "practica_codigo": asesoria_db.get("practica_codigo"),
+                "practica_nombre": asesoria_db.get("practica_nombre"),
+                "obra_social": asesoria_db.get("cobertura_obra_social"),
+                "estado": "programado"
+            }
+            if turno_p1:
+                # Actualizar turno existente
+                payload_upd = {k: v for k, v in datos_turno_1.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
+                payload_upd["updated_at"] = "now()"
+                upd_res = supabase.table("turnos_quirofano").update(payload_upd).eq("id", turno_p1["id"]).execute()
+                if upd_res.data:
+                    turnos_procesados.append(upd_res.data[0])
+            else:
+                # Crear nuevo turno en turnos_quirofano
+                t_nuevo = crear_turno_quirofano(datos_turno_1)
+                if t_nuevo:
+                    turnos_procesados.append(t_nuevo)
+
+        # -------------------------------------------------------------
+        # 2. PROCESAR 2° OJO (EN CASO DE BILATERAL ESCALONADA)
+        # -------------------------------------------------------------
+        if es_bilateral_escalonada:
+            turno_p2 = None
+            for t in turnos_existentes:
+                if (t.get("ojo") or "").upper() == segundo_ojo:
+                    turno_p2 = t
+                    break
+
+            fecha_p2 = payload_agenda.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo")
+            quirofano_p2 = payload_agenda.get("quirofano_id_2do_ojo") or meta_bilateral.get("quirofano_id_2do_ojo") or (turno_p2.get("quirofano_id") if turno_p2 else quirofano_p1)
+            hora_p2 = payload_agenda.get("hora_inicio_2do_ojo") or meta_bilateral.get("hora_inicio_2do_ojo") or (turno_p2.get("hora_inicio") if turno_p2 else hora_p1)
+            dur_p2 = int(payload_agenda.get("duracion_minutos_2do_ojo") or meta_bilateral.get("duracion_minutos_2do_ojo") or dur_p1 or 45)
+
+            if ("fecha_definitiva_2do_ojo" in payload_agenda and not payload_agenda["fecha_definitiva_2do_ojo"]) or payload_agenda.get("cancelar_turno_2"):
+                if turno_p2:
+                    supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", turno_p2["id"]).execute()
+                    logger.info(f"Turno de 2° ojo {turno_p2['id']} cancelado al limpiar fecha en asesoría {asesoria_id}")
+            elif fecha_p2 and quirofano_p2:
+                datos_turno_2 = {
+                    "asesoria_id": asesoria_id,
+                    "paciente_id": asesoria_db.get("paciente_id"),
+                    "quirofano_id": quirofano_p2,
+                    "fecha_cirugia": fecha_p2,
+                    "hora_inicio": hora_p2,
+                    "duracion_minutos": dur_p2,
+                    "ojo": segundo_ojo,
+                    "es_bilateral_escalonada": True,
+                    "cirujano_id": asesoria_db.get("medico_cirujano_id"),
+                    "cirujano_nombre": asesoria_db.get("medico_cirujano_nombre"),
+                    "practica_codigo": asesoria_db.get("practica_codigo"),
+                    "practica_nombre": asesoria_db.get("practica_nombre"),
+                    "obra_social": asesoria_db.get("cobertura_obra_social"),
+                    "estado": "programado"
+                }
+                if turno_p2:
+                    payload_upd2 = {k: v for k, v in datos_turno_2.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
+                    payload_upd2["updated_at"] = "now()"
+                    upd_res2 = supabase.table("turnos_quirofano").update(payload_upd2).eq("id", turno_p2["id"]).execute()
+                    if upd_res2.data:
+                        turnos_procesados.append(upd_res2.data[0])
+                else:
+                    t_nuevo2 = crear_turno_quirofano(datos_turno_2)
+                    if t_nuevo2:
+                        turnos_procesados.append(t_nuevo2)
+
+        # Si se crearon o actualizaron turnos y el caso aún estaba en etapa temprana, promover a 'programado'
+        if turnos_procesados and asesoria_db.get("estado") in ["en_asesoramiento", "confirmado"]:
+            supabase.table("asesorias_quirurgicas").update({
+                "estado": "programado",
+                "updated_at": "now()"
+            }).eq("id", asesoria_id).execute()
+            logger.info(f"Asesoría {asesoria_id} promovida a 'programado' con turno asignado en Quirófano.")
+
+        return turnos_procesados
+    except Exception as e:
+        logger.error(f"Error sincronizando turno de quirófano desde asesoría {asesoria_id}: {e}")
+        return []
 
 
 
