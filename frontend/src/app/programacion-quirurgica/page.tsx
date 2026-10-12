@@ -52,7 +52,9 @@ function ProgramacionQuirurgicaContent() {
   const [bloquesMedicos, setBloquesMedicos] = useState<any[]>([])
   const [casosConfirmados, setCasosConfirmados] = useState<any[]>([])
 
-  const [cargando, setCargando] = useState(true)
+  const [cargandoInicial, setCargandoInicial] = useState(true)
+  const [actualizandoTurnos, setActualizandoTurnos] = useState(false)
+  const [cargandoCasos, setCargandoCasos] = useState(false)
   const [modalAbierto, setModalAbierto] = useState(false)
   const [turnoSeleccionado, setTurnoSeleccionado] = useState<any | null>(null)
   const [casoConfirmadoSeleccionado, setCasoConfirmadoSeleccionado] = useState<any | null>(null)
@@ -138,40 +140,62 @@ function ProgramacionQuirurgicaContent() {
     return `${d.length}d`
   }
 
-  const fetchDatos = async () => {
+  // 1. Carga única de Quirófanos y Bloques Médicos al montar la vista
+  const cargarQuirofanosYBloques = async () => {
     try {
-      setCargando(true)
+      const [resQ, resBM] = await Promise.all([
+        apiFetch('/api/quirofanos?solo_activos=true'),
+        apiFetch('/api/quirofanos/bloques-medicos')
+      ])
+      const dataQ = await resQ.json()
+      const dataBM = await resBM.json()
+
+      if (dataQ.success && Array.isArray(dataQ.quirofanos)) {
+        setQuirofanos(dataQ.quirofanos)
+        setQuirofanoSeleccionadoId((prev) => prev || (dataQ.quirofanos[0]?.id || ''))
+      }
+      if (dataBM.success) setBloquesMedicos(dataBM.bloques || [])
+    } catch (e) {
+      console.error('Error cargando quirofanos y bloques:', e)
+    }
+  }
+
+  // 2. Carga ágil de Turnos y Bloqueos de la fecha/semana seleccionada
+  const cargarTurnosYBloqueos = async (primerMontaje = false) => {
+    try {
+      if (primerMontaje) setCargandoInicial(true)
+      else setActualizandoTurnos(true)
 
       const fDesde = modoVista === 'dia' ? fechaSeleccionada : fechaDesdeSemana
       const fHasta = modoVista === 'dia' ? fechaSeleccionada : fechaHastaSemana
 
-      const [resQ, resT, resB, resBM, resCasos] = await Promise.all([
-        apiFetch('/api/quirofanos?solo_activos=true'),
+      const [resT, resB] = await Promise.all([
         apiFetch(`/api/turnos-quirofano?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
-        apiFetch(`/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`),
-        apiFetch('/api/quirofanos/bloques-medicos'),
-        apiFetch('/api/asesorias-quirurgicas/pendientes-quirofano')
+        apiFetch(`/api/quirofano-bloqueos?fecha_desde=${fDesde}&fecha_hasta=${fHasta}`)
       ])
 
-      const dataQ = await resQ.json()
       const dataT = await resT.json()
       const dataB = await resB.json()
-      const dataBM = await resBM.json()
-      const dataCasos = await resCasos.json()
 
-      if (dataQ.success) {
-        setQuirofanos(dataQ.quirofanos || [])
-        if (dataQ.quirofanos.length > 0 && !quirofanoSeleccionadoId) {
-          setQuirofanoSeleccionadoId(dataQ.quirofanos[0].id)
-        }
-      }
       if (dataT.success) setTurnos(dataT.turnos || [])
       if (dataB.success) setBloqueos(dataB.bloqueos || [])
-      if (dataBM.success) setBloquesMedicos(dataBM.bloques || [])
+    } catch (err) {
+      console.error('Error cargando turnos quirúrgicos:', err)
+    } finally {
+      setCargandoInicial(false)
+      setActualizandoTurnos(false)
+    }
+  }
+
+  // 3. Carga en segundo plano de la bandeja de casos confirmados (no bloqueante)
+  const cargarCasosConfirmados = async () => {
+    try {
+      setCargandoCasos(true)
+      const resCasos = await apiFetch('/api/asesorias-quirurgicas/pendientes-quirofano')
+      const dataCasos = await resCasos.json()
 
       let listaConfirmados: any[] = (dataCasos.success && Array.isArray(dataCasos.casos)) ? dataCasos.casos : []
 
-      // Si por alguna razón está vacío, fallback de respaldo con pipeline
       if (listaConfirmados.length === 0) {
         try {
           const resPipe = await apiFetch('/api/pipeline-quirurgico')
@@ -184,7 +208,6 @@ function ProgramacionQuirurgicaContent() {
 
       setCasosConfirmados(listaConfirmados)
 
-      // Si viene por parámetro de URL con asesoria_id, abrir directamente el modal
       if (paramAsesoriaId && !modalAbierto) {
         const caso = listaConfirmados.find((c) => c.id === paramAsesoriaId)
         if (caso) {
@@ -194,31 +217,46 @@ function ProgramacionQuirurgicaContent() {
           setModalAbierto(true)
         }
       }
-    } catch (err) {
-      console.error('Error cargando turnero quirúrgico:', err)
+    } catch (e) {
+      console.error('Error cargando casos confirmados:', e)
     } finally {
-      setCargando(false)
+      setCargandoCasos(false)
     }
   }
 
-  useEffect(() => {
-    fetchDatos()
+  // Refresco manual integral
+  const refrescarTodo = async () => {
+    await Promise.all([cargarTurnosYBloqueos(false), cargarCasosConfirmados()])
+  }
 
-    // Suscripción en tiempo real a cambios en asesorías confirmadas y turnos
+  // Montaje inicial: salas fijas y confirmados en background
+  useEffect(() => {
+    cargarQuirofanosYBloques()
+    cargarCasosConfirmados()
+  }, [])
+
+  // Carga de turnos según navegación de fecha o modo (sin re-ejecutar por cambio de sala)
+  useEffect(() => {
+    cargarTurnosYBloqueos(cargandoInicial)
+  }, [fechaSeleccionada, modoVista])
+
+  // Suscripción Realtime a Supabase desacoplada
+  useEffect(() => {
     const channel = supabase
       .channel('programacion-quirurgica-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
         () => {
-          fetchDatos()
+          cargarCasosConfirmados()
         }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'turnos_quirofano' },
         () => {
-          fetchDatos()
+          cargarTurnosYBloqueos(false)
+          cargarCasosConfirmados()
         }
       )
       .subscribe()
@@ -226,7 +264,7 @@ function ProgramacionQuirurgicaContent() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [fechaSeleccionada, modoVista, quirofanoSeleccionadoId, paramAsesoriaId])
+  }, [fechaSeleccionada, modoVista])
 
   const cambiarSemana = (delta: number) => {
     const base = new Date(fechaSeleccionada + 'T12:00:00')
@@ -279,7 +317,7 @@ function ProgramacionQuirurgicaContent() {
     if (!confirm('¿Desea desbloquear este horario de quirófano?')) return
     try {
       const res = await fetch(`${BACKEND_URL}/api/quirofano-bloqueos/${bloqueoId}`, { method: 'DELETE' })
-      if (res.ok) fetchDatos()
+      if (res.ok) cargarTurnosYBloqueos(false)
     } catch (err) {
       console.error('Error al eliminar bloqueo:', err)
     }
@@ -341,12 +379,12 @@ function ProgramacionQuirurgicaContent() {
               </button>
 
               <button
-                onClick={fetchDatos}
-                disabled={cargando}
+                onClick={refrescarTodo}
+                disabled={actualizandoTurnos || cargandoInicial || cargandoCasos}
                 className="p-2 rounded-xl border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-[var(--foreground)] transition-all"
                 title="Refrescar agenda y casos confirmados"
               >
-                <RefreshCw size={15} className={cargando ? 'animate-spin text-blue-600' : ''} />
+                <RefreshCw size={15} className={actualizandoTurnos || cargandoInicial || cargandoCasos ? 'animate-spin text-blue-600' : ''} />
               </button>
             </div>
           )}
@@ -490,26 +528,33 @@ function ProgramacionQuirurgicaContent() {
         </div>
       </div>
 
-      {/* GRILLA DEL TURNERO */}
-      {cargando ? (
+      {/* GRILLA DEL TURNERO (Stale-While-Revalidate: nunca desmonta el calendario en revalidaciones) */}
+      {cargandoInicial ? (
         <div className="p-16 rounded-2xl border border-[var(--border)] bg-[var(--card)] flex flex-col items-center justify-center gap-3 min-h-[400px]">
           <Loader2 className="animate-spin text-blue-600" size={36} />
           <p className="text-xs font-medium text-[var(--secondary)]">Cargando grilla quirúrgica y ocupación de salas...</p>
         </div>
       ) : (
-        <TurneroGrid
-          modo={modoVista}
-          quirofanos={quirofanos}
-          quirofanoSeleccionadoId={quirofanoSeleccionadoId}
-          turnos={turnos}
-          bloqueos={bloqueos}
-          bloquesMedicos={bloquesMedicos}
-          fechaSeleccionada={fechaSeleccionada}
-          diasSemana={diasVisibles}
-          onSlotClick={handleSlotClick}
-          onTurnoClick={handleTurnoClick}
-          onEliminarBloqueo={handleEliminarBloqueo}
-        />
+        <div className="relative">
+          {actualizandoTurnos && (
+            <div className="absolute top-0 left-0 right-0 h-1 bg-blue-500/20 overflow-hidden z-20 rounded-t-xl">
+              <div className="h-full bg-blue-600 animate-pulse w-full" />
+            </div>
+          )}
+          <TurneroGrid
+            modo={modoVista}
+            quirofanos={quirofanos}
+            quirofanoSeleccionadoId={quirofanoSeleccionadoId}
+            turnos={turnos}
+            bloqueos={bloqueos}
+            bloquesMedicos={bloquesMedicos}
+            fechaSeleccionada={fechaSeleccionada}
+            diasSemana={diasVisibles}
+            onSlotClick={handleSlotClick}
+            onTurnoClick={handleTurnoClick}
+            onEliminarBloqueo={handleEliminarBloqueo}
+          />
+        </div>
       )}
 
       {/* DRAWER / SLIDE-OVER: BANDEJA DE CASOS CONFIRMADOS DESDE ASESORAMIENTO */}
@@ -536,7 +581,12 @@ function ProgramacionQuirurgicaContent() {
             </p>
 
             <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-              {casosConfirmados.length === 0 ? (
+              {cargandoCasos && casosConfirmados.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-2 text-[var(--secondary)]">
+                  <Loader2 className="animate-spin text-blue-600" size={24} />
+                  <p className="text-xs font-medium">Cargando casos confirmados en segundo plano...</p>
+                </div>
+              ) : casosConfirmados.length === 0 ? (
                 <p className="text-xs text-[var(--secondary)] italic py-8 text-center">
                   No hay cirugías confirmadas pendientes por el momento.
                 </p>
@@ -643,7 +693,7 @@ function ProgramacionQuirurgicaContent() {
             setCasoConfirmadoSeleccionado(null)
             setSlotClickData(null)
           }}
-          onSaved={fetchDatos}
+          onSaved={refrescarTodo}
         />
       )}
     </div>

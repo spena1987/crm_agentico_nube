@@ -6055,12 +6055,29 @@ def get_asesorias_confirmadas_pendientes() -> List[Dict[str, Any]]:
         resp = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").in_("estado", ["confirmado", "programado"]).order("created_at", desc=True).execute()
         casos = resp.data or []
         
+        # Optimización: Obtener turnos existentes de todas las asesorías en una sola consulta por lotes (evita N+1)
+        casos_ids = [c["id"] for c in casos if c.get("id")]
+        turnos_por_asesoria: Dict[str, List[Dict[str, Any]]] = {}
+        if casos_ids:
+            try:
+                t_resp = supabase.table("turnos_quirofano") \
+                    .select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, estado") \
+                    .in_("asesoria_id", casos_ids) \
+                    .neq("estado", "cancelado") \
+                    .execute()
+                for t in (t_resp.data or []):
+                    as_id = t.get("asesoria_id")
+                    if as_id:
+                        if as_id not in turnos_por_asesoria:
+                            turnos_por_asesoria[as_id] = []
+                        turnos_por_asesoria[as_id].append(t)
+            except Exception as e_t:
+                logger.warning(f"Aviso al cargar turnos en lote para asesorias confirmadas: {e_t}")
+
         resultado = []
         for caso in casos:
             asesoria_id = caso["id"]
-            # Buscar turnos ya existentes para esta asesoría en quirófano
-            t_resp = supabase.table("turnos_quirofano").select("id, ojo, fecha_cirugia, hora_inicio, estado").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
-            turnos_existentes = t_resp.data or []
+            turnos_existentes = turnos_por_asesoria.get(asesoria_id, [])
             
             ojo_caso = caso.get("ojo") or "OD"
             
