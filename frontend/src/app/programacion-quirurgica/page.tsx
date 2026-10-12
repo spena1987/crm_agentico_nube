@@ -132,6 +132,17 @@ function ProgramacionQuirurgicaContent() {
     return `Vista Semanal (${diasOp.length} días)`
   }, [diasOp, mostrarDiasInhabiles])
 
+  // Conteo de turnos programados activos por quirófano para las fechas cargadas
+  const conteoTurnosPorQuirofano = useMemo(() => {
+    const mapa: Record<string, number> = {}
+    turnos.forEach((t) => {
+      if (t.quirofano_id && t.estado !== 'cancelado') {
+        mapa[t.quirofano_id] = (mapa[t.quirofano_id] || 0) + 1
+      }
+    })
+    return mapa
+  }, [turnos])
+
   const getRegimenDiasTxt = (q: any) => {
     const d: number[] = q?.dias_operativos || [1, 2, 3, 4, 5]
     if (d.length === 5 && d.includes(1) && d.includes(5)) return 'L-V'
@@ -440,20 +451,36 @@ function ProgramacionQuirurgicaContent() {
           </span>
           {quirofanos.map((q) => {
             const isSelected = q.id === quirofanoActual?.id
+            const cant = conteoTurnosPorQuirofano[q.id] || 0
             return (
               <button
                 key={q.id}
                 onClick={() => setQuirofanoSeleccionadoId(q.id)}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 border ${
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 border ${
                   isSelected
                     ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 border-blue-500 shadow-sm'
-                    : 'bg-slate-100/60 dark:bg-slate-900/40 text-[var(--secondary)] border-transparent hover:bg-slate-200'
+                    : 'bg-slate-100/60 dark:bg-slate-900/40 text-[var(--secondary)] border-transparent hover:bg-slate-200 dark:hover:bg-slate-800'
                 }`}
               >
                 <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: q.color }} />
                 <span>{q.nombre}</span>
                 <span className="text-[10px] font-mono opacity-80 font-normal">({q.duracion_slot_minutos || 15}m)</span>
-                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold ml-1">
+                
+                {/* Badge con conteo de cirugías en esta semana */}
+                <span
+                  className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full transition-all ${
+                    cant > 0
+                      ? isSelected
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-blue-100 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700'
+                      : 'opacity-40 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
+                  }`}
+                  title={`${cant} cirugía(s) programada(s) en esta sala para esta semana`}
+                >
+                  {cant} {cant === 1 ? 'turno' : 'turnos'}
+                </span>
+
+                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-bold ml-0.5">
                   {getRegimenDiasTxt(q)}
                 </span>
               </button>
@@ -553,6 +580,7 @@ function ProgramacionQuirurgicaContent() {
             onSlotClick={handleSlotClick}
             onTurnoClick={handleTurnoClick}
             onEliminarBloqueo={handleEliminarBloqueo}
+            onSeleccionarQuirofano={setQuirofanoSeleccionadoId}
           />
         </div>
       )}
