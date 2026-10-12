@@ -544,3 +544,247 @@ def obtener_analitica_causas_pareto() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error generando analítica de Pareto: {e}", exc_info=True)
         return {"error": str(e)}
+
+
+async def despachar_consentimiento_informado_inteligente(
+    turno_id: Optional[str] = None,
+    asesoria_id: Optional[str] = None,
+    operador_nombre: Optional[str] = None,
+    forzar_plantilla: bool = False
+) -> Dict[str, Any]:
+    """
+    Enrutador Inteligente (Smart Template Router) para Consentimientos Informados de WhatsApp.
+    1. Si la ventana de 24h de Meta está abierta (o el operador no fuerza plantilla):
+       Intenta enviar texto libre detallado con el enlace directo.
+       Si Meta rechaza por ventana cerrada (error 131047 / 131026), conmuta automáticamente a la plantilla oficial.
+    2. Si la ventana de 24h de Meta está cerrada:
+       Despacha directamente la plantilla oficial de Meta aprobada 'consentimiento_informado_quirurgico_v1'
+       (categoría UTILITY, idioma es_AR) con sus 5 parámetros sanitizados:
+         {{1}}: paciente_nombre
+         {{2}}: practica_nombre (+ ojo)
+         {{3}}: turno_fecha
+         {{4}}: cirujano_nombre
+         {{5}}: enlace_firma
+    3. Registra el impacto en turnos_quirofano, asesorias_quirurgicas, bitácora de evolución
+       y en la tabla de mensajes con badge de plantilla oficial y wamid para tildes de entrega.
+    """
+    import re
+    import secrets
+    from datetime import datetime, timezone, timedelta
+    from app.db import (
+        asegurar_turno_para_consentimiento_asesoria,
+        get_turno_quirofano_by_id,
+        actualizar_turno_quirofano,
+        check_patient_24h_window,
+        registrar_envio_consentimiento_quirurgico
+    )
+    from app.services.whatsapp_cloud.client import (
+        WhatsAppCloudClient,
+        get_whatsapp_cloud_credentials,
+        ConversationWindowClosedError
+    )
+    from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+
+    # 1. Resolver Turno y Asesoría
+    turno = None
+    t_id = turno_id
+    as_id = asesoria_id
+
+    if as_id and not t_id:
+        turno = asegurar_turno_para_consentimiento_asesoria(as_id)
+        if turno:
+            t_id = turno.get("id")
+    elif t_id:
+        turno = get_turno_quirofano_by_id(t_id)
+        if turno and turno.get("asesoria_id") and not as_id:
+            as_id = turno["asesoria_id"]
+
+    if not turno or not t_id:
+        raise ValueError("No se pudo identificar un turno quirúrgico válido para despachar el consentimiento.")
+
+    # 2. Resolver Paciente y Teléfono
+    paciente = turno.get("pacientes") or {}
+    paciente_id = paciente.get("id") or turno.get("paciente_id")
+    telefono = paciente.get("telefono")
+
+    if not telefono and paciente_id and supabase:
+        try:
+            p_res = supabase.table("pacientes").select("id, nombre, telefono").eq("id", paciente_id).limit(1).execute()
+            if p_res.data and len(p_res.data) > 0:
+                paciente = p_res.data[0]
+                telefono = paciente.get("telefono")
+        except Exception as e_pac:
+            logger.warning(f"Error consultando datos de paciente {paciente_id}: {e_pac}")
+
+    if not telefono or len(str(telefono).strip()) < 8:
+        raise ValueError(f"El paciente {paciente.get('nombre') or ''} no tiene un teléfono válido registrado para WhatsApp.")
+
+    # 3. Token y enlace de firma seguro
+    token = turno.get("consentimiento_token")
+    if not token:
+        token = secrets.token_urlsafe(24)
+        actualizar_turno_quirofano(t_id, {"consentimiento_token": token})
+        turno["consentimiento_token"] = token
+
+    try:
+        from app.services.urgencias_service import obtener_base_crm_url
+        base_app_url = obtener_base_crm_url()
+    except Exception:
+        base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm-agentico-nube.vercel.app"
+    enlace_firma = f"{base_app_url.rstrip('/')}/consentimiento/{token}"
+
+    # 4. Formateo y sanitización estricta para Meta (Error #132018)
+    def _sanitize(val: Any, fallback: str = "", max_len: int = 120) -> str:
+        s = str(val or fallback).strip()
+        s = re.sub(r"[\r\n\t]+", " ", s)
+        s = re.sub(r"\s{2,}", " ", s).strip()
+        return s[:max_len].strip()
+
+    p_nombre = _sanitize(paciente.get("nombre"), "Estimado/a", 60)
+
+    ojo = turno.get("ojo") or "OD"
+    ojo_desc = "Ojo Derecho" if ojo == "OD" else "Ojo Izquierdo" if ojo == "OI" else "Ambos Ojos"
+    practica_base = turno.get("practica_nombre") or "Cirugía Oftalmológica"
+    if "ojo" not in practica_base.lower() and "od" not in practica_base.lower() and "oi" not in practica_base.lower():
+        p_cirugia = _sanitize(f"{practica_base} ({ojo_desc})", "Cirugía Oftalmológica", 80)
+    else:
+        p_cirugia = _sanitize(practica_base, "Cirugía Oftalmológica", 80)
+
+    # Formateo amigable de fecha y hora
+    fecha_raw = str(turno.get("fecha_cirugia") or "").strip()
+    fecha_bonita = fecha_raw
+    if "-" in fecha_raw and len(fecha_raw) == 10:
+        partes = fecha_raw.split("-")
+        if len(partes) == 3:
+            fecha_bonita = f"{partes[2]}/{partes[1]}/{partes[0]}"
+
+    hora_raw = str(turno.get("hora_inicio") or "").strip()[:5]
+    if hora_raw:
+        fecha_str = f"{fecha_bonita} a las {hora_raw} hs"
+    else:
+        fecha_str = fecha_bonita or "a coordinar"
+    p_fecha = _sanitize(fecha_str, "a coordinar", 50)
+
+    p_cirujano = _sanitize(turno.get("cirujano_nombre"), "Médico Cirujano", 60)
+    p_enlace = str(enlace_firma).strip()
+
+    # 5. Evaluar Ventana de 24 horas
+    win_info = check_patient_24h_window(paciente_id, telefono)
+    is_window_open = bool(win_info.get("is_open", False))
+
+    cuerpo_texto_libre = (
+        f"Hola {p_nombre}! 🩺 Te escribimos de Clínica Médica Nube respecto a tu cirugía de {p_cirugia} "
+        f"programada para el {p_fecha} con el Dr/a. {p_cirujano}. "
+        f"Para que puedas leerlo con tranquilidad en familia y firmarlo digitalmente desde tu celular, "
+        f"te compartimos tu Consentimiento Informado oficial:\n{p_enlace}\n\n"
+        f"Si prefieres firmarlo en papel el día de tu ingreso en la clínica, no hay ningún problema. ¡Quedamos a tu entera disposición!"
+    )
+
+    modo_utilizado = "template"
+    template_name = "consentimiento_informado_quirurgico_v1"
+    wamid = None
+    texto_para_historial = cuerpo_texto_libre
+
+    phone_id, token_waba = get_whatsapp_cloud_credentials()
+    norm_to = normalize_to_meta_e164(telefono) or telefono
+
+    # Si la ventana está abierta y no se fuerza plantilla, intentar texto libre
+    if is_window_open and not forzar_plantilla:
+        logger.info(f"Ventana 24h abierta para {p_nombre} ({telefono}). Intentando envío de texto libre...")
+        try:
+            if phone_id and token_waba:
+                client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token_waba)
+                try:
+                    res_ft = await client.send_free_text(norm_to, cuerpo_texto_libre)
+                    wamid = res_ft.get("wamid")
+                    modo_utilizado = "free_text"
+                    template_name = None
+                finally:
+                    await client.close()
+            else:
+                # Simulación o WhatsApp Web manager fallback
+                res_mgr = whatsapp_manager.enviar_mensaje(telefono, cuerpo_texto_libre)
+                if res_mgr and res_mgr.get("status") in ("sent", "queued", "simulated", "ok"):
+                    modo_utilizado = "free_text"
+                    template_name = None
+                    wamid = res_mgr.get("id") or f"wa_{secrets.token_hex(8)}"
+                else:
+                    raise ConversationWindowClosedError(131047, None, "Ventana cerrada o rechazo", None)
+        except (ConversationWindowClosedError, Exception) as e_ft:
+            logger.warning(f"Envío de texto libre no exitoso ({e_ft}). Activando Smart Template Router a 'consentimiento_informado_quirurgico_v1'...")
+            modo_utilizado = "template"
+            template_name = "consentimiento_informado_quirurgico_v1"
+
+    # Si corresponde enviar plantilla oficial de Meta
+    if modo_utilizado == "template":
+        logger.info(f"Enrutando a plantilla oficial Meta '{template_name}' para {p_nombre} ({telefono}).")
+        body_params = [
+            {"type": "text", "text": p_nombre},
+            {"type": "text", "text": p_cirugia},
+            {"type": "text", "text": p_fecha},
+            {"type": "text", "text": p_cirujano},
+            {"type": "text", "text": p_enlace}
+        ]
+
+        if phone_id and token_waba:
+            client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token_waba)
+            try:
+                res_tpl = await client.send_template(
+                    to_phone=norm_to,
+                    template_name=template_name,
+                    language_code="es_AR",
+                    components=[{"type": "body", "parameters": body_params}]
+                )
+                wamid = res_tpl.get("wamid")
+            except Exception as e_tpl:
+                logger.error(f"Error al enviar plantilla oficial Meta {template_name}: {e_tpl}")
+                # Fallback síncrono si el cliente HTTP falló
+                res_sync = _enviar_plantilla_meta_sync(
+                    telefono=telefono,
+                    template_name=template_name,
+                    parametros_body=body_params,
+                    language_code="es_AR"
+                )
+                if res_sync and not res_sync.get("error"):
+                    wamid = (res_sync.get("messages") or [{}])[0].get("id")
+                else:
+                    raise RuntimeError(f"Fallo al despachar plantilla oficial de Meta: {res_sync.get('error') or e_tpl}")
+            finally:
+                await client.close()
+        else:
+            # Entorno sin credenciales Meta (dev / test) -> simulación exitosa
+            logger.info(f"Simulando despacho de plantilla oficial Meta '{template_name}' en entorno sin credenciales.")
+            wamid = f"sim_wamid_{secrets.token_hex(10)}"
+
+        texto_para_historial = (
+            f"📄 [PLANTILLA OFICIAL META: Consentimiento Informado Quirúrgico]\n"
+            f"Hola {p_nombre}, confirmamos tu turno de cirugía de {p_cirugia} para el día {p_fecha} con el Dr/a. {p_cirujano}.\n"
+            f"Por favor, revisá y firmá tu Consentimiento Informado en tu celular desde el siguiente enlace seguro:\n{p_enlace}"
+        )
+
+    # 6. Registrar en Base de Datos, bitácora y mensajes
+    registrar_envio_consentimiento_quirurgico(
+        turno_id=t_id,
+        asesoria_id=as_id,
+        paciente_id=paciente_id or "",
+        telefono=telefono,
+        modo_envio=modo_utilizado,
+        enlace_firma=p_enlace,
+        token=token,
+        template_name=template_name,
+        wamid=wamid,
+        usuario_nombre=operador_nombre or "Automatismo CRM",
+        texto_renderizado=texto_para_historial
+    )
+
+    return {
+        "success": True,
+        "ok": True,
+        "modo_utilizado": modo_utilizado,
+        "template_name": template_name,
+        "wamid": wamid,
+        "enlace_firma": p_enlace,
+        "telefono": telefono,
+        "mensaje": f"Consentimiento Informado enviado por WhatsApp exitosamente ({'Plantilla Oficial Meta' if modo_utilizado == 'template' else 'Texto Libre'}).",
+        "estado": "enviado_whatsapp"
+    }

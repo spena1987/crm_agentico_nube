@@ -271,29 +271,18 @@ async def ejecutar_envio_automatico_consentimientos_anticipados() -> int:
             if not tel:
                 continue
 
-            # Respetar ventana de Meta si está configurado para evitar error 131047
-            if auto_cfg.get("consentimiento_respetar_ventana_meta", True):
-                try:
-                    win_info = check_patient_24h_window(pac.get("id"), tel)
-                    if not win_info.get("is_open", False):
-                        logger.info(f"⏳ [Consentimiento Auto] Omitiendo turno {t['id']} para paciente {pac.get('nombre')}: Ventana de 24h Meta cerrada.")
-                        continue
-                except Exception as e_win:
-                    logger.warning(f"No se pudo chequear ventana de 24h para paciente {pac.get('nombre')}: {e_win}")
-                
             as_id = t.get("asesoria_id")
-            if as_id:
-                try:
-                    await enviar_consentimiento_asesoria_whatsapp(as_id)
+            try:
+                from app.services.seguimiento_quirurgico_service import despachar_consentimiento_informado_inteligente
+                res_auto = await despachar_consentimiento_informado_inteligente(
+                    turno_id=t["id"],
+                    asesoria_id=as_id,
+                    operador_nombre="Automatismo CRM (D-2 a D-3)"
+                )
+                if res_auto.get("success"):
                     enviados += 1
-                except Exception as e_env:
-                    logger.warning(f"Aviso en cron automático enviando consentimiento a asesoría {as_id}: {e_env}")
-            else:
-                try:
-                    await enviar_consentimiento_whatsapp(t["id"])
-                    enviados += 1
-                except Exception as e_env:
-                    logger.warning(f"Aviso en cron automático enviando consentimiento a turno {t['id']}: {e_env}")
+            except Exception as e_env:
+                logger.warning(f"Aviso en cron automático enviando consentimiento a turno {t['id']}: {e_env}")
                     
         return enviados
     except Exception as e:
@@ -5153,66 +5142,15 @@ def marcar_pulsera_impresa_api(turno_id: str, payload: Optional[Dict[str, Any]] 
 @app.post("/api/turnos-quirofano/{turno_id}/enviar-consentimiento-wa")
 async def enviar_consentimiento_whatsapp(turno_id: str):
     try:
-        turno = get_turno_quirofano_by_id(turno_id)
-        if not turno:
-            raise HTTPException(status_code=404, detail="Turno no encontrado")
-            
-        paciente = turno.get("pacientes") or {}
-        telefono = paciente.get("telefono")
-        if not telefono:
-            raise HTTPException(status_code=400, detail="El paciente no tiene teléfono registrado")
-            
-        config = get_configuracion_quirofano()
-        plantilla_msg = config.get("whatsapp_mensaje_envio") or (
-            "Hola {paciente}, confirmamos tu turno de cirugía de {cirugia} ({ojo_intervenido}) para el día {fecha_cirugia} a las {hora_cirugia} hs con el Dr. {cirujano}. "
-            "Por favor, revisá y firmá tu Consentimiento Informado en tu celular desde el siguiente enlace seguro: {enlace_firma}"
-        )
-        
-        token = turno.get("consentimiento_token")
-        if not token:
-            import secrets
-            token = secrets.token_urlsafe(24)
-            actualizar_turno_quirofano(turno_id, {"consentimiento_token": token})
-            
-        # Determinar base URL pública o del frontend (Vercel en producción o configurada en Ajustes)
-        try:
-            from app.services.urgencias_service import obtener_base_crm_url
-            base_app_url = obtener_base_crm_url()
-        except Exception:
-            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or os.getenv("FRONTEND_URL") or "https://crm-agentico-nube.vercel.app"
-        enlace_firma = f"{base_app_url}/consentimiento/{token}"
-        
-        ojo = turno.get("ojo") or "OD"
-        ojo_desc = "Ojo Derecho" if ojo == "OD" else "Ojo Izquierdo" if ojo == "OI" else "Ambos Ojos"
-        
-        mensaje_final = plantilla_msg.format(
-            paciente=paciente.get("nombre") or "Paciente",
-            cirugia=turno.get("practica_nombre") or "Cirugía",
-            ojo_intervenido=ojo_desc,
-            fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
-            hora_cirugia=str(turno.get("hora_inicio") or "")[:5],
-            cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
-            enlace_firma=enlace_firma
-        )
-        
-        # Enviar mensaje vía WhatsApp (función síncrona)
-        jid = telefono if "@" in telefono else f"{telefono}@s.whatsapp.net"
-        res_wa = whatsapp_manager.enviar_mensaje(jid, mensaje_final)
-        
-        # Actualizar estado de envío en BD
-        actualizar_turno_quirofano(turno_id, {
-            "consentimiento_estado": "enviado_whatsapp",
-            "consentimiento_enviado_at": "now()"
-        })
-        
-        return {
-            "success": True, 
-            "mensaje": "Consentimiento enviado por WhatsApp exitosamente.",
-            "enlace_firma": enlace_firma,
-            "resultado_wa": res_wa
-        }
+        from app.services.seguimiento_quirurgico_service import despachar_consentimiento_informado_inteligente
+        res = await despachar_consentimiento_informado_inteligente(turno_id=turno_id)
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error al enviar consentimiento por WhatsApp: {e}")
+        logger.error(f"Error al enviar consentimiento por WhatsApp para turno {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Disparo de Preparación Prequirúrgica por WhatsApp
@@ -5726,84 +5664,18 @@ def obtener_consentimiento_asesoria(asesoria_id: str):
 @app.post("/api/asesorias-quirurgicas/{asesoria_id}/enviar-consentimiento-wa")
 async def enviar_consentimiento_asesoria_whatsapp(asesoria_id: str):
     """
-    Envía el consentimiento informado por WhatsApp directamente desde el caso de asesoría quirúrgica.
+    Envía el consentimiento informado por WhatsApp directamente desde el caso de asesoría quirúrgica
+    usando el Enrutador Inteligente (Smart Template Router) para respetar la ventana de 24h de Meta.
     """
     try:
-        from app.db import (
-            asegurar_turno_para_consentimiento_asesoria,
-            actualizar_turno_quirofano,
-            crear_evolucion_asesoria,
-            get_configuracion_quirofano
+        from app.services.seguimiento_quirurgico_service import despachar_consentimiento_informado_inteligente
+        res = await despachar_consentimiento_informado_inteligente(
+            asesoria_id=asesoria_id,
+            operador_nombre="Asesoría Quirúrgica"
         )
-        from app.whatsapp import whatsapp_manager
-        
-        turno = asegurar_turno_para_consentimiento_asesoria(asesoria_id)
-        if not turno:
-            raise HTTPException(status_code=404, detail="No se pudo resolver el caso quirúrgico.")
-            
-        paciente = turno.get("pacientes") or {}
-        telefono = paciente.get("telefono")
-        if not telefono:
-            raise HTTPException(status_code=400, detail="El paciente no tiene número de teléfono registrado.")
-            
-        token = turno.get("consentimiento_token")
-        
-        try:
-            from app.services.urgencias_service import obtener_base_crm_url
-            base_app_url = obtener_base_crm_url()
-        except Exception:
-            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm-agentico-nube.vercel.app"
-        enlace_firma = f"{base_app_url}/consentimiento/{token}"
-        
-        ojo = turno.get("ojo") or "OD"
-        ojo_desc = "Ojo Derecho (OD)" if ojo == "OD" else "Ojo Izquierdo (OI)" if ojo == "OI" else "Ambos Ojos (AO)"
-        
-        config = get_configuracion_quirofano()
-        plantilla_msg = config.get("whatsapp_mensaje_envio") or (
-            "Hola {paciente}! 🩺 Te escribimos de Clínica Médica Nube respecto a tu cirugía de {cirugia} ({ojo_intervenido}) programada para el {fecha_cirugia}. "
-            "Para que puedas leerlo con tranquilidad en familia y firmarlo digitalmente desde tu celular, te compartimos tu Consentimiento Informado oficial: {enlace_firma}\n\n"
-            "Si prefieres firmarlo en papel el día de tu ingreso en la clínica, no hay ningún problema. ¡Quedamos a tu entera disposición!"
-        )
-        
-        mensaje_final = plantilla_msg.format(
-            paciente=paciente.get("nombre") or "Paciente",
-            cirugia=turno.get("practica_nombre") or "Cirugía Oftalmológica",
-            ojo_intervenido=ojo_desc,
-            fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
-            hora_cirugia=str(turno.get("hora_inicio") or "")[:5],
-            cirujano=turno.get("cirujano_nombre") or "Médico Cirujano",
-            enlace_firma=enlace_firma
-        )
-        
-        jid = telefono if "@" in telefono else f"{telefono}@s.whatsapp.net"
-        res_wa = whatsapp_manager.enviar_mensaje(jid, mensaje_final)
-        
-        # Actualizar estado de consentimiento
-        actualizar_turno_quirofano(turno["id"], {
-            "consentimiento_estado": "enviado_whatsapp",
-            "consentimiento_enviado_at": "now()"
-        })
-        
-        # Asentar hito en la bitácora del paciente
-        from datetime import datetime, timezone, timedelta
-        now_art_str = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M")
-        crear_evolucion_asesoria({
-            "asesoria_id": asesoria_id,
-            "paciente_id": paciente.get("id"),
-            "tipo": "contacto",
-            "canal": "whatsapp",
-            "contenido": f"📲 Consentimiento Informado enviado por WhatsApp al paciente ({now_art_str}). Enlace de firma: {enlace_firma}",
-            "autor": "Asesoría Quirúrgica",
-            "fecha": now_art_str[:10]
-        })
-        
-        return {
-            "success": True,
-            "mensaje": "Consentimiento Informado enviado por WhatsApp exitosamente.",
-            "enlace_firma": enlace_firma,
-            "estado": "enviado_whatsapp",
-            "resultado_wa": res_wa
-        }
+        return res
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except HTTPException:
         raise
     except Exception as e:
