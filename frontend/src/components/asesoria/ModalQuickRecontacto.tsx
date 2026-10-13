@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
+import Link from 'next/link'
 import {
   X,
   Clock,
@@ -48,6 +49,8 @@ export default function ModalQuickRecontacto({
   const telefono = paciente.telefono || caso.telefono || ''
   const nombrePaciente = paciente.nombre || caso.paciente_nombre || 'Paciente'
 
+  const pacienteId = caso.paciente_id || paciente.id || ''
+
   // Presets rápidos para reprogramación
   const setPresetDias = (dias: number) => {
     const d = new Date()
@@ -55,13 +58,12 @@ export default function ModalQuickRecontacto({
     setNuevaFecha(d.toISOString().slice(0, 10))
   }
 
-  // Generar link directo de WhatsApp Web / App
+  // Generar enlace al Gestor de Chat de WhatsApp del CRM
   const cleanPhone = telefono.replace(/[^0-9]/g, '')
-  const phoneFormatted = cleanPhone.startsWith('54') ? cleanPhone : `549${cleanPhone}`
-  const textoMensajeWa = encodeURIComponent(
-    `Hola ${nombrePaciente}, te escribo desde la clínica respecto a tu presupuesto para ${caso.practica_nombre || 'tu cirugía'}. ¿Pudiste evaluarlo o tienes alguna consulta que podamos resolverte?`
-  )
-  const waUrl = cleanPhone ? `https://wa.me/${phoneFormatted}?text=${textoMensajeWa}` : null
+  const textoMensaje = `Hola ${nombrePaciente}, te escribo desde la clínica respecto a tu presupuesto para ${caso.practica_nombre || 'tu cirugía'}. ¿Pudiste evaluarlo o tienes alguna consulta que podamos resolverte?`
+  const chatCrmUrl = (pacienteId || cleanPhone)
+    ? `/chat?pacienteId=${encodeURIComponent(pacienteId)}&telefono=${encodeURIComponent(cleanPhone)}&mensaje=${encodeURIComponent(textoMensaje)}`
+    : null
 
   const handleGuardar = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -136,17 +138,17 @@ export default function ModalQuickRecontacto({
               <Phone size={13} className="text-emerald-400" />
               <strong className="text-gray-200">{telefono || 'Sin teléfono'}</strong>
             </span>
-            {waUrl && (
-              <a
-                href={waUrl}
+            {chatCrmUrl && (
+              <Link
+                href={chatCrmUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all"
+                title="Abrir gestor de chat de WhatsApp del CRM en una nueva pestaña con la conversación seleccionada"
               >
-                <MessageSquare size={13} />
-                <span>Contactar por WhatsApp</span>
-                <ExternalLink size={11} className="opacity-70" />
-              </a>
+                <MessageSquare size={13} className="shrink-0" />
+                <span>Abrir en Chat del CRM</span>
+              </Link>
             )}
           </div>
           {caso.proxima_accion_texto && (

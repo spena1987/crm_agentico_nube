@@ -582,6 +582,7 @@ export default function ChatInbox() {
   const paramConvId = searchParams ? (searchParams.get('conv') || searchParams.get('id')) : null
   const paramPacienteId = searchParams ? searchParams.get('pacienteId') : null
   const paramTelefono = searchParams ? searchParams.get('telefono') : null
+  const paramMensaje = searchParams ? (searchParams.get('mensaje') || searchParams.get('texto')) : null
 
   const fetchConversaciones = async (isBackground = false) => {
     try {
@@ -653,10 +654,16 @@ export default function ChatInbox() {
       }
 
       if ((paramPacienteId || paramTelefono) && !selectedConvIdRef.current) {
+        const paramTelClean = paramTelefono ? paramTelefono.replace(/\D/g, '') : ''
         const target = convs.find((c) => {
           const p = getPatient(c)
           if (paramPacienteId && (c.paciente_id === paramPacienteId || p?.id === paramPacienteId)) return true
-          if (paramTelefono && p?.telefono === paramTelefono) return true
+          if (paramTelClean) {
+            const pTelClean = (p?.telefono || '').replace(/\D/g, '')
+            const waChatIdClean = (c.wa_chat_id || '').replace(/\D/g, '')
+            if (pTelClean && (pTelClean.endsWith(paramTelClean) || paramTelClean.endsWith(pTelClean))) return true
+            if (waChatIdClean && (waChatIdClean.endsWith(paramTelClean) || paramTelClean.endsWith(waChatIdClean))) return true
+          }
           return false
         })
         if (target) {
@@ -876,6 +883,16 @@ export default function ChatInbox() {
 
     return () => clearInterval(intervalMsgs)
   }, [selectedConvId])
+
+  // Precarga inteligente de mensaje si proviene de deep link (?mensaje=... o ?texto=...)
+  useEffect(() => {
+    if (paramMensaje && selectedConvId) {
+      setNuevoMensaje(paramMensaje)
+      setTimeout(() => {
+        messageInputRef.current?.focus()
+      }, 250)
+    }
+  }, [selectedConvId, paramMensaje])
 
   // Desplazamiento inteligente condicional al cambiar mensajes
   useEffect(() => {
