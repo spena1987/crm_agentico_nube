@@ -22,7 +22,9 @@ import {
   Sparkles,
   BellRing,
   CheckCheck,
-  AlertCircle
+  AlertCircle,
+  Phone,
+  Flame
 } from 'lucide-react'
 
 import type { AsesoriaCasoPipeline } from '@/app/pipeline-quirurgico/page'
@@ -42,6 +44,7 @@ interface VistaVerticalPipelineProps {
   onAbrirWhatsApp: (caso: AsesoriaCasoPipeline) => void
   onAbrirRecordatorioQx?: (caso: AsesoriaCasoPipeline) => void
   onAbrirConsentimientoQx?: (caso: AsesoriaCasoPipeline) => void
+  onAbrirQuickRecontacto?: (caso: AsesoriaCasoPipeline) => void
   onMarcarContactadoHoy: (caso: AsesoriaCasoPipeline) => Promise<void>
   actualizandoCasoId: string | null
   canChangeStage: boolean
@@ -58,6 +61,7 @@ export default function VistaVerticalPipeline({
   onAbrirWhatsApp,
   onAbrirRecordatorioQx,
   onAbrirConsentimientoQx,
+  onAbrirQuickRecontacto,
   onMarcarContactadoHoy,
   actualizandoCasoId,
   canChangeStage,
@@ -505,13 +509,17 @@ export default function VistaVerticalPipeline({
                             {/* Próxima Acción Programada */}
                             {Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) && (
                               <div
-                                className={`p-1.5 rounded-lg border text-[10.5px] flex items-start gap-1.5 ${
+                                onClick={() => onAbrirQuickRecontacto?.(caso)}
+                                className={`p-1.5 rounded-lg border text-[10.5px] flex items-start gap-1.5 transition-all ${
+                                  onAbrirQuickRecontacto ? 'cursor-pointer hover:opacity-90 active:scale-[0.99]' : ''
+                                } ${
                                   esAccionVencida
-                                    ? 'bg-red-950/40 border-red-500/40 text-red-200'
+                                    ? 'bg-red-950/40 border-red-500/40 text-red-200 hover:border-red-400'
                                     : esAccionHoy
-                                    ? 'bg-amber-950/50 border-amber-500/50 text-amber-200'
-                                    : 'bg-blue-950/40 border-blue-500/30 text-blue-200'
+                                    ? 'bg-amber-950/50 border-amber-500/50 text-amber-200 hover:border-amber-400'
+                                    : 'bg-blue-950/40 border-blue-500/30 text-blue-200 hover:border-blue-400'
                                 }`}
+                                title={onAbrirQuickRecontacto ? "Clic para gestionar seguimiento y registrar recontacto" : undefined}
                               >
                                 <Clock size={11} className="shrink-0 mt-0.5" />
                                 <div className="min-w-0 flex-1 truncate">
@@ -651,6 +659,19 @@ export default function VistaVerticalPipeline({
                                   </>
                                 )}
                               </button>
+
+                              {/* Botón Acción Rápida: Seguimiento y Recontacto Asistido */}
+                              {onAbrirQuickRecontacto && (caso.estado === 'en_analisis' || Boolean(caso.proxima_accion_fecha) || esAccionHoy || esAccionVencida) && (
+                                <button
+                                  type="button"
+                                  onClick={() => onAbrirQuickRecontacto(caso)}
+                                  className="px-2.5 py-1 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-300 hover:text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs shrink-0"
+                                  title="Gestionar recontacto asistido: WhatsApp + registro rápido de resolución (reprogramar, confirmar, no responde, desiste)"
+                                >
+                                  <Phone size={12} className="text-amber-400" />
+                                  <span>Recontactar</span>
+                                </button>
+                              )}
 
                               {/* Botón WhatsApp */}
                               <button

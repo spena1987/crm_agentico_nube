@@ -3020,6 +3020,22 @@ def crear_asesoria_quirurgica(payload: dict) -> Dict[str, Any]:
             "motivo_demora": payload.get("motivo_demora") or None,
             "canal_resolucion": payload.get("canal_resolucion") or None
         }
+
+        # Auto-programación de SLA si se crea en estado 'en_analisis' o 'presupuesto_enviado' sin fecha
+        if datos.get("estado") in ["en_analisis", "presupuesto_enviado"] and not datos.get("proxima_accion_fecha"):
+            try:
+                from datetime import datetime, timezone, timedelta
+                conf_auto = get_configuracion_automatismos()
+                if conf_auto.get("recontacto_humano_en_analisis_activo", True):
+                    plazo_dias = int(conf_auto.get("plazo_recontacto_analisis_dias") or 2)
+                    fecha_sla = (datetime.now(timezone.utc) + timedelta(days=plazo_dias)).strftime("%Y-%m-%d")
+                    datos["proxima_accion_fecha"] = fecha_sla
+                    if not datos.get("proxima_accion_texto"):
+                        datos["proxima_accion_texto"] = "Recontacto clínico y comercial (Caso en Análisis)"
+                    if not datos.get("snooze_hasta"):
+                        datos["snooze_hasta"] = fecha_sla
+            except Exception as e_sla_c:
+                logger.warning(f"Aviso al evaluar SLA de recontacto en crear_asesoria: {e_sla_c}")
         
         resp = supabase.table("asesorias_quirurgicas").insert(datos).execute()
         if not resp.data:
@@ -3061,9 +3077,31 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                     datos[k] = str(payload[k]).upper()
                 elif k in ["control_postop_24h", "control_postop_7d", "alta_medica_definitiva"]:
                     datos[k] = bool(payload[k])
-                else:
-                    datos[k] = payload[k]
-                    
+        # Auto-programación de SLA si el caso transiciona a 'en_analisis' o 'presupuesto_enviado'
+        nuevo_est = datos.get("estado")
+        if nuevo_est in ["en_analisis", "presupuesto_enviado"]:
+            try:
+                from datetime import datetime, timezone, timedelta
+                conf_auto = get_configuracion_automatismos()
+                if conf_auto.get("recontacto_humano_en_analisis_activo", True):
+                    tiene_fecha_en_payload = bool(datos.get("proxima_accion_fecha"))
+                    if not tiene_fecha_en_payload:
+                        # Verificar si la asesoría ya tiene una fecha futura programada
+                        q_prev = supabase.table("asesorias_quirurgicas").select("proxima_accion_fecha, proxima_accion_texto, snooze_hasta").eq("id", asesoria_id).limit(1).execute()
+                        prev_row = q_prev.data[0] if (q_prev.data and len(q_prev.data) > 0) else {}
+                        fecha_existente = prev_row.get("proxima_accion_fecha")
+                        hoy_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        if not fecha_existente or fecha_existente < hoy_str:
+                            plazo_dias = int(conf_auto.get("plazo_recontacto_analisis_dias") or 2)
+                            fecha_sla = (datetime.now(timezone.utc) + timedelta(days=plazo_dias)).strftime("%Y-%m-%d")
+                            datos["proxima_accion_fecha"] = fecha_sla
+                            if not datos.get("proxima_accion_texto"):
+                                datos["proxima_accion_texto"] = "Recontacto clínico y comercial (Caso en Análisis)"
+                            if not datos.get("snooze_hasta") and not prev_row.get("snooze_hasta"):
+                                datos["snooze_hasta"] = fecha_sla
+            except Exception as e_sla_upd:
+                logger.warning(f"Aviso al evaluar SLA de recontacto en actualizar_asesoria {asesoria_id}: {e_sla_upd}")
+
         datos["updated_at"] = "now()"
         
         resp = supabase.table("asesorias_quirurgicas").update(datos).eq("id", asesoria_id).execute()
@@ -5512,7 +5550,10 @@ DEFAULT_AUTOMATISMOS_CONFIG: Dict[str, Any] = {
     "consentimiento_respetar_ventana_meta": True,
     "bot_gemini_activo": True,
     "purga_multimedia_activa": True,
-    "dias_retencion_multimedia": 30
+    "dias_retencion_multimedia": 30,
+    "recontacto_humano_en_analisis_activo": True,
+    "plazo_recontacto_analisis_dias": 2,
+    "notificar_recontactos_en_crm": True
 }
 
 def get_configuracion_automatismos() -> Dict[str, Any]:
@@ -9086,5 +9127,156 @@ def procesar_escaneo_qr_turno(
     except Exception as e:
         logger.error(f"Error procesando escaneo QR para turno {turno_id}: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ====================================================================
+# SEGUIMIENTO Y RECONTACTO ASISTIDO DE CASOS QUIRÚRGICOS EN ANÁLISIS
+# ====================================================================
+
+def obtener_metricas_recontactos_asesoria() -> Dict[str, Any]:
+    """
+    Calcula el conteo de recontactos pendientes hoy, vencidos y totales
+    para casos quirúrgicos en etapas activas (en_asesoramiento, en_analisis, derivado, confirmado, programado).
+    Alimenta el badge del menú de navegación y los filtros rápidos del Pipeline.
+    """
+    if not supabase:
+        return {"hoy": 0, "vencidos": 0, "total": 0, "urgentes_ids": []}
+    try:
+        from datetime import datetime, timezone
+        ahora_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Casos activos con proxima_accion_fecha definida
+        resp = supabase.table("asesorias_quirurgicas") \
+            .select("id, proxima_accion_fecha, proxima_accion_texto, estado, paciente_id") \
+            .in_("estado", ["derivado", "en_asesoramiento", "en_analisis", "presupuesto_enviado", "confirmado", "programado"]) \
+            .not_.is_("proxima_accion_fecha", "null") \
+            .execute()
+
+        casos = resp.data or []
+        hoy_count = 0
+        vencidos_count = 0
+        urgentes_ids = []
+
+        for c in casos:
+            p_fecha = str(c.get("proxima_accion_fecha") or "").strip()
+            if not p_fecha:
+                continue
+            if p_fecha == ahora_str:
+                hoy_count += 1
+                urgentes_ids.append(c["id"])
+            elif p_fecha < ahora_str:
+                vencidos_count += 1
+                urgentes_ids.append(c["id"])
+
+        return {
+            "hoy": hoy_count,
+            "vencidos": vencidos_count,
+            "total": hoy_count + vencidos_count,
+            "urgentes_ids": urgentes_ids
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener métricas de recontactos: {e}")
+        return {"hoy": 0, "vencidos": 0, "total": 0, "urgentes_ids": []}
+
+
+def registrar_quick_recontacto_asesoria(asesoria_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Permite a la asesora registrar el resultado de un recontacto en un solo paso:
+    - accion: 'reprogramar', 'confirmado', 'no_responde', 'desiste'
+    - nota: detalle u observación para la bitácora
+    - nueva_fecha: YYYY-MM-DD (para reprogramar o reintento)
+    - categoria_causa / motivo_demora: si el paciente desiste
+    - autor: nombre de la asesora u operador
+    """
+    if not supabase or not asesoria_id:
+        raise ValueError("ID de asesoría no especificado.")
+
+    try:
+        from datetime import datetime, timezone, timedelta
+        ahora = datetime.now(timezone.utc)
+        ahora_iso = ahora.isoformat()
+        ahora_fecha = ahora.strftime("%Y-%m-%d")
+
+        accion = payload.get("accion") or "reprogramar"
+        nota = (payload.get("nota") or "").strip()
+        nueva_fecha = payload.get("nueva_fecha")
+        autor = payload.get("autor") or "Asesora Quirúrgica"
+
+        # 1. Obtener la asesoría actual
+        q_caso = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("id", asesoria_id).limit(1).execute()
+        if not q_caso.data:
+            raise ValueError(f"Asesoría {asesoria_id} no encontrada.")
+        caso = q_caso.data[0]
+        paciente = caso.get("pacientes") or {}
+
+        datos_upd = {
+            "ultimo_contacto_at": ahora_iso,
+            "updated_at": "now()"
+        }
+        evolucion_texto = ""
+
+        if accion == "confirmado":
+            datos_upd["estado"] = "confirmado"
+            datos_upd["proxima_accion_fecha"] = None
+            datos_upd["proxima_accion_texto"] = None
+            evolucion_texto = f"🎉 [Recontacto Exitoso] El paciente confirmó su decisión quirúrgica. Avanza a etapa 'Confirmados'."
+            if nota:
+                evolucion_texto += f" Detalle: {nota}"
+
+        elif accion == "desiste":
+            cat = payload.get("categoria_causa") or "Económica / Presupuesto"
+            motivo = payload.get("motivo_demora") or nota or "Desistimiento informado en recontacto"
+            datos_upd["estado"] = "cancelado"
+            datos_upd["categoria_causa"] = cat
+            datos_upd["motivo_cancelacion"] = motivo
+            datos_upd["proxima_accion_fecha"] = None
+            datos_upd["proxima_accion_texto"] = None
+            evolucion_texto = f"❌ [Recontacto - Desiste] El paciente desestimó la cirugía. Causa: {cat}. Motivo: {motivo}."
+
+        elif accion == "no_responde":
+            if not nueva_fecha:
+                nueva_fecha = (ahora + timedelta(days=1)).strftime("%Y-%m-%d")
+            datos_upd["proxima_accion_fecha"] = nueva_fecha
+            datos_upd["proxima_accion_texto"] = "Reintento de contacto (No respondió llamada/WhatsApp)"
+            datos_upd["snooze_hasta"] = nueva_fecha
+            evolucion_texto = f"📞 [Recontacto - No Responde] Se intentó comunicar pero no atendió/respondió. Se reprogramó un nuevo reintento para el {nueva_fecha}."
+            if nota:
+                evolucion_texto += f" Observación: {nota}"
+
+        else: # reprogramar / sigue evaluando
+            if not nueva_fecha:
+                nueva_fecha = (ahora + timedelta(days=2)).strftime("%Y-%m-%d")
+            datos_upd["proxima_accion_fecha"] = nueva_fecha
+            datos_upd["proxima_accion_texto"] = nota or "Recontacto pautado (Sigue evaluando propuesta)"
+            datos_upd["snooze_hasta"] = nueva_fecha
+            evolucion_texto = f"💬 [Recontacto - Sigue Evaluando] Paciente contactado. Continúa en análisis. Próximo contacto pautado para el {nueva_fecha}."
+            if nota:
+                evolucion_texto += f" Resumen: {nota}"
+
+        # 2. Actualizar asesorías quirúrgicas
+        upd_res = supabase.table("asesorias_quirurgicas").update(datos_upd).eq("id", asesoria_id).execute()
+        caso_actualizado = upd_res.data[0] if upd_res.data else {**caso, **datos_upd}
+
+        # 3. Registrar hito en la bitácora oficial de evoluciones
+        ev_creada = None
+        try:
+            ev_payload = {
+                "asesoria_id": asesoria_id,
+                "nota": evolucion_texto,
+                "autor": autor
+            }
+            ev_creada = crear_evolucion_asesoria(ev_payload)
+        except Exception as e_ev:
+            logger.warning(f"Aviso al crear evolución en quick-recontacto: {e_ev}")
+
+        return {
+            "success": True,
+            "mensaje": "Recontacto registrado exitosamente en el expediente.",
+            "caso": caso_actualizado,
+            "evolucion": ev_creada
+        }
+    except Exception as e:
+        logger.error(f"Error en registrar_quick_recontacto_asesoria ({asesoria_id}): {e}")
+        raise
 
 

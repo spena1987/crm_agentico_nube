@@ -4742,6 +4742,34 @@ def actualizar_accion_seguimiento_endpoint(asesoria_id: str, payload: Dict[str, 
         logger.error(f"Error al actualizar seguimiento de asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/pipeline-quirurgico/metricas-recontactos")
+def obtener_metricas_recontactos_endpoint():
+    """
+    Retorna el conteo de recontactos urgentes (del día y vencidos) para la barra lateral
+    y filtros prioritarios del Pipeline Quirúrgico.
+    """
+    try:
+        from app.db import obtener_metricas_recontactos_asesoria
+        datos = obtener_metricas_recontactos_asesoria()
+        return {"success": True, **datos}
+    except Exception as e:
+        logger.error(f"Error al obtener métricas de recontactos: {e}")
+        return {"success": False, "hoy": 0, "vencidos": 0, "total": 0, "urgentes_ids": []}
+
+@app.post("/api/asesorias-quirurgicas/{asesoria_id}/quick-recontacto")
+def registrar_quick_recontacto_endpoint(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Registra en un solo paso la conclusión de un recontacto de la asesora
+    (reprogramar, confirmar, no responde o desistir) y asienta el hito en la Bitácora.
+    """
+    try:
+        from app.db import registrar_quick_recontacto_asesoria
+        res = registrar_quick_recontacto_asesoria(asesoria_id, payload)
+        return res
+    except Exception as e:
+        logger.error(f"Error al registrar recontacto rápido en {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ====================================================================
 # ENDPOINTS: ASESORÍAS, BITÁCORA Y PRÓXIMA ACCIÓN PROGRAMADA
 # ====================================================================

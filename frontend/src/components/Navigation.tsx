@@ -90,6 +90,8 @@ export default function Navigation() {
   const [mobileOpen, setMobileOpen] = useState(false)
   // Contador de chats con mensajes no leídos
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
+  // Contador de recontactos quirúrgicos pendientes del día o vencidos
+  const [recontactosPendientesCount, setRecontactosPendientesCount] = useState<number>(0)
   const [quirofanoMenuOpen, setQuirofanoMenuOpen] = useState(true)
   const [asesoriaMenuOpen, setAsesoriaMenuOpen] = useState(true)
   const [clinicLogo, setClinicLogo] = useState<string | null>(null)
@@ -97,10 +99,17 @@ export default function Navigation() {
 
   const fetchUnreadMetrics = async () => {
     try {
-      const res = await apiFetch('/api/conversaciones/metricas', { cache: 'no-store' })
-      if (res.ok) {
-        const data = await res.json()
+      const [resC, resR] = await Promise.all([
+        apiFetch('/api/conversaciones/metricas', { cache: 'no-store' }),
+        apiFetch('/api/pipeline-quirurgico/metricas-recontactos', { cache: 'no-store' })
+      ])
+      if (resC.ok) {
+        const data = await resC.json()
         setUnreadChatCount(data.no_leidos_count || 0)
+      }
+      if (resR.ok) {
+        const dataR = await resR.json()
+        setRecontactosPendientesCount(dataR.total || 0)
       }
     } catch (e) {}
   }
@@ -177,6 +186,13 @@ export default function Navigation() {
         { event: '*', schema: 'public', table: 'configuracion_sistema' },
         () => {
           fetchClinicBranding()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+        () => {
+          fetchUnreadMetrics()
         }
       )
       .subscribe()
@@ -311,10 +327,17 @@ export default function Navigation() {
                       <Icon size={19} className={isGroupActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} />
                       <span className="truncate text-xs font-semibold tracking-tight">{item.label}</span>
                     </div>
-                    <ChevronDown
-                      size={14}
-                      className={`text-slate-400 transition-transform duration-200 ${isMenuOpen ? 'rotate-180 text-blue-600' : ''}`}
-                    />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {isAsesoria && recontactosPendientesCount > 0 && (
+                        <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-0.5" title={`${recontactosPendientesCount} recontactos pendientes hoy o vencidos`}>
+                          🔥 {recontactosPendientesCount}
+                        </span>
+                      )}
+                      <ChevronDown
+                        size={14}
+                        className={`text-slate-400 transition-transform duration-200 ${isMenuOpen ? 'rotate-180 text-blue-600' : ''}`}
+                      />
+                    </div>
                   </button>
 
                   {isMenuOpen && (
@@ -322,19 +345,27 @@ export default function Navigation() {
                       {item.subItems.map((sub) => {
                         const SubIcon = sub.icon || Activity
                         const isSubActive = pathname === sub.href
+                        const esPipeline = sub.code === 'pipeline-quirurgico'
                         return (
                           <Link
                             key={sub.href}
                             href={sub.href}
                             onClick={() => setMobileOpen(false)}
-                            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                            className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
                               isSubActive
                                 ? 'bg-blue-600 text-white font-bold shadow-sm'
                                 : 'text-[var(--secondary)] hover:text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800/60'
                             }`}
                           >
-                            <SubIcon size={14} className={isSubActive ? 'text-white' : 'text-slate-400'} />
-                            <span className="truncate">{sub.label}</span>
+                            <div className="flex items-center gap-2.5 truncate">
+                              <SubIcon size={14} className={isSubActive ? 'text-white' : 'text-slate-400'} />
+                              <span className="truncate">{sub.label}</span>
+                            </div>
+                            {esPipeline && recontactosPendientesCount > 0 && (
+                              <span className={`px-1.5 py-0.2 text-[9.5px] font-bold rounded-full ${isSubActive ? 'bg-white text-blue-700' : 'bg-purple-500 text-white animate-pulse'}`}>
+                                {recontactosPendientesCount}
+                              </span>
+                            )}
                           </Link>
                         )
                       })}
@@ -349,7 +380,7 @@ export default function Navigation() {
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
-                title={isCollapsed ? `${item.label}${hasUnread ? ` (${unreadChatCount} sin leer)` : ''}` : undefined}
+                title={isCollapsed ? `${item.label}${hasUnread ? ` (${unreadChatCount} sin leer)` : isAsesoria && recontactosPendientesCount > 0 ? ` (${recontactosPendientesCount} recontactos)` : ''}` : undefined}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 group relative ${
                   isActive 
                     ? 'bg-blue-600 text-white shadow-xs glow-primary' 
@@ -366,6 +397,9 @@ export default function Navigation() {
                   {/* Badge en modo colapsado */}
                   {isCollapsed && hasUnread && (
                     <span className="absolute -top-1 -right-1.5 w-3 h-3 bg-emerald-500 rounded-full ring-2 ring-[var(--background)] animate-pulse" />
+                  )}
+                  {isCollapsed && isAsesoria && recontactosPendientesCount > 0 && (
+                    <span className="absolute -top-1 -right-1.5 w-3 h-3 bg-purple-500 rounded-full ring-2 ring-[var(--background)] animate-pulse" />
                   )}
                 </div>
                 

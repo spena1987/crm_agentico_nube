@@ -43,6 +43,7 @@ import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
 import { ModalAnaliticaCausasQuirurgicas } from '@/components/pipeline/ModalAnaliticaCausasQuirurgicas'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
+import ModalQuickRecontacto from '@/components/asesoria/ModalQuickRecontacto'
 import { usePipelineSessionState } from '@/hooks/usePipelineSessionState'
 import { Columns3, AlignJustify } from 'lucide-react'
 import { Radio, Users, BellRing, FileCheck2, BarChart2, PauseCircle, Flame } from 'lucide-react'
@@ -257,6 +258,12 @@ export default function PipelineQuirurgicoPage() {
   const [modalAnaliticaOpen, setModalAnaliticaOpen] = useState<boolean>(false)
   const [seguimientoAutoGlobal, setSeguimientoAutoGlobal] = useState<boolean>(true)
 
+  // Modal de Recontacto Rápido y Filtro Asistido
+  const [modalQuickRecontactoOpen, setModalQuickRecontactoOpen] = useState(false)
+  const [casoParaQuickRecontacto, setCasoParaQuickRecontacto] = useState<AsesoriaCasoPipeline | null>(null)
+  const [filtroSoloRecontactos, setFiltroSoloRecontactos] = useState<boolean>(false)
+  const [metricasRecontactos, setMetricasRecontactos] = useState<{ hoy: number; vencidos: number; total_pendientes: number } | null>(null)
+
   // Cargar Pipeline (con apiFetch autenticado y fallback resiliente a Supabase)
   const fetchPipeline = async () => {
     try {
@@ -272,6 +279,17 @@ export default function PipelineQuirurgicoPage() {
             setSeguimientoAutoGlobal(false)
           } else {
             setSeguimientoAutoGlobal(true)
+          }
+        }
+      } catch (_) {}
+
+      // Consultar métricas de SLA de recontactos asistidos
+      try {
+        const resRec = await apiFetch('/api/pipeline-quirurgico/metricas-recontactos')
+        if (resRec.ok) {
+          const dRec = await resRec.json()
+          if (dRec?.success) {
+            setMetricasRecontactos(dRec)
           }
         }
       } catch (_) {}
@@ -726,11 +744,19 @@ export default function PipelineQuirurgicoPage() {
     const q = filtroTexto.toLowerCase().trim()
     const res: Record<string, AsesoriaCasoPipeline[]> = {}
 
+    const hoyStr = new Date().toISOString().slice(0, 10)
+
     ETAPAS_COLUMNAS_ACTIVAS.forEach((col) => {
       res[col.id] = (etapas[col.id] || []).filter((caso) => {
         const matchGen = matchFiltrosGenerales(caso, q)
         const matchAlerta = !soloAlertas || caso.es_critico || caso.es_alerta
-        return matchGen && matchAlerta
+        const tieneRecontactoPendiente = (
+          (Boolean(caso.proxima_accion_fecha) && caso.proxima_accion_fecha! <= hoyStr) ||
+          (caso.estado === 'en_analisis' && (!caso.proxima_accion_fecha || caso.proxima_accion_fecha <= hoyStr))
+        )
+        const matchRecontacto = !filtroSoloRecontactos || tieneRecontactoPendiente
+
+        return matchGen && matchAlerta && matchRecontacto
       })
     })
 
@@ -746,7 +772,8 @@ export default function PipelineQuirurgicoPage() {
     filtroSeguimiento,
     fechaDesde,
     fechaHasta,
-    soloAlertas
+    soloAlertas,
+    filtroSoloRecontactos
   ])
 
   // Casos cerrados (Operados y Cancelados)
@@ -1149,18 +1176,41 @@ export default function PipelineQuirurgicoPage() {
 
           {/* En vista Activa: Toggle Alertas SLA */}
           {vistaActual === 'activos' && (
-            <button
-              type="button"
-              onClick={() => setSoloAlertas(!soloAlertas)}
-              className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border shrink-0 ${
-                soloAlertas
-                  ? 'bg-red-950 text-red-300 border-red-500/50 shadow-sm'
-                  : 'bg-neutral-950 text-gray-400 border-[var(--border)] hover:text-white'
-              }`}
-            >
-              <Clock size={12} className={soloAlertas ? 'text-red-400' : 'text-gray-400'} />
-              <span>Solo Alertas SLA</span>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setFiltroSoloRecontactos(!filtroSoloRecontactos)}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border shrink-0 ${
+                  filtroSoloRecontactos
+                    ? 'bg-amber-950 text-amber-300 border-amber-500/60 shadow-sm ring-1 ring-amber-500/30'
+                    : 'bg-neutral-950 text-gray-400 border-[var(--border)] hover:text-white'
+                }`}
+                title="Filtrar casos con fecha de recontacto para hoy o vencidos en análisis"
+              >
+                <Flame size={12} className={filtroSoloRecontactos ? 'text-amber-400' : 'text-amber-400/80'} />
+                <span>Recontactos Hoy</span>
+                {metricasRecontactos && metricasRecontactos.total_pendientes > 0 && (
+                  <span className={`text-[10px] font-mono font-black px-1.5 py-0.2 rounded-full ${
+                    filtroSoloRecontactos ? 'bg-amber-900 text-amber-100' : 'bg-neutral-800 text-amber-400'
+                  }`}>
+                    {metricasRecontactos.total_pendientes}
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSoloAlertas(!soloAlertas)}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold transition-all flex items-center gap-1 border shrink-0 ${
+                  soloAlertas
+                    ? 'bg-red-950 text-red-300 border-red-500/50 shadow-sm'
+                    : 'bg-neutral-950 text-gray-400 border-[var(--border)] hover:text-white'
+                }`}
+              >
+                <Clock size={12} className={soloAlertas ? 'text-red-400' : 'text-gray-400'} />
+                <span>Solo Alertas SLA</span>
+              </button>
+            </>
           )}
 
           {/* En vista Cerrados: Sub-filtro Operado vs Cancelado */}
@@ -1271,6 +1321,10 @@ export default function PipelineQuirurgicoPage() {
           onAbrirWhatsApp={handleAbrirWhatsApp}
           onAbrirRecordatorioQx={handleAbrirRecordatorioQx}
           onAbrirConsentimientoQx={handleAbrirConsentimientoQx}
+          onAbrirQuickRecontacto={(caso) => {
+            setCasoParaQuickRecontacto(caso)
+            setModalQuickRecontactoOpen(true)
+          }}
           onMarcarContactadoHoy={handleMarcarContactadoHoy}
           actualizandoCasoId={actualizandoCasoId}
           canChangeStage={canChangeStage}
@@ -1529,8 +1583,12 @@ export default function PipelineQuirurgicoPage() {
 
                               return (
                                 <div
-                                  className={`p-1.5 rounded-lg border text-[10px] flex items-start gap-1.5 ${colorClases}`}
-                                  title={caso.proxima_accion_fecha ? `Acción pautada para el ${caso.proxima_accion_fecha}` : 'Acción de seguimiento'}
+                                  onClick={() => {
+                                    setCasoParaQuickRecontacto(caso)
+                                    setModalQuickRecontactoOpen(true)
+                                  }}
+                                  className={`p-1.5 rounded-lg border text-[10px] flex items-start gap-1.5 cursor-pointer hover:opacity-90 active:scale-[0.99] transition-all ${colorClases}`}
+                                  title="Clic para gestionar seguimiento y registrar recontacto"
                                 >
                                   <Clock size={12} className={`shrink-0 mt-0.5 ${iconoColor}`} />
                                   <div className="min-w-0 flex-1">
@@ -1667,6 +1725,21 @@ export default function PipelineQuirurgicoPage() {
                                 >
                                   <BellRing size={12} />
                                 </button>
+
+                                {/* Botón Recontacto Rápido Asistido */}
+                                {(caso.estado === 'en_analisis' || Boolean(caso.proxima_accion_fecha)) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setCasoParaQuickRecontacto(caso)
+                                      setModalQuickRecontactoOpen(true)
+                                    }}
+                                    className="p-1 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-300 hover:text-white transition-colors cursor-pointer"
+                                    title="Abrir seguimiento y recontacto asistido (WhatsApp + registro rápido de resolución)"
+                                  >
+                                    <Phone size={12} />
+                                  </button>
+                                )}
 
                                 <button
                                   type="button"
@@ -1949,6 +2022,21 @@ export default function PipelineQuirurgicoPage() {
         <ModalAnaliticaCausasQuirurgicas
           isOpen={modalAnaliticaOpen}
           onClose={() => setModalAnaliticaOpen(false)}
+        />
+      )}
+
+      {modalQuickRecontactoOpen && casoParaQuickRecontacto && (
+        <ModalQuickRecontacto
+          isOpen={modalQuickRecontactoOpen}
+          onClose={() => {
+            setModalQuickRecontactoOpen(false)
+            setCasoParaQuickRecontacto(null)
+          }}
+          caso={casoParaQuickRecontacto}
+          onRecontactoGuardado={() => {
+            mostrarToast('Seguimiento y recontacto guardado exitosamente.')
+            fetchPipeline()
+          }}
         />
       )}
 

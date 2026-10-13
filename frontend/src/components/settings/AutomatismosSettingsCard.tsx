@@ -28,6 +28,9 @@ interface AutomatismosConfig {
   bot_gemini_activo: boolean
   purga_multimedia_activa: boolean
   dias_retencion_multimedia: number
+  recontacto_humano_en_analisis_activo: boolean
+  plazo_recontacto_analisis_dias: number
+  notificar_recontactos_en_crm: boolean
 }
 
 const DEFAULT_CONFIG: AutomatismosConfig = {
@@ -36,7 +39,10 @@ const DEFAULT_CONFIG: AutomatismosConfig = {
   consentimiento_respetar_ventana_meta: true,
   bot_gemini_activo: true,
   purga_multimedia_activa: true,
-  dias_retencion_multimedia: 30
+  dias_retencion_multimedia: 30,
+  recontacto_humano_en_analisis_activo: true,
+  plazo_recontacto_analisis_dias: 2,
+  notificar_recontactos_en_crm: true
 }
 
 export default function AutomatismosSettingsCard() {
@@ -233,6 +239,88 @@ export default function AutomatismosSettingsCard() {
                   className="sr-only peer"
                 />
                 <div className="w-12 h-6 bg-slate-700 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* AUTOMATISMO 1.B: SLA DE RECONTACTO ASISTIDO PARA CASOS EN ANÁLISIS */}
+        <div className={`p-4 sm:p-5 rounded-2xl border transition-all ${
+          config.recontacto_humano_en_analisis_activo
+            ? 'bg-gradient-to-r from-purple-950/20 via-slate-900/50 to-[var(--card)] border-purple-500/30'
+            : 'bg-gradient-to-r from-neutral-950/40 via-slate-900/50 to-[var(--card)] border-neutral-700/60'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+            <div className="space-y-2.5 flex-1">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className={`w-2.5 h-2.5 rounded-full ${config.recontacto_humano_en_analisis_activo ? 'bg-purple-400 animate-pulse' : 'bg-neutral-500'}`} />
+                <h4 className="text-sm font-bold text-[var(--foreground)] flex items-center gap-2">
+                  <Clock size={16} className="text-purple-400" />
+                  SLA de Recontacto Humano & Asistido (Casos en Análisis)
+                </h4>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                  config.recontacto_humano_en_analisis_activo
+                    ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                    : 'bg-neutral-800 text-neutral-400 border border-neutral-700'
+                }`}>
+                  {config.recontacto_humano_en_analisis_activo ? '🟢 Activo' : '⏸️ Inactivo'}
+                </span>
+                <span className="text-[10px] text-gray-400 flex items-center gap-1 font-mono">
+                  Sugerido: {config.plazo_recontacto_analisis_dias} {config.plazo_recontacto_analisis_dias === 1 ? 'día' : 'días'}
+                </span>
+              </div>
+              <p className="text-xs text-[var(--secondary)] leading-relaxed max-w-2xl">
+                Al mover un caso quirúrgico a <em>En Análisis</em> o emitir un presupuesto oficial, el CRM autoprograma de forma inteligente
+                la fecha límite de recontacto para la asesora (si no tiene una pautada). Evita que los casos se enfríen si el bot está apagado o en espera.
+              </p>
+
+              {/* Controles de Configuración del SLA */}
+              {config.recontacto_humano_en_analisis_activo && (
+                <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+                  <div>
+                    <label className="text-[11px] font-semibold text-gray-300 block mb-1">
+                      Plazo estándar de recontacto sugerido:
+                    </label>
+                    <select
+                      value={config.plazo_recontacto_analisis_dias}
+                      onChange={(e) => setConfig((prev) => ({ ...prev, plazo_recontacto_analisis_dias: Number(e.target.value) }))}
+                      className="w-full text-xs bg-neutral-900 border border-purple-500/40 text-purple-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:border-purple-400 font-medium"
+                    >
+                      <option value={1}>24 horas (1 día corrido)</option>
+                      <option value={2}>48 horas (2 días - Recomendado)</option>
+                      <option value={3}>72 horas (3 días)</option>
+                      <option value={5}>5 días hábiles</option>
+                      <option value={7}>7 días corridos (1 semana)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-4 sm:pt-5">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.notificar_recontactos_en_crm}
+                        onChange={(e) => setConfig((prev) => ({ ...prev, notificar_recontactos_en_crm: e.target.checked }))}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-slate-700 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                    </label>
+                    <span className="text-[11px] text-gray-300 font-medium">
+                      Mostrar alertas y badges en Pipeline & Menú
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.recontacto_humano_en_analisis_activo}
+                  onChange={(e) => setConfig((prev) => ({ ...prev, recontacto_humano_en_analisis_activo: e.target.checked }))}
+                  className="sr-only peer"
+                />
+                <div className="w-12 h-6 bg-slate-700 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
               </label>
             </div>
           </div>
