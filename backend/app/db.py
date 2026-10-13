@@ -3062,21 +3062,28 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
             "control_postop_24h", "control_postop_7d", "alta_medica_definitiva",
             "estado", "situacion_paciente", "motivo_cancelacion",
             "checklist_prequirurgico", "proxima_accion_fecha", "proxima_accion_texto", "ultimo_contacto_at",
-            "ojo",
+            "ojo", "modalidad_bilateral",
             "seguimiento_auto_activo", "seguimiento_etapa", "seguimiento_ultimo_toque_at",
             "seguimiento_estado_actual", "snooze_hasta", "categoria_causa", "motivo_demora", "canal_resolucion"
         ]
         
         for k in campos_permitidos:
             if k in payload:
+                val = payload[k]
                 if k in ["medico_derivador_id", "medico_cirujano_id"]:
-                    datos[k] = int(payload[k]) if payload[k] else None
+                    datos[k] = int(val) if val else None
                 elif k in ["monto_extra", "monto_sena"]:
-                    datos[k] = float(payload[k]) if payload[k] is not None else 0.0
+                    datos[k] = float(val) if val is not None and val != "" else 0.0
                 elif k == "moneda_extra":
-                    datos[k] = str(payload[k]).upper()
+                    datos[k] = str(val).upper() if val else "ARS"
                 elif k in ["control_postop_24h", "control_postop_7d", "alta_medica_definitiva"]:
-                    datos[k] = bool(payload[k])
+                    datos[k] = bool(val)
+                elif k in ["fecha_probable_cirugia", "fecha_definitiva_cirugia", "proxima_accion_fecha", "snooze_hasta", "seguimiento_ultimo_toque_at"]:
+                    datos[k] = val if val else None
+                elif k == "checklist_prequirurgico":
+                    datos[k] = val if isinstance(val, dict) else {}
+                else:
+                    datos[k] = val
         # Auto-programación de SLA si el caso transiciona a 'en_analisis' o 'presupuesto_enviado'
         nuevo_est = datos.get("estado")
         if nuevo_est in ["en_analisis", "presupuesto_enviado"]:
