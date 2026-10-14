@@ -667,12 +667,32 @@ async def despachar_consentimiento_informado_inteligente(
     p_nombre = _sanitize(paciente.get("nombre"), "Estimado/a", 60)
 
     ojo = turno.get("ojo") or "OD"
-    ojo_desc = "Ojo Derecho" if ojo == "OD" else "Ojo Izquierdo" if ojo == "OI" else "Ambos Ojos"
+    as_id_sw = turno.get("asesoria_id")
+    es_esc_sw = turno.get("es_bilateral_escalonada", False)
+    ojo_desc = None
+    if as_id_sw:
+        try:
+            info_d_sw = asegurar_turnos_para_consentimiento_asesoria(as_id_sw)
+            if info_d_sw.get("es_bilateral_escalonada"):
+                es_esc_sw = True
+                p1_sw = info_d_sw.get("primer_ojo") or {}
+                if turno.get("id") == p1_sw.get("turno_id") or ojo == p1_sw.get("ojo"):
+                    ojo_desc = f"1° Ojo ({'Ojo Derecho' if ojo == 'OD' else 'Ojo Izquierdo'})"
+                else:
+                    ojo_desc = f"2° Ojo ({'Ojo Derecho' if ojo == 'OD' else 'Ojo Izquierdo'})"
+        except Exception:
+            pass
+
+    if not ojo_desc:
+        if ojo == "AO":
+            ojo_desc = "Ambos Ojos (Simultánea)"
+        elif ojo == "OI":
+            ojo_desc = "Ojo Izquierdo"
+        else:
+            ojo_desc = "Ojo Derecho"
+
     practica_base = turno.get("practica_nombre") or "Cirugía Oftalmológica"
-    if "ojo" not in practica_base.lower() and "od" not in practica_base.lower() and "oi" not in practica_base.lower():
-        p_cirugia = _sanitize(f"{practica_base} ({ojo_desc})", "Cirugía Oftalmológica", 80)
-    else:
-        p_cirugia = _sanitize(practica_base, "Cirugía Oftalmológica", 80)
+    p_cirugia = _sanitize(f"{practica_base} - {ojo_desc}", "Cirugía Oftalmológica", 80)
 
     # Formateo amigable de fecha y hora
     fecha_raw = str(turno.get("fecha_cirugia") or "").strip()

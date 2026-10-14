@@ -3658,11 +3658,19 @@ def get_datos_consentimiento_whatsapp(
         # 3. Práctica, Ojo y Cirujano
         cirugia_nombre = turno.get("practica_nombre") or (caso.get("practica_nombre") if caso else None) or "Cirugía Oftalmológica"
         ojo_val = turno.get("ojo") or (caso.get("ojo") if caso else None) or "OD"
-        ojo_desc = "Ojo Derecho (OD)" if ojo_val == "OD" else "Ojo Izquierdo (OI)" if ojo_val == "OI" else "Ambos Ojos (AO)" if ojo_val == "AO" else ojo_val
-        if ojo_desc and ojo_desc not in cirugia_nombre:
-            cirugia_completa = f"{cirugia_nombre} ({ojo_desc})"
+        
+        if es_bilateral_escalonada:
+            p1_ojo = (primer_ojo_info.get("ojo") if primer_ojo_info else "OD").upper()
+            if ojo_val == p1_ojo:
+                ojo_desc = f"1° Ojo a Operar: {'Ojo Derecho (OD)' if ojo_val == 'OD' else 'Ojo Izquierdo (OI)'}"
+            else:
+                ojo_desc = f"2° Ojo a Operar: {'Ojo Derecho (OD)' if ojo_val == 'OD' else 'Ojo Izquierdo (OI)'}"
+        elif ojo_val == "AO":
+            ojo_desc = "Ambos Ojos (AO) - En el Mismo Acto Quirúrgico"
         else:
-            cirugia_completa = cirugia_nombre
+            ojo_desc = "Ojo Derecho (OD)" if ojo_val == "OD" else "Ojo Izquierdo (OI)" if ojo_val == "OI" else ojo_val
+
+        cirugia_completa = f"{cirugia_nombre} ({ojo_desc})"
 
         cirujano_nombre = turno.get("cirujano_nombre") or (caso.get("medico_cirujano_nombre") if caso else None) or "Médico Cirujano"
         quirofano_nombre = (turno.get("quirofanos") or {}).get("nombre") if isinstance(turno.get("quirofanos"), dict) else "Centrovisión - Quirófano Central"
@@ -6689,8 +6697,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
         meta_bilateral = checklist.get("_meta_bilateral") or {}
         if not isinstance(meta_bilateral, dict):
             meta_bilateral = {}
-        modalidad = meta_bilateral.get("modalidad") or asesoria_db.get("modalidad_bilateral")
-        es_bilateral_escalonada = (ojo_caso == "AO" and modalidad == "escalonada")
+        es_bilateral_escalonada = (ojo_caso == "AO" and str(modalidad or "").lower() == "escalonada")
 
         orden = meta_bilateral.get("orden") or "OD_primero"
         primer_ojo = "OI" if orden == "OI_primero" else "OD"
@@ -6699,6 +6706,16 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
         # Buscar turnos existentes activos de esta asesoría
         res_t = supabase.table("turnos_quirofano").select("*").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
         turnos_existentes = res_t.data or []
+
+        if not es_bilateral_escalonada and len(turnos_existentes) > 1:
+            # Cancelar turnos secundarios para evitar turnos huérfanos al conmutar a unilateral o simultáneo
+            for t in turnos_existentes[1:]:
+                try:
+                    supabase.table("turnos_quirofano").update({"estado": "cancelado", "updated_at": "now()"}).eq("id", t["id"]).execute()
+                    logger.info(f"Turno secundario huérfano {t['id']} cancelado al conmutar a caso unilateral o simultáneo.")
+                except Exception as e_c_sob:
+                    logger.warning(f"Aviso cancelando turno secundario huérfano: {e_c_sob}")
+            turnos_existentes = [turnos_existentes[0]]
 
         turnos_procesados = []
 
@@ -7173,11 +7190,18 @@ def asegurar_turnos_para_consentimiento_asesoria(
 
         ojo_caso = (as_data.get("ojo") or "").upper()
         modalidad = meta_bilateral.get("modalidad") or as_data.get("modalidad_bilateral")
-        es_bilateral_escalonada = (ojo_caso == "AO" and modalidad == "escalonada") or bool(meta_bilateral.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_probable_2do_ojo"))
+        es_bilateral_escalonada = (ojo_caso == "AO" and str(modalidad or "").lower() == "escalonada")
 
         if not es_bilateral_escalonada:
-            # Caso Unilateral o Bilateral Simultáneo (1 acto)
+            # Caso Unilateral o Bilateral Simultáneo (1 solo acto / 1 solo consentimiento)
             t_unico = asegurar_turno_para_consentimiento_asesoria(asesoria_id, ojo=ojo_caso if ojo_caso in ("OD", "OI") else None, crear_si_no_existe=crear_si_no_existe)
+            ojo_desc_unico = (
+                "Ambos Ojos (AO) - En el Mismo Acto Quirúrgico" if ojo_caso == "AO"
+                else "Ojo Derecho (OD)" if ojo_caso == "OD"
+                else "Ojo Izquierdo (OI)" if ojo_caso == "OI"
+                else ojo_caso
+            )
+            f_unica = as_data.get("fecha_definitiva_cirugia") or as_data.get("fecha_probable_cirugia")
             if not t_unico:
                 return {
                     "ok": True,
@@ -7189,13 +7213,15 @@ def asegurar_turnos_para_consentimiento_asesoria(
                     "consentimiento": {
                         "turno_id": None,
                         "ojo": ojo_caso or "OD",
+                        "ojo_desc": ojo_desc_unico,
                         "estado": "pendiente",
                         "firmado": False,
                         "modo_firma": None,
                         "token": None,
                         "pdf_url": None,
                         "firmado_at": None,
-                        "fecha_cirugia": as_data.get("fecha_definitiva_cirugia") or as_data.get("fecha_probable_cirugia"),
+                        "fecha": f_unica,
+                        "fecha_cirugia": f_unica,
                         "hora_inicio": None,
                         "practica_nombre": as_data.get("practica_nombre"),
                         "cirujano_nombre": as_data.get("medico_cirujano_nombre")
@@ -7203,6 +7229,7 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 }
 
             c_est = t_unico.get("consentimiento_estado") or "pendiente_envio"
+            f_turno_unica = t_unico.get("fecha_cirugia") or f_unica
             return {
                 "ok": True,
                 "es_bilateral_escalonada": False,
@@ -7213,20 +7240,22 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 "consentimiento": {
                     "turno_id": t_unico.get("id"),
                     "ojo": t_unico.get("ojo") or ojo_caso or "OD",
+                    "ojo_desc": ojo_desc_unico,
                     "estado": c_est,
                     "firmado": c_est in ("firmado_digital", "firmado_papel", "firmado"),
                     "modo_firma": "papel" if c_est == "firmado_papel" else ("digital" if c_est in ("firmado_digital", "firmado") else None),
                     "token": t_unico.get("consentimiento_token"),
                     "pdf_url": t_unico.get("consentimiento_pdf_url"),
                     "firmado_at": t_unico.get("consentimiento_firmado_at"),
-                    "fecha_cirugia": t_unico.get("fecha_cirugia"),
+                    "fecha": f_turno_unica,
+                    "fecha_cirugia": f_turno_unica,
                     "hora_inicio": t_unico.get("hora_inicio"),
-                    "practica_nombre": t_unico.get("practica_nombre"),
-                    "cirujano_nombre": t_unico.get("cirujano_nombre")
+                    "practica_nombre": t_unico.get("practica_nombre") or as_data.get("practica_nombre"),
+                    "cirujano_nombre": t_unico.get("cirujano_nombre") or as_data.get("medico_cirujano_nombre")
                 }
             }
 
-        # Caso Bilateral Escalonada (2 Actos)
+        # Caso Bilateral Escalonada (2 Actos Quirúrgicos Independientes)
         orden = meta_bilateral.get("orden") or "OD_primero"
         primer_ojo = "OI" if orden == "OI_primero" else "OD"
         segundo_ojo = "OD" if primer_ojo == "OI" else "OI"
@@ -7238,27 +7267,60 @@ def asegurar_turnos_para_consentimiento_asesoria(
         res_t = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo)").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
         turnos = res_t.data or []
 
+        primer_ojo_label = f"1° Ojo ({'Ojo Derecho - OD' if primer_ojo == 'OD' else 'Ojo Izquierdo - OI'})"
+        segundo_ojo_label = f"2° Ojo ({'Ojo Derecho - OD' if segundo_ojo == 'OD' else 'Ojo Izquierdo - OI'})"
+
+        primer_ojo_desc = f"1° Ojo a Operar ({'OD' if primer_ojo == 'OD' else 'OI'})"
+        segundo_ojo_desc = f"2° Ojo a Operar ({'OD' if segundo_ojo == 'OD' else 'OI'})"
+
         if not turnos and not crear_si_no_existe:
+            p1_mock = {
+                "turno_id": None,
+                "ojo": primer_ojo,
+                "ojo_label": primer_ojo_label,
+                "ojo_desc": primer_ojo_desc,
+                "etapa": "1er_ojo",
+                "etapa_texto": "1° Acto Quirúrgico",
+                "fecha": str(fecha_1),
+                "fecha_cirugia": str(fecha_1),
+                "hora_inicio": None,
+                "estado": "pendiente",
+                "firmado": False,
+                "modo_firma": None,
+                "token": None,
+                "pdf_url": None,
+                "firmado_at": None,
+                "practica_nombre": as_data.get("practica_nombre"),
+                "cirujano_nombre": as_data.get("medico_cirujano_nombre")
+            }
+            p2_mock = {
+                "turno_id": None,
+                "ojo": segundo_ojo,
+                "ojo_label": segundo_ojo_label,
+                "ojo_desc": segundo_ojo_desc,
+                "etapa": "2do_ojo",
+                "etapa_texto": "2° Acto Quirúrgico",
+                "fecha": str(fecha_2),
+                "fecha_cirugia": str(fecha_2),
+                "hora_inicio": None,
+                "estado": "pendiente",
+                "firmado": False,
+                "modo_firma": None,
+                "token": None,
+                "pdf_url": None,
+                "firmado_at": None,
+                "practica_nombre": as_data.get("practica_nombre"),
+                "cirujano_nombre": as_data.get("medico_cirujano_nombre")
+            }
             return {
                 "ok": True,
                 "es_bilateral_escalonada": True,
                 "tiene_turno": False,
-                "primer_ojo": None,
-                "segundo_ojo": None,
+                "primer_ojo": p1_mock,
+                "segundo_ojo": p2_mock,
                 "turno_principal": None,
                 "consentimiento": {
-                    "turno_id": None,
-                    "ojo": primer_ojo,
-                    "estado": "pendiente",
-                    "firmado": False,
-                    "modo_firma": None,
-                    "token": None,
-                    "pdf_url": None,
-                    "firmado_at": None,
-                    "fecha_cirugia": fecha_1,
-                    "hora_inicio": None,
-                    "practica_nombre": as_data.get("practica_nombre"),
-                    "cirujano_nombre": as_data.get("medico_cirujano_nombre"),
+                    **p1_mock,
                     "estado_consolidado": "pendiente",
                     "ambos_firmados": False
                 }
@@ -7335,11 +7397,18 @@ def asegurar_turnos_para_consentimiento_asesoria(
         c_est1 = (turno_1.get("consentimiento_estado") if turno_1 else "pendiente") or "pendiente"
         c_est2 = (turno_2.get("consentimiento_estado") if turno_2 else "pendiente") or "pendiente"
 
+        f1_val = str((turno_1.get("fecha_cirugia") if turno_1 else None) or fecha_1 or "")
+        f2_val = str((turno_2.get("fecha_cirugia") if turno_2 else None) or fecha_2 or "")
+
         primer_ojo_info = {
             "turno_id": turno_1.get("id") if turno_1 else None,
             "ojo": primer_ojo,
-            "ojo_label": f"1° Ojo ({'Ojo Derecho - OD' if primer_ojo == 'OD' else 'Ojo Izquierdo - OI'})",
-            "fecha_cirugia": turno_1.get("fecha_cirugia") if turno_1 else str(fecha_1),
+            "ojo_label": primer_ojo_label,
+            "ojo_desc": primer_ojo_desc,
+            "etapa": "1er_ojo",
+            "etapa_texto": "1° Acto Quirúrgico",
+            "fecha": f1_val,
+            "fecha_cirugia": f1_val,
             "hora_inicio": turno_1.get("hora_inicio") if turno_1 else None,
             "estado": c_est1,
             "firmado": c_est1 in ("firmado_digital", "firmado_papel", "firmado"),
@@ -7354,8 +7423,12 @@ def asegurar_turnos_para_consentimiento_asesoria(
         segundo_ojo_info = {
             "turno_id": turno_2.get("id") if turno_2 else None,
             "ojo": segundo_ojo,
-            "ojo_label": f"2° Ojo ({'Ojo Derecho - OD' if segundo_ojo == 'OD' else 'Ojo Izquierdo - OI'})",
-            "fecha_cirugia": turno_2.get("fecha_cirugia") if turno_2 else str(fecha_2),
+            "ojo_label": segundo_ojo_label,
+            "ojo_desc": segundo_ojo_desc,
+            "etapa": "2do_ojo",
+            "etapa_texto": "2° Acto Quirúrgico",
+            "fecha": f2_val,
+            "fecha_cirugia": f2_val,
             "hora_inicio": turno_2.get("hora_inicio") if turno_2 else None,
             "estado": c_est2,
             "firmado": c_est2 in ("firmado_digital", "firmado_papel", "firmado"),
@@ -7520,7 +7593,29 @@ def generar_pdf_consentimiento_papel(turno_o_asesoria: Dict[str, Any]) -> str:
         cuerpo_template = plantillas[0]["cuerpo"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
         
     ojo = turno.get("ojo") or "OD"
-    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    es_escalonado = turno.get("es_bilateral_escalonada", False)
+    as_id_t = turno.get("asesoria_id")
+    ojo_desc = None
+    if as_id_t:
+        try:
+            info_d = asegurar_turnos_para_consentimiento_asesoria(as_id_t)
+            if info_d.get("es_bilateral_escalonada"):
+                es_escalonado = True
+                p1 = info_d.get("primer_ojo") or {}
+                if turno.get("id") == p1.get("turno_id") or ojo == p1.get("ojo"):
+                    ojo_desc = f"1° OJO A INTERVENIR: {'OJO DERECHO (OD)' if ojo == 'OD' else 'OJO IZQUIERDO (OI)'} - 1° ETAPA QUIRÚRGICA"
+                else:
+                    ojo_desc = f"2° OJO A INTERVENIR: {'OJO DERECHO (OD)' if ojo == 'OD' else 'OJO IZQUIERDO (OI)'} - 2° ETAPA QUIRÚRGICA"
+        except Exception:
+            pass
+
+    if not ojo_desc:
+        if ojo == "AO":
+            ojo_desc = "AMBOS OJOS (AO) - EN EL MISMO ACTO QUIRÚRGICO"
+        elif ojo == "OI":
+            ojo_desc = "OJO IZQUIERDO (OI)"
+        else:
+            ojo_desc = "OJO DERECHO (OD)"
     
     cuerpo_final = render_consent_template(
         cuerpo_template,

@@ -138,8 +138,9 @@ export default function ModalEnviarConsentimientoWhatsApp({
 
     const cargarDatos = async () => {
       try {
+        const queryParam = ojoDefault ? `?ojo=${encodeURIComponent(ojoDefault)}` : ''
         const endpoint = casoId
-          ? `/api/asesorias-quirurgicas/${casoId}/datos-consentimiento-whatsapp`
+          ? `/api/asesorias-quirurgicas/${casoId}/datos-consentimiento-whatsapp${queryParam}`
           : `/api/turnos-quirofano/${turnoId}/datos-consentimiento-whatsapp`
 
         const res = await apiFetch(endpoint)

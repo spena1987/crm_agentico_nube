@@ -2843,7 +2843,7 @@ export default function CasoFormularioActivo({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <div className={`p-1.5 rounded-lg border ${
-                  esBilateralConsentimiento
+                  (ojo === 'AO' && modalidadBilateral === 'escalonada')
                     ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
                     : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400'
                 }`}>
@@ -2851,19 +2851,21 @@ export default function CasoFormularioActivo({
                 </div>
                 <div>
                   <div className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
-                    {esBilateralConsentimiento ? 'Consentimiento Informado Dual' : 'Consentimiento Informado'}
+                    {(ojo === 'AO' && modalidadBilateral === 'escalonada') ? 'Consentimiento Informado Dual (2 Actos)' : 'Consentimiento Informado'}
                     {cargandoConsentimiento && <Loader2 size={12} className="animate-spin text-gray-400" />}
                   </div>
                   <p className="text-[10px] text-gray-400">
-                    {esBilateralConsentimiento
+                    {(ojo === 'AO' && modalidadBilateral === 'escalonada')
                       ? 'Cirugía Bilateral: 1 consentimiento independiente por cada ojo / acto quirúrgico'
-                      : 'Firma digital anticipada por WhatsApp o impresión en papel'}
+                      : ojo === 'AO'
+                        ? 'Cirugía Bilateral Simultánea: 1 consentimiento único (Ambos Ojos en el mismo acto)'
+                        : `Cirugía Unilateral (${ojo}): Firma digital anticipada por WhatsApp o impresión en papel`}
                   </p>
                 </div>
               </div>
 
               {/* Badge de Estado Global / Resumen */}
-              {esBilateralConsentimiento ? (
+              {(ojo === 'AO' && modalidadBilateral === 'escalonada') ? (
                 primerOjoConsentimiento?.firmado && segundoOjoConsentimiento?.firmado ? (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
                     <CheckCircle2 size={11} /> Ambos Ojos Firmados
@@ -2921,7 +2923,7 @@ export default function CasoFormularioActivo({
             )}
 
             {/* VISTA DUAL: CIRUGÍA BILATERAL ESCALONADA */}
-            {esBilateralConsentimiento ? (
+            {(ojo === 'AO' && modalidadBilateral === 'escalonada') ? (
               <div className="space-y-2.5">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                   {/* SUB-CARD 1: PRIMER OJO */}
@@ -2929,7 +2931,7 @@ export default function CasoFormularioActivo({
                     <div>
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className="text-[11px] font-bold text-gray-200">
-                          1° {primerOjoConsentimiento?.ojo_desc || 'Primer Ojo'} ({primerOjoConsentimiento?.ojo || 'OD'})
+                          1° {ordenOjos === 'OI_primero' ? 'Ojo Izquierdo (OI)' : 'Ojo Derecho (OD)'}
                         </span>
                         {primerOjoConsentimiento?.firmado ? (
                           <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-semibold border ${
@@ -2951,7 +2953,7 @@ export default function CasoFormularioActivo({
                       </div>
                       <div className="text-[10px] text-gray-400 flex items-center gap-1">
                         <Calendar size={11} className="text-gray-500" />
-                        <span>{primerOjoConsentimiento?.fecha || 'Fecha no definida'}</span>
+                        <span>{primerOjoConsentimiento?.fecha_cirugia || primerOjoConsentimiento?.fecha || fechaDefinitiva || fechaProbable || 'Fecha no definida'}</span>
                       </div>
                     </div>
 
@@ -2959,21 +2961,21 @@ export default function CasoFormularioActivo({
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
                           type="button"
-                          onClick={() => abrirModalWhatsApp(primerOjoConsentimiento?.ojo || 'OD')}
+                          onClick={() => abrirModalWhatsApp(ordenOjos === 'OI_primero' ? 'OI' : 'OD')}
                           disabled={guardando}
                           className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-emerald-500/30 cursor-pointer"
-                          title="Enviar consentimiento del 1° ojo por WhatsApp"
+                          title={`Enviar consentimiento del 1° ojo (${ordenOjos === 'OI_primero' ? 'OI' : 'OD'}) por WhatsApp`}
                         >
                           <Send size={11} />
-                          <span>WA 1° Ojo</span>
+                          <span>WA 1° Ojo ({ordenOjos === 'OI_primero' ? 'OI' : 'OD'})</span>
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => handleImprimirConsentimientoPapel(primerOjoConsentimiento?.ojo || 'OD')}
+                          onClick={() => handleImprimirConsentimientoPapel(ordenOjos === 'OI_primero' ? 'OI' : 'OD')}
                           disabled={guardando}
                           className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-neutral-700 cursor-pointer"
-                          title="Imprimir documento oficial en blanco del 1° ojo"
+                          title={`Imprimir documento oficial en blanco del 1° ojo (${ordenOjos === 'OI_primero' ? 'OI' : 'OD'})`}
                         >
                           <Printer size={11} className="text-gray-300" />
                           <span>Papel</span>
@@ -2983,7 +2985,7 @@ export default function CasoFormularioActivo({
                       {primerOjoConsentimiento?.firmado ? (
                         <button
                           type="button"
-                          onClick={() => handleVerConsentimientoFirmado(primerOjoConsentimiento?.ojo, primerOjoConsentimiento?.turno_id)}
+                          onClick={() => handleVerConsentimientoFirmado(ordenOjos === 'OI_primero' ? 'OI' : 'OD', primerOjoConsentimiento?.turno_id)}
                           className="w-full py-0.5 text-center text-[10.5px] text-emerald-400 hover:text-emerald-300 hover:underline flex items-center justify-center gap-1 cursor-pointer"
                         >
                           <Download size={11} />
@@ -3007,7 +3009,7 @@ export default function CasoFormularioActivo({
                     <div>
                       <div className="flex items-center justify-between gap-1 mb-1">
                         <span className="text-[11px] font-bold text-gray-200">
-                          2° {segundoOjoConsentimiento?.ojo_desc || 'Segundo Ojo'} ({segundoOjoConsentimiento?.ojo || 'OI'})
+                          2° {ordenOjos === 'OI_primero' ? 'Ojo Derecho (OD)' : 'Ojo Izquierdo (OI)'}
                         </span>
                         {segundoOjoConsentimiento?.firmado ? (
                           <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-semibold border ${
@@ -3029,7 +3031,7 @@ export default function CasoFormularioActivo({
                       </div>
                       <div className="text-[10px] text-gray-400 flex items-center gap-1">
                         <Calendar size={11} className="text-gray-500" />
-                        <span>{segundoOjoConsentimiento?.fecha || 'Fecha no definida'}</span>
+                        <span>{segundoOjoConsentimiento?.fecha_cirugia || segundoOjoConsentimiento?.fecha || fechaDefinitiva2doOjo || fechaProbable2doOjo || 'Fecha no definida'}</span>
                       </div>
                     </div>
 
@@ -3037,21 +3039,21 @@ export default function CasoFormularioActivo({
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
                           type="button"
-                          onClick={() => abrirModalWhatsApp(segundoOjoConsentimiento?.ojo || 'OI')}
+                          onClick={() => abrirModalWhatsApp(ordenOjos === 'OI_primero' ? 'OD' : 'OI')}
                           disabled={guardando}
                           className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-emerald-500/30 cursor-pointer"
-                          title="Enviar consentimiento del 2° ojo por WhatsApp"
+                          title={`Enviar consentimiento del 2° ojo (${ordenOjos === 'OI_primero' ? 'OD' : 'OI'}) por WhatsApp`}
                         >
                           <Send size={11} />
-                          <span>WA 2° Ojo</span>
+                          <span>WA 2° Ojo ({ordenOjos === 'OI_primero' ? 'OD' : 'OI'})</span>
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => handleImprimirConsentimientoPapel(segundoOjoConsentimiento?.ojo || 'OI')}
+                          onClick={() => handleImprimirConsentimientoPapel(ordenOjos === 'OI_primero' ? 'OD' : 'OI')}
                           disabled={guardando}
                           className="px-2 py-1 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-neutral-700 cursor-pointer"
-                          title="Imprimir documento oficial en blanco del 2° ojo"
+                          title={`Imprimir documento oficial en blanco del 2° ojo (${ordenOjos === 'OI_primero' ? 'OD' : 'OI'})`}
                         >
                           <Printer size={11} className="text-gray-300" />
                           <span>Papel</span>
@@ -3061,7 +3063,7 @@ export default function CasoFormularioActivo({
                       {segundoOjoConsentimiento?.firmado ? (
                         <button
                           type="button"
-                          onClick={() => handleVerConsentimientoFirmado(segundoOjoConsentimiento?.ojo, segundoOjoConsentimiento?.turno_id)}
+                          onClick={() => handleVerConsentimientoFirmado(ordenOjos === 'OI_primero' ? 'OD' : 'OI', segundoOjoConsentimiento?.turno_id)}
                           className="w-full py-0.5 text-center text-[10.5px] text-emerald-400 hover:text-emerald-300 hover:underline flex items-center justify-center gap-1 cursor-pointer"
                         >
                           <Download size={11} />
@@ -3111,7 +3113,7 @@ export default function CasoFormularioActivo({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => abrirModalWhatsApp()}
+                    onClick={() => abrirModalWhatsApp(ojo === 'AO' ? 'AO' : ojo)}
                     disabled={guardando}
                     className="px-2.5 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-emerald-500/30 cursor-pointer shadow-sm"
                     title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
@@ -3119,20 +3121,20 @@ export default function CasoFormularioActivo({
                     <Send size={12} />
                     <span>
                       {consentimiento?.estado === 'enviado_wa' || consentimiento?.estado === 'enviado_whatsapp'
-                        ? 'Reenviar WhatsApp'
-                        : 'Enviar por WhatsApp'}
+                        ? `Reenviar WhatsApp (${ojo})`
+                        : `Enviar por WhatsApp (${ojo})`}
                     </span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => handleImprimirConsentimientoPapel()}
+                    onClick={() => handleImprimirConsentimientoPapel(ojo === 'AO' ? 'AO' : ojo)}
                     disabled={guardando}
                     className="px-2.5 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-gray-200 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-neutral-700 cursor-pointer"
                     title="Abrir e imprimir el consentimiento oficial en blanco para firma manuscrita"
                   >
                     <Printer size={12} className="text-gray-300" />
-                    <span>Imprimir p/ Papel</span>
+                    <span>Imprimir p/ Papel ({ojo})</span>
                   </button>
                 </div>
 
@@ -3141,7 +3143,7 @@ export default function CasoFormularioActivo({
                   {!consentimiento?.firmado ? (
                     <button
                       type="button"
-                      onClick={() => abrirModalFirmaPapel('ambos')}
+                      onClick={() => abrirModalFirmaPapel(ojo === 'AO' ? 'ambos' : 'primer_ojo')}
                       className="text-blue-400 hover:text-blue-300 hover:underline flex items-center gap-1 cursor-pointer"
                     >
                       <CheckCircle2 size={12} />
@@ -3186,7 +3188,7 @@ export default function CasoFormularioActivo({
                 </div>
 
                 {/* Si es bilateral escalonada, selector de objetivo */}
-                {esBilateralConsentimiento && (
+                {(ojo === 'AO' && modalidadBilateral === 'escalonada') && (
                   <div className="flex items-center gap-2 text-[10.5px]">
                     <span className="text-gray-400">Acto objetivo:</span>
                     <button
@@ -3198,7 +3200,18 @@ export default function CasoFormularioActivo({
                           : 'bg-neutral-900 text-gray-400 border-neutral-700'
                       }`}
                     >
-                      1° Ojo ({primerOjoConsentimiento?.ojo || 'OD'})
+                      1° Ojo ({ordenOjos === 'OI_primero' ? 'OI' : 'OD'})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOjoObjetivoFirmaPapel('segundo_ojo')}
+                      className={`px-2 py-0.5 rounded border text-[10px] font-semibold ${
+                        ojoObjetivoFirmaPapel === 'segundo_ojo'
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-neutral-900 text-gray-400 border-neutral-700'
+                      }`}
+                    >
+                      2° Ojo ({ordenOjos === 'OI_primero' ? 'OD' : 'OI'})
                     </button>
                     <button
                       type="button"
