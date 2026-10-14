@@ -707,6 +707,12 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
     emisión de presencia ('Escribiendo...'), filtro rápido de escalamiento y auto-lectura al responder.
     """
     try:
+        # 0. Kill-Switch Global
+        from app.db import es_bot_activo_globalmente
+        if not es_bot_activo_globalmente():
+            logger.info(f"[Kill-Switch Central] Bot IA Gemini pausado centralmente en Ajustes. Omitiendo respuesta para conv {conversacion_id}.")
+            return
+
         # 1. Comprobar bloqueo y período de gracia (15 minutos desde el último mensaje de operador humano)
         if conversacion_id and supabase:
             try:
@@ -715,6 +721,7 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
                     c_row = c_res.data[0]
                     c_meta = c_row.get("metadata_json") or {}
                     last_human = c_meta.get("ultimo_mensaje_humano_at")
+                    bloqueo_manual = bool(c_meta.get("bloqueo_humano_manual", False))
 
                     # Verificación de Auto-Reactivación por Inactividad
                     from app.services.config_service import load_settings
@@ -725,7 +732,7 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
                     segundos_limite = max(horas_limite * 3600.0, 60.0)
 
                     tiempo_ref = float(last_human or 0)
-                    if tiempo_ref == 0 and c_row.get("updated_at"):
+                    if not bloqueo_manual and tiempo_ref == 0 and c_row.get("updated_at"):
                         try:
                             dt_upd = datetime.fromisoformat(str(c_row["updated_at"]).replace("Z", "+00:00"))
                             tiempo_ref = dt_upd.timestamp()
@@ -733,7 +740,7 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
                             tiempo_ref = 0
 
                     if c_row.get("bot_disabled"):
-                        if auto_reactivar and tiempo_ref > 0 and (time.time() - tiempo_ref >= segundos_limite):
+                        if not bloqueo_manual and auto_reactivar and tiempo_ref > 0 and (time.time() - tiempo_ref >= segundos_limite):
                             logger.info(f"Auto-reactivando bot por inactividad para conversación {conversacion_id} tras {(time.time() - tiempo_ref)/3600:.1f}h.")
                             c_meta["ultimo_mensaje_humano_at"] = 0
                             c_meta["fallback_strikes"] = 0
@@ -743,7 +750,7 @@ def procesar_agente_ia_background(conversacion_id: str, clean_phone: str, texto:
                                 "metadata_json": c_meta
                             }).eq("id", conversacion_id).execute()
                         else:
-                            logger.info(f"Bot IA desactivado manualmente para conversación {conversacion_id}. Omitiendo respuesta.")
+                            logger.info(f"Bot IA desactivado para conversación {conversacion_id} (manual={bloqueo_manual}). Omitiendo respuesta.")
                             return
 
                     if last_human and (time.time() - float(last_human) < 900):
@@ -1471,6 +1478,7 @@ def send_message_api(payload: SendMessageRequest):
                 conv_row = c_res.data[0]
                 c_meta = conv_row.get("metadata_json") or {}
                 c_meta["ultimo_mensaje_humano_at"] = time.time()
+                c_meta["bloqueo_humano_manual"] = True
                 upd_conv: Dict[str, Any] = {
                     "metadata_json": c_meta,
                     "bot_disabled": True

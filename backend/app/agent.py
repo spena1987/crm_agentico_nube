@@ -224,6 +224,24 @@ def procesar_mensaje_agente(
     if not client:
         return "El servicio del agente inteligente no está disponible en este momento."
 
+    # 0. Verificación de Kill-Switch Global y de Conversación
+    try:
+        from app.db import es_bot_activo_globalmente
+        if not es_bot_activo_globalmente():
+            logger.info("[Kill-Switch] El Bot IA Gemini se encuentra desactivado globalmente en Ajustes. Omitiendo inferencia.")
+            return ""
+    except Exception as e_glob:
+        logger.warning(f"Error verificando switch global en agente: {e_glob}")
+
+    if conversacion_id and supabase:
+        try:
+            c_chk = supabase.table("conversaciones").select("bot_disabled").eq("id", conversacion_id).limit(1).execute()
+            if c_chk.data and c_chk.data[0].get("bot_disabled"):
+                logger.info(f"[Kill-Switch] Conversación {conversacion_id} tiene bot_disabled=True (Atención Humana). Omitiendo inferencia de IA.")
+                return ""
+        except Exception as err_chk:
+            logger.warning(f"Error verificando bot_disabled en conversación {conversacion_id}: {err_chk}")
+
     if mensaje_texto is not None:
         paciente_id = mensaje_texto_o_paciente_id
         final_texto = mensaje_texto

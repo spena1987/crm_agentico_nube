@@ -542,7 +542,12 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
         # 4.1 Sincronizar en el Chat del CRM (public.conversaciones y public.mensajes) - INDEPENDIENTE DE account_id
         if paciente_id:
             try:
-                conv_crm_res = supabase.table("conversaciones").select("id, bot_disabled, metadata_json, unread_count, estado_gestion, asignado_a_usuario_id, archivada").eq("paciente_id", paciente_id).execute()
+                conv_crm_res = supabase.table("conversaciones")\
+                    .select("id, bot_disabled, metadata_json, unread_count, estado_gestion, asignado_a_usuario_id, archivada")\
+                    .eq("paciente_id", paciente_id)\
+                    .order("updated_at", desc=True)\
+                    .limit(1)\
+                    .execute()
                 crm_conv_id = None
                 bot_disabled = False
 
@@ -555,6 +560,7 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     conv_asignado = conv_crm_res.data[0].get("asignado_a_usuario_id")
                     conv_archivada = bool(conv_crm_res.data[0].get("archivada", False))
                     ultimo_humano = c_meta.get("ultimo_mensaje_humano_at", 0)
+                    bloqueo_manual = bool(c_meta.get("bloqueo_humano_manual", False))
                     
                     # Período de gracia de 15 minutos (900s) solo si el operador humano estuvo respondiendo,
                     # la conversación no ha sido resuelta y sigue asignada activamente a un operador humano.
@@ -574,8 +580,12 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                     # Verificación de Auto-Reactivación por Inactividad Humana
                     # Si el bot estaba pausado pero ha transcurrido el tiempo límite de inactividad
-                    # configurado en Ajustes (ej. 24h), reactivar el Asistente IA automáticamente.
+                    # configurado en Ajustes (ej. 24h), reactivar el Asistente IA automáticamente
+                    # EXCEPTO si el operador fijó bloqueo manual o el bot está pausado centralmente.
                     try:
+                        from app.db import es_bot_activo_globalmente
+                        bot_global_activo = es_bot_activo_globalmente()
+
                         from app.services.config_service import load_settings
                         settings = load_settings()
                         handover_cfg = settings.get("bot", {}).get("handover", {})
@@ -585,14 +595,16 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                         ahora = time.time()
                         tiempo_referencia = float(ultimo_humano or 0)
-                        if tiempo_referencia == 0 and conv_crm_res.data[0].get("updated_at"):
+                        # Solo hacer fallback a updated_at si NO hay bloqueo manual del operador
+                        if not bloqueo_manual and tiempo_referencia == 0 and conv_crm_res.data[0].get("updated_at"):
                             try:
                                 dt_upd = datetime.fromisoformat(str(conv_crm_res.data[0]["updated_at"]).replace("Z", "+00:00"))
                                 tiempo_referencia = dt_upd.timestamp()
                             except Exception:
                                 tiempo_referencia = 0
 
-                        if bot_disabled and auto_reactivar and tiempo_referencia > 0 and (ahora - tiempo_referencia >= segundos_limite):
+                        # Si hay bloqueo manual del operador o el bot está apagado globalmente, NUNCA auto-reactivar
+                        if bot_disabled and not bloqueo_manual and bot_global_activo and auto_reactivar and tiempo_referencia > 0 and (ahora - tiempo_referencia >= segundos_limite):
                             bot_disabled = False
                             c_meta["ultimo_mensaje_humano_at"] = 0
                             c_meta["fallback_strikes"] = 0
@@ -613,6 +625,8 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                                 }).execute()
                             except Exception as n_err:
                                 logger.warning(f"Error registrando nota de auto-reactivación: {n_err}")
+                        elif bot_disabled and bloqueo_manual:
+                            logger.info(f"[Bot Lock] Conversación {crm_conv_id} tiene bloqueo manual de atención humana. Auto-reactivación omitida.")
                     except Exception as ar_err:
                         logger.warning(f"Error en chequeo de auto-reactivación por inactividad: {ar_err}")
 
@@ -675,11 +689,19 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                         paciente_id=paciente_id,
                         normalized_phone=normalized_phone,
                         crm_conv_id=crm_conv_id,
-                        account_id=account_id
+                        account_id=account_id,
+                        bot_disabled=bot_disabled
                     )
 
                 # 4.3 Despachar el Agente IA (Gemini) si no fue una acción interactiva determinística y el bot no está deshabilitado
-                if not interactive_handled and not bot_disabled and text_content and msg_type in ("text", "interactive", "audio"):
+                from app.db import es_bot_activo_globalmente
+                bot_global_activo = es_bot_activo_globalmente()
+
+                if not bot_global_activo:
+                    logger.info(f"[Kill-Switch Central] Bot IA Gemini pausado centralmente en Ajustes. Omitiendo inferencia para paciente {paciente_id}.")
+                elif bot_disabled:
+                    logger.info(f"[Kill-Switch Paciente] Conversación {crm_conv_id} tiene bot_disabled=True (Atención Humana). Omitiendo inferencia para paciente {paciente_id}.")
+                elif not interactive_handled and text_content and msg_type in ("text", "interactive", "audio"):
                     import asyncio
                     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 
@@ -701,6 +723,10 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                     async def responder_con_agente():
                         try:
+                            if not es_bot_activo_globalmente():
+                                logger.info("[Kill-Switch] Abortando responder_con_agente: Bot pausado centralmente.")
+                                return
+
                             from app.services.config_service import load_settings
                             settings = load_settings()
                             bot_cfg = settings.get("bot", {})
@@ -854,7 +880,8 @@ async def handle_automated_interactive_action(
     paciente_id: Optional[str],
     normalized_phone: str,
     crm_conv_id: Optional[str],
-    account_id: Optional[str]
+    account_id: Optional[str],
+    bot_disabled: bool = False
 ) -> bool:
     """
     Ruteo determinístico para clics en botones interactivos de plantillas y mensajes:
@@ -865,6 +892,15 @@ async def handle_automated_interactive_action(
     btn_id = (button_id or "").lower().strip()
     title_str = (text_content or "").lower().strip()
     logger.info(f"[Interactive Auto] Evaluando acción: id='{btn_id}', texto='{title_str}' para paciente={paciente_id}")
+
+    from app.db import es_bot_activo_globalmente
+    bot_global = es_bot_activo_globalmente()
+
+    # Si es texto libre (no un clic de botón interactivo) y el bot está pausado (global o paciente):
+    # NUNCA responder automáticamente desde el bot; permitir que el operador humano gestione el chat.
+    if not btn_id and (bot_disabled or not bot_global):
+        logger.info(f"[Interactive Auto] Omitiendo intercepción de texto '{title_str[:30]}' porque el bot está pausado (global={bot_global}, conv_disabled={bot_disabled}).")
+        return False
 
     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
 

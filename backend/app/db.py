@@ -579,15 +579,21 @@ def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
         return None
     try:
         update_data = {"bot_disabled": disabled}
-        if not disabled:
-            try:
-                cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
-                c_meta = dict(cur_conv.data[0].get("metadata_json") or {}) if cur_conv.data else {}
+        try:
+            cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+            c_meta = dict(cur_conv.data[0].get("metadata_json") or {}) if cur_conv.data else {}
+            if disabled:
+                import time
+                c_meta["bloqueo_humano_manual"] = True
+                c_meta["bloqueado_at"] = datetime.now(timezone.utc).isoformat()
+                c_meta["ultimo_mensaje_humano_at"] = time.time()
+            else:
+                c_meta["bloqueo_humano_manual"] = False
                 c_meta["ultimo_mensaje_humano_at"] = 0
                 c_meta["fallback_strikes"] = 0
-                update_data["metadata_json"] = c_meta
-            except Exception as e_meta:
-                logger.warning(f"No se pudo resetear ultimo_mensaje_humano_at/fallback_strikes: {e_meta}")
+            update_data["metadata_json"] = c_meta
+        except Exception as e_meta:
+            logger.warning(f"No se pudo sincronizar metadata_json en toggle bot: {e_meta}")
 
         response = supabase.table("conversaciones").update(update_data).eq("id", conversacion_id).execute()
         if response.data:
@@ -5820,6 +5826,29 @@ def actualizar_configuracion_automatismos(payload: Dict[str, Any]) -> Dict[str, 
     except Exception as e:
         logger.error(f"Error al actualizar configuración de automatismos: {e}")
         raise
+
+def es_bot_activo_globalmente() -> bool:
+    """
+    Verifica con prioridad de corte estricto si el Agente IA Gemini está activo globalmente.
+    Si está pausado en Ajustes > Centro de Automatismos ('bot_gemini_activo': false)
+    o en Configuración General del Bot ('bot.enabled': false), retorna False.
+    """
+    try:
+        auto_cfg = get_configuracion_automatismos()
+        if not auto_cfg.get("bot_gemini_activo", True):
+            return False
+    except Exception as e:
+        logger.warning(f"Error verificando automatismos de bot: {e}")
+
+    try:
+        from app.services.config_service import load_settings
+        settings = load_settings()
+        if not settings.get("bot", {}).get("enabled", True):
+            return False
+    except Exception as e:
+        logger.warning(f"Error verificando settings de bot: {e}")
+
+    return True
 
 
 
