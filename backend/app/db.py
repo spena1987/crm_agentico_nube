@@ -3209,12 +3209,13 @@ def eliminar_asesoria_quirurgica(asesoria_id: str) -> bool:
 # RECORDATORIO PREQUIRÚRGICO OFICIAL POR WHATSAPP (META UTILITY)
 # ====================================================================
 
-def get_datos_recordatorio_quirurgico(asesoria_id: str) -> Optional[Dict[str, Any]]:
+def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Resuelve todos los datos requeridos para la plantilla de recordatorio prequirúrgico:
     1. Paciente (nombre y teléfono)
     2. Práctica quirúrgica (nombre, código, ojo, cirujano)
-    3. Turno de quirófano (fecha_cirugia, hora_inicio, quirofano_nombre, cálculo de hora_citacion)
+    3. Bilateralidad: Si es bilateral escalonada (AO en días separados), resuelve la secuencia
+       del 1° y 2° ojo con sus respectivos turnos de quirófano, fechas, horarios y estados de confirmación.
     4. Preparación médica (desde nomenclador_practicas / plantillas_preparaciones)
     5. Listado de plantillas de WhatsApp registradas en Meta (whatsapp_templates) con su estado
     """
@@ -3254,69 +3255,190 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str) -> Optional[Dict[str, An
         elif paciente_nombre:
             saludo_nombre = paciente_nombre.title()
 
-        # 3. Datos de la cirugía
+        # 3. Datos de la cirugía base
         cirugia_nombre = caso.get("practica_nombre") or "Procedimiento Quirúrgico"
-        ojo = caso.get("ojo") or ""
-        if ojo and ojo not in cirugia_nombre:
-            cirugia_completa = f"{cirugia_nombre} ({ojo})"
-        else:
-            cirugia_completa = cirugia_nombre
-
+        ojo_caso = (caso.get("ojo") or "").upper()
         cirujano_nombre = caso.get("medico_cirujano_nombre") or ""
 
-        # 4. Turnos de quirófano
+        # 4. Evaluar bilateralidad escalonada
+        chk = caso.get("checklist_prequirurgico") or {}
+        if not isinstance(chk, dict):
+            chk = {}
+        meta_bilateral = chk.get("_meta_bilateral") or {}
+        if not isinstance(meta_bilateral, dict):
+            meta_bilateral = {}
+
+        modalidad = meta_bilateral.get("modalidad") or caso.get("modalidad_bilateral")
+        es_bilateral_escalonada = (ojo_caso == "AO" and str(modalidad or "").lower() == "escalonada")
+
+        # Helpers de formateo
+        def _fmt_fecha(f_val: Optional[str]) -> str:
+            if not f_val:
+                return "Fecha a confirmar"
+            if "-" in str(f_val):
+                try:
+                    from datetime import datetime
+                    dt = datetime.strptime(str(f_val)[:10], "%Y-%m-%d")
+                    dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                    meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+                    dia_semana = dias[dt.weekday()]
+                    mes_nombre = meses[dt.month - 1]
+                    return f"{dia_semana} {dt.day} de {mes_nombre} ({dt.strftime('%d/%m/%Y')})"
+                except Exception:
+                    return str(f_val)
+            return str(f_val)
+
+        def _fmt_hora(h_val: Optional[str]):
+            if h_val:
+                h_clean = str(h_val)[:5]
+                try:
+                    from datetime import datetime, timedelta
+                    t_obj = datetime.strptime(h_clean, "%H:%M")
+                    t_cit = t_obj - timedelta(minutes=40)
+                    h_cit = t_cit.strftime("%H:%M")
+                    return f"{h_cit} hs (Procedimiento {h_clean} hs)", h_clean, h_cit
+                except Exception:
+                    return f"{h_clean} hs", h_clean, h_clean
+            return "07:30 hs (a confirmar)", "08:15", "07:30"
+
+        def _extraer_estado_rec(t_obj: Optional[Dict[str, Any]], chk_eye: Optional[Dict[str, Any]] = None):
+            t_chk = (t_obj.get("checks_adicionales") or {}) if t_obj else {}
+            if not isinstance(t_chk, dict):
+                t_chk = {}
+            a_chk = chk_eye or {}
+            if not isinstance(a_chk, dict):
+                a_chk = {}
+            est = (
+                t_chk.get("recordatorio_estado")
+                or a_chk.get("estado")
+                or ("enviado" if (t_chk.get("recordatorio_enviado") or a_chk.get("enviado_at")) else "pendiente")
+            )
+            return {
+                "estado": est,
+                "enviado_at": t_chk.get("recordatorio_fecha") or a_chk.get("enviado_at"),
+                "respondido_at": t_chk.get("recordatorio_respondido_at") or a_chk.get("respondido_at"),
+                "respuesta_texto": t_chk.get("recordatorio_respuesta_texto") or a_chk.get("respuesta_texto"),
+                "template": t_chk.get("recordatorio_template") or a_chk.get("template")
+            }
+
+        # Turnos activos
         turnos = caso.get("turnos_quirofano") or []
         turnos_activos = [t for t in turnos if t.get("estado") != "cancelado"]
-        
-        fecha_cirugia = None
-        hora_cirugia = None
-        quirofano_nombre = "Centrovisión - Quirófano Central"
-        turno_id = None
+        turnos_activos.sort(key=lambda x: str(x.get("fecha_cirugia", "")))
 
-        if turnos_activos:
-            # Ordenar por fecha_cirugia asc
-            turnos_activos.sort(key=lambda x: str(x.get("fecha_cirugia", "")))
-            turno_elegido = turnos_activos[0]
-            turno_id = turno_elegido.get("id")
-            # Jerarquía: 1° fecha definitiva del expediente, 2° fecha del turno, 3° fecha probable
-            fecha_cirugia = caso.get("fecha_definitiva_cirugia") or turno_elegido.get("fecha_cirugia") or caso.get("fecha_probable_cirugia")
-            hora_cirugia = turno_elegido.get("hora_inicio")
-            if turno_elegido.get("quirofanos"):
-                quirofano_nombre = turno_elegido["quirofanos"].get("nombre") or quirofano_nombre
+        primer_ojo_info = None
+        segundo_ojo_info = None
+        seleccionado = None
+
+        if es_bilateral_escalonada:
+            orden = meta_bilateral.get("orden") or "OD_primero"
+            primer_ojo = "OI" if orden == "OI_primero" else "OD"
+            segundo_ojo = "OD" if primer_ojo == "OI" else "OI"
+
+            fecha_1 = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
+            fecha_2 = meta_bilateral.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_probable_2do_ojo") or fecha_1
+
+            turno_1 = next((t for t in turnos_activos if (t.get("ojo") or "").upper() == primer_ojo), None)
+            if not turno_1 and turnos_activos:
+                turno_1 = turnos_activos[0]
+
+            turno_2 = next((t for t in turnos_activos if (t.get("ojo") or "").upper() == segundo_ojo and (not turno_1 or t.get("id") != turno_1.get("id"))), None)
+            if not turno_2 and len(turnos_activos) > 1:
+                turno_2 = turnos_activos[1]
+
+            rec_qx = chk.get("_recordatorio_qx") or {}
+            if not isinstance(rec_qx, dict):
+                rec_qx = {}
+            p1_chk = rec_qx.get("primer_ojo")
+            p2_chk = rec_qx.get("segundo_ojo")
+
+            p1_rec = _extraer_estado_rec(turno_1, p1_chk)
+            p2_rec = _extraer_estado_rec(turno_2, p2_chk)
+
+            f1_iso = (turno_1.get("fecha_cirugia") if turno_1 else None) or fecha_1
+            h1_disp, h1_cir, h1_cit = _fmt_hora(turno_1.get("hora_inicio") if turno_1 else None)
+            q1_nom = (turno_1.get("quirofanos") or {}).get("nombre") if (turno_1 and turno_1.get("quirofanos")) else "Centrovisión - Quirófano Central"
+
+            f2_iso = (turno_2.get("fecha_cirugia") if turno_2 else None) or fecha_2
+            h2_disp, h2_cir, h2_cit = _fmt_hora(turno_2.get("hora_inicio") if turno_2 else None)
+            q2_nom = (turno_2.get("quirofanos") or {}).get("nombre") if (turno_2 and turno_2.get("quirofanos")) else "Centrovisión - Quirófano Central"
+
+            primer_ojo_info = {
+                "turno_id": turno_1.get("id") if turno_1 else None,
+                "ojo": primer_ojo,
+                "ojo_label": f"1° Ojo ({primer_ojo})",
+                "ojo_desc": f"1° Ojo a Operar ({'Ojo Derecho - OD' if primer_ojo == 'OD' else 'Ojo Izquierdo - OI'})",
+                "etapa": "1er_ojo",
+                "cirugia": f"{cirugia_nombre} ({primer_ojo})",
+                "fecha": _fmt_fecha(f1_iso),
+                "fecha_iso": str(f1_iso or ""),
+                "hora": h1_disp,
+                "hora_cirugia": h1_cir,
+                "hora_citacion": h1_cit,
+                "quirofano_nombre": q1_nom,
+                "recordatorio_estado": p1_rec["estado"],
+                "recordatorio_enviado_at": p1_rec["enviado_at"],
+                "recordatorio_respondido_at": p1_rec["respondido_at"],
+                "recordatorio_respuesta_texto": p1_rec["respuesta_texto"],
+                "recordatorio_template": p1_rec["template"]
+            }
+
+            segundo_ojo_info = {
+                "turno_id": turno_2.get("id") if turno_2 else None,
+                "ojo": segundo_ojo,
+                "ojo_label": f"2° Ojo ({segundo_ojo})",
+                "ojo_desc": f"2° Ojo a Operar ({'Ojo Derecho - OD' if segundo_ojo == 'OD' else 'Ojo Izquierdo - OI'})",
+                "etapa": "2do_ojo",
+                "cirugia": f"{cirugia_nombre} ({segundo_ojo})",
+                "fecha": _fmt_fecha(f2_iso),
+                "fecha_iso": str(f2_iso or ""),
+                "hora": h2_disp,
+                "hora_cirugia": h2_cir,
+                "hora_citacion": h2_cit,
+                "quirofano_nombre": q2_nom,
+                "recordatorio_estado": p2_rec["estado"],
+                "recordatorio_enviado_at": p2_rec["enviado_at"],
+                "recordatorio_respondido_at": p2_rec["respondido_at"],
+                "recordatorio_respuesta_texto": p2_rec["respuesta_texto"],
+                "recordatorio_template": p2_rec["template"]
+            }
+
+            ojo_solicitado = (ojo or "").lower()
+            if ojo_solicitado in ["segundo_ojo", "2do_ojo", segundo_ojo.lower()]:
+                seleccionado = segundo_ojo_info
+            else:
+                seleccionado = primer_ojo_info
         else:
-            fecha_cirugia = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
+            # Caso Unilateral o Bilateral Simultáneo (1 solo acto)
+            cirugia_completa = f"{cirugia_nombre} ({ojo_caso})" if ojo_caso and ojo_caso not in cirugia_nombre else cirugia_nombre
+            turno_elegido = turnos_activos[0] if turnos_activos else None
+            fecha_cirugia = caso.get("fecha_definitiva_cirugia") or (turno_elegido.get("fecha_cirugia") if turno_elegido else None) or caso.get("fecha_probable_cirugia")
+            hora_cirugia = turno_elegido.get("hora_inicio") if turno_elegido else None
+            q_nom = (turno_elegido.get("quirofanos") or {}).get("nombre") if (turno_elegido and turno_elegido.get("quirofanos")) else "Centrovisión - Quirófano Central"
+            h_disp, h_cir, h_cit = _fmt_hora(hora_cirugia)
 
-        # Formatear fecha legible
-        fecha_texto = fecha_cirugia or ""
-        if fecha_cirugia and "-" in fecha_cirugia:
-            try:
-                from datetime import datetime
-                dt = datetime.strptime(fecha_cirugia, "%Y-%m-%d")
-                dias = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-                meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-                dia_semana = dias[dt.weekday()]
-                mes_nombre = meses[dt.month - 1]
-                fecha_texto = f"{dia_semana} {dt.day} de {mes_nombre} ({dt.strftime('%d/%m/%Y')})"
-            except Exception:
-                fecha_texto = fecha_cirugia
+            rec_qx = chk.get("_recordatorio_qx") or {}
+            rec_meta = _extraer_estado_rec(turno_elegido, rec_qx)
 
-        # Formatear horas: Citación e Inicio
-        hora_citacion = ""
-        hora_display = ""
-        if hora_cirugia:
-            # Limpiar segundos si vienen (ej: "08:30:00" -> "08:30")
-            h_clean = hora_cirugia[:5]
-            try:
-                from datetime import datetime, timedelta
-                t_obj = datetime.strptime(h_clean, "%H:%M")
-                t_cit = t_obj - timedelta(minutes=40)
-                hora_citacion = t_cit.strftime("%H:%M")
-                hora_display = f"{hora_citacion} hs (Procedimiento {h_clean} hs)"
-            except Exception:
-                hora_citacion = h_clean
-                hora_display = f"{h_clean} hs"
-        else:
-            hora_display = "07:30 hs (a confirmar)"
+            seleccionado = {
+                "turno_id": turno_elegido.get("id") if turno_elegido else None,
+                "ojo": ojo_caso or "OD",
+                "ojo_label": f"Ojo {ojo_caso}" if ojo_caso else "Cirugía",
+                "ojo_desc": "Cirugía Quirúrgica",
+                "etapa": "unico",
+                "cirugia": cirugia_completa,
+                "fecha": _fmt_fecha(fecha_cirugia),
+                "fecha_iso": str(fecha_cirugia or ""),
+                "hora": h_disp,
+                "hora_cirugia": h_cir,
+                "hora_citacion": h_cit,
+                "quirofano_nombre": q_nom,
+                "recordatorio_estado": rec_meta["estado"],
+                "recordatorio_enviado_at": rec_meta["enviado_at"],
+                "recordatorio_respondido_at": rec_meta["respondido_at"],
+                "recordatorio_respuesta_texto": rec_meta["respuesta_texto"],
+                "recordatorio_template": rec_meta["template"]
+            }
 
         # 5. Resolver preparación médica desde el nomenclador
         preparacion_texto = ""
@@ -3332,15 +3454,13 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str) -> Optional[Dict[str, An
             logger.warning(f"Aviso al obtener resumen operativo de práctica: {e_prep}")
 
         if preparacion_texto:
-            # Reemplazar posibles tags contextuales si vienen de la plantilla del nomenclador
             preparacion_texto = (
                 preparacion_texto
                 .replace("{paciente}", saludo_nombre or paciente_nombre or "")
-                .replace("{practica}", cirugia_completa or "")
-                .replace("{fecha_cirugia}", fecha_texto or "")
-                .replace("{fecha}", fecha_texto or "")
+                .replace("{practica}", seleccionado["cirugia"] or "")
+                .replace("{fecha_cirugia}", seleccionado["fecha"] or "")
+                .replace("{fecha}", seleccionado["fecha"] or "")
             )
-            # Si el texto de preparación arranca con un saludo o encabezado introductorio redundante, limpiarlo
             lineas_prep = [l.strip() for l in preparacion_texto.splitlines() if l.strip()]
             if lineas_prep and any(w in lineas_prep[0].lower() for w in ["estimado", "para su cirugía", "para su cirugia", "hola"]):
                 lineas_prep = lineas_prep[1:]
@@ -3369,19 +3489,27 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str) -> Optional[Dict[str, An
             "paciente_nombre": paciente_nombre,
             "saludo_nombre": saludo_nombre,
             "telefono": telefono_paciente,
-            "cirugia": cirugia_completa,
+            "cirugia": seleccionado["cirugia"],
             "cirujano_nombre": cirujano_nombre,
-            "fecha": fecha_texto,
-            "fecha_iso": fecha_cirugia,
-            "hora": hora_display,
-            "hora_cirugia": hora_cirugia,
-            "hora_citacion": hora_citacion,
-            "quirofano_nombre": quirofano_nombre,
+            "fecha": seleccionado["fecha"],
+            "fecha_iso": seleccionado["fecha_iso"],
+            "hora": seleccionado["hora"],
+            "hora_cirugia": seleccionado["hora_cirugia"],
+            "hora_citacion": seleccionado["hora_citacion"],
+            "quirofano_nombre": seleccionado["quirofano_nombre"],
             "preparacion": preparacion_texto,
             "ayuno_horas": ayuno_horas,
-            "turno_id": turno_id,
+            "turno_id": seleccionado["turno_id"],
+            "ojo": seleccionado.get("ojo") or ojo_caso,
+            "recordatorio_estado": seleccionado.get("recordatorio_estado") or "pendiente",
+            "recordatorio_enviado_at": seleccionado.get("recordatorio_enviado_at"),
+            "recordatorio_respondido_at": seleccionado.get("recordatorio_respondido_at"),
+            "recordatorio_respuesta_texto": seleccionado.get("recordatorio_respuesta_texto"),
             "plantillas": plantillas_list,
-            "plantilla_recomendada": "recordatorio_cirugia_preparacion_v1"
+            "plantilla_recomendada": "recordatorio_cirugia_preparacion_v1",
+            "es_bilateral_escalonada": es_bilateral_escalonada,
+            "primer_ojo": primer_ojo_info,
+            "segundo_ojo": segundo_ojo_info
         }
     except Exception as e:
         logger.error(f"Error al obtener datos de recordatorio quirúrgico: {e}")
@@ -3396,14 +3524,16 @@ def registrar_envio_recordatorio_quirurgico(
     wamid: Optional[str] = None,
     usuario_id: Optional[str] = None,
     usuario_nombre: Optional[str] = None,
-    texto_renderizado: Optional[str] = None
+    texto_renderizado: Optional[str] = None,
+    turno_id: Optional[str] = None,
+    ojo: Optional[str] = None
 ) -> bool:
     """
     Registra el impacto del envío del recordatorio quirúrgico en:
-    - Ultimo contacto en la asesoría
-    - Nota de evolución cronológica
+    - Ultimo contacto y checklist prequirúrgico en la asesoría (discriminando 1° y 2° ojo si es bilateral escalonada)
+    - Nota de evolución cronológica formal del caso
     - Mensaje en la conversación de chat de WhatsApp del paciente
-    - Check de recordatorio enviado en turnos_quirofano si existe
+    - Check de recordatorio enviado en el turno de quirófano correspondiente
     """
     if not supabase:
         return False
@@ -3413,17 +3543,52 @@ def registrar_envio_recordatorio_quirurgico(
 
         # 1. Actualizar ultimo_contacto_at y checklist_prequirurgico en asesorías quirúrgicas
         try:
-            caso_chk_res = supabase.table("asesorias_quirurgicas").select("checklist_prequirurgico").eq("id", asesoria_id).limit(1).execute()
+            caso_chk_res = supabase.table("asesorias_quirurgicas").select("ojo, checklist_prequirurgico").eq("id", asesoria_id).limit(1).execute()
             chk_pre = {}
-            if caso_chk_res.data and isinstance(caso_chk_res.data[0].get("checklist_prequirurgico"), dict):
-                chk_pre = dict(caso_chk_res.data[0]["checklist_prequirurgico"])
-            chk_pre["_recordatorio_qx"] = {
+            as_row = {}
+            if caso_chk_res.data:
+                as_row = caso_chk_res.data[0]
+                if isinstance(as_row.get("checklist_prequirurgico"), dict):
+                    chk_pre = dict(as_row["checklist_prequirurgico"])
+
+            meta_bi = chk_pre.get("_meta_bilateral") or {}
+            es_bi = (as_row.get("ojo") == "AO" and str(meta_bi.get("modalidad") or "").lower() == "escalonada")
+
+            rec_item = {
                 "estado": "enviado",
                 "enviado_at": ahora_iso,
                 "template": template_name,
                 "telefono": telefono,
-                "wamid": wamid
+                "wamid": wamid,
+                "turno_id": turno_id,
+                "ojo": ojo
             }
+
+            prev_rec = chk_pre.get("_recordatorio_qx") or {}
+            if not isinstance(prev_rec, dict):
+                prev_rec = {}
+
+            if es_bi:
+                p1_ojo = "OI" if meta_bi.get("orden") == "OI_primero" else "OD"
+                p2_ojo = "OD" if p1_ojo == "OI" else "OI"
+
+                stage_key = "segundo_ojo" if (ojo and (ojo.upper() == p2_ojo or ojo in ["segundo_ojo", "2do_ojo"])) else "primer_ojo"
+                prev_rec["es_bilateral_escalonada"] = True
+                prev_rec[stage_key] = rec_item
+
+                p1_est = (prev_rec.get("primer_ojo") or {}).get("estado", "pendiente")
+                p2_est = (prev_rec.get("segundo_ojo") or {}).get("estado", "pendiente")
+                if p1_est == "confirmado" and p2_est == "confirmado":
+                    prev_rec["estado"] = "ambos_confirmados"
+                elif p1_est in ["enviado", "confirmado"] and p2_est in ["enviado", "confirmado"]:
+                    prev_rec["estado"] = "ambos_enviados"
+                else:
+                    prev_rec["estado"] = "parcial_enviado"
+
+                chk_pre["_recordatorio_qx"] = prev_rec
+            else:
+                chk_pre["_recordatorio_qx"] = rec_item
+
             supabase.table("asesorias_quirurgicas") \
                 .update({
                     "ultimo_contacto_at": ahora_iso,
@@ -3438,10 +3603,11 @@ def registrar_envio_recordatorio_quirurgico(
         cirugia_txt = variables.get("cirugia") or "Cirugía"
         fecha_txt = variables.get("fecha") or "Fecha programada"
         hora_txt = variables.get("hora") or "Horario programado"
-        
+        ojo_tag = f" ({ojo})" if ojo and ojo not in cirugia_txt else ""
+
         texto_evolucion = (
             f"Recordatorio prequirúrgico enviado por WhatsApp Oficial (Plantilla Meta UTILITY: '{template_name}').\n"
-            f"• Procedimiento: {cirugia_txt}\n"
+            f"• Procedimiento: {cirugia_txt}{ojo_tag}\n"
             f"• Fecha: {fecha_txt}\n"
             f"• Horario: {hora_txt}\n"
             f"• Teléfono de envío: {telefono}"
@@ -3473,9 +3639,11 @@ def registrar_envio_recordatorio_quirurgico(
                     "wamid": wamid,
                     "variables": variables,
                     "provider": "meta_cloud_api",
-                    "asesoria_id": asesoria_id
+                    "asesoria_id": asesoria_id,
+                    "turno_id": turno_id,
+                    "ojo": ojo
                 }
-                c_texto = texto_renderizado or f"[Plantilla WhatsApp Meta: {template_name}]\n{cirugia_txt} - {fecha_txt} - {hora_txt}"
+                c_texto = texto_renderizado or f"[Plantilla WhatsApp Meta: {template_name}]\n{cirugia_txt}{ojo_tag} - {fecha_txt} - {hora_txt}"
                 guardar_mensaje(
                     conversacion_id=conv["id"],
                     emisor="operador",
@@ -3487,9 +3655,17 @@ def registrar_envio_recordatorio_quirurgico(
         except Exception as e_msg:
             logger.warning(f"Error registrando mensaje de plantilla en conversación: {e_msg}")
 
-        # 4. Actualizar checks_adicionales en turnos_quirofano si existe turno para esta asesoría
+        # 4. Actualizar checks_adicionales en turnos_quirofano
         try:
-            t_res = supabase.table("turnos_quirofano").select("id, checks_adicionales").eq("asesoria_id", asesoria_id).execute()
+            if turno_id:
+                t_res = supabase.table("turnos_quirofano").select("id, checks_adicionales").eq("id", turno_id).execute()
+            elif ojo:
+                t_res = supabase.table("turnos_quirofano").select("id, checks_adicionales").eq("asesoria_id", asesoria_id).eq("ojo", ojo).execute()
+                if not t_res.data:
+                    t_res = supabase.table("turnos_quirofano").select("id, checks_adicionales").eq("asesoria_id", asesoria_id).execute()
+            else:
+                t_res = supabase.table("turnos_quirofano").select("id, checks_adicionales").eq("asesoria_id", asesoria_id).execute()
+
             for t in (t_res.data or []):
                 chk = t.get("checks_adicionales") or {}
                 if not isinstance(chk, dict):
@@ -3499,7 +3675,9 @@ def registrar_envio_recordatorio_quirurgico(
                 chk["recordatorio_template"] = template_name
                 chk["recordatorio_estado"] = "enviado"
                 chk["wamid"] = wamid
-                supabase.table("turnos_quirofano").update({"checks_adicionales": chk}).eq("id", t["id"]).execute()
+                if ojo:
+                    chk["ojo"] = ojo
+                supabase.table("turnos_quirofano").update({"checks_adicionales": chk, "updated_at": ahora_iso}).eq("id", t["id"]).execute()
         except Exception as e_chk:
             logger.warning(f"Aviso al actualizar checks de turno_quirofano: {e_chk}")
 

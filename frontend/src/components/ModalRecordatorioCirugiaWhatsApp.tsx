@@ -37,6 +37,26 @@ interface TemplateInfo {
   body_text?: string
 }
 
+interface InfoOjoRecordatorio {
+  turno_id?: string
+  ojo: string
+  ojo_label: string
+  ojo_desc: string
+  etapa?: string
+  cirugia?: string
+  fecha?: string
+  fecha_iso?: string
+  hora?: string
+  hora_cirugia?: string
+  hora_citacion?: string
+  quirofano_nombre?: string
+  recordatorio_estado?: string
+  recordatorio_enviado_at?: string
+  recordatorio_respondido_at?: string
+  recordatorio_respuesta_texto?: string
+  recordatorio_template?: string
+}
+
 interface DatosRecordatorioBackend {
   caso_id: string
   codigo_caso?: string
@@ -55,8 +75,16 @@ interface DatosRecordatorioBackend {
   preparacion: string
   ayuno_horas?: number
   turno_id?: string
+  ojo?: string
+  recordatorio_estado?: string
+  recordatorio_enviado_at?: string
+  recordatorio_respondido_at?: string
+  recordatorio_respuesta_texto?: string
   plantillas: TemplateInfo[]
   plantilla_recomendada: string
+  es_bilateral_escalonada?: boolean
+  primer_ojo?: InfoOjoRecordatorio
+  segundo_ojo?: InfoOjoRecordatorio
 }
 
 interface ModalRecordatorioCirugiaWhatsAppProps {
@@ -66,6 +94,8 @@ interface ModalRecordatorioCirugiaWhatsAppProps {
   pacienteId?: string
   pacienteNombreDefault?: string
   pacienteTelefonoDefault?: string
+  ojoDefault?: string
+  turnoIdDefault?: string
   onMensajeEnviado?: () => void
 }
 
@@ -76,6 +106,8 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   pacienteId,
   pacienteNombreDefault,
   pacienteTelefonoDefault,
+  ojoDefault,
+  turnoIdDefault,
   onMensajeEnviado
 }: ModalRecordatorioCirugiaWhatsAppProps) {
   const [cargando, setCargando] = useState<boolean>(true)
@@ -86,6 +118,11 @@ export default function ModalRecordatorioCirugiaWhatsApp({
 
   // Datos originales devueltos por el backend
   const [datosOriginales, setDatosOriginales] = useState<DatosRecordatorioBackend | null>(null)
+
+  // Selección de ojo para cirugías bilaterales escalonadas
+  const [ojoSeleccionado, setOjoSeleccionado] = useState<'primer_ojo' | 'segundo_ojo'>('primer_ojo')
+  const [turnoIdSeleccionado, setTurnoIdSeleccionado] = useState<string | undefined>(turnoIdDefault)
+  const [ojoTarget, setOjoTarget] = useState<string>('')
 
   // Campos editables por el usuario
   const [telefono, setTelefono] = useState<string>('')
@@ -123,13 +160,41 @@ export default function ModalRecordatorioCirugiaWhatsApp({
           setDatosOriginales(d)
           setTelefono(d.telefono || pacienteTelefonoDefault || '')
           setPacienteNombre(d.saludo_nombre || d.paciente_nombre || pacienteNombreDefault || '')
-          setCirugia(d.cirugia || 'Cirugía Oftalmológica')
-          setFecha(d.fecha || 'Fecha a confirmar')
-          setHora(d.hora || '07:30 hs')
           setPreparacion(d.preparacion || '')
           setPlantillasDisponibles(d.plantillas || [])
 
-          // Si hay una recomendada o preexistente aprobada
+          let targetOjo: 'primer_ojo' | 'segundo_ojo' = 'primer_ojo'
+          if (d.es_bilateral_escalonada) {
+            const segOjoCode = (d.segundo_ojo?.ojo || '').toUpperCase()
+            const ojoParam = (ojoDefault || '').toUpperCase()
+            if (ojoParam === 'SEGUNDO_OJO' || ojoParam === '2DO_OJO' || (segOjoCode && ojoParam === segOjoCode)) {
+              targetOjo = 'segundo_ojo'
+            } else {
+              targetOjo = 'primer_ojo'
+            }
+          }
+          setOjoSeleccionado(targetOjo)
+
+          if (d.es_bilateral_escalonada && targetOjo === 'segundo_ojo' && d.segundo_ojo) {
+            setCirugia(d.segundo_ojo.cirugia || d.cirugia || 'Cirugía Oftalmológica')
+            setFecha(d.segundo_ojo.fecha || d.fecha || 'Fecha a confirmar')
+            setHora(d.segundo_ojo.hora || d.hora || '07:30 hs')
+            setTurnoIdSeleccionado(d.segundo_ojo.turno_id)
+            setOjoTarget(d.segundo_ojo.ojo)
+          } else if (d.es_bilateral_escalonada && d.primer_ojo) {
+            setCirugia(d.primer_ojo.cirugia || d.cirugia || 'Cirugía Oftalmológica')
+            setFecha(d.primer_ojo.fecha || d.fecha || 'Fecha a confirmar')
+            setHora(d.primer_ojo.hora || d.hora || '07:30 hs')
+            setTurnoIdSeleccionado(d.primer_ojo.turno_id)
+            setOjoTarget(d.primer_ojo.ojo)
+          } else {
+            setCirugia(d.cirugia || 'Cirugía Oftalmológica')
+            setFecha(d.fecha || 'Fecha a confirmar')
+            setHora(d.hora || '07:30 hs')
+            setTurnoIdSeleccionado(d.turno_id)
+            setOjoTarget(d.ojo || '')
+          }
+
           const rec = d.plantilla_recomendada || 'recordatorio_cirugia_preparacion_v1'
           setPlantillaSeleccionada(rec)
         }
@@ -147,7 +212,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     return () => {
       isMounted = false
     }
-  }, [isOpen, casoId, pacienteNombreDefault, pacienteTelefonoDefault])
+  }, [isOpen, casoId, pacienteNombreDefault, pacienteTelefonoDefault, ojoDefault])
 
   if (!isOpen) return null
 
@@ -172,15 +237,55 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     }
   }
 
+  // Cambiar entre 1° ojo y 2° ojo en bilateral escalonada
+  const handleCambiarOjoObjetivo = (nuevoOjo: 'primer_ojo' | 'segundo_ojo') => {
+    setOjoSeleccionado(nuevoOjo)
+    setErrorMsg(null)
+    if (!datosOriginales) return
+
+    if (nuevoOjo === 'primer_ojo' && datosOriginales.primer_ojo) {
+      setCirugia(datosOriginales.primer_ojo.cirugia || datosOriginales.cirugia || '')
+      setFecha(datosOriginales.primer_ojo.fecha || datosOriginales.fecha || '')
+      setHora(datosOriginales.primer_ojo.hora || datosOriginales.hora || '')
+      setTurnoIdSeleccionado(datosOriginales.primer_ojo.turno_id)
+      setOjoTarget(datosOriginales.primer_ojo.ojo)
+    } else if (nuevoOjo === 'segundo_ojo' && datosOriginales.segundo_ojo) {
+      setCirugia(datosOriginales.segundo_ojo.cirugia || datosOriginales.cirugia || '')
+      setFecha(datosOriginales.segundo_ojo.fecha || datosOriginales.fecha || '')
+      setHora(datosOriginales.segundo_ojo.hora || datosOriginales.hora || '')
+      setTurnoIdSeleccionado(datosOriginales.segundo_ojo.turno_id)
+      setOjoTarget(datosOriginales.segundo_ojo.ojo)
+    }
+  }
+
   // Restablecer a los valores calculados
   const handleRestablecer = () => {
     if (!datosOriginales) return
     setTelefono(datosOriginales.telefono || '')
     setPacienteNombre(datosOriginales.saludo_nombre || datosOriginales.paciente_nombre || '')
-    setCirugia(datosOriginales.cirugia || '')
-    setFecha(datosOriginales.fecha || '')
-    setHora(datosOriginales.hora || '')
     setPreparacion(datosOriginales.preparacion || '')
+
+    if (datosOriginales.es_bilateral_escalonada) {
+      if (ojoSeleccionado === 'segundo_ojo' && datosOriginales.segundo_ojo) {
+        setCirugia(datosOriginales.segundo_ojo.cirugia || '')
+        setFecha(datosOriginales.segundo_ojo.fecha || '')
+        setHora(datosOriginales.segundo_ojo.hora || '')
+        setTurnoIdSeleccionado(datosOriginales.segundo_ojo.turno_id)
+        setOjoTarget(datosOriginales.segundo_ojo.ojo)
+      } else if (datosOriginales.primer_ojo) {
+        setCirugia(datosOriginales.primer_ojo.cirugia || '')
+        setFecha(datosOriginales.primer_ojo.fecha || '')
+        setHora(datosOriginales.primer_ojo.hora || '')
+        setTurnoIdSeleccionado(datosOriginales.primer_ojo.turno_id)
+        setOjoTarget(datosOriginales.primer_ojo.ojo)
+      }
+    } else {
+      setCirugia(datosOriginales.cirugia || '')
+      setFecha(datosOriginales.fecha || '')
+      setHora(datosOriginales.hora || '')
+      setTurnoIdSeleccionado(datosOriginales.turno_id)
+      setOjoTarget(datosOriginales.ojo || '')
+    }
     setErrorMsg(null)
   }
 
@@ -228,7 +333,9 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
           preparacion: preparacion
         },
         texto_renderizado: cuerpoTextoRenderizado,
-        paciente_id: pacienteId || datosOriginales?.paciente_id
+        paciente_id: pacienteId || datosOriginales?.paciente_id,
+        turno_id: turnoIdSeleccionado || datosOriginales?.turno_id,
+        ojo: ojoTarget || datosOriginales?.ojo
       }
 
       const res = await apiFetch(`/api/asesorias-quirurgicas/${casoId}/enviar-recordatorio-whatsapp`, {
@@ -258,6 +365,38 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
     } finally {
       setEnviando(false)
     }
+  }
+
+  const renderBadgeEstado = (estado?: string, respondidoAt?: string) => {
+    if (estado === 'confirmado') {
+      return (
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40 flex items-center gap-1 shadow-sm shrink-0">
+          <CheckCircle2 size={11} className="text-emerald-400" />
+          <span>Confirmado por Paciente</span>
+        </span>
+      )
+    }
+    if (estado === 'con_consulta') {
+      return (
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-500/40 flex items-center gap-1 shrink-0">
+          <AlertCircle size={11} className="text-amber-400" />
+          <span>Tiene Consulta</span>
+        </span>
+      )
+    }
+    if (estado === 'enviado') {
+      return (
+        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-950 text-blue-300 border border-blue-500/40 flex items-center gap-1 shrink-0">
+          <Send size={11} className="text-blue-400" />
+          <span>Enviado (Esperando Conf.)</span>
+        </span>
+      )
+    }
+    return (
+      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-neutral-800 text-gray-400 border border-neutral-700 shrink-0">
+        Pendiente
+      </span>
+    )
   }
 
   const horaActualDisplay = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
@@ -310,6 +449,86 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
           {/* COLUMNA IZQUIERDA: CONFIGURACIÓN & EDICIÓN INTERACTIVA (7 cols) */}
           {/* ---------------------------------------------------------------- */}
           <div className="lg:col-span-7 space-y-4">
+
+            {/* Selector de Ojo / Acto Quirúrgico si es Bilateral Escalonada */}
+            {datosOriginales?.es_bilateral_escalonada && (
+              <div className="p-3.5 rounded-xl bg-gradient-to-r from-indigo-950/70 via-neutral-900 to-purple-950/70 border border-indigo-500/30 space-y-2.5 shadow-md">
+                <div className="flex items-center justify-between flex-wrap gap-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-200">
+                    <Sparkles size={13} className="text-indigo-400" />
+                    <span>Cirugía Bilateral Escalonada (2 Actos Quirúrgicos)</span>
+                  </div>
+                  <span className="text-[10.5px] text-gray-400">
+                    Seleccione el ojo para emitir o auditar su recordatorio:
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Pestaña 1° Ojo */}
+                  <button
+                    type="button"
+                    onClick={() => handleCambiarOjoObjetivo('primer_ojo')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-1.5 ${
+                      ojoSeleccionado === 'primer_ojo'
+                        ? 'bg-indigo-600/25 border-indigo-500 text-white shadow-md ring-1 ring-indigo-500/40'
+                        : 'bg-neutral-900/80 border-neutral-700/80 hover:border-gray-500 text-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-bold text-white flex items-center gap-1">
+                        <span>{datosOriginales.primer_ojo?.ojo_label || '1° Ojo'}</span>
+                      </span>
+                      {renderBadgeEstado(datosOriginales.primer_ojo?.recordatorio_estado, datosOriginales.primer_ojo?.recordatorio_respondido_at)}
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px] text-indigo-300 font-medium">
+                      <Calendar size={12} className="text-indigo-400 shrink-0" />
+                      <span>{datosOriginales.primer_ojo?.fecha || 'Fecha a confirmar'}</span>
+                    </div>
+                    <div className="text-[10.5px] text-gray-400 flex items-center justify-between">
+                      <span className="truncate">{datosOriginales.primer_ojo?.quirofano_nombre || 'Quirófano'}</span>
+                      <span className="text-gray-300 font-mono font-medium">{datosOriginales.primer_ojo?.hora || ''}</span>
+                    </div>
+                  </button>
+
+                  {/* Pestaña 2° Ojo */}
+                  <button
+                    type="button"
+                    onClick={() => handleCambiarOjoObjetivo('segundo_ojo')}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col gap-1.5 ${
+                      ojoSeleccionado === 'segundo_ojo'
+                        ? 'bg-purple-600/25 border-purple-500 text-white shadow-md ring-1 ring-purple-500/40'
+                        : 'bg-neutral-900/80 border-neutral-700/80 hover:border-gray-500 text-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-xs font-bold text-white flex items-center gap-1">
+                        <span>{datosOriginales.segundo_ojo?.ojo_label || '2° Ojo'}</span>
+                      </span>
+                      {renderBadgeEstado(datosOriginales.segundo_ojo?.recordatorio_estado, datosOriginales.segundo_ojo?.recordatorio_respondido_at)}
+                    </div>
+                    <div className="flex items-center gap-1 text-[11px] text-purple-300 font-medium">
+                      <Calendar size={12} className="text-purple-400 shrink-0" />
+                      <span>{datosOriginales.segundo_ojo?.fecha || 'Fecha a confirmar'}</span>
+                    </div>
+                    <div className="text-[10.5px] text-gray-400 flex items-center justify-between">
+                      <span className="truncate">{datosOriginales.segundo_ojo?.quirofano_nombre || 'Quirófano'}</span>
+                      <span className="text-gray-300 font-mono font-medium">{datosOriginales.segundo_ojo?.hora || ''}</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Estado General si es Unilateral */}
+            {!datosOriginales?.es_bilateral_escalonada && datosOriginales && (
+              <div className="p-3 rounded-xl bg-neutral-950/80 border border-[var(--border)] flex items-center justify-between gap-2">
+                <span className="text-xs text-gray-300 font-medium flex items-center gap-1.5">
+                  <BellRing size={13} className="text-indigo-400" />
+                  Estado del Recordatorio Quirúrgico:
+                </span>
+                {renderBadgeEstado(datosOriginales.recordatorio_estado, datosOriginales.recordatorio_respondido_at)}
+              </div>
+            )}
             
             {/* Tarjeta de Verificación de Plantilla en Ajustes & Meta */}
             <div className="p-3.5 rounded-xl bg-neutral-950 border border-[var(--border)] space-y-2.5">

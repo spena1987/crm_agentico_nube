@@ -4049,14 +4049,17 @@ def eliminar_asesoria(asesoria_id: str):
 # ====================================================================
 
 @app.get("/api/asesorias-quirurgicas/{asesoria_id}/datos-recordatorio-whatsapp")
-def obtener_datos_recordatorio_whatsapp_endpoint(asesoria_id: str):
+def obtener_datos_recordatorio_whatsapp_endpoint(
+    asesoria_id: str,
+    ojo: Optional[str] = Query(None)
+):
     """
     Recupera los datos sugeridos para el recordatorio prequirúrgico:
-    cirugía, fecha, horario de citación, preparación médica del nomenclador
-    y plantillas registradas en Meta para validación de estado.
+    cirugía, fecha, horario de citación, preparación médica del nomenclador,
+    soporte para ambos ojos en cirugías bilaterales escalonadas y estado de confirmación.
     """
     try:
-        datos = get_datos_recordatorio_quirurgico(asesoria_id)
+        datos = get_datos_recordatorio_quirurgico(asesoria_id, ojo=ojo)
         if not datos:
             raise HTTPException(status_code=404, detail="No se encontró el caso quirúrgico solicitado.")
         return {"success": True, **datos}
@@ -4190,8 +4193,10 @@ async def enviar_recordatorio_whatsapp_endpoint(
 
         # 5. Registrar impacto en CRM (evolución, mensajes de paciente, timestamp y turnos)
         paciente_id = payload.get("paciente_id")
+        turno_id = payload.get("turno_id")
+        ojo = payload.get("ojo")
         if not paciente_id:
-            c_info = get_datos_recordatorio_quirurgico(asesoria_id)
+            c_info = get_datos_recordatorio_quirurgico(asesoria_id, ojo=ojo)
             if c_info:
                 paciente_id = c_info.get("paciente_id")
 
@@ -4204,7 +4209,9 @@ async def enviar_recordatorio_whatsapp_endpoint(
             wamid=wamid,
             usuario_id=payload.get("usuario_id"),
             usuario_nombre=payload.get("usuario_nombre"),
-            texto_renderizado=payload.get("texto_renderizado")
+            texto_renderizado=payload.get("texto_renderizado"),
+            turno_id=turno_id,
+            ojo=ojo
         )
 
         return {

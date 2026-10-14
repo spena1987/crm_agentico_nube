@@ -85,7 +85,7 @@ interface CasoFormularioActivoProps {
   onGuardar: (datosActualizados: Partial<AsesoriaQuirurgica>) => Promise<void>
   onAbrirModalPresupuesto: (datosPractica?: { codigo: string; nombre: string; precio: number; moneda: string }) => void
   onAbrirModalWhatsApp: () => void
-  onAbrirRecordatorioQx?: () => void
+  onAbrirRecordatorioQx?: (ojo?: string) => void
   onAbrirModalCierre: () => void
   onEliminar: () => void
   onAprobarRechazarPresupuesto: (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado') => Promise<void> | void
@@ -1321,9 +1321,36 @@ export default function CasoFormularioActivo({
                   Activo en Sala
                 </span>
               </div>
-              <p className="text-[11px] text-gray-300 mt-0.5">
-                {turnosActivos.map((t: any) => `${t.quirofanos?.nombre || 'Quirófano'} • Fecha: ${t.fecha_cirugia || 'Sin fecha'} (${(t.hora_inicio || '08:30').slice(0, 5)} hs) • Ojo: ${t.ojo || 'OD'}`).join(' | ')}
-              </p>
+              <div className="text-[11px] text-gray-300 mt-1 space-y-1">
+                {turnosActivos.map((t: any, idx: number) => {
+                  const chk = t.checks_adicionales || {}
+                  const recEst = chk.recordatorio_estado || (chk.recordatorio_enviado ? 'enviado' : 'pendiente')
+                  return (
+                    <div key={t.id || idx} className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-white">{t.quirofanos?.nombre || 'Quirófano'}</span>
+                      <span>• Fecha: {t.fecha_cirugia || 'Sin fecha'} ({(t.hora_inicio || '08:30').slice(0, 5)} hs)</span>
+                      <span>• Ojo: <strong className="text-white">{t.ojo || 'OD'}</strong></span>
+                      {recEst === 'confirmado' ? (
+                        <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-0.5 shadow-sm" title={chk.recordatorio_respondido_at ? `Confirmado por el paciente el ${new Date(chk.recordatorio_respondido_at).toLocaleDateString()}` : undefined}>
+                          <CheckCircle2 size={10} className="text-emerald-400" /> Confirmado por Paciente
+                        </span>
+                      ) : recEst === 'con_consulta' ? (
+                        <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 inline-flex items-center gap-0.5">
+                          <AlertCircle size={10} className="text-amber-400" /> Paciente con Consulta
+                        </span>
+                      ) : recEst === 'enviado' ? (
+                        <span className="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40 inline-flex items-center gap-0.5" title={chk.recordatorio_fecha ? `Enviado el ${new Date(chk.recordatorio_fecha).toLocaleDateString()}` : undefined}>
+                          <Send size={10} className="text-blue-400" /> Recordatorio Enviado
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-neutral-800 text-gray-400 border border-neutral-700 inline-flex items-center gap-0.5">
+                          <Clock size={10} /> Recordatorio Pendiente
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           </div>
           <a
@@ -3291,7 +3318,7 @@ export default function CasoFormularioActivo({
                 {onAbrirRecordatorioQx && (
                   <button
                     type="button"
-                    onClick={onAbrirRecordatorioQx}
+                    onClick={() => onAbrirRecordatorioQx()}
                     className="px-2.5 py-1 bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 hover:text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all shadow-sm border border-indigo-500/40 cursor-pointer"
                     title="Enviar recordatorio oficial de fecha de cirugía y preparación prequirúrgica por WhatsApp (Meta UTILITY)"
                   >
@@ -3311,6 +3338,76 @@ export default function CasoFormularioActivo({
                 </button>
               </div>
             </div>
+
+            {/* Panel de Recordatorios Quirúrgicos Oficiales y Confirmaciones de Asistencia */}
+            {turnosActivos.length > 0 && (
+              <div className="p-3 rounded-xl bg-neutral-950/80 border border-indigo-500/30 space-y-2 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-indigo-300 flex items-center gap-1.5">
+                    <BellRing size={12} className="text-indigo-400" />
+                    <span>Recordatorios Quirúrgicos Oficiales (WhatsApp Meta)</span>
+                  </span>
+                  <span className="text-[10px] text-gray-400 font-medium">
+                    {turnosActivos.length === 1 ? '1 Turno en Quirófano' : `${turnosActivos.length} Turnos (Bilateral)`}
+                  </span>
+                </div>
+                
+                <div className="space-y-1.5">
+                  {turnosActivos.map((t: any, idx: number) => {
+                    const chk = t.checks_adicionales || {}
+                    const recEst = chk.recordatorio_estado || (chk.recordatorio_enviado ? 'enviado' : 'pendiente')
+                    const ojoTexto = t.ojo ? `${t.ojo}` : (idx === 0 ? '1° Ojo' : '2° Ojo')
+                    return (
+                      <div key={t.id || idx} className="flex items-center justify-between text-xs bg-neutral-900/90 px-3 py-2 rounded-lg border border-white/5 flex-wrap gap-2">
+                        <div className="flex items-center gap-2 text-gray-200">
+                          <span className="px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-500/30 font-bold text-[10.5px]">
+                            Ojo {ojoTexto}
+                          </span>
+                          <span className="font-semibold text-white">
+                            {t.fecha_cirugia || 'Fecha a confirmar'}
+                          </span>
+                          <span className="text-gray-400 font-mono text-[11px]">
+                            ({t.hora_inicio ? t.hora_inicio.slice(0, 5) : '08:30'} hs)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {recEst === 'confirmado' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1 shadow-sm" title={chk.recordatorio_respondido_at ? `Confirmado por el paciente el ${new Date(chk.recordatorio_respondido_at).toLocaleDateString()}` : undefined}>
+                              <CheckCircle2 size={11} className="text-emerald-400" />
+                              <span>Confirmado por Paciente</span>
+                            </span>
+                          ) : recEst === 'con_consulta' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-amber-950 text-amber-300 border border-amber-500/40 inline-flex items-center gap-1">
+                              <AlertCircle size={11} className="text-amber-400" />
+                              <span>Tiene Consulta</span>
+                            </span>
+                          ) : recEst === 'enviado' ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-blue-950 text-blue-300 border border-blue-500/40 inline-flex items-center gap-1">
+                              <Send size={11} className="text-blue-400" />
+                              <span>Enviado (Esperando Conf.)</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-neutral-800 text-gray-400 border border-neutral-700 inline-flex items-center gap-1">
+                              <span>Pendiente de Envío</span>
+                            </span>
+                          )}
+                          {onAbrirRecordatorioQx && (
+                            <button
+                              type="button"
+                              onClick={() => onAbrirRecordatorioQx(t.ojo || (idx === 0 ? 'primer_ojo' : 'segundo_ojo'))}
+                              className="px-2 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 hover:text-white border border-indigo-500/30 text-[11px] font-bold transition-colors cursor-pointer"
+                              title="Gestionar o enviar recordatorio para esta fecha quirúrgica"
+                            >
+                              Gestionar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* CASO A: Diálogo para Registrar Cumplimiento y Pasar a Bitácora */}
             {mostrandoCompletarAccion && (

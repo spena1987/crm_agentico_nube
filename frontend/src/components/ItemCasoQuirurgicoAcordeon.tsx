@@ -212,6 +212,7 @@ export default function ItemCasoQuirurgicoAcordeon({
   const [mostrarModalPresupuesto, setMostrarModalPresupuesto] = useState(false)
   const [mostrarModalWhatsApp, setMostrarModalWhatsApp] = useState(false)
   const [mostrarModalRecordatorioQx, setMostrarModalRecordatorioQx] = useState(false)
+  const [ojoParaRecordatorio, setOjoParaRecordatorio] = useState<string | undefined>(undefined)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
   const [presupuestoParaEnviarWA, setPresupuestoParaEnviarWA] = useState<PresupuestoPaciente | null>(null)
   const [practicaParaModalPresupuesto, setPracticaParaModalPresupuesto] = useState<{
@@ -629,7 +630,10 @@ export default function ItemCasoQuirurgicoAcordeon({
                 setMostrarModalPresupuesto(true)
               }}
               onAbrirModalWhatsApp={() => setMostrarModalWhatsApp(true)}
-              onAbrirRecordatorioQx={() => setMostrarModalRecordatorioQx(true)}
+              onAbrirRecordatorioQx={(ojo?: string) => {
+                setOjoParaRecordatorio(ojo)
+                setMostrarModalRecordatorioQx(true)
+              }}
               onAbrirModalCierre={() => setMostrarModalCierre(true)}
               onEliminar={handleEliminarCaso}
               onAprobarRechazarPresupuesto={handleAprobarRechazarPresupuesto}
@@ -772,11 +776,15 @@ export default function ItemCasoQuirurgicoAcordeon({
       {mostrarModalRecordatorioQx && (
         <ModalRecordatorioCirugiaWhatsApp
           isOpen={mostrarModalRecordatorioQx}
-          onClose={() => setMostrarModalRecordatorioQx(false)}
+          onClose={() => {
+            setMostrarModalRecordatorioQx(false)
+            setOjoParaRecordatorio(undefined)
+          }}
           casoId={caso.id}
           pacienteId={pacienteId}
           pacienteNombreDefault={pacienteNombre}
           pacienteTelefonoDefault={pacienteTelefono || ''}
+          ojoDefault={ojoParaRecordatorio}
           onMensajeEnviado={() => {
             onCasoActualizado({
               ...caso,
