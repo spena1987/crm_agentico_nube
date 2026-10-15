@@ -3315,7 +3315,7 @@ export default function CasoFormularioActivo({
               </div>
               
               <div className="flex items-center gap-1.5 shrink-0">
-                {onAbrirRecordatorioQx && (
+                {onAbrirRecordatorioQx && (estado === 'confirmado' || estado === 'programado') && (
                   <button
                     type="button"
                     onClick={() => onAbrirRecordatorioQx()}
@@ -3339,8 +3339,8 @@ export default function CasoFormularioActivo({
               </div>
             </div>
 
-            {/* Panel de Recordatorios Quirúrgicos Oficiales y Confirmaciones de Asistencia */}
-            {turnosActivos.length > 0 && (
+            {/* Panel de Recordatorios Quirúrgicos Oficiales y Confirmaciones de Asistencia (Solo Confirmados y Programados) */}
+            {turnosActivos.length > 0 && (estado === 'confirmado' || estado === 'programado') && (
               <div className="p-3 rounded-xl bg-neutral-950/80 border border-indigo-500/30 space-y-2 shadow-sm">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-indigo-300 flex items-center gap-1.5">

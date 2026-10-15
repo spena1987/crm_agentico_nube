@@ -614,51 +614,53 @@ export default function VistaVerticalPipeline({
                                 </button>
                               )}
 
-                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado */}
-                              <button
-                                type="button"
-                                onClick={() => onAbrirRecordatorioQx?.(caso)}
-                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
-                                  recInfo.estado === 'confirmado'
-                                    ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
-                                    : recInfo.estado === 'enviado'
-                                    ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/40 text-amber-300 hover:text-white'
-                                    : recInfo.estado === 'con_consulta'
-                                    ? 'bg-purple-950/80 hover:bg-purple-900 border-purple-500/50 text-purple-300 hover:text-white'
-                                    : 'bg-indigo-950/80 hover:bg-indigo-900 border-indigo-500/40 text-indigo-300 hover:text-white'
-                                }`}
-                                title={
-                                  recInfo.estado === 'confirmado'
-                                    ? 'Paciente confirmó cirugía por WhatsApp. Clic para ver o reenviar recordatorio'
-                                    : recInfo.estado === 'enviado'
-                                    ? 'Recordatorio oficial enviado (esperando respuesta). Clic para reenviar'
-                                    : recInfo.estado === 'con_consulta'
-                                    ? 'El paciente tiene consultas sobre la cirugía. Clic para gestionar'
-                                    : 'Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)'
-                                }
-                              >
-                                {recInfo.estado === 'confirmado' ? (
-                                  <>
-                                    <CheckCheck size={13} className="text-emerald-400" />
-                                    <span>Confirmado</span>
-                                  </>
-                                ) : recInfo.estado === 'enviado' ? (
-                                  <>
-                                    <Clock size={13} className="text-amber-400" />
-                                    <span>Enviado</span>
-                                  </>
-                                ) : recInfo.estado === 'con_consulta' ? (
-                                  <>
-                                    <AlertCircle size={13} className="text-purple-400" />
-                                    <span>Con Consulta</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <BellRing size={13} className="text-indigo-400" />
-                                    <span>Recordatorio Qx</span>
-                                  </>
-                                )}
-                              </button>
+                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado (Solo Confirmados y Programados) */}
+                              {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
+                                <button
+                                  type="button"
+                                  onClick={() => onAbrirRecordatorioQx?.(caso)}
+                                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
+                                    recInfo.estado === 'confirmado'
+                                      ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
+                                      : recInfo.estado === 'enviado'
+                                      ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/40 text-amber-300 hover:text-white'
+                                      : recInfo.estado === 'con_consulta'
+                                      ? 'bg-purple-950/80 hover:bg-purple-900 border-purple-500/50 text-purple-300 hover:text-white'
+                                      : 'bg-indigo-950/80 hover:bg-indigo-900 border-indigo-500/40 text-indigo-300 hover:text-white'
+                                  }`}
+                                  title={
+                                    recInfo.estado === 'confirmado'
+                                      ? 'Paciente confirmó cirugía por WhatsApp. Clic para ver o reenviar recordatorio'
+                                      : recInfo.estado === 'enviado'
+                                      ? 'Recordatorio oficial enviado (esperando respuesta). Clic para reenviar'
+                                      : recInfo.estado === 'con_consulta'
+                                      ? 'El paciente tiene consultas sobre la cirugía. Clic para gestionar'
+                                      : 'Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)'
+                                  }
+                                >
+                                  {recInfo.estado === 'confirmado' ? (
+                                    <>
+                                      <CheckCheck size={13} className="text-emerald-400" />
+                                      <span>Confirmado</span>
+                                    </>
+                                  ) : recInfo.estado === 'enviado' ? (
+                                    <>
+                                      <Clock size={13} className="text-amber-400" />
+                                      <span>Enviado</span>
+                                    </>
+                                  ) : recInfo.estado === 'con_consulta' ? (
+                                    <>
+                                      <AlertCircle size={13} className="text-purple-400" />
+                                      <span>Con Consulta</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <BellRing size={13} className="text-indigo-400" />
+                                      <span>Recordatorio Qx</span>
+                                    </>
+                                  )}
+                                </button>
+                              )}
 
                               {/* Botón Acción Rápida: Seguimiento y Recontacto Asistido */}
                               {onAbrirQuickRecontacto && (caso.estado === 'en_analisis' || Boolean(caso.proxima_accion_fecha) || esAccionHoy || esAccionVencida) && (

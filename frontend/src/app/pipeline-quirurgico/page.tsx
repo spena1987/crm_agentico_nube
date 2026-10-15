@@ -1716,15 +1716,17 @@ export default function PipelineQuirurgicoPage() {
                                   </button>
                                 )}
 
-                                {/* Botón WhatsApp */}
-                                <button
-                                  type="button"
-                                  onClick={() => handleAbrirRecordatorioQx(caso)}
-                                  className="p-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white transition-colors cursor-pointer"
-                                  title="Enviar recordatorio oficial de fecha y preparación por WhatsApp (Meta UTILITY)"
-                                >
-                                  <BellRing size={12} />
-                                </button>
+                                {/* Botón WhatsApp Recordatorio Qx (Solo Confirmados y Programados) */}
+                                {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAbrirRecordatorioQx(caso)}
+                                    className="p-1 rounded-lg bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-500/40 text-indigo-300 hover:text-white transition-colors cursor-pointer"
+                                    title="Enviar recordatorio oficial de fecha y preparación por WhatsApp (Meta UTILITY)"
+                                  >
+                                    <BellRing size={12} />
+                                  </button>
+                                )}
 
                                 {/* Botón Recontacto Rápido Asistido */}
                                 {(caso.estado === 'en_analisis' || Boolean(caso.proxima_accion_fecha)) && (
