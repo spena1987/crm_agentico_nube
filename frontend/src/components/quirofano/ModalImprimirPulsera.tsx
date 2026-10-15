@@ -192,7 +192,7 @@ export default function ModalImprimirPulsera({
                 {/* VISTA PREVIA VISUAL DE LA PULSERA */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs font-bold text-gray-400">
-                    <span>Vista Previa de la Pulsera (Zona Térmica Imprimible 100mm x 25mm):</span>
+                    <span>Vista Previa de la Pulsera (Zona Térmica Imprimible 150mm x 25mm):</span>
                     <span className="font-mono text-[10px] text-emerald-400 font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
                       ArgusID® ProBand (24 cm x 2.5 cm)
                     </span>
@@ -202,8 +202,8 @@ export default function ModalImprimirPulsera({
                   <div className="p-4 bg-neutral-950 rounded-2xl border border-gray-800 overflow-x-auto flex items-center justify-center">
                     <div className="flex items-center select-none">
                       
-                      {/* Cuerpo Imprimible Blanco (100mm x 25mm) */}
-                      <div className="w-[490px] h-[115px] bg-white text-black rounded-l-lg shadow-xl p-2.5 flex items-center gap-3 border border-gray-400 relative font-sans">
+                      {/* Cuerpo Imprimible Blanco (150mm x 25mm) */}
+                      <div className="w-[590px] h-[115px] bg-white text-black rounded-l-lg shadow-xl p-2.5 flex items-center gap-3 border border-gray-400 relative font-sans">
                         
                         {/* Código QR */}
                         <div className="shrink-0 flex flex-col items-center justify-center">
@@ -237,18 +237,13 @@ export default function ModalImprimirPulsera({
                           </div>
 
                           {/* Fila 2: Práctica y Cirujano */}
-                          <div className="space-y-0.5 text-[9px] text-gray-900">
-                            <p className="font-extrabold truncate">
-                              {cir.practica_nombre}
-                            </p>
-                            <p className="font-semibold text-gray-700">
-                              Cirujano: <strong className="text-black">{cir.cirujano_nombre}</strong> • {cir.quirofano_nombre}
-                            </p>
+                          <div className="text-[9px] text-gray-900 font-extrabold truncate">
+                            {cir.practica_nombre} • <span className="font-semibold text-gray-700">Cirujano:</span> <strong className="text-black">{cir.cirujano_nombre}</strong> {cir.quirofano_nombre && `(${cir.quirofano_nombre})`}
                           </div>
 
                           {/* Fila 3: LIO & Alergias */}
                           <div className="flex items-center justify-between text-[8.5px] font-bold pt-0.5 border-t border-black/10">
-                            <span className="text-blue-900 truncate max-w-[240px]">
+                            <span className="text-blue-900 truncate max-w-[320px]">
                               {cir.lleva_lente && cir.lente_tipo
                                 ? `LIO: ${cir.lente_tipo} (${cir.lente_dioptria || ''} D)`
                                 : 'No requiere LIO'}
@@ -390,13 +385,9 @@ export default function ModalImprimirPulsera({
                   DNI: {pac.dni} {pac.edad && `• ${pac.edad}`} {pac.obra_social && `• ${pac.obra_social}`}
                 </div>
 
-                {/* Práctica y Cirujano */}
+                {/* Práctica y Cirujano en línea amplia */}
                 <div className="wristband-practica-text">
-                  {cir.practica_nombre}
-                </div>
-
-                <div className="wristband-doctor-text">
-                  Cirujano: {cir.cirujano_nombre} • {cir.quirofano_nombre}
+                  {cir.practica_nombre} • Cirujano: {cir.cirujano_nombre} {cir.quirofano_nombre && `(${cir.quirofano_nombre})`}
                 </div>
 
                 {/* LIO y Alergias */}
@@ -471,19 +462,20 @@ export default function ModalImprimirPulsera({
             height: 25mm;
             display: flex;
             align-items: center;
-            padding-left: 8mm;
+            padding-left: 6mm;
             box-sizing: border-box;
           }
 
+          /* ÁREA IMPRIMIBLE AMPLIADA A 150 MM Y ALTO MAXIMIZADO A 24 MM */
           .wristband-printable-body {
-            width: 100mm;
-            height: 23mm;
-            border: 1.5pt solid #000000;
-            border-radius: 3pt;
+            width: 150mm;
+            height: 24mm;
+            border: 1pt solid #000000;
+            border-radius: 2pt;
             display: flex;
             align-items: center;
-            padding: 1.5mm 2.5mm;
-            gap: 2.5mm;
+            padding: 1.2mm 2.5mm;
+            gap: 3mm;
             box-sizing: border-box;
             background: #FFFFFF;
           }
@@ -499,8 +491,8 @@ export default function ModalImprimirPulsera({
           }
 
           .wristband-qr-img {
-            width: 17mm;
-            height: 17mm;
+            width: 18mm;
+            height: 18mm;
             object-fit: contain;
             image-rendering: pixelated;
           }
@@ -521,7 +513,7 @@ export default function ModalImprimirPulsera({
             justify-content: space-between;
             height: 100%;
             overflow: hidden;
-            line-height: 1.05;
+            line-height: 1.15;
           }
 
           .wristband-row-header {
@@ -529,17 +521,18 @@ export default function ModalImprimirPulsera({
             justify-content: space-between;
             align-items: center;
             border-bottom: 0.6pt solid #000000;
-            padding-bottom: 0.5mm;
+            padding-bottom: 0.4mm;
           }
 
+          /* NOMBRE EN 8.5PT CON HASTA 95 MM DE ANCHO (NUNCA SE RECORTA) */
           .wristband-paciente-title {
-            font-size: 7.5pt;
+            font-size: 8.5pt;
             font-weight: 900;
             text-transform: uppercase;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 52mm;
+            max-width: 95mm;
             color: #000000;
             font-family: Arial, sans-serif;
           }
@@ -547,16 +540,16 @@ export default function ModalImprimirPulsera({
           .wristband-ojo-badge {
             background: #000000 !important;
             color: #FFFFFF !important;
-            font-size: 7pt;
+            font-size: 7.5pt;
             font-weight: 900;
-            padding: 0.5mm 1.5mm;
+            padding: 0.5mm 2mm;
             border-radius: 2pt;
             white-space: nowrap;
             font-family: Arial, sans-serif;
           }
 
           .wristband-sub-info {
-            font-size: 5.5pt;
+            font-size: 6pt;
             font-weight: 700;
             color: #000000;
             white-space: nowrap;
@@ -566,22 +559,12 @@ export default function ModalImprimirPulsera({
           }
 
           .wristband-practica-text {
-            font-size: 6pt;
+            font-size: 6.5pt;
             font-weight: 800;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
             color: #000000;
-            font-family: Arial, sans-serif;
-          }
-
-          .wristband-doctor-text {
-            font-size: 5.5pt;
-            font-weight: 700;
-            color: #000000;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
             font-family: Arial, sans-serif;
           }
 
@@ -589,10 +572,10 @@ export default function ModalImprimirPulsera({
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 5.5pt;
+            font-size: 6pt;
             font-weight: 800;
             border-top: 0.6pt solid #000000;
-            padding-top: 0.5mm;
+            padding-top: 0.4mm;
             color: #000000;
             font-family: Arial, sans-serif;
           }
@@ -600,7 +583,7 @@ export default function ModalImprimirPulsera({
           .wristband-lio-text {
             color: #000000;
             font-weight: 800;
-            max-width: 48mm;
+            max-width: 80mm;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
