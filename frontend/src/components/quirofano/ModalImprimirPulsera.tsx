@@ -128,6 +128,23 @@ export default function ModalImprimirPulsera({
   const esOI = ojo === 'OI'
   const esAO = ojo === 'AO'
 
+  // Formateo de fecha DD/MM/YYYY y hora HH:MM hs
+  const formatearFecha = (f?: string) => {
+    if (!f) return ''
+    try {
+      const parte = f.split('T')[0]
+      const [y, m, d] = parte.split('-')
+      if (y && m && d) return `${d}/${m}/${y}`
+      return f
+    } catch {
+      return f
+    }
+  }
+
+  const fechaCirugia = formatearFecha(cir.fecha)
+  const horaCirugia = cir.hora ? `${cir.hora} hs` : ''
+  const fechaHoraTexto = [fechaCirugia, horaCirugia].filter(Boolean).join(' • ')
+
   return (
     <>
       {/* ==================================================================== */}
@@ -192,18 +209,26 @@ export default function ModalImprimirPulsera({
                 {/* VISTA PREVIA VISUAL DE LA PULSERA */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs font-bold text-gray-400">
-                    <span>Vista Previa de la Pulsera (Zona Térmica Imprimible 150mm x 25mm):</span>
+                    <span>Vista Previa de la Pulsera (Cierre Autoadhesivo 4 cm + Zona Térmica Imprimible 20 cm):</span>
                     <span className="font-mono text-[10px] text-emerald-400 font-bold bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800/40">
                       ArgusID® ProBand (24 cm x 2.5 cm)
                     </span>
                   </div>
 
-                  {/* Simulación Gráfica de la Pulsera Real ArgusID ProBand */}
+                  {/* Simulación Gráfica de la Pulsera Real ArgusID ProBand (4cm Adhesivo + 20cm Impresión) */}
                   <div className="p-4 bg-neutral-950 rounded-2xl border border-gray-800 overflow-x-auto flex items-center justify-center">
                     <div className="flex items-center select-none">
                       
-                      {/* Cuerpo Imprimible Blanco (150mm x 25mm) */}
-                      <div className="w-[590px] h-[115px] bg-white text-black rounded-l-lg shadow-xl p-2.5 flex items-center gap-3 border border-gray-400 relative font-sans">
+                      {/* Solapa Inicial de Cierre Autoadhesivo (4 cm / 40mm) */}
+                      <div className="w-[105px] h-[115px] bg-neutral-800/90 border border-gray-600 rounded-l-lg flex flex-col items-center justify-center p-2 text-center text-gray-300 gap-1 shadow-inner">
+                        <span className="text-[9px] font-mono font-bold text-amber-400 uppercase tracking-wider">Cierre</span>
+                        <span className="text-[8px] font-semibold text-gray-200">Autoadhesivo</span>
+                        <span className="text-[7.5px] text-gray-400 font-mono">4 cm (40 mm)</span>
+                        <div className="w-8 h-1 bg-amber-400/40 rounded-full mt-1" />
+                      </div>
+
+                      {/* Cuerpo Imprimible Blanco Extendido (20 cm / 200mm) */}
+                      <div className="w-[620px] h-[115px] bg-white text-black rounded-r-lg shadow-xl p-2.5 flex items-center gap-3 border border-gray-400 relative font-sans">
                         
                         {/* Código QR */}
                         <div className="shrink-0 flex flex-col items-center justify-center">
@@ -218,56 +243,48 @@ export default function ModalImprimirPulsera({
                         {/* Información Clínica */}
                         <div className="flex-1 min-w-0 flex flex-col justify-between h-full py-0.5 leading-tight">
                           
-                          {/* Fila 1: Nombre y Ojo */}
-                          <div className="flex items-start justify-between gap-1 border-b border-black/20 pb-1">
-                            <div className="min-w-0">
+                          {/* Fila 1: Nombre, Fecha / Horario Programado y Ojo */}
+                          <div className="flex items-center justify-between gap-1 border-b border-black/20 pb-1">
+                            <div className="min-w-0 flex items-center gap-1.5">
                               <h4 className="text-xs font-black uppercase text-black truncate tracking-tight">
                                 <span className="font-mono bg-black text-white px-1 py-0.5 rounded text-[10px] mr-1.5">{cir.codigo_turno || cir.codigo_caso || 'QX-26-0012-OD'}</span>
                                 {pac.nombre}
                               </h4>
-                              <p className="text-[9px] font-bold text-gray-800 font-mono">
-                                DNI: {pac.dni} {pac.edad && `• ${pac.edad}`} {pac.obra_social && `• ${pac.obra_social}`}
-                              </p>
                             </div>
 
-                            {/* Badge de Ojo de Alto Impacto */}
-                            <div className="px-2 py-1 rounded text-[10px] font-black tracking-wider text-white shrink-0 uppercase bg-black">
-                              {cir.ojo_texto}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {fechaHoraTexto && (
+                                <span className="text-[9px] font-bold text-gray-900 bg-gray-100 border border-gray-300 px-1.5 py-0.5 rounded font-mono">
+                                  {fechaHoraTexto}
+                                </span>
+                              )}
+
+                              {/* Badge de Ojo de Alto Impacto */}
+                              <div className="px-2 py-1 rounded text-[10px] font-black tracking-wider text-white uppercase bg-black">
+                                {cir.ojo_texto}
+                              </div>
                             </div>
                           </div>
 
-                          {/* Fila 2: Práctica y Cirujano */}
+                          {/* Fila 2: Subtítulo DNI, Edad y Cobertura */}
+                          <div className="text-[9px] font-bold text-gray-800 font-mono">
+                            DNI: {pac.dni} {pac.edad && `• ${pac.edad}`} {pac.obra_social && `• ${pac.obra_social}`} {pac.nro_afiliado && `(${pac.nro_afiliado})`}
+                          </div>
+
+                          {/* Fila 3: Práctica y Cirujano */}
                           <div className="text-[9px] text-gray-900 font-extrabold truncate">
                             {cir.practica_nombre} • <span className="font-semibold text-gray-700">Cirujano:</span> <strong className="text-black">{cir.cirujano_nombre}</strong> {cir.quirofano_nombre && `(${cir.quirofano_nombre})`}
                           </div>
 
-                          {/* Fila 3: LIO & Alergias */}
-                          <div className="flex items-center justify-between text-[8.5px] font-bold pt-0.5 border-t border-black/10">
-                            <span className="text-blue-900 truncate max-w-[320px]">
-                              {cir.lleva_lente && cir.lente_tipo
-                                ? `LIO: ${cir.lente_tipo} (${cir.lente_dioptria || ''} D)`
-                                : 'No requiere LIO'}
-                            </span>
-                            <span className="text-red-700 font-extrabold uppercase truncate">
-                              {pac.alergias && pac.alergias !== 'Sin alergias declaradas' ? `ALERGIA: ${pac.alergias}` : 'SIN ALERGIAS'}
-                            </span>
+                          {/* Fila 4: LIO (Espacio optimizado sin alergias) */}
+                          <div className="text-[8.5px] font-extrabold text-blue-900 pt-0.5 border-t border-black/10 truncate">
+                            {cir.lleva_lente && cir.lente_tipo
+                              ? `LIO: ${cir.lente_tipo} (${cir.lente_dioptria || ''} D)`
+                              : 'No requiere LIO'}
                           </div>
 
                         </div>
                       </div>
-
-                      {/* Tira / Extensión de Sujeción ArgusID® (140mm con cierre y broche) */}
-                      <div className="w-[140px] h-[95px] bg-neutral-800/80 border-y border-r border-dashed border-gray-600 rounded-r-xl flex flex-col items-center justify-center p-2 text-center text-gray-400 gap-1.5 shadow-inner">
-                        <span className="text-[9px] font-mono font-bold text-gray-300 uppercase tracking-wider">ArgusID® ProBand</span>
-                        <div className="flex items-center gap-1.5 opacity-60">
-                          <div className="w-2.5 h-2.5 rounded-full border border-gray-400" />
-                          <div className="w-2.5 h-2.5 rounded-full border border-gray-400" />
-                          <div className="w-2.5 h-2.5 rounded-full border border-gray-400" />
-                          <div className="w-2.5 h-2.5 rounded-full border border-gray-400" />
-                        </div>
-                        <span className="text-[7.5px] text-gray-400 leading-none">Tira de 24 cm con cierre inviolable</span>
-                      </div>
-
                     </div>
                   </div>
                 </div>
@@ -370,33 +387,37 @@ export default function ModalImprimirPulsera({
 
               {/* Contenido Clínico Vectorial */}
               <div className="wristband-info-box">
-                {/* Nombre y Ojo */}
+                {/* Fila 1: Código, Nombre, Fecha / Hora Programada y Ojo */}
                 <div className="wristband-row-header">
                   <div className="wristband-paciente-title">
                     [{cir.codigo_turno || cir.codigo_caso || 'QX-26-0012-OD'}] {pac.nombre}
                   </div>
+
+                  {fechaHoraTexto && (
+                    <div className="wristband-fecha-hora">
+                      {fechaHoraTexto}
+                    </div>
+                  )}
+
                   <div className="wristband-ojo-badge">
                     {cir.ojo_texto}
                   </div>
                 </div>
 
-                {/* Subtítulo DNI y Edad */}
+                {/* Fila 2: Subtítulo DNI, Edad y Cobertura */}
                 <div className="wristband-sub-info">
-                  DNI: {pac.dni} {pac.edad && `• ${pac.edad}`} {pac.obra_social && `• ${pac.obra_social}`}
+                  DNI: {pac.dni} {pac.edad && `• ${pac.edad}`} {pac.obra_social && `• ${pac.obra_social}`} {pac.nro_afiliado && `(${pac.nro_afiliado})`}
                 </div>
 
-                {/* Práctica y Cirujano en línea amplia */}
+                {/* Fila 3: Práctica y Cirujano en línea amplia */}
                 <div className="wristband-practica-text">
                   {cir.practica_nombre} • Cirujano: {cir.cirujano_nombre} {cir.quirofano_nombre && `(${cir.quirofano_nombre})`}
                 </div>
 
-                {/* LIO y Alergias */}
+                {/* Fila 4: LIO (Espacio optimizado sin alergias) */}
                 <div className="wristband-bottom-row">
                   <span className="wristband-lio-text">
                     {cir.lleva_lente && cir.lente_tipo ? `LIO: ${cir.lente_tipo} (${cir.lente_dioptria || ''} D)` : 'Sin LIO'}
-                  </span>
-                  <span className="wristband-alergias-text">
-                    {pac.alergias && pac.alergias !== 'Sin alergias declaradas' ? `ALERGIAS: ${pac.alergias}` : 'SIN ALERGIAS'}
                   </span>
                 </div>
               </div>
@@ -462,20 +483,20 @@ export default function ModalImprimirPulsera({
             height: 25mm;
             display: flex;
             align-items: center;
-            padding-left: 6mm;
+            padding-left: 40mm;
             box-sizing: border-box;
           }
 
-          /* ÁREA IMPRIMIBLE AMPLIADA A 150 MM Y ALTO MAXIMIZADO A 24 MM */
+          /* ÁREA IMPRIMIBLE AMPLIADA A 200 MM (20 CM) Y ALTO MAXIMIZADO A 24 MM */
           .wristband-printable-body {
-            width: 150mm;
+            width: 200mm;
             height: 24mm;
             border: 1pt solid #000000;
             border-radius: 2pt;
             display: flex;
             align-items: center;
-            padding: 1.2mm 2.5mm;
-            gap: 3mm;
+            padding: 1.2mm 3mm;
+            gap: 3.5mm;
             box-sizing: border-box;
             background: #FFFFFF;
           }
@@ -522,9 +543,10 @@ export default function ModalImprimirPulsera({
             align-items: center;
             border-bottom: 0.6pt solid #000000;
             padding-bottom: 0.4mm;
+            gap: 2mm;
           }
 
-          /* NOMBRE EN 8.5PT CON HASTA 95 MM DE ANCHO (NUNCA SE RECORTA) */
+          /* NOMBRE EN 8.5PT CON HASTA 105 MM DE ANCHO */
           .wristband-paciente-title {
             font-size: 8.5pt;
             font-weight: 900;
@@ -532,9 +554,21 @@ export default function ModalImprimirPulsera({
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            max-width: 95mm;
+            max-width: 105mm;
             color: #000000;
             font-family: Arial, sans-serif;
+          }
+
+          .wristband-fecha-hora {
+            font-size: 6.5pt;
+            font-weight: 800;
+            color: #000000;
+            white-space: nowrap;
+            font-family: Arial, sans-serif;
+            border: 0.5pt solid #000000;
+            padding: 0.2mm 1.5mm;
+            border-radius: 2pt;
+            background: #f4f4f4;
           }
 
           .wristband-ojo-badge {
@@ -570,9 +604,8 @@ export default function ModalImprimirPulsera({
 
           .wristband-bottom-row {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            font-size: 6pt;
+            font-size: 6.5pt;
             font-weight: 800;
             border-top: 0.6pt solid #000000;
             padding-top: 0.4mm;
@@ -583,16 +616,6 @@ export default function ModalImprimirPulsera({
           .wristband-lio-text {
             color: #000000;
             font-weight: 800;
-            max-width: 80mm;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-
-          .wristband-alergias-text {
-            color: #000000;
-            font-weight: 900;
-            text-transform: uppercase;
             white-space: nowrap;
           }
         }
