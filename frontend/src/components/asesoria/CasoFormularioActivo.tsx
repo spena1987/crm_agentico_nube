@@ -443,7 +443,14 @@ export default function CasoFormularioActivo({
     window.open(url, '_blank')
   }
 
+  const esProgramadoQx = ['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado'].includes(estado)
+
   const abrirModalWhatsApp = (ojo?: string) => {
+    if (!esProgramadoQx) {
+      setAvisoValidacion('⚠️ El Consentimiento Informado por WhatsApp solo puede enviarse cuando el turno quirúrgico esté programado en Quirófano.')
+      setTimeout(() => setAvisoValidacion(null), 6000)
+      return
+    }
     setModalOjoObjetivo(ojo)
     setModalConsentimientoWhatsAppOpen(true)
   }
@@ -2949,6 +2956,19 @@ export default function CasoFormularioActivo({
               </div>
             )}
 
+            {/* Aviso Asistencial: Envío bloqueado si no está en Quirófano */}
+            {!esProgramadoQx && (
+              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300 flex items-start gap-2">
+                <AlertCircle size={14} className="shrink-0 mt-0.5 text-amber-400" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold">Envío de Consentimiento por WhatsApp no disponible</p>
+                  <p className="text-gray-300 text-[10.5px]">
+                    El caso se encuentra en <span className="font-semibold text-amber-200">"{estado === 'derivado' ? '1. Derivado' : estado === 'en_asesoramiento' ? '2. En Asesoramiento' : estado === 'en_analisis' ? '3. En Análisis' : estado === 'confirmado' ? '4. Confirmado (Pendiente Qx)' : estado}"</span>. Para generar y despachar el Consentimiento Informado oficial con su enlace de firma digital, el turno debe estar formalmente <strong className="text-white">Programado en Quirófano</strong>.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* VISTA DUAL: CIRUGÍA BILATERAL ESCALONADA */}
             {(ojo === 'AO' && modalidadBilateral === 'escalonada') ? (
               <div className="space-y-2.5">
@@ -2989,9 +3009,13 @@ export default function CasoFormularioActivo({
                         <button
                           type="button"
                           onClick={() => abrirModalWhatsApp(ordenOjos === 'OI_primero' ? 'OI' : 'OD')}
-                          disabled={guardando}
-                          className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-emerald-500/30 cursor-pointer"
-                          title={`Enviar consentimiento del 1° ojo (${ordenOjos === 'OI_primero' ? 'OI' : 'OD'}) por WhatsApp`}
+                          disabled={guardando || !esProgramadoQx}
+                          className={`px-2 py-1 rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border ${
+                            !esProgramadoQx
+                              ? 'bg-neutral-800/60 text-gray-500 border-neutral-700 cursor-not-allowed opacity-60'
+                              : 'bg-emerald-700/80 hover:bg-emerald-600 text-white border-emerald-500/30 cursor-pointer'
+                          }`}
+                          title={!esProgramadoQx ? 'Disponible cuando el turno esté programado en Quirófano' : `Enviar consentimiento del 1° ojo (${ordenOjos === 'OI_primero' ? 'OI' : 'OD'}) por WhatsApp`}
                         >
                           <Send size={11} />
                           <span>WA 1° Ojo ({ordenOjos === 'OI_primero' ? 'OI' : 'OD'})</span>
@@ -3067,9 +3091,13 @@ export default function CasoFormularioActivo({
                         <button
                           type="button"
                           onClick={() => abrirModalWhatsApp(ordenOjos === 'OI_primero' ? 'OD' : 'OI')}
-                          disabled={guardando}
-                          className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border border-emerald-500/30 cursor-pointer"
-                          title={`Enviar consentimiento del 2° ojo (${ordenOjos === 'OI_primero' ? 'OD' : 'OI'}) por WhatsApp`}
+                          disabled={guardando || !esProgramadoQx}
+                          className={`px-2 py-1 rounded text-[10.5px] font-medium flex items-center justify-center gap-1 transition-all border ${
+                            !esProgramadoQx
+                              ? 'bg-neutral-800/60 text-gray-500 border-neutral-700 cursor-not-allowed opacity-60'
+                              : 'bg-emerald-700/80 hover:bg-emerald-600 text-white border-emerald-500/30 cursor-pointer'
+                          }`}
+                          title={!esProgramadoQx ? 'Disponible cuando el turno esté programado en Quirófano' : `Enviar consentimiento del 2° ojo (${ordenOjos === 'OI_primero' ? 'OD' : 'OI'}) por WhatsApp`}
                         >
                           <Send size={11} />
                           <span>WA 2° Ojo ({ordenOjos === 'OI_primero' ? 'OD' : 'OI'})</span>
@@ -3115,7 +3143,13 @@ export default function CasoFormularioActivo({
                   <button
                     type="button"
                     onClick={() => abrirModalWhatsApp('ambos')}
-                    className="text-emerald-400 hover:text-emerald-300 hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                    disabled={!esProgramadoQx}
+                    className={`flex items-center gap-1 font-medium ${
+                      !esProgramadoQx
+                        ? 'text-gray-500 cursor-not-allowed opacity-60'
+                        : 'text-emerald-400 hover:text-emerald-300 hover:underline cursor-pointer'
+                    }`}
+                    title={!esProgramadoQx ? 'Disponible cuando el turno esté programado en Quirófano' : 'Abrir asistente de envío para ambos ojos'}
                   >
                     <Send size={11} />
                     <span>Asistente WhatsApp (Ambos Ojos)</span>
@@ -3141,9 +3175,13 @@ export default function CasoFormularioActivo({
                   <button
                     type="button"
                     onClick={() => abrirModalWhatsApp(ojo === 'AO' ? 'AO' : ojo)}
-                    disabled={guardando}
-                    className="px-2.5 py-1.5 bg-emerald-700/80 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border border-emerald-500/30 cursor-pointer shadow-sm"
-                    title="Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp"
+                    disabled={guardando || !esProgramadoQx}
+                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium flex items-center justify-center gap-1.5 transition-all border shadow-sm ${
+                      !esProgramadoQx
+                        ? 'bg-neutral-800/60 text-gray-500 border-neutral-700 cursor-not-allowed opacity-60'
+                        : 'bg-emerald-700/80 hover:bg-emerald-600 text-white border-emerald-500/30 cursor-pointer'
+                    }`}
+                    title={!esProgramadoQx ? 'Disponible cuando el turno esté programado en Quirófano' : 'Abrir asistente de envío y simulación del Consentimiento Informado por WhatsApp'}
                   >
                     <Send size={12} />
                     <span>

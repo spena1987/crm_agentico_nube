@@ -5714,8 +5714,20 @@ async def enviar_consentimiento_asesoria_whatsapp(
     Envía el consentimiento informado por WhatsApp directamente desde el caso de asesoría quirúrgica
     usando el Enrutador Inteligente (Smart Template Router) para respetar la ventana de 24h de Meta.
     Soporta cirugías bilaterales escalonadas especificando 'ojo_objetivo' ('primer_ojo', 'segundo_ojo', 'ambos').
+    Solo se permite el envío cuando el caso se encuentra formalmente en estado 'programado' (con turno de quirófano).
     """
     try:
+        from app.db import supabase
+        res_c = supabase.table("asesorias_quirurgicas").select("id, estado, codigo_caso").eq("id", asesoria_id).limit(1).execute()
+        if not res_c.data:
+            raise HTTPException(status_code=404, detail="Caso quirúrgico no encontrado.")
+        caso_est = res_c.data[0].get("estado")
+        if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"El Consentimiento Informado solo puede enviarse para casos quirúrgicos con turno programado en quirófano. El caso actual se encuentra en '{caso_est}'."
+            )
+
         from app.services.seguimiento_quirurgico_service import despachar_consentimiento_informado_inteligente
         obj = ojo_objetivo or (payload.ojo_objetivo if payload else None) or "primer_ojo"
         res = await despachar_consentimiento_informado_inteligente(
@@ -5743,9 +5755,19 @@ def obtener_datos_consentimiento_asesoria_endpoint(asesoria_id: str, ojo: Option
     Recupera los datos sugeridos y el enlace de firma para el Consentimiento Informado,
     resolviendo la jerarquía de fecha y el estado de la ventana de 24h de Meta.
     Soporta filtro por ojo en cirugías bilaterales escalonadas (?ojo=OD o ?ojo=OI).
+    Solo se permite la consulta si el caso se encuentra en estado 'programado' o posterior.
     """
     try:
-        from app.db import get_datos_consentimiento_whatsapp
+        from app.db import supabase, get_datos_consentimiento_whatsapp
+        res_c = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", asesoria_id).limit(1).execute()
+        if res_c.data:
+            caso_est = res_c.data[0].get("estado")
+            if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El Consentimiento Informado solo está disponible para casos con turno programado en quirófano. El caso actual se encuentra en '{caso_est}'."
+                )
+
         datos = get_datos_consentimiento_whatsapp(asesoria_id=asesoria_id, ojo=ojo)
         if not datos:
             raise HTTPException(status_code=404, detail="No se pudo resolver el caso quirúrgico para consentimiento.")
@@ -5822,29 +5844,50 @@ async def enviar_consentimiento_whatsapp_endpoint(
     token = payload.token
     enlace = payload.enlace_firma
 
+    from app.db import supabase
+    if as_id:
+        res_as = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+        if res_as.data:
+            caso_est = res_as.data[0].get("estado")
+            if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"El Consentimiento Informado solo puede enviarse para casos quirúrgicos con turno programado en quirófano. El caso actual se encuentra en '{caso_est}'."
+                )
+
     if as_id and not t_id:
         target_ojo = payload.ojo or payload.ojo_objetivo
         t_obj = asegurar_turno_para_consentimiento_asesoria(as_id, ojo=target_ojo, crear_si_no_existe=True)
         if t_obj:
             t_id = t_obj.get("id")
-            if not token:
-                token = t_obj.get("consentimiento_token")
+            if t_obj.get("consentimiento_token"):
+                token = t_obj["consentimiento_token"]
     elif t_id and not as_id:
         t_obj = get_turno_quirofano_by_id(t_id)
-        if t_obj and t_obj.get("asesoria_id"):
-            as_id = t_obj["asesoria_id"]
-            if not token:
-                token = t_obj.get("consentimiento_token")
+        if t_obj:
+            if t_obj.get("consentimiento_token"):
+                token = t_obj["consentimiento_token"]
+            if t_obj.get("asesoria_id"):
+                as_id = t_obj["asesoria_id"]
+                res_as = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+                if res_as.data:
+                    caso_est = res_as.data[0].get("estado")
+                    if caso_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"El Consentimiento Informado solo puede enviarse para casos quirúrgicos con turno programado en quirófano. El caso actual se encuentra en '{caso_est}'."
+                        )
 
     if not t_id:
         raise HTTPException(status_code=400, detail="No se pudo asociar un turno quirúrgico para el consentimiento.")
 
-    if not enlace and token:
-        try:
-            from app.services.urgencias_service import obtener_base_crm_url
-            base_app_url = obtener_base_crm_url()
-        except Exception:
-            base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm-agentico-nube.vercel.app"
+    try:
+        from app.services.urgencias_service import obtener_base_crm_url
+        base_app_url = obtener_base_crm_url()
+    except Exception:
+        base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or os.getenv("APP_URL") or "https://crm-agentico-nube.vercel.app"
+
+    if token:
         enlace = f"{base_app_url.rstrip('/')}/consentimiento/{token}"
 
     normalized_to = normalize_to_meta_e164(to_phone)

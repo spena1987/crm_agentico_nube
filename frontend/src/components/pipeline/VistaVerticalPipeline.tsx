@@ -438,30 +438,39 @@ export default function VistaVerticalPipeline({
                               >
                                 {checklist.lente_seleccionado ? '✓ LIO' : 'LIO'}
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => onAbrirConsentimientoQx?.(caso)}
-                                className={`px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
-                                  checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                    ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 font-bold hover:bg-emerald-900'
-                                    : caso.consentimiento_info?.estado === 'enviado_whatsapp' || caso.consentimiento_info?.estado === 'esperando_apertura' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                    ? 'bg-amber-950/70 text-amber-300 border-amber-500/50 font-semibold hover:bg-amber-900'
-                                    : 'bg-neutral-800 text-gray-400 border-neutral-700 hover:text-white hover:border-gray-500'
-                                }`}
-                                title={
-                                  checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                    ? 'Consentimiento firmado digitalmente o en papel'
+                              {['programado', 'en_espera', 'pre_quirofano', 'en_operacion', 'operado'].includes(caso.estado) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onAbrirConsentimientoQx?.(caso)}
+                                  className={`px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                                    checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                      ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 font-bold hover:bg-emerald-900'
+                                      : caso.consentimiento_info?.estado === 'enviado_whatsapp' || caso.consentimiento_info?.estado === 'esperando_apertura' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                      ? 'bg-amber-950/70 text-amber-300 border-amber-500/50 font-semibold hover:bg-amber-900'
+                                      : 'bg-neutral-800 text-gray-400 border-neutral-700 hover:text-white hover:border-gray-500'
+                                  }`}
+                                  title={
+                                    checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                      ? 'Consentimiento firmado digitalmente o en papel'
+                                      : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                      ? 'Consentimiento enviado por WhatsApp (esperando firma del paciente)'
+                                      : 'Enviar Consentimiento Informado al paciente'
+                                  }
+                                >
+                                  {checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                    ? '✓ C.I. Firmado'
                                     : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                    ? 'Consentimiento enviado por WhatsApp (esperando firma del paciente)'
-                                    : 'Enviar Consentimiento Informado al paciente'
-                                }
-                              >
-                                {checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                  ? '✓ C.I. Firmado'
-                                  : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                  ? '⏳ C.I. Enviado'
-                                  : 'C.I.'}
-                              </button>
+                                    ? '⏳ C.I. Enviado'
+                                    : 'C.I.'}
+                                </button>
+                              ) : (
+                                <span
+                                  className="px-1.5 py-0.5 rounded border bg-neutral-800/60 text-gray-500 border-neutral-700 cursor-not-allowed select-none"
+                                  title="Consentimiento Informado disponible una vez programada la cirugía en quirófano"
+                                >
+                                  C.I.
+                                </span>
+                              )}
                             </div>
 
                             {/* Badge Semáforo de Recordatorio Quirúrgico de WhatsApp */}
@@ -595,8 +604,8 @@ export default function VistaVerticalPipeline({
                                 </Link>
                               )}
 
-                              {/* Botón Acción Rápida: Consentimiento Informado (WhatsApp / Digital) */}
-                              {(caso.estado === 'programado' || caso.estado === 'confirmado' || caso.fecha_definitiva_cirugia) && (
+                              {/* Botón Acción Rápida: Consentimiento Informado (WhatsApp / Digital) - Solo Programados */}
+                              {(['programado', 'en_espera', 'pre_quirofano', 'en_operacion'].includes(caso.estado)) && (
                                 <button
                                   type="button"
                                   onClick={() => onAbrirConsentimientoQx?.(caso)}

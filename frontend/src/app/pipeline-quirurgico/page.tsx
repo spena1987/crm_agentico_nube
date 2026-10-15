@@ -1692,8 +1692,8 @@ export default function PipelineQuirurgicoPage() {
                                   </Link>
                                 )}
 
-                                {/* Botón Consentimiento Informado (Firma Digital / WhatsApp) */}
-                                {(caso.estado === 'programado' || caso.estado === 'confirmado' || caso.fecha_definitiva_cirugia) && (
+                                {/* Botón Consentimiento Informado (Firma Digital / WhatsApp) - Solo Programados */}
+                                {(['programado', 'en_espera', 'pre_quirofano', 'en_operacion'].includes(caso.estado)) && (
                                   <button
                                     type="button"
                                     onClick={() => handleAbrirConsentimientoQx(caso)}

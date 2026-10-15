@@ -600,6 +600,14 @@ async def despachar_consentimiento_informado_inteligente(
     t_id = turno_id
     as_id = asesoria_id
 
+    # Validación estricta de estado: solo casos en 'programado' o posterior
+    if as_id and sb:
+        res_c = sb.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+        if res_c.data:
+            c_est = res_c.data[0].get("estado")
+            if c_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+                raise ValueError(f"El consentimiento informado solo está disponible para casos con turno programado en quirófano. El caso actual se encuentra en '{c_est}'.")
+
     if as_id and not t_id:
         info_dual = asegurar_turnos_para_consentimiento_asesoria(as_id, crear_si_no_existe=True)
         if info_dual.get("es_bilateral_escalonada"):
@@ -622,6 +630,12 @@ async def despachar_consentimiento_informado_inteligente(
         turno = get_turno_quirofano_by_id(t_id)
         if turno and turno.get("asesoria_id") and not as_id:
             as_id = turno["asesoria_id"]
+            if sb:
+                res_c = sb.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+                if res_c.data:
+                    c_est = res_c.data[0].get("estado")
+                    if c_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
+                        raise ValueError(f"El consentimiento informado solo está disponible para casos con turno programado en quirófano. El caso actual se encuentra en '{c_est}'.")
 
     if not turno or not t_id:
         raise ValueError("No se pudo identificar un turno quirúrgico válido para despachar el consentimiento.")
