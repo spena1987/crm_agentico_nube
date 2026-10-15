@@ -243,27 +243,26 @@ export default function ModalImprimirPulsera({
                         {/* Información Clínica */}
                         <div className="flex-1 min-w-0 flex flex-col justify-between h-full py-0.5 leading-tight">
                           
-                          {/* Fila 1: Nombre, Fecha / Horario Programado y Ojo */}
-                          <div className="flex items-center justify-between gap-1 border-b border-black/20 pb-1">
-                            <div className="min-w-0 flex items-center gap-1.5">
+                          {/* Fila 1: Nombre, Ojo y Fecha / Horario agrupados a la izquierda para seguridad */}
+                          <div className="flex items-center justify-start gap-2 border-b border-black/20 pb-1">
+                            <div className="min-w-0 flex items-center gap-1.5 shrink-0">
                               <h4 className="text-xs font-black uppercase text-black truncate tracking-tight">
                                 <span className="font-mono bg-black text-white px-1 py-0.5 rounded text-[10px] mr-1.5">{cir.codigo_turno || cir.codigo_caso || 'QX-26-0012-OD'}</span>
                                 {pac.nombre}
                               </h4>
                             </div>
 
-                            <div className="flex items-center gap-1.5 shrink-0">
-                              {fechaHoraTexto && (
-                                <span className="text-[9px] font-bold text-gray-900 bg-gray-100 border border-gray-300 px-1.5 py-0.5 rounded font-mono">
-                                  {fechaHoraTexto}
-                                </span>
-                              )}
-
-                              {/* Badge de Ojo de Alto Impacto */}
-                              <div className="px-2 py-1 rounded text-[10px] font-black tracking-wider text-white uppercase bg-black">
-                                {cir.ojo_texto}
-                              </div>
+                            {/* Badge de Ojo de Alto Impacto pegado al paciente */}
+                            <div className="px-2 py-1 rounded text-[10px] font-black tracking-wider text-white uppercase bg-black shrink-0">
+                              {cir.ojo_texto}
                             </div>
+
+                            {/* Fecha y Horario Programado a continuación */}
+                            {fechaHoraTexto && (
+                              <span className="text-[9px] font-bold text-gray-900 bg-gray-100 border border-gray-300 px-1.5 py-0.5 rounded font-mono shrink-0">
+                                {fechaHoraTexto}
+                              </span>
+                            )}
                           </div>
 
                           {/* Fila 2: Subtítulo DNI, Edad y Cobertura */}
@@ -387,10 +386,14 @@ export default function ModalImprimirPulsera({
 
               {/* Contenido Clínico Vectorial */}
               <div className="wristband-info-box">
-                {/* Fila 1: Código, Nombre, Fecha / Hora Programada y Ojo */}
+                {/* Fila 1: Código, Nombre, Ojo y Fecha / Hora agrupados a la izquierda para seguridad */}
                 <div className="wristband-row-header">
                   <div className="wristband-paciente-title">
                     [{cir.codigo_turno || cir.codigo_caso || 'QX-26-0012-OD'}] {pac.nombre}
+                  </div>
+
+                  <div className="wristband-ojo-badge">
+                    {cir.ojo_texto}
                   </div>
 
                   {fechaHoraTexto && (
@@ -398,10 +401,6 @@ export default function ModalImprimirPulsera({
                       {fechaHoraTexto}
                     </div>
                   )}
-
-                  <div className="wristband-ojo-badge">
-                    {cir.ojo_texto}
-                  </div>
                 </div>
 
                 {/* Fila 2: Subtítulo DNI, Edad y Cobertura */}
@@ -539,24 +538,34 @@ export default function ModalImprimirPulsera({
 
           .wristband-row-header {
             display: flex;
-            justify-content: space-between;
+            justify-content: flex-start;
             align-items: center;
             border-bottom: 0.6pt solid #000000;
             padding-bottom: 0.4mm;
-            gap: 2mm;
+            gap: 2.5mm;
           }
 
-          /* NOMBRE EN 8.5PT CON HASTA 105 MM DE ANCHO */
+          /* NOMBRE EN 8.5PT */
           .wristband-paciente-title {
             font-size: 8.5pt;
             font-weight: 900;
             text-transform: uppercase;
             white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            max-width: 105mm;
             color: #000000;
             font-family: Arial, sans-serif;
+            flex-shrink: 0;
+          }
+
+          .wristband-ojo-badge {
+            background: #000000 !important;
+            color: #FFFFFF !important;
+            font-size: 7.5pt;
+            font-weight: 900;
+            padding: 0.5mm 2mm;
+            border-radius: 2pt;
+            white-space: nowrap;
+            font-family: Arial, sans-serif;
+            flex-shrink: 0;
           }
 
           .wristband-fecha-hora {
@@ -569,17 +578,7 @@ export default function ModalImprimirPulsera({
             padding: 0.2mm 1.5mm;
             border-radius: 2pt;
             background: #f4f4f4;
-          }
-
-          .wristband-ojo-badge {
-            background: #000000 !important;
-            color: #FFFFFF !important;
-            font-size: 7.5pt;
-            font-weight: 900;
-            padding: 0.5mm 2mm;
-            border-radius: 2pt;
-            white-space: nowrap;
-            font-family: Arial, sans-serif;
+            flex-shrink: 0;
           }
 
           .wristband-sub-info {
