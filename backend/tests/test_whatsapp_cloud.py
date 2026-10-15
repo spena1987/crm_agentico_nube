@@ -253,6 +253,7 @@ def test_escalado_humano_respuesta_empatica():
     
     # Mocking Gemini client response where tool was called
     with patch("app.agent.client") as mock_gemini, \
+         patch("app.db.es_bot_activo_globalmente", return_value=True), \
          patch("app.agent.orchestrator.determine_active_agent", return_value={"nombre": "General", "codigo": "GENERAL"}), \
          patch("app.agent.orchestrator.compile_system_prompt", return_value="Prompt"), \
          patch("app.agent.AVAILABLE_TOOLS_MAP", {"escalar_a_operador_humano": lambda **kwargs: {"success": True}}):
@@ -453,6 +454,7 @@ async def test_handle_automated_text_action_affirmative_presupuesto():
     from app.services.whatsapp_cloud.worker import handle_automated_interactive_action
 
     with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sup, \
+         patch("app.db.es_bot_activo_globalmente", return_value=True), \
          patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=("1289373670929621", "token_123")), \
          patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.send_document", return_value={"wamid": "wamid.TEST_DOC_AFFIRM"}) as mock_send_doc, \
          patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.close"), \
