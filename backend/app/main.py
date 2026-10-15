@@ -392,13 +392,26 @@ app = FastAPI(
 
 from app.auth import AuthSecurityMiddleware, verify_webhook_secret
 
-# Configuración de CORS con orígenes permitidos configurables
-allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "*")
-allowed_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()] if allowed_origins_env != "*" else ["*"]
+# Configuración de CORS estricta y compatible con credenciales W3C (evita el error 'Failed to fetch')
+default_origins = [
+    "https://crm-agentico-nube-tn4d.vercel.app",
+    "https://crm-agentico-nube.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+]
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+if allowed_origins_env and allowed_origins_env != "*":
+    env_origins = [o.strip() for o in allowed_origins_env.split(",") if o.strip()]
+    allowed_origins = list(dict.fromkeys(default_origins + env_origins))
+else:
+    allowed_origins = default_origins
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://([a-zA-Z0-9_-]+\.)?vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

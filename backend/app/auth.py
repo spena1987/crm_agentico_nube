@@ -212,26 +212,38 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
         elif request.query_params.get("token"):
             token = request.query_params.get("token").strip()
 
+        # Preparar encabezados CORS para cualquier respuesta temprana de error (evita Failed to fetch en el navegador)
+        origin = request.headers.get("origin") or request.headers.get("Origin")
+        cors_headers = {"WWW-Authenticate": "Bearer"}
+        if origin:
+            cors_headers["Access-Control-Allow-Origin"] = origin
+            cors_headers["Access-Control-Allow-Credentials"] = "true"
+            cors_headers["Access-Control-Allow-Methods"] = "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT"
+            cors_headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Accept, X-Requested-With"
+            cors_headers["Vary"] = "Origin"
+
         if not token:
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Acceso no autorizado: Se requiere encabezado 'Authorization: Bearer <token>' emitido por Supabase."},
-                headers={"WWW-Authenticate": "Bearer"}
+                headers=cors_headers
             )
         try:
             user_payload = decode_supabase_jwt(token)
             request.state.user = user_payload
         except HTTPException as he:
+            resp_headers = dict(he.headers or {})
+            resp_headers.update(cors_headers)
             return JSONResponse(
                 status_code=he.status_code,
                 content={"detail": he.detail},
-                headers=he.headers or {"WWW-Authenticate": "Bearer"}
+                headers=resp_headers
             )
         except Exception as e:
             return JSONResponse(
                 status_code=401,
                 content={"detail": f"Token de sesión inválido: {str(e)}"},
-                headers={"WWW-Authenticate": "Bearer"}
+                headers=cors_headers
             )
 
         return await call_next(request)

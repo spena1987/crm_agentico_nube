@@ -90,3 +90,39 @@ def test_protected_presupuesto_mutations_still_require_auth():
     response = client.post("/api/presupuestos/crear-rapido", json={})
     assert response.status_code == 401
     assert "no autorizado" in response.json().get("detail", "").lower()
+
+def test_cors_reflects_vercel_origin_without_wildcard():
+    """
+    Verifica que las peticiones originadas desde dominios de Vercel (producción o preview)
+    reflejen exactamente el dominio de origen en Access-Control-Allow-Origin en vez del comodín '*',
+    cumpliendo con la especificación de credenciales W3C CORS para evitar 'Failed to fetch'.
+    """
+    test_origin = "https://crm-agentico-nube-tn4d.vercel.app"
+    valid_token = generate_test_jwt()
+    response = client.get(
+        "/api/quirofanos",
+        headers={
+            "Authorization": f"Bearer {valid_token}",
+            "Origin": test_origin
+        }
+    )
+    assert response.status_code == 200
+    allow_origin = response.headers.get("access-control-allow-origin")
+    assert allow_origin == test_origin
+    assert allow_origin != "*"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+
+def test_cors_headers_present_on_unauthorized_401():
+    """
+    Verifica que cuando el middleware rechaza con 401 por falta de token,
+    la respuesta contenga las cabeceras Access-Control-Allow-Origin correspondientes
+    para que el navegador no enmascare el 401 con 'Failed to fetch'.
+    """
+    test_origin = "https://crm-agentico-nube-tn4d.vercel.app"
+    response = client.get(
+        "/api/quirofanos",
+        headers={"Origin": test_origin}
+    )
+    assert response.status_code == 401
+    assert response.headers.get("access-control-allow-origin") == test_origin
+
