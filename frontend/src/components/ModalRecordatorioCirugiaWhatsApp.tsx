@@ -99,6 +99,23 @@ interface ModalRecordatorioCirugiaWhatsAppProps {
   onMensajeEnviado?: () => void
 }
 
+function formatCirugiaConOjoCompleto(cirugiaBase?: string, ojoCod?: string): string {
+  if (!cirugiaBase) return 'Cirugía Oftalmológica'
+  const cod = (ojoCod || '').trim().toUpperCase()
+  const mapDesc: Record<string, string> = {
+    OD: 'OJO DERECHO',
+    OI: 'OJO IZQUIERDO',
+    AO: 'AMBOS OJOS'
+  }
+  const desc = mapDesc[cod]
+  if (!desc) return cirugiaBase
+
+  // Limpiar sufijos abreviados previos como (OD), (OI), (AO), - OD, etc.
+  const limpia = cirugiaBase.replace(/\s*(\((OD|OI|AO|OJO DERECHO|OJO IZQUIERDO|AMBOS OJOS)\)|-\s*(OD|OI|AO|OJO DERECHO|OJO IZQUIERDO|AMBOS OJOS))\s*$/i, '').trim()
+  if (limpia.toUpperCase().includes(desc)) return limpia
+  return `${limpia} (${desc})`
+}
+
 export default function ModalRecordatorioCirugiaWhatsApp({
   isOpen,
   onClose,
@@ -176,19 +193,19 @@ export default function ModalRecordatorioCirugiaWhatsApp({
           setOjoSeleccionado(targetOjo)
 
           if (d.es_bilateral_escalonada && targetOjo === 'segundo_ojo' && d.segundo_ojo) {
-            setCirugia(d.segundo_ojo.cirugia || d.cirugia || 'Cirugía Oftalmológica')
+            setCirugia(formatCirugiaConOjoCompleto(d.segundo_ojo.cirugia || d.cirugia, d.segundo_ojo.ojo))
             setFecha(d.segundo_ojo.fecha || d.fecha || 'Fecha a confirmar')
             setHora(d.segundo_ojo.hora || d.hora || '07:30 hs')
             setTurnoIdSeleccionado(d.segundo_ojo.turno_id)
             setOjoTarget(d.segundo_ojo.ojo)
           } else if (d.es_bilateral_escalonada && d.primer_ojo) {
-            setCirugia(d.primer_ojo.cirugia || d.cirugia || 'Cirugía Oftalmológica')
+            setCirugia(formatCirugiaConOjoCompleto(d.primer_ojo.cirugia || d.cirugia, d.primer_ojo.ojo))
             setFecha(d.primer_ojo.fecha || d.fecha || 'Fecha a confirmar')
             setHora(d.primer_ojo.hora || d.hora || '07:30 hs')
             setTurnoIdSeleccionado(d.primer_ojo.turno_id)
             setOjoTarget(d.primer_ojo.ojo)
           } else {
-            setCirugia(d.cirugia || 'Cirugía Oftalmológica')
+            setCirugia(formatCirugiaConOjoCompleto(d.cirugia, d.ojo))
             setFecha(d.fecha || 'Fecha a confirmar')
             setHora(d.hora || '07:30 hs')
             setTurnoIdSeleccionado(d.turno_id)
@@ -244,13 +261,13 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     if (!datosOriginales) return
 
     if (nuevoOjo === 'primer_ojo' && datosOriginales.primer_ojo) {
-      setCirugia(datosOriginales.primer_ojo.cirugia || datosOriginales.cirugia || '')
+      setCirugia(formatCirugiaConOjoCompleto(datosOriginales.primer_ojo.cirugia || datosOriginales.cirugia, datosOriginales.primer_ojo.ojo))
       setFecha(datosOriginales.primer_ojo.fecha || datosOriginales.fecha || '')
       setHora(datosOriginales.primer_ojo.hora || datosOriginales.hora || '')
       setTurnoIdSeleccionado(datosOriginales.primer_ojo.turno_id)
       setOjoTarget(datosOriginales.primer_ojo.ojo)
     } else if (nuevoOjo === 'segundo_ojo' && datosOriginales.segundo_ojo) {
-      setCirugia(datosOriginales.segundo_ojo.cirugia || datosOriginales.cirugia || '')
+      setCirugia(formatCirugiaConOjoCompleto(datosOriginales.segundo_ojo.cirugia || datosOriginales.cirugia, datosOriginales.segundo_ojo.ojo))
       setFecha(datosOriginales.segundo_ojo.fecha || datosOriginales.fecha || '')
       setHora(datosOriginales.segundo_ojo.hora || datosOriginales.hora || '')
       setTurnoIdSeleccionado(datosOriginales.segundo_ojo.turno_id)
@@ -267,20 +284,20 @@ export default function ModalRecordatorioCirugiaWhatsApp({
 
     if (datosOriginales.es_bilateral_escalonada) {
       if (ojoSeleccionado === 'segundo_ojo' && datosOriginales.segundo_ojo) {
-        setCirugia(datosOriginales.segundo_ojo.cirugia || '')
+        setCirugia(formatCirugiaConOjoCompleto(datosOriginales.segundo_ojo.cirugia, datosOriginales.segundo_ojo.ojo))
         setFecha(datosOriginales.segundo_ojo.fecha || '')
         setHora(datosOriginales.segundo_ojo.hora || '')
         setTurnoIdSeleccionado(datosOriginales.segundo_ojo.turno_id)
         setOjoTarget(datosOriginales.segundo_ojo.ojo)
       } else if (datosOriginales.primer_ojo) {
-        setCirugia(datosOriginales.primer_ojo.cirugia || '')
+        setCirugia(formatCirugiaConOjoCompleto(datosOriginales.primer_ojo.cirugia, datosOriginales.primer_ojo.ojo))
         setFecha(datosOriginales.primer_ojo.fecha || '')
         setHora(datosOriginales.primer_ojo.hora || '')
         setTurnoIdSeleccionado(datosOriginales.primer_ojo.turno_id)
         setOjoTarget(datosOriginales.primer_ojo.ojo)
       }
     } else {
-      setCirugia(datosOriginales.cirugia || '')
+      setCirugia(formatCirugiaConOjoCompleto(datosOriginales.cirugia, datosOriginales.ojo))
       setFecha(datosOriginales.fecha || '')
       setHora(datosOriginales.hora || '')
       setTurnoIdSeleccionado(datosOriginales.turno_id)

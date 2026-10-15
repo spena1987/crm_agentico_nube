@@ -204,3 +204,83 @@ def test_registrar_envio_recordatorio_discrimina_ojo_en_bilateral():
             ojo="OI"
         )
         assert ok is True
+
+
+def test_recordatorio_formato_cirugia_descripcion_completa_ojo():
+    """
+    Verifica que el campo de cirugía/procedimiento formatee la lateralidad completa
+    (OJO DERECHO, OJO IZQUIERDO, AMBOS OJOS) en vez de siglas abreviadas (OD, OI, AO).
+    """
+    with patch("app.db.supabase") as mock_sb:
+        mock_table = MagicMock()
+        mock_select = MagicMock()
+        mock_table.select.return_value = mock_select
+        mock_eq = MagicMock()
+        mock_select.eq.return_value = mock_eq
+        mock_limit = MagicMock()
+        mock_eq.limit.return_value = mock_limit
+
+        # Caso unilateral con práctica que ya traía abreviación (OD)
+        mock_limit.execute.return_value = MagicMock(data=[{
+            "id": "as-uni-od",
+            "paciente_id": "pac-1",
+            "ojo": "OD",
+            "practica_nombre": "FACOEMULSIFICACION E IMPL.LIO PLEGABLE (OD)",
+            "fecha_definitiva_cirugia": "2026-10-25",
+            "pacientes": {"nombre": "Peña, Juan", "telefono": "5492614703230"},
+            "turnos_quirofano": [{
+                "id": "t-1",
+                "ojo": "OD",
+                "fecha_cirugia": "2026-10-25",
+                "hora_inicio": "08:15:00",
+                "estado": "programado"
+            }]
+        }])
+        mock_sb.table.return_value = mock_table
+
+        res = get_datos_recordatorio_quirurgico("as-uni-od")
+        assert res is not None
+        # Debe eliminar el sufijo previo (OD) y reemplazarlo por la descripción completa
+        assert res["cirugia"] == "FACOEMULSIFICACION E IMPL.LIO PLEGABLE (OJO DERECHO)"
+        assert "(OD)" not in res["cirugia"]
+
+        # Caso Bilateral Escalonado
+        mock_limit.execute.return_value = MagicMock(data=[{
+            "id": "as-bi-ao",
+            "paciente_id": "pac-2",
+            "ojo": "AO",
+            "modalidad_bilateral": "escalonada",
+            "practica_nombre": "CIRUGIA DE CATARATA",
+            "fecha_definitiva_cirugia": "2026-10-20",
+            "checklist_prequirurgico": {
+                "_meta_bilateral": {
+                    "modalidad": "escalonada",
+                    "orden": "OD_primero",
+                    "fecha_definitiva_2do_ojo": "2026-10-27"
+                }
+            },
+            "pacientes": {"nombre": "Gomez, Carlos", "telefono": "5492615559999"},
+            "turnos_quirofano": [
+                {
+                    "id": "t-od",
+                    "ojo": "OD",
+                    "fecha_cirugia": "2026-10-20",
+                    "hora_inicio": "08:00:00",
+                    "estado": "programado"
+                },
+                {
+                    "id": "t-oi",
+                    "ojo": "OI",
+                    "fecha_cirugia": "2026-10-27",
+                    "hora_inicio": "08:00:00",
+                    "estado": "programado"
+                }
+            ]
+        }])
+
+        res_bi = get_datos_recordatorio_quirurgico("as-bi-ao")
+        assert res_bi is not None
+        assert res_bi["es_bilateral_escalonada"] is True
+        assert res_bi["primer_ojo"]["cirugia"] == "CIRUGIA DE CATARATA (OJO DERECHO)"
+        assert res_bi["segundo_ojo"]["cirugia"] == "CIRUGIA DE CATARATA (OJO IZQUIERDO)"
+

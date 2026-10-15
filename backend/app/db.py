@@ -3327,6 +3327,36 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
                 "template": t_chk.get("recordatorio_template") or a_chk.get("template")
             }
 
+        def _describir_ojo(cod: Optional[str]) -> str:
+            c = str(cod or "").strip().upper()
+            if c == "OD":
+                return "OJO DERECHO"
+            elif c == "OI":
+                return "OJO IZQUIERDO"
+            elif c == "AO":
+                return "AMBOS OJOS"
+            return c
+
+        def _formatear_cirugia_con_ojo_completo(base_nombre: str, cod_ojo: Optional[str]) -> str:
+            import re
+            base = str(base_nombre or "Cirugía Oftalmológica").strip()
+            ojo_desc = _describir_ojo(cod_ojo)
+            if not ojo_desc:
+                return base
+
+            # Limpiar sufijos previos al final como (OD), (OI), (AO), (OJO DERECHO), - OD, etc.
+            base_limpia = re.sub(
+                r"\s*(\((OD|OI|AO|OJO DERECHO|OJO IZQUIERDO|AMBOS OJOS)\)|-\s*(OD|OI|AO|OJO DERECHO|OJO IZQUIERDO|AMBOS OJOS))\s*$",
+                "",
+                base,
+                flags=re.IGNORECASE
+            ).strip()
+
+            if ojo_desc in base_limpia.upper():
+                return base_limpia
+
+            return f"{base_limpia} ({ojo_desc})"
+
         # Turnos activos
         turnos = caso.get("turnos_quirofano") or []
         turnos_activos = [t for t in turnos if t.get("estado") != "cancelado"]
@@ -3369,13 +3399,16 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
             h2_disp, h2_cir, h2_cit = _fmt_hora(turno_2.get("hora_inicio") if turno_2 else None)
             q2_nom = (turno_2.get("quirofanos") or {}).get("nombre") if (turno_2 and turno_2.get("quirofanos")) else "Centrovisión - Quirófano Central"
 
+            p1_desc = _describir_ojo(primer_ojo)
+            p2_desc = _describir_ojo(segundo_ojo)
+
             primer_ojo_info = {
                 "turno_id": turno_1.get("id") if turno_1 else None,
                 "ojo": primer_ojo,
-                "ojo_label": f"1° Ojo ({primer_ojo})",
-                "ojo_desc": f"1° Ojo a Operar ({'Ojo Derecho - OD' if primer_ojo == 'OD' else 'Ojo Izquierdo - OI'})",
+                "ojo_label": f"1° Ojo ({p1_desc.title()})",
+                "ojo_desc": f"1° Ojo a Operar ({p1_desc} - {primer_ojo})",
                 "etapa": "1er_ojo",
-                "cirugia": f"{cirugia_nombre} ({primer_ojo})",
+                "cirugia": _formatear_cirugia_con_ojo_completo(cirugia_nombre, primer_ojo),
                 "fecha": _fmt_fecha(f1_iso),
                 "fecha_iso": str(f1_iso or ""),
                 "hora": h1_disp,
@@ -3392,10 +3425,10 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
             segundo_ojo_info = {
                 "turno_id": turno_2.get("id") if turno_2 else None,
                 "ojo": segundo_ojo,
-                "ojo_label": f"2° Ojo ({segundo_ojo})",
-                "ojo_desc": f"2° Ojo a Operar ({'Ojo Derecho - OD' if segundo_ojo == 'OD' else 'Ojo Izquierdo - OI'})",
+                "ojo_label": f"2° Ojo ({p2_desc.title()})",
+                "ojo_desc": f"2° Ojo a Operar ({p2_desc} - {segundo_ojo})",
                 "etapa": "2do_ojo",
-                "cirugia": f"{cirugia_nombre} ({segundo_ojo})",
+                "cirugia": _formatear_cirugia_con_ojo_completo(cirugia_nombre, segundo_ojo),
                 "fecha": _fmt_fecha(f2_iso),
                 "fecha_iso": str(f2_iso or ""),
                 "hora": h2_disp,
@@ -3416,7 +3449,8 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
                 seleccionado = primer_ojo_info
         else:
             # Caso Unilateral o Bilateral Simultáneo (1 solo acto)
-            cirugia_completa = f"{cirugia_nombre} ({ojo_caso})" if ojo_caso and ojo_caso not in cirugia_nombre else cirugia_nombre
+            cirugia_completa = _formatear_cirugia_con_ojo_completo(cirugia_nombre, ojo_caso)
+            ojo_desc_uni = _describir_ojo(ojo_caso)
             turno_elegido = turnos_activos[0] if turnos_activos else None
             fecha_cirugia = caso.get("fecha_definitiva_cirugia") or (turno_elegido.get("fecha_cirugia") if turno_elegido else None) or caso.get("fecha_probable_cirugia")
             hora_cirugia = turno_elegido.get("hora_inicio") if turno_elegido else None
@@ -3429,8 +3463,8 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
             seleccionado = {
                 "turno_id": turno_elegido.get("id") if turno_elegido else None,
                 "ojo": ojo_caso or "OD",
-                "ojo_label": f"Ojo {ojo_caso}" if ojo_caso else "Cirugía",
-                "ojo_desc": "Cirugía Quirúrgica",
+                "ojo_label": f"{ojo_desc_uni.title()} ({ojo_caso})" if ojo_caso else "Cirugía",
+                "ojo_desc": f"Cirugía {ojo_desc_uni}" if ojo_desc_uni else "Cirugía Quirúrgica",
                 "etapa": "unico",
                 "cirugia": cirugia_completa,
                 "fecha": _fmt_fecha(fecha_cirugia),
