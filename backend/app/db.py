@@ -3164,10 +3164,11 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 except Exception as e_t:
                     logger.warning(f"Aviso al sincronizar turno desde asesoría {asesoria_id}: {e_t}")
 
-        # 2.b Sincronizar asignación de fecha/quirofano/hora si viene en payload o si cambió fecha definitiva
+        # 2.b Sincronizar asignación de fecha/quirofano/hora si viene en payload o si cambió fecha definitiva / orden bilateral
         if any(k in payload for k in [
             "quirofano_id", "hora_inicio", "duracion_minutos", "fecha_definitiva_cirugia", "cancelar_turno_1",
-            "quirofano_id_2do_ojo", "hora_inicio_2do_ojo", "duracion_minutos_2do_ojo", "fecha_definitiva_2do_ojo", "cancelar_turno_2"
+            "quirofano_id_2do_ojo", "hora_inicio_2do_ojo", "duracion_minutos_2do_ojo", "fecha_definitiva_2do_ojo", "cancelar_turno_2",
+            "checklist_prequirurgico", "modalidad_bilateral", "ojo"
         ]):
             try:
                 sincronizar_turno_quirofano_desde_asesoria(asesoria_id, payload, resp.data[0])
@@ -3187,18 +3188,15 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
 
         # Cargar asesoría con turnos activos actualizados para respuesta atómica
         try:
-            res_full = supabase.table("asesorias_quirurgicas") \
-                .select("*, turnos_quirofano(*, quirofanos(nombre, codigo, color))") \
-                .eq("id", asesoria_id) \
-                .limit(1) \
-                .execute()
-            if res_full.data:
-                caso_res = res_full.data[0]
-                t_list = caso_res.get("turnos_quirofano") or []
-                caso_res["turnos_activos"] = [t for t in t_list if t.get("estado") != "cancelado"]
-                return caso_res
-        except Exception:
-            pass
+            res_as = supabase.table("asesorias_quirurgicas").select("*").eq("id", asesoria_id).limit(1).execute()
+            caso_res = res_as.data[0] if (res_as and res_as.data) else resp.data[0]
+            res_t = supabase.table("turnos_quirofano").select("*, quirofanos(nombre, codigo, color)").eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+            turnos_act = res_t.data or []
+            caso_res["turnos_activos"] = turnos_act
+            caso_res["turnos_quirofano"] = turnos_act
+            return caso_res
+        except Exception as e_ret_t:
+            logger.warning(f"Aviso enriqueciendo asesoría actualizada con turnos: {e_ret_t}")
 
         return resp.data[0]
     except Exception as e:
@@ -3386,13 +3384,44 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
             fecha_1 = caso.get("fecha_definitiva_cirugia") or caso.get("fecha_probable_cirugia")
             fecha_2 = meta_bilateral.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_probable_2do_ojo") or fecha_1
 
-            turno_1 = next((t for t in turnos_activos if (t.get("ojo") or "").upper() == primer_ojo), None)
-            if not turno_1 and turnos_activos:
-                turno_1 = turnos_activos[0]
+            # Emparejamiento posicional y cronológico riguroso (1° turno -> fecha_1/primer_ojo; 2° turno -> fecha_2/segundo_ojo)
+            turnos_candidatos = sorted(turnos_activos, key=lambda x: (str(x.get("fecha_cirugia") or ""), str(x.get("hora_inicio") or "")))
+            candidatos_pool = list(turnos_candidatos)
 
-            turno_2 = next((t for t in turnos_activos if (t.get("ojo") or "").upper() == segundo_ojo and (not turno_1 or t.get("id") != turno_1.get("id"))), None)
-            if not turno_2 and len(turnos_activos) > 1:
-                turno_2 = turnos_activos[1]
+            turno_1 = None
+            if fecha_1:
+                for t in candidatos_pool:
+                    if str(t.get("fecha_cirugia") or "") == str(fecha_1):
+                        turno_1 = t
+                        candidatos_pool.remove(t)
+                        break
+            if not turno_1 and candidatos_pool:
+                turno_1 = candidatos_pool.pop(0)
+
+            turno_2 = None
+            if fecha_2:
+                for t in candidatos_pool:
+                    if str(t.get("fecha_cirugia") or "") == str(fecha_2):
+                        turno_2 = t
+                        candidatos_pool.remove(t)
+                        break
+            if not turno_2 and candidatos_pool:
+                turno_2 = candidatos_pool.pop(0)
+
+            # Saneamiento proactivo en BD si la lateralidad del turno físico difiere de la planificación quirúrgica
+            if turno_1 and (turno_1.get("ojo") or "").upper() != primer_ojo:
+                try:
+                    supabase.table("turnos_quirofano").update({"ojo": primer_ojo, "updated_at": "now()"}).eq("id", turno_1["id"]).execute()
+                    turno_1["ojo"] = primer_ojo
+                except Exception as e_upd_o1:
+                    logger.warning(f"Aviso actualizando lateralidad de turno 1 en recordatorio: {e_upd_o1}")
+
+            if turno_2 and (turno_2.get("ojo") or "").upper() != segundo_ojo:
+                try:
+                    supabase.table("turnos_quirofano").update({"ojo": segundo_ojo, "updated_at": "now()"}).eq("id", turno_2["id"]).execute()
+                    turno_2["ojo"] = segundo_ojo
+                except Exception as e_upd_o2:
+                    logger.warning(f"Aviso actualizando lateralidad de turno 2 en recordatorio: {e_upd_o2}")
 
             rec_qx = chk.get("_recordatorio_qx") or {}
             if not isinstance(rec_qx, dict):
@@ -6916,6 +6945,11 @@ def crear_turno_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
                     payload["practica_nombre"] = as_data.get("practica_nombre")
                 if not payload.get("practica_codigo") and as_data.get("practica_codigo"):
                     payload["practica_codigo"] = as_data.get("practica_codigo")
+                if not payload.get("cirujano_nombre"):
+                    payload["cirujano_nombre"] = as_data.get("medico_cirujano_nombre") or "A designar"
+
+        if not payload.get("cirujano_nombre"):
+            payload["cirujano_nombre"] = "A designar"
         
         resp = supabase.table("turnos_quirofano").insert(payload).execute()
         if not resp.data or len(resp.data) == 0:
@@ -7020,6 +7054,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
         meta_bilateral = checklist.get("_meta_bilateral") or {}
         if not isinstance(meta_bilateral, dict):
             meta_bilateral = {}
+        modalidad = payload_agenda.get("modalidad_bilateral") or meta_bilateral.get("modalidad") or asesoria_db.get("modalidad_bilateral")
         es_bilateral_escalonada = (ojo_caso == "AO" and str(modalidad or "").lower() == "escalonada")
 
         orden = meta_bilateral.get("orden") or "OD_primero"
@@ -7043,21 +7078,49 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
         turnos_procesados = []
 
         # -------------------------------------------------------------
+        # EMPAREJAMIENTO DE TURNOS EXISTENTES (BILATERAL ESCALONADA VS UNILATERAL)
+        # -------------------------------------------------------------
+        fecha_p1 = payload_agenda.get("fecha_definitiva_cirugia") if "fecha_definitiva_cirugia" in payload_agenda else asesoria_db.get("fecha_definitiva_cirugia")
+        fecha_p2 = (payload_agenda.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo")) if es_bilateral_escalonada else None
+
+        turno_p1 = None
+        turno_p2 = None
+
+        if es_bilateral_escalonada:
+            # Ordenar turnos activos cronológicamente
+            turnos_ordenados = sorted(turnos_existentes, key=lambda x: (str(x.get("fecha_cirugia") or ""), str(x.get("hora_inicio") or "")))
+            candidatos = list(turnos_ordenados)
+
+            # 1. Emparejar turno 1 por fecha_definitiva_cirugia
+            if fecha_p1:
+                for t in candidatos:
+                    if str(t.get("fecha_cirugia") or "") == str(fecha_p1):
+                        turno_p1 = t
+                        candidatos.remove(t)
+                        break
+
+            # 2. Emparejar turno 2 por fecha_definitiva_2do_ojo
+            if fecha_p2:
+                for t in candidatos:
+                    if str(t.get("fecha_cirugia") or "") == str(fecha_p2):
+                        turno_p2 = t
+                        candidatos.remove(t)
+                        break
+
+            # 3. Asignación cronológica de respaldo para slots no emparejados por fecha
+            if not turno_p1 and candidatos:
+                turno_p1 = candidatos.pop(0)
+            if not turno_p2 and candidatos:
+                turno_p2 = candidatos.pop(0)
+        else:
+            if turnos_existentes:
+                turno_p1 = turnos_existentes[0]
+
+        # -------------------------------------------------------------
         # 1. PROCESAR TURNO PRINCIPAL / 1° OJO
         # -------------------------------------------------------------
         ojo_p1 = primer_ojo if es_bilateral_escalonada else ojo_caso
-        turno_p1 = None
-        for t in turnos_existentes:
-            t_ojo = (t.get("ojo") or "").upper()
-            if es_bilateral_escalonada:
-                if t_ojo == primer_ojo:
-                    turno_p1 = t
-                    break
-            else:
-                turno_p1 = t
-                break
 
-        fecha_p1 = payload_agenda.get("fecha_definitiva_cirugia") if "fecha_definitiva_cirugia" in payload_agenda else asesoria_db.get("fecha_definitiva_cirugia")
         quirofano_p1 = payload_agenda.get("quirofano_id") or (turno_p1.get("quirofano_id") if turno_p1 else None)
         hora_p1 = payload_agenda.get("hora_inicio") or (turno_p1.get("hora_inicio") if turno_p1 else None)
         dur_p1 = int(payload_agenda.get("duracion_minutos") or (turno_p1.get("duracion_minutos") if turno_p1 else 45) or 45)
@@ -7078,7 +7141,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 "ojo": ojo_p1,
                 "es_bilateral_escalonada": es_bilateral_escalonada,
                 "cirujano_id": asesoria_db.get("medico_cirujano_id"),
-                "cirujano_nombre": asesoria_db.get("medico_cirujano_nombre"),
+                "cirujano_nombre": asesoria_db.get("medico_cirujano_nombre") or "A designar",
                 "practica_codigo": asesoria_db.get("practica_codigo"),
                 "practica_nombre": asesoria_db.get("practica_nombre"),
                 "obra_social": asesoria_db.get("cobertura_obra_social"),
@@ -7101,12 +7164,6 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
         # 2. PROCESAR 2° OJO (EN CASO DE BILATERAL ESCALONADA)
         # -------------------------------------------------------------
         if es_bilateral_escalonada:
-            turno_p2 = None
-            for t in turnos_existentes:
-                if (t.get("ojo") or "").upper() == segundo_ojo:
-                    turno_p2 = t
-                    break
-
             fecha_p2 = payload_agenda.get("fecha_definitiva_2do_ojo") or meta_bilateral.get("fecha_definitiva_2do_ojo")
             quirofano_p2 = payload_agenda.get("quirofano_id_2do_ojo") or meta_bilateral.get("quirofano_id_2do_ojo") or (turno_p2.get("quirofano_id") if turno_p2 else None)
             hora_p2 = payload_agenda.get("hora_inicio_2do_ojo") or meta_bilateral.get("hora_inicio_2do_ojo") or (turno_p2.get("hora_inicio") if turno_p2 else None)
@@ -7127,7 +7184,7 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     "ojo": segundo_ojo,
                     "es_bilateral_escalonada": True,
                     "cirujano_id": asesoria_db.get("medico_cirujano_id"),
-                    "cirujano_nombre": asesoria_db.get("medico_cirujano_nombre"),
+                    "cirujano_nombre": asesoria_db.get("medico_cirujano_nombre") or "A designar",
                     "practica_codigo": asesoria_db.get("practica_codigo"),
                     "practica_nombre": asesoria_db.get("practica_nombre"),
                     "obra_social": asesoria_db.get("cobertura_obra_social"),
@@ -7171,6 +7228,71 @@ def get_consentimiento_by_token(token: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error al buscar consentimiento por token: {e}")
         return None
+
+def resolver_descripcion_ojo_clinico(turno: Optional[Dict[str, Any]]) -> str:
+    """
+    Resuelve la descripción canónica y pericial de la lateralidad para turnos y consentimientos,
+    distinguiendo rigurosamente:
+    - 1° Ojo a Intervenir: OJO IZQUIERDO (OI) - 1° ETAPA QUIRÚRGICA
+    - 2° Ojo a Intervenir: OJO DERECHO (OD) - 2° ETAPA QUIRÚRGICA
+    - AMBOS OJOS (AO) - EN EL MISMO ACTO QUIRÚRGICO
+    - OJO DERECHO (OD) / OJO IZQUIERDO (OI) en intervenciones unilaterales.
+    """
+    if not turno:
+        return "OJO DERECHO (OD)"
+
+    ojo_desc_prev = turno.get("ojo_desc")
+    if ojo_desc_prev and ("ETAPA" in str(ojo_desc_prev).upper() or "ACTO" in str(ojo_desc_prev).upper()):
+        return str(ojo_desc_prev).strip()
+
+    ojo = (turno.get("ojo") or "OD").upper()
+    ojo_lado = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    
+    es_escalonada = bool(turno.get("es_bilateral_escalonada"))
+    as_id = turno.get("asesoria_id")
+    
+    if as_id and supabase:
+        try:
+            res_as = supabase.table("asesorias_quirurgicas").select("ojo, checklist_prequirurgico, fecha_definitiva_cirugia").eq("id", as_id).limit(1).execute()
+            if res_as.data:
+                as_row = res_as.data[0]
+                chk = as_row.get("checklist_prequirurgico") or {}
+                meta_bi = chk.get("_meta_bilateral") or {}
+                if as_row.get("ojo") == "AO" and str(meta_bi.get("modalidad") or "").lower() == "escalonada":
+                    es_escalonada = True
+                    orden = meta_bi.get("orden") or "OD_primero"
+                    p1_ojo = "OI" if orden == "OI_primero" else "OD"
+                    p2_ojo = "OD" if p1_ojo == "OI" else "OI"
+                    
+                    if ojo == p1_ojo and ojo != p2_ojo:
+                        return f"1° OJO A INTERVENIR: {ojo_lado} - 1° ETAPA QUIRÚRGICA"
+                    elif ojo == p2_ojo and ojo != p1_ojo:
+                        return f"2° OJO A INTERVENIR: {ojo_lado} - 2° ETAPA QUIRÚRGICA"
+                    
+                    f_turno = str(turno.get("fecha_cirugia") or "")
+                    f_def1 = str(as_row.get("fecha_definitiva_cirugia") or "")
+                    f_def2 = str(meta_bi.get("fecha_definitiva_2do_ojo") or "")
+                    if f_turno and f_turno == f_def1:
+                        return f"1° OJO A INTERVENIR: {ojo_lado} - 1° ETAPA QUIRÚRGICA"
+                    elif f_turno and f_turno == f_def2:
+                        return f"2° OJO A INTERVENIR: {ojo_lado} - 2° ETAPA QUIRÚRGICA"
+        except Exception as e_res:
+            logger.warning(f"Aviso resolviendo lateralidad clínica extendida: {e_res}")
+
+    if es_escalonada:
+        etapa = str(turno.get("etapa") or turno.get("etapa_quirurgica") or "").lower()
+        if etapa in ("1er_ojo", "primer_ojo", "1") or turno.get("es_primer_ojo"):
+            return f"1° OJO A INTERVENIR: {ojo_lado} - 1° ETAPA QUIRÚRGICA"
+        elif etapa in ("2do_ojo", "segundo_ojo", "2") or turno.get("es_segundo_ojo"):
+            return f"2° OJO A INTERVENIR: {ojo_lado} - 2° ETAPA QUIRÚRGICA"
+        return f"{ojo_lado} - ETAPA QUIRÚRGICA INDEPENDIENTE"
+
+    if ojo == "AO":
+        return "AMBOS OJOS (AO) - EN EL MISMO ACTO QUIRÚRGICO"
+    elif ojo == "OI":
+        return "OJO IZQUIERDO (OI)"
+    return "OJO DERECHO (OD)"
+
 
 def registrar_firma_consentimiento(
     token: str,
@@ -7224,12 +7346,14 @@ def registrar_firma_consentimiento(
             "otorgando mi consentimiento libre e informado."
         )
     
-    # Reemplazo seguro de variables dinámicas
-    ojo = turno.get("ojo") or "OD"
-    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
-    # Jerarquía estricta de fecha para el documento legal
+    # Reemplazo seguro de variables dinámicas con descripción pericial de lateralidad
+    ojo_desc = resolver_descripcion_ojo_clinico(turno)
+    turno["ojo_desc"] = ojo_desc
+    # Jerarquía estricta de fecha para el documento legal:
+    # 1° fecha_cirugia del propio turno (indispensable para 1° y 2° ojo en bilaterales escalonadas)
+    # 2° Fallback a fecha_definitiva_cirugia si el turno no tuviese fecha asignada
     fecha_cirugia_val = str(turno.get("fecha_cirugia") or "")
-    if turno.get("asesoria_id"):
+    if not fecha_cirugia_val and turno.get("asesoria_id"):
         try:
             res_a_f = supabase.table("asesorias_quirurgicas").select("fecha_definitiva_cirugia").eq("id", turno["asesoria_id"]).limit(1).execute()
             if res_a_f.data and res_a_f.data[0].get("fecha_definitiva_cirugia"):
@@ -7649,18 +7773,28 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 }
             }
 
-        # Buscar turno del 1° ojo
+        # Ordenar turnos cronológicamente por fecha de cirugía y hora
+        turnos_ordenados = sorted(turnos, key=lambda x: (str(x.get("fecha_cirugia") or ""), str(x.get("hora_inicio") or "")))
+        turnos_candidatos = list(turnos_ordenados)
+
+        # 1. Emparejar turno del 1° ojo (prioridad: fecha_1; respaldo: 1er turno cronológico)
         turno_1 = None
-        for t in turnos:
-            if (t.get("ojo") or "").upper() == primer_ojo:
-                turno_1 = t
-                break
-        if not turno_1 and turnos:
-            # Si hay un turno creado con AO o sin ojo específico, asignarle el primer ojo
-            turno_1 = turnos[0]
-            if (turno_1.get("ojo") or "").upper() != primer_ojo:
+        if fecha_1:
+            for t in turnos_candidatos:
+                if str(t.get("fecha_cirugia") or "") == str(fecha_1):
+                    turno_1 = t
+                    turnos_candidatos.remove(t)
+                    break
+        if not turno_1 and turnos_candidatos:
+            turno_1 = turnos_candidatos.pop(0)
+
+        # Garantizar que el turno_1 tenga la lateralidad correcta del 1° ojo
+        if turno_1 and (turno_1.get("ojo") or "").upper() != primer_ojo:
+            try:
                 supabase.table("turnos_quirofano").update({"ojo": primer_ojo, "updated_at": "now()"}).eq("id", turno_1["id"]).execute()
                 turno_1["ojo"] = primer_ojo
+            except Exception as e_upd_o1:
+                logger.warning(f"Aviso actualizando lateralidad de turno 1 en consentimiento: {e_upd_o1}")
 
         # Si no existe turno 1 y se pide crear:
         if not turno_1 and crear_si_no_existe:
@@ -7671,12 +7805,24 @@ def asegurar_turnos_para_consentimiento_asesoria(
                 supabase.table("turnos_quirofano").update({"consentimiento_token": tok1, "updated_at": "now()"}).eq("id", turno_1["id"]).execute()
                 turno_1["consentimiento_token"] = tok1
 
-        # Buscar turno del 2° ojo
+        # 2. Emparejar turno del 2° ojo (prioridad: fecha_2; respaldo: siguiente turno cronológico)
         turno_2 = None
-        for t in turnos:
-            if (not turno_1 or t.get("id") != turno_1.get("id")) and (t.get("ojo") or "").upper() == segundo_ojo:
-                turno_2 = t
-                break
+        if fecha_2:
+            for t in turnos_candidatos:
+                if str(t.get("fecha_cirugia") or "") == str(fecha_2):
+                    turno_2 = t
+                    turnos_candidatos.remove(t)
+                    break
+        if not turno_2 and turnos_candidatos:
+            turno_2 = turnos_candidatos.pop(0)
+
+        # Garantizar que el turno_2 tenga la lateralidad correcta del 2° ojo
+        if turno_2 and (turno_2.get("ojo") or "").upper() != segundo_ojo:
+            try:
+                supabase.table("turnos_quirofano").update({"ojo": segundo_ojo, "updated_at": "now()"}).eq("id", turno_2["id"]).execute()
+                turno_2["ojo"] = segundo_ojo
+            except Exception as e_upd_o2:
+                logger.warning(f"Aviso actualizando lateralidad de turno 2 en consentimiento: {e_upd_o2}")
 
         # Si no existe turno 2 y se pide crear con la fecha del 2° ojo:
         if not turno_2 and crear_si_no_existe and turno_1:
@@ -7915,30 +8061,8 @@ def generar_pdf_consentimiento_papel(turno_o_asesoria: Dict[str, Any]) -> str:
         plantillas = config.get("plantillas_consentimiento") or []
         cuerpo_template = plantillas[0]["cuerpo"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
         
-    ojo = turno.get("ojo") or "OD"
-    es_escalonado = turno.get("es_bilateral_escalonada", False)
-    as_id_t = turno.get("asesoria_id")
-    ojo_desc = None
-    if as_id_t:
-        try:
-            info_d = asegurar_turnos_para_consentimiento_asesoria(as_id_t)
-            if info_d.get("es_bilateral_escalonada"):
-                es_escalonado = True
-                p1 = info_d.get("primer_ojo") or {}
-                if turno.get("id") == p1.get("turno_id") or ojo == p1.get("ojo"):
-                    ojo_desc = f"1° OJO A INTERVENIR: {'OJO DERECHO (OD)' if ojo == 'OD' else 'OJO IZQUIERDO (OI)'} - 1° ETAPA QUIRÚRGICA"
-                else:
-                    ojo_desc = f"2° OJO A INTERVENIR: {'OJO DERECHO (OD)' if ojo == 'OD' else 'OJO IZQUIERDO (OI)'} - 2° ETAPA QUIRÚRGICA"
-        except Exception:
-            pass
-
-    if not ojo_desc:
-        if ojo == "AO":
-            ojo_desc = "AMBOS OJOS (AO) - EN EL MISMO ACTO QUIRÚRGICO"
-        elif ojo == "OI":
-            ojo_desc = "OJO IZQUIERDO (OI)"
-        else:
-            ojo_desc = "OJO DERECHO (OD)"
+    ojo_desc = resolver_descripcion_ojo_clinico(turno)
+    turno["ojo_desc"] = ojo_desc
     
     cuerpo_final = render_consent_template(
         cuerpo_template,

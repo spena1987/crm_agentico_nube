@@ -483,8 +483,9 @@ def servir_archivo_estatico(filename: str):
                             plantillas = config.get("plantillas_consentimiento") or []
                             cuerpo_template = plantillas[0]["cuerpo"] if plantillas else "Consentimiento informado para procedimiento quirúrgico."
                             
-                        ojo = t_data.get("ojo") or "OD"
-                        ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+                        from app.db import resolver_descripcion_ojo_clinico
+                        ojo_desc = resolver_descripcion_ojo_clinico(t_data)
+                        t_data["ojo_desc"] = ojo_desc
                         
                         cuerpo_final = render_consent_template(
                             cuerpo_template,
@@ -5392,12 +5393,14 @@ def obtener_datos_consentimiento_publico(token: str):
                     "Comprendo y acepto los riesgos, beneficios y cuidados médicos indicados."
                 )
             
-        ojo = turno.get("ojo") or "OD"
-        ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+        from app.db import resolver_descripcion_ojo_clinico
+        ojo_desc = resolver_descripcion_ojo_clinico(turno)
+        turno["ojo_desc"] = ojo_desc
         
-        # Jerarquía de fecha: 1° fecha_definitiva_cirugia del expediente, 2° fecha_cirugia del turno
+        # Jerarquía de fecha canónica: 1° fecha_cirugia del propio turno (indispensable para 1° vs 2° ojo en bilaterales)
+        # 2° Fallback a la asesoría si el turno no tuviese fecha asignada
         fecha_cirugia_val = str(turno.get("fecha_cirugia") or "")
-        if turno.get("asesoria_id"):
+        if not fecha_cirugia_val and turno.get("asesoria_id"):
             try:
                 res_a_f = supabase.table("asesorias_quirurgicas").select("fecha_definitiva_cirugia, fecha_probable_cirugia").eq("id", turno["asesoria_id"]).limit(1).execute()
                 if res_a_f.data and res_a_f.data[0].get("fecha_definitiva_cirugia"):
@@ -5612,8 +5615,8 @@ def verificar_consentimiento_endpoint(token: str):
     hash_payload = f"{t['id']}:{pac.get('dni')}:{ts_utc}:{ip}:{sig_hash}"
     doc_hash = hashlib.sha256(hash_payload.encode()).hexdigest()
     
-    ojo = t.get("ojo") or "OD"
-    ojo_desc = "Ojo Derecho (OD)" if ojo == "OD" else "Ojo Izquierdo (OI)" if ojo == "OI" else "Ambos Ojos (AO)"
+    from app.db import resolver_descripcion_ojo_clinico
+    ojo_desc = resolver_descripcion_ojo_clinico(t)
 
     return {
         "success": True,

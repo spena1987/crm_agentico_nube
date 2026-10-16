@@ -909,8 +909,14 @@ def generar_html_consentimiento(
         extensions=['extra', 'nl2br', 'sane_lists']
     )
     
-    ojo = turno.get("ojo") or "OD"
-    ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
+    ojo_desc = turno.get("ojo_desc")
+    if not ojo_desc or not ("ETAPA" in str(ojo_desc).upper() or "ACTO" in str(ojo_desc).upper()):
+        try:
+            from app.db import resolver_descripcion_ojo_clinico
+            ojo_desc = resolver_descripcion_ojo_clinico(turno)
+        except Exception:
+            ojo = turno.get("ojo") or "OD"
+            ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
     
     # Preparar firma base64 si existe
     sig_b64 = firma_img_base64

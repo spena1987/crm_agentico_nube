@@ -470,18 +470,34 @@ export default function CasoFormularioActivo({
   const [quirofanos, setQuirofanos] = useState<any[]>([])
   const [cargandoQuirofanos, setCargandoQuirofanos] = useState(false)
 
+  // Agenda Quirúrgica Inicial desde checklist_prequirurgico o caso
+  const agendaInicial = ((caso.checklist_prequirurgico as any)?._agenda_qx) || {}
+  const metaBilateralAgenda = ((caso.checklist_prequirurgico as any)?._meta_bilateral) || {}
+
   // Asignación de Turno en Quirófano (1° Ojo / Turno Principal)
-  const [quirofanoId, setQuirofanoId] = useState<string>('')
-  const [horaInicio, setHoraInicio] = useState<string>('08:00')
-  const [duracionMinutos, setDuracionMinutos] = useState<number>(45)
+  const [quirofanoId, setQuirofanoId] = useState<string>(() => {
+    return agendaInicial.quirofano_id || (caso as any).quirofano_id || ''
+  })
+  const [horaInicio, setHoraInicio] = useState<string>(() => {
+    return agendaInicial.hora_inicio || (caso as any).hora_inicio || '08:00'
+  })
+  const [duracionMinutos, setDuracionMinutos] = useState<number>(() => {
+    return Number(agendaInicial.duracion_minutos || (caso as any).duracion_minutos || 45)
+  })
   const [turnosFecha, setTurnosFecha] = useState<any[]>([])
   const [bloqueosFecha, setBloqueosFecha] = useState<any[]>([])
   const [cargandoAgendaFecha, setCargandoAgendaFecha] = useState(false)
 
   // Asignación de Turno en Quirófano para 2° Ojo (Bilateral Escalonada)
-  const [quirofanoId2doOjo, setQuirofanoId2doOjo] = useState<string>('')
-  const [horaInicio2doOjo, setHoraInicio2doOjo] = useState<string>('08:00')
-  const [duracionMinutos2doOjo, setDuracionMinutos2doOjo] = useState<number>(45)
+  const [quirofanoId2doOjo, setQuirofanoId2doOjo] = useState<string>(() => {
+    return metaBilateralAgenda.quirofano_id_2do_ojo || (caso as any).quirofano_id_2do_ojo || ''
+  })
+  const [horaInicio2doOjo, setHoraInicio2doOjo] = useState<string>(() => {
+    return metaBilateralAgenda.hora_inicio_2do_ojo || (caso as any).hora_inicio_2do_ojo || '08:00'
+  })
+  const [duracionMinutos2doOjo, setDuracionMinutos2doOjo] = useState<number>(() => {
+    return Number(metaBilateralAgenda.duracion_minutos_2do_ojo || (caso as any).duracion_minutos_2do_ojo || 45)
+  })
   const [turnosFecha2doOjo, setTurnosFecha2doOjo] = useState<any[]>([])
   const [bloqueosFecha2doOjo, setBloqueosFecha2doOjo] = useState<any[]>([])
   const [cargandoAgendaFecha2doOjo, setCargandoAgendaFecha2doOjo] = useState(false)
@@ -510,10 +526,15 @@ export default function CasoFormularioActivo({
   useEffect(() => {
     if (turnosActivos.length > 0) {
       if (ojo === 'AO' && modalidadBilateral === 'escalonada') {
-        const segundoOjo = ordenOjos === 'OD_primero' ? 'OI' : 'OD'
-        const primerOjo = ordenOjos === 'OD_primero' ? 'OD' : 'OI'
+        // Ordenar turnos activos cronológicamente por fecha de cirugía y hora
+        const turnosOrdenados = [...turnosActivos].sort((a: any, b: any) => {
+          const fA = `${a.fecha_cirugia || ''} ${a.hora_inicio || ''}`
+          const fB = `${b.fecha_cirugia || ''} ${b.hora_inicio || ''}`
+          return fA.localeCompare(fB)
+        })
 
-        const turno1 = turnosActivos.find((t: any) => (t.ojo || '').toUpperCase() === primerOjo) || turnosActivos[0]
+        // Turno 1 (1° ojo): Buscar primero por coincidencia con fechaDefinitiva; si no, el primer turno cronológico
+        const turno1 = (fechaDefinitiva ? turnosOrdenados.find((t: any) => t.fecha_cirugia === fechaDefinitiva) : null) || turnosOrdenados[0]
         if (turno1) {
           if (!fechaDefinitiva && turno1.fecha_cirugia) setFechaDefinitiva(turno1.fecha_cirugia)
           if (turno1.quirofano_id) setQuirofanoId(turno1.quirofano_id)
@@ -521,7 +542,9 @@ export default function CasoFormularioActivo({
           if (turno1.duracion_minutos) setDuracionMinutos(Number(turno1.duracion_minutos))
         }
 
-        const turno2 = turnosActivos.find((t: any) => (t.ojo || '').toUpperCase() === segundoOjo)
+        // Turno 2 (2° ojo): Buscar primero por coincidencia con fechaDefinitiva2doOjo; si no, el segundo turno cronológico
+        const turnosRestantes = turnosOrdenados.filter((t: any) => !turno1 || t.id !== turno1.id)
+        const turno2 = (fechaDefinitiva2doOjo ? turnosRestantes.find((t: any) => t.fecha_cirugia === fechaDefinitiva2doOjo) : null) || turnosRestantes[0]
         if (turno2) {
           if (!fechaDefinitiva2doOjo && turno2.fecha_cirugia) setFechaDefinitiva2doOjo(turno2.fecha_cirugia)
           if (turno2.quirofano_id) setQuirofanoId2doOjo(turno2.quirofano_id)
@@ -529,7 +552,7 @@ export default function CasoFormularioActivo({
           if (turno2.duracion_minutos) setDuracionMinutos2doOjo(Number(turno2.duracion_minutos))
         }
       } else {
-        const turnoUnico = turnosActivos.find((t: any) => (t.ojo || '').toUpperCase() === ojo) || turnosActivos[0]
+        const turnoUnico = (fechaDefinitiva ? turnosActivos.find((t: any) => t.fecha_cirugia === fechaDefinitiva) : null) || turnosActivos[0]
         if (turnoUnico) {
           if (!fechaDefinitiva && turnoUnico.fecha_cirugia) setFechaDefinitiva(turnoUnico.fecha_cirugia)
           if (turnoUnico.quirofano_id) setQuirofanoId(turnoUnico.quirofano_id)
@@ -538,7 +561,7 @@ export default function CasoFormularioActivo({
         }
       }
     }
-  }, [turnosActivos, ojo, modalidadBilateral, ordenOjos])
+  }, [turnosActivos, ojo, modalidadBilateral])
 
   // Cargar agenda de la fecha definitiva (1° ojo / Principal)
   useEffect(() => {
