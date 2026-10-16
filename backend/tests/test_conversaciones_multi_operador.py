@@ -160,3 +160,85 @@ def test_send_message_autoasignar_conversacion_sin_asignar():
         data = resp.json()
         assert data.get("caso_autoasignado") is True
         mock_tomar.assert_called_once_with("conv-999", "user-operator-123", "Lucía Ramos")
+
+
+@pytest.mark.asyncio
+async def test_inbound_reapertura_conversacion_resuelta():
+    """
+    Verifica que al recibir un mensaje entrante de un paciente cuya conversación
+    está en 'RESUELTO' o 'archivada=True', el worker la reabra automáticamente:
+    - archivada = False
+    - estado_gestion = 'SIN_ASIGNAR'
+    - asignado_a_usuario_id = None
+    - bot_disabled = True
+    """
+    from app.services.whatsapp_cloud.worker import process_meta_webhook_payload
+
+    meta_payload = {
+        "entry": [{
+            "changes": [{
+                "value": {
+                    "messages": [{
+                        "from": "5492614703230",
+                        "id": "wamid.TEST_INBOUND_REOPEN",
+                        "timestamp": "1729100000",
+                        "type": "text",
+                        "text": {"body": "Hola, tengo una nueva consulta."}
+                    }],
+                    "contacts": [{
+                        "wa_id": "5492614703230",
+                        "profile": {"name": "Juan Perez"}
+                    }]
+                }
+            }]
+        }]
+    }
+
+    with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sb, \
+         patch("app.db.es_bot_activo_globalmente", return_value=False):
+        
+        # Simular paciente
+        mock_pac = MagicMock()
+        mock_pac.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{"id": "pac-123", "nombre": "Juan Perez"}]
+        )
+        
+        # Simular conversación resuelta
+        mock_conv = MagicMock()
+        mock_conv.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{
+                "id": "conv-closed-99",
+                "bot_disabled": False,
+                "metadata_json": {},
+                "unread_count": 0,
+                "estado_gestion": "RESUELTO",
+                "asignado_a_usuario_id": "user-previo",
+                "archivada": True
+            }]
+        )
+        mock_conv.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
+
+        mock_mensajes = MagicMock()
+        mock_mensajes.insert.return_value.execute.return_value = MagicMock(data=[{}])
+
+        def table_router(tbl):
+            if tbl == "pacientes":
+                return mock_pac
+            elif tbl == "conversaciones":
+                return mock_conv
+            elif tbl == "mensajes":
+                return mock_mensajes
+            return MagicMock()
+
+        mock_sb.table.side_effect = table_router
+
+        await process_meta_webhook_payload(meta_payload)
+
+        # Verificar que se actualizó conversaciones con archivada=False y estado_gestion='SIN_ASIGNAR'
+        mock_conv.update.assert_called()
+        upd_call_arg = mock_conv.update.call_args[0][0]
+        assert upd_call_arg["archivada"] is False
+        assert upd_call_arg["estado_gestion"] == "SIN_ASIGNAR"
+        assert upd_call_arg["asignado_a_usuario_id"] is None
+        assert upd_call_arg["bot_disabled"] is True
+

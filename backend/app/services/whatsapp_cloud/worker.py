@@ -630,14 +630,38 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                     except Exception as ar_err:
                         logger.warning(f"Error en chequeo de auto-reactivación por inactividad: {ar_err}")
 
-                    # Si el bot seguía deshabilitado y entra un mensaje en caso cerrado/archivado,
+                    # Si el paciente vuelve a escribir en una conversación resuelta o archivada,
                     # reabrir automáticamente hacia la pestaña 'Espera' (SIN_ASIGNAR)
-                    if bot_disabled and (conv_estado == "RESUELTO" or conv_archivada):
+                    # liberando la asignación previa y pausando el bot para que una asesora quirúrgica humana lo tome.
+                    hubo_reapertura = False
+                    if conv_estado == "RESUELTO" or conv_archivada:
                         upd_payload["archivada"] = False
                         upd_payload["estado_gestion"] = "SIN_ASIGNAR"
-                        logger.info(f"[Inbound Reopen] Chat {crm_conv_id} reabierto a 'SIN_ASIGNAR' al recibir mensaje con bot apagado.")
+                        upd_payload["asignado_a_usuario_id"] = None
+                        upd_payload["bot_disabled"] = True
+                        bot_disabled = True
+                        c_meta["reabierto_automaticamente_at"] = inbound_now
+                        c_meta["motivo_reapertura"] = "Nuevo mensaje entrante de paciente en conversación resuelta"
+                        upd_payload["metadata_json"] = c_meta
+                        hubo_reapertura = True
+                        logger.info(f"[Inbound Reopen] Chat {crm_conv_id} reabierto automáticamente a 'SIN_ASIGNAR' (Espera) tras nuevo mensaje de paciente.")
 
                     supabase.table("conversaciones").update(upd_payload).eq("id", crm_conv_id).execute()
+
+                    if hubo_reapertura:
+                        try:
+                            supabase.table("mensajes").insert({
+                                "conversacion_id": crm_conv_id,
+                                "emisor": "sistema",
+                                "contenido": "💬 Conversación reabierta en 'Espera': nuevo mensaje recibido del paciente tras haber sido resuelta.",
+                                "metadata_json": {
+                                    "es_nota_interna": True,
+                                    "sistema": True,
+                                    "evento": "reapertura_por_mensaje_entrante"
+                                }
+                            }).execute()
+                        except Exception as r_err:
+                            logger.warning(f"Error registrando nota de reapertura en mensajes: {r_err}")
                 else:
                     inbound_now = datetime.now(timezone.utc).isoformat()
                     new_crm_conv = supabase.table("conversaciones").insert({
