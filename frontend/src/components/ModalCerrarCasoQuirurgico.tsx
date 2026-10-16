@@ -135,6 +135,26 @@ export default function ModalCerrarCasoQuirurgico({
         }
       }
 
+      // Sincronización fallback hacia turnos y presupuestos si fue operado
+      if (tipoCierre === 'operado') {
+        try {
+          const ahoraIso = new Date().toISOString()
+          await supabase
+            .from('turnos_quirofano' as any)
+            .update({ estado: 'operado', fin_cirugia_at: ahoraIso, updated_at: ahoraIso } as any)
+            .eq('asesoria_id', casoId)
+            .neq('estado', 'cancelado')
+
+          // Actualizar presupuesto vinculado
+          await supabase
+            .from('presupuestos' as any)
+            .update({ estado: 'operado' } as any)
+            .or(`asesoria_id.eq.${casoId},id.eq.${casoActualizado?.presupuesto_id || '00000000-0000-0000-0000-000000000000'}`)
+        } catch (syncErr) {
+          console.warn('Aviso en sincronización directa de turnos/presupuesto:', syncErr)
+        }
+      }
+
       // 2. Registrar automáticamente una nota de evolución interna en la bitácora
       const textoEvolucion = `🔒 CIERRE FORMAL DEL CASO QUIRÚRGICO\n• Resultado: ${
         tipoCierre === 'operado' ? 'Operado con Éxito' : 'Cancelado / Desistido'
@@ -303,7 +323,12 @@ export default function ModalCerrarCasoQuirurgico({
               Impacto del Cierre:
             </p>
             <p>
-              Se asentará automáticamente una nota interna en la <strong>Bitácora de Evoluciones</strong> registrada por <strong>{nombreUsuario}</strong> con la fecha/hora actual.
+              Se asentará automáticamente una nota interna en la <strong>Bitácora de Evoluciones</strong> registrada por <strong>{nombreUsuario}</strong>.
+              {tipoCierre === 'operado' && (
+                <span className="text-emerald-400 font-semibold block mt-0.5">
+                  ✔ El Turno de Quirófano y el Presupuesto Oficial vinculado se actualizarán automáticamente a estado OPERADO.
+                </span>
+              )}
             </p>
           </div>
 

@@ -37,7 +37,7 @@ export interface PresupuestoPaciente {
   total: number
   total_ars?: number
   total_usd?: number
-  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
+  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado' | 'operado'
   pdf_url?: string
   created_at: string
   updated_at?: string
@@ -78,7 +78,7 @@ export default function ModalHistorialPresupuestosPaciente({
   const [casosLocales, setCasosLocales] = useState<CasoQuirurgicoSimple[]>(casosQuirurgicos)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'aprobado' | 'enviado' | 'rechazado'>('todos')
+  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'aprobado' | 'operado' | 'enviado' | 'rechazado'>('todos')
   const [filtroCaso, setFiltroCaso] = useState<string>('todos')
   const [copiadoId, setCopiadoId] = useState<string | null>(null)
   const [actualizandoEstadoId, setActualizandoEstadoId] = useState<string | null>(null)
@@ -179,6 +179,7 @@ export default function ModalHistorialPresupuestosPaciente({
     let totalArs = 0
     let totalUsd = 0
     let aprobados = 0
+    let operados = 0
     let enviados = 0
     let rechazados = 0
 
@@ -188,12 +189,13 @@ export default function ModalHistorialPresupuestosPaciente({
       totalArs += ars
       totalUsd += usd
 
-      if (p.estado === 'aprobado') aprobados++
+      if (p.estado === 'operado') operados++
+      else if (p.estado === 'aprobado') aprobados++
       else if (p.estado === 'enviado') enviados++
       else if (p.estado === 'rechazado') rechazados++
     })
 
-    return { totalArs, totalUsd, aprobados, enviados, rechazados, total: presupuestos.length }
+    return { totalArs, totalUsd, aprobados, operados, enviados, rechazados, total: presupuestos.length }
   }, [presupuestos])
 
   // Filtrado de presupuestos
@@ -209,7 +211,7 @@ export default function ModalHistorialPresupuestosPaciente({
   }, [presupuestos, filtroEstado, filtroCaso])
 
   // Cambiar estado comercial de un presupuesto
-  const handleCambiarEstado = async (presId: string, nuevoEstado: 'aprobado' | 'enviado' | 'rechazado') => {
+  const handleCambiarEstado = async (presId: string, nuevoEstado: 'aprobado' | 'operado' | 'enviado' | 'rechazado') => {
     try {
       setActualizandoEstadoId(presId)
       const res = await fetch(`${BACKEND_URL}/api/presupuestos/${presId}/estado`, {
@@ -357,7 +359,7 @@ export default function ModalHistorialPresupuestosPaciente({
               <span className="text-[11px] font-bold text-gray-400 flex items-center gap-1 mr-1">
                 <Filter size={12} /> Estado:
               </span>
-              {(['todos', 'aprobado', 'enviado', 'rechazado'] as const).map((est) => (
+              {(['todos', 'aprobado', 'operado', 'enviado', 'rechazado'] as const).map((est) => (
                 <button
                   key={est}
                   type="button"
@@ -511,7 +513,9 @@ export default function ModalHistorialPresupuestosPaciente({
                           disabled={actualizandoEstadoId === p.id}
                           onChange={(e) => handleCambiarEstado(p.id, e.target.value as any)}
                           className={`px-2 py-1 rounded-lg text-xs font-bold border capitalize focus:outline-none ${
-                            p.estado === 'aprobado'
+                            p.estado === 'operado'
+                              ? 'bg-purple-950 text-purple-300 border-purple-500/40'
+                              : p.estado === 'aprobado'
                               ? 'bg-emerald-950 text-emerald-300 border-emerald-500/40'
                               : p.estado === 'rechazado'
                               ? 'bg-red-950 text-red-300 border-red-500/40'
@@ -520,6 +524,7 @@ export default function ModalHistorialPresupuestosPaciente({
                         >
                           <option value="enviado">Enviado</option>
                           <option value="aprobado">Aprobado</option>
+                          <option value="operado">✔ Operado</option>
                           <option value="rechazado">Rechazado</option>
                         </select>
 

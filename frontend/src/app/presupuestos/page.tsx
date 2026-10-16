@@ -30,7 +30,7 @@ interface Presupuesto {
   numero_presupuesto?: number | null
   paciente_id: string
   asesoria_id?: string | null
-  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado'
+  estado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado' | 'operado'
   total: number
   total_ars?: number
   total_usd?: number
@@ -149,7 +149,7 @@ export default function PresupuestosPage() {
   }, [])
 
   // Cambiar estado del presupuesto con sincronización bidireccional
-  const updateEstado = async (id: string, nuevoEstado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado') => {
+  const updateEstado = async (id: string, nuevoEstado: 'borrador' | 'enviado' | 'aprobado' | 'rechazado' | 'operado') => {
     try {
       // 1. Actualización optimista en la UI
       setPresupuestos((prev) => 
@@ -207,6 +207,8 @@ export default function PresupuestosPage() {
 
   const getBadgeColor = (estado: string) => {
     switch (estado) {
+      case 'operado':
+        return 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-400/40'
       case 'aprobado':
         return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400'
       case 'rechazado':
@@ -220,7 +222,7 @@ export default function PresupuestosPage() {
 
   // Cálculo de días transcurridos para badges de seguimiento
   const getFollowUpStatus = (createdAt: string, estado: string) => {
-    if (estado === 'aprobado' || estado === 'rechazado') return null
+    if (estado === 'aprobado' || estado === 'rechazado' || estado === 'operado') return null
     const diffDays = Math.floor((new Date().getTime() - new Date(createdAt).getTime()) / (1000 * 3600 * 24))
     if (diffDays <= 2) {
       return { tipo: 'reciente', label: `${diffDays === 0 ? 'Hoy' : `${diffDays}d`} • Reciente`, color: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border-emerald-200' }
@@ -407,6 +409,7 @@ export default function PresupuestosPage() {
                                 <option value="borrador">Borrador</option>
                                 <option value="enviado">Enviado</option>
                                 <option value="aprobado">Aprobado</option>
+                                <option value="operado">✔ Operado</option>
                                 <option value="rechazado">Rechazado</option>
                               </select>
                               {pres.asesorias_quirurgicas?.estado && ['confirmado', 'fecha_programada', 'programado', 'operado'].includes(pres.asesorias_quirurgicas.estado) && (
