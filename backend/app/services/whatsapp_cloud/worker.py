@@ -1227,6 +1227,9 @@ async def handle_automated_interactive_action(
     if is_confirm:
         logger.info(f"[Interactive Auto] Confirmación de turno quirúrgico para paciente {paciente_id} ({normalized_phone})")
         turno_id = None
+        target_ojo = None
+        target_asesoria_id = None
+
         if "confirmar_turno" in btn_id:
             match_id = re.search(r"confirmar_turno[_\-:]([a-zA-Z0-9\-_]+)", button_id or "", re.IGNORECASE)
             if match_id:
@@ -1234,27 +1237,73 @@ async def handle_automated_interactive_action(
             elif btn_id.startswith("confirmar_turno_"):
                 turno_id = button_id.replace("CONFIRMAR_TURNO_", "").replace("confirmar_turno_", "").strip()
 
+        # Si no vino turno_id explícito en el ID del botón (como botones interactivos Quick Reply de Meta donde payload es "confirmar_asistencia"),
+        # buscar en los últimos mensajes salientes de la conversación el turno_id referenciado en la plantilla de recordatorio.
+        if not turno_id and crm_conv_id:
+            try:
+                prev_msgs = supabase.table("mensajes") \
+                    .select("metadata_json, created_at, emisor") \
+                    .eq("conversacion_id", crm_conv_id) \
+                    .neq("emisor", "paciente") \
+                    .order("created_at", desc=True) \
+                    .limit(10) \
+                    .execute()
+                for pm in (prev_msgs.data or []):
+                    p_meta = pm.get("metadata_json") or {}
+                    if p_meta.get("tipo") == "template" and ("recordatorio" in str(p_meta.get("template_name", "")).lower() or p_meta.get("turno_id")):
+                        if p_meta.get("turno_id"):
+                            turno_id = p_meta.get("turno_id")
+                        if p_meta.get("ojo"):
+                            target_ojo = str(p_meta.get("ojo")).upper()
+                        if p_meta.get("asesoria_id"):
+                            target_asesoria_id = p_meta.get("asesoria_id")
+                        logger.info(f"[Interactive Auto] Contexto quirúrgico recuperado de mensaje previo: turno_id={turno_id}, ojo={target_ojo}, asesoria_id={target_asesoria_id}")
+                        break
+            except Exception as e_meta:
+                logger.warning(f"[Interactive Auto] Error recuperando metadata de mensaje previo: {e_meta}")
+
         turno_data = None
+        target_tid = None
         ahora_iso = datetime.now(timezone.utc).isoformat()
 
-        if paciente_id:
+        if paciente_id or turno_id:
             try:
                 today_str = datetime.now(timezone.utc).date().isoformat()
-                t_query = supabase.table("turnos_quirofano").select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, estado, checks_adicionales, practica_nombre, quirofanos(nombre)")
+                t_query = supabase.table("turnos_quirofano").select("id, asesoria_id, paciente_id, ojo, fecha_cirugia, hora_inicio, estado, checks_adicionales, practica_nombre, quirofanos(nombre)")
                 if turno_id:
                     t_query = t_query.eq("id", turno_id)
                 else:
-                    t_query = t_query.eq("paciente_id", paciente_id).in_("estado", ["pendiente", "notificado", "agendado", "confirmado"]).gte("fecha_cirugia", today_str).order("fecha_cirugia", desc=False)
+                    t_query = t_query.eq("paciente_id", paciente_id).neq("estado", "cancelado").gte("fecha_cirugia", today_str).order("fecha_cirugia", desc=False)
                 t_res = t_query.execute()
-                if t_res.data and len(t_res.data) > 0:
-                    turnos_candidatos = t_res.data
-                    # Priorizar el turno que tenga recordatorio enviado pendiente de confirmación
-                    turno_data = None
-                    for tc in turnos_candidatos:
-                        chk_tc = tc.get("checks_adicionales") or {}
-                        if isinstance(chk_tc, dict) and chk_tc.get("recordatorio_estado") == "enviado":
-                            turno_data = tc
-                            break
+                turnos_candidatos = t_res.data or []
+
+                if not turnos_candidatos and paciente_id and not turno_id:
+                    t_fallback = supabase.table("turnos_quirofano") \
+                        .select("id, asesoria_id, paciente_id, ojo, fecha_cirugia, hora_inicio, estado, checks_adicionales, practica_nombre, quirofanos(nombre)") \
+                        .eq("paciente_id", paciente_id) \
+                        .neq("estado", "cancelado") \
+                        .order("fecha_cirugia", desc=True) \
+                        .limit(5) \
+                        .execute()
+                    turnos_candidatos = t_fallback.data or []
+
+                if turnos_candidatos:
+                    # Priorizar:
+                    # 1. El que coincida con target_ojo si fue detectado en el template previo
+                    # 2. El que tenga recordatorio_estado == "enviado"
+                    # 3. El primero cronológicamente
+                    if target_ojo:
+                        for tc in turnos_candidatos:
+                            tc_ojo = (tc.get("ojo") or "").upper()
+                            if tc_ojo == target_ojo:
+                                turno_data = tc
+                                break
+                    if not turno_data:
+                        for tc in turnos_candidatos:
+                            chk_tc = tc.get("checks_adicionales") or {}
+                            if isinstance(chk_tc, dict) and chk_tc.get("recordatorio_estado") == "enviado":
+                                turno_data = tc
+                                break
                     if not turno_data:
                         turno_data = turnos_candidatos[0]
 
@@ -1267,7 +1316,6 @@ async def handle_automated_interactive_action(
                     chk["recordatorio_respuesta_texto"] = text_content
 
                     supabase.table("turnos_quirofano").update({
-                        "estado": "confirmado",
                         "checks_adicionales": chk,
                         "updated_at": ahora_iso
                     }).eq("id", target_tid).execute()
@@ -1277,9 +1325,9 @@ async def handle_automated_interactive_action(
 
             # Sincronizar en asesorias_quirurgicas y bitácora del CRM
             try:
-                as_id = turno_data.get("asesoria_id") if turno_data else None
+                as_id = turno_data.get("asesoria_id") if turno_data else target_asesoria_id
                 as_row = None
-                if not as_id:
+                if not as_id and paciente_id:
                     c_res = supabase.table("asesorias_quirurgicas") \
                         .select("id, ojo, checklist_prequirurgico, practica_nombre") \
                         .eq("paciente_id", paciente_id) \
@@ -1290,7 +1338,7 @@ async def handle_automated_interactive_action(
                     if c_res.data and len(c_res.data) > 0:
                         as_row = c_res.data[0]
                         as_id = as_row["id"]
-                else:
+                elif as_id:
                     c_res = supabase.table("asesorias_quirurgicas").select("id, ojo, checklist_prequirurgico, practica_nombre").eq("id", as_id).limit(1).execute()
                     if c_res.data and len(c_res.data) > 0:
                         as_row = c_res.data[0]
@@ -1306,7 +1354,7 @@ async def handle_automated_interactive_action(
                     if not isinstance(prev_rec, dict):
                         prev_rec = {}
 
-                    t_ojo = (turno_data.get("ojo") or "").upper()
+                    t_ojo = ((turno_data.get("ojo") if turno_data else target_ojo) or "").upper()
                     p1_ojo = "OI" if meta_bi.get("orden") == "OI_primero" else "OD"
                     p2_ojo = "OD" if p1_ojo == "OI" else "OI"
                     target_stage = "segundo_ojo" if t_ojo == p2_ojo else "primer_ojo"
@@ -1317,8 +1365,8 @@ async def handle_automated_interactive_action(
                         "respondido_at": ahora_iso,
                         "respuesta_tipo": "confirmado",
                         "respuesta_texto": text_content,
-                        "template": prev_rec.get(target_stage, {}).get("template") if es_bi else prev_rec.get("template"),
-                        "turno_id": target_tid,
+                        "template": (prev_rec.get(target_stage, {}).get("template") if es_bi else prev_rec.get("template")) or "recordatorio_cirugia_preparacion_v1",
+                        "turno_id": target_tid or (turno_data.get("id") if turno_data else None),
                         "ojo": t_ojo
                     }
 
@@ -1349,14 +1397,16 @@ async def handle_automated_interactive_action(
                     try:
                         from app.db import crear_evolucion_asesoria
                         ojo_txt = f" ({t_ojo})" if t_ojo else ""
-                        fecha_txt = turno_data.get("fecha_cirugia") or ""
-                        hora_txt = str(turno_data.get("hora_inicio") or "")[:5]
+                        fecha_txt = (turno_data.get("fecha_cirugia") if turno_data else "") or ""
+                        hora_txt = str(turno_data.get("hora_inicio") or "")[:5] if turno_data else ""
+                        hora_str_ev = f" ({hora_txt} hs)" if hora_txt else ""
+                        practica_desc = (turno_data.get("practica_nombre") if turno_data else as_row.get("practica_nombre")) or "Cirugía"
                         crear_evolucion_asesoria({
                             "asesoria_id": as_id,
                             "paciente_id": paciente_id,
                             "usuario_nombre": "Asistente WhatsApp (Meta)",
                             "tipo_contacto": "whatsapp",
-                            "contenido": f"✅ CONFIRMACIÓN QUIRÚRGICA RECIBIDA{ojo_txt}:\nEl paciente confirmó su asistencia a la cirugía ({turno_data.get('practica_nombre', 'Cirugía')}) del día {fecha_txt} ({hora_txt} hs) vía WhatsApp tras el recordatorio oficial enviado.\n• Respuesta: {text_content}",
+                            "contenido": f"✅ CONFIRMACIÓN QUIRÚRGICA RECIBIDA{ojo_txt}:\nEl paciente confirmó su asistencia a la cirugía ({practica_desc}) del día {fecha_txt}{hora_str_ev} vía WhatsApp tras el recordatorio oficial enviado.\n• Respuesta: {text_content}",
                             "fecha_contacto": ahora_iso
                         })
                     except Exception as e_ev:
@@ -1422,21 +1472,76 @@ async def handle_automated_interactive_action(
     if is_inquiry:
         logger.info(f"[Interactive Auto] Paciente {paciente_id} tiene una consulta sobre el turno quirúrgico ({normalized_phone})")
         ahora_iso = datetime.now(timezone.utc).isoformat()
-        turno_data = None
+        turno_id = None
+        target_ojo = None
+        target_asesoria_id = None
 
-        if paciente_id:
+        if "consulta_turno" in btn_id:
+            match_id = re.search(r"consulta_turno[_\-:]([a-zA-Z0-9\-_]+)", button_id or "", re.IGNORECASE)
+            if match_id:
+                turno_id = match_id.group(1).strip()
+            elif btn_id.startswith("consulta_turno_"):
+                turno_id = button_id.replace("CONSULTA_TURNO_", "").replace("consulta_turno_", "").strip()
+
+        if not turno_id and crm_conv_id:
+            try:
+                prev_msgs = supabase.table("mensajes") \
+                    .select("metadata_json, created_at, emisor") \
+                    .eq("conversacion_id", crm_conv_id) \
+                    .neq("emisor", "paciente") \
+                    .order("created_at", desc=True) \
+                    .limit(10) \
+                    .execute()
+                for pm in (prev_msgs.data or []):
+                    p_meta = pm.get("metadata_json") or {}
+                    if p_meta.get("tipo") == "template" and ("recordatorio" in str(p_meta.get("template_name", "")).lower() or p_meta.get("turno_id")):
+                        if p_meta.get("turno_id"):
+                            turno_id = p_meta.get("turno_id")
+                        if p_meta.get("ojo"):
+                            target_ojo = str(p_meta.get("ojo")).upper()
+                        if p_meta.get("asesoria_id"):
+                            target_asesoria_id = p_meta.get("asesoria_id")
+                        logger.info(f"[Interactive Auto Inquiry] Contexto quirúrgico recuperado de mensaje previo: turno_id={turno_id}, ojo={target_ojo}, asesoria_id={target_asesoria_id}")
+                        break
+            except Exception as e_meta:
+                logger.warning(f"[Interactive Auto Inquiry] Error recuperando metadata de mensaje previo: {e_meta}")
+
+        turno_data = None
+        target_tid = None
+
+        if paciente_id or turno_id:
             try:
                 today_str = datetime.now(timezone.utc).date().isoformat()
-                t_query = supabase.table("turnos_quirofano").select("id, asesoria_id, ojo, fecha_cirugia, hora_inicio, checks_adicionales, practica_nombre").eq("paciente_id", paciente_id).gte("fecha_cirugia", today_str).order("fecha_cirugia", desc=False)
+                t_query = supabase.table("turnos_quirofano").select("id, asesoria_id, paciente_id, ojo, fecha_cirugia, hora_inicio, checks_adicionales, practica_nombre, estado").neq("estado", "cancelado")
+                if turno_id:
+                    t_query = t_query.eq("id", turno_id)
+                else:
+                    t_query = t_query.eq("paciente_id", paciente_id).gte("fecha_cirugia", today_str).order("fecha_cirugia", desc=False)
                 t_res = t_query.execute()
-                if t_res.data and len(t_res.data) > 0:
-                    turnos_candidatos = t_res.data
-                    turno_data = None
-                    for tc in turnos_candidatos:
-                        chk_tc = tc.get("checks_adicionales") or {}
-                        if isinstance(chk_tc, dict) and chk_tc.get("recordatorio_estado") == "enviado":
-                            turno_data = tc
-                            break
+                turnos_candidatos = t_res.data or []
+
+                if not turnos_candidatos and paciente_id and not turno_id:
+                    t_fallback = supabase.table("turnos_quirofano") \
+                        .select("id, asesoria_id, paciente_id, ojo, fecha_cirugia, hora_inicio, checks_adicionales, practica_nombre, estado") \
+                        .eq("paciente_id", paciente_id) \
+                        .neq("estado", "cancelado") \
+                        .order("fecha_cirugia", desc=True) \
+                        .limit(5) \
+                        .execute()
+                    turnos_candidatos = t_fallback.data or []
+
+                if turnos_candidatos:
+                    if target_ojo:
+                        for tc in turnos_candidatos:
+                            if (tc.get("ojo") or "").upper() == target_ojo:
+                                turno_data = tc
+                                break
+                    if not turno_data:
+                        for tc in turnos_candidatos:
+                            chk_tc = tc.get("checks_adicionales") or {}
+                            if isinstance(chk_tc, dict) and chk_tc.get("recordatorio_estado") == "enviado":
+                                turno_data = tc
+                                break
                     if not turno_data:
                         turno_data = turnos_candidatos[0]
 
@@ -1451,16 +1556,17 @@ async def handle_automated_interactive_action(
                         "checks_adicionales": chk,
                         "updated_at": ahora_iso
                     }).eq("id", target_tid).execute()
+                    logger.info(f"[Turnos Inquiry] Turno quirúrgico {target_tid} ({turno_data.get('ojo')}) marcado con consulta en Supabase.")
             except Exception as te:
                 logger.error(f"[Interactive Inquiry] Error actualizando checks de turno: {te}")
 
             # Sincronizar en asesorias_quirurgicas y bitácora del CRM
             try:
-                as_id = turno_data.get("asesoria_id") if turno_data else None
+                as_id = turno_data.get("asesoria_id") if turno_data else target_asesoria_id
                 as_row = None
-                if not as_id:
+                if not as_id and paciente_id:
                     c_res = supabase.table("asesorias_quirurgicas") \
-                        .select("id, ojo, checklist_prequirurgico") \
+                        .select("id, ojo, checklist_prequirurgico, practica_nombre") \
                         .eq("paciente_id", paciente_id) \
                         .in_("estado", ["confirmado", "programado", "en_asesoramiento", "en_analisis"]) \
                         .order("created_at", desc=True) \
@@ -1469,8 +1575,8 @@ async def handle_automated_interactive_action(
                     if c_res.data and len(c_res.data) > 0:
                         as_row = c_res.data[0]
                         as_id = as_row["id"]
-                else:
-                    c_res = supabase.table("asesorias_quirurgicas").select("id, ojo, checklist_prequirurgico").eq("id", as_id).limit(1).execute()
+                elif as_id:
+                    c_res = supabase.table("asesorias_quirurgicas").select("id, ojo, checklist_prequirurgico, practica_nombre").eq("id", as_id).limit(1).execute()
                     if c_res.data and len(c_res.data) > 0:
                         as_row = c_res.data[0]
 
@@ -1485,7 +1591,7 @@ async def handle_automated_interactive_action(
                     if not isinstance(prev_rec, dict):
                         prev_rec = {}
 
-                    t_ojo = (turno_data.get("ojo") or "").upper()
+                    t_ojo = ((turno_data.get("ojo") if turno_data else target_ojo) or "").upper()
                     p1_ojo = "OI" if meta_bi.get("orden") == "OI_primero" else "OD"
                     p2_ojo = "OD" if p1_ojo == "OI" else "OI"
                     target_stage = "segundo_ojo" if t_ojo == p2_ojo else "primer_ojo"
@@ -1496,8 +1602,8 @@ async def handle_automated_interactive_action(
                         "respondido_at": ahora_iso,
                         "respuesta_tipo": "consulta",
                         "respuesta_texto": text_content,
-                        "template": prev_rec.get(target_stage, {}).get("template") if es_bi else prev_rec.get("template"),
-                        "turno_id": target_tid,
+                        "template": (prev_rec.get(target_stage, {}).get("template") if es_bi else prev_rec.get("template")) or "recordatorio_cirugia_preparacion_v1",
+                        "turno_id": target_tid or (turno_data.get("id") if turno_data else None),
                         "ojo": t_ojo
                     }
 
@@ -1518,17 +1624,16 @@ async def handle_automated_interactive_action(
                     try:
                         from app.db import crear_evolucion_asesoria
                         ojo_txt = f" ({t_ojo})" if t_ojo else ""
-                        fecha_txt = turno_data.get("fecha_cirugia") or ""
+                        fecha_txt = (turno_data.get("fecha_cirugia") if turno_data else "") or ""
+                        practica_desc = (turno_data.get("practica_nombre") if turno_data else as_row.get("practica_nombre")) or "Cirugía"
                         crear_evolucion_asesoria({
                             "asesoria_id": as_id,
                             "paciente_id": paciente_id,
                             "usuario_nombre": "Asistente WhatsApp (Meta)",
                             "tipo_contacto": "whatsapp",
-                            "contenido": f"⚠️ CONSULTA PREQUIRÚRGICA DEL PACIENTE{ojo_txt}:\nEl paciente indicó 'Tengo una consulta' tras el recordatorio de cirugía ({turno_data.get('practica_nombre', 'Cirugía')}) del día {fecha_txt}.\n• Detalle: {text_content}\n• Acción: Asignado al equipo de coordinación para seguimiento.",
+                            "contenido": f"⚠️ CONSULTA PREQUIRÚRGICA DEL PACIENTE{ojo_txt}:\nEl paciente indicó 'Tengo una consulta' tras el recordatorio de cirugía ({practica_desc}) del día {fecha_txt}.\n• Detalle: {text_content}\n• Acción: Asignado al equipo de coordinación para seguimiento.",
                             "fecha_contacto": ahora_iso
                         })
-                    except Exception as e_ev:
-                        logger.warning(f"Aviso registrando evolución de consulta: {e_ev}")
                     except Exception as e_ev:
                         logger.warning(f"Aviso registrando evolución de consulta: {e_ev}")
             except Exception as as_err:

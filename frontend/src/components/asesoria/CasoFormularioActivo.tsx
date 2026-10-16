@@ -3467,7 +3467,17 @@ export default function CasoFormularioActivo({
                 <div className="space-y-1.5">
                   {turnosActivos.map((t: any, idx: number) => {
                     const chk = t.checks_adicionales || {}
-                    const recEst = chk.recordatorio_estado || (chk.recordatorio_enviado ? 'enviado' : 'pendiente')
+                    const recQx = (caso.checklist_prequirurgico as any)?._recordatorio_qx || {}
+                    const metaBi = (caso.checklist_prequirurgico as any)?._meta_bilateral || {}
+                    const p1Ojo = metaBi.orden === 'OI_primero' ? 'OI' : 'OD'
+                    const stageKey = t.ojo === p1Ojo ? 'primer_ojo' : (t.ojo ? 'segundo_ojo' : (idx === 0 ? 'primer_ojo' : 'segundo_ojo'))
+                    const stageRec = recQx[stageKey] || recQx
+
+                    let recEst = chk.recordatorio_estado || stageRec?.estado
+                    if (!recEst) {
+                      recEst = (chk.recordatorio_enviado || stageRec?.enviado_at) ? 'enviado' : 'pendiente'
+                    }
+                    const respondidoFecha = chk.recordatorio_respondido_at || stageRec?.respondido_at
                     const ojoTexto = t.ojo ? `${t.ojo}` : (idx === 0 ? '1° Ojo' : '2° Ojo')
                     return (
                       <div key={t.id || idx} className="flex items-center justify-between text-xs bg-neutral-900/90 px-3 py-2 rounded-lg border border-white/5 flex-wrap gap-2">
@@ -3484,7 +3494,7 @@ export default function CasoFormularioActivo({
                         </div>
                         <div className="flex items-center gap-2">
                           {recEst === 'confirmado' ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1 shadow-sm" title={chk.recordatorio_respondido_at ? `Confirmado por el paciente el ${new Date(chk.recordatorio_respondido_at).toLocaleDateString()}` : undefined}>
+                            <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/40 inline-flex items-center gap-1 shadow-sm" title={respondidoFecha ? `Confirmado por el paciente el ${new Date(respondidoFecha).toLocaleDateString()}` : undefined}>
                               <CheckCircle2 size={11} className="text-emerald-400" />
                               <span>Confirmado por Paciente</span>
                             </span>

@@ -284,3 +284,100 @@ def test_recordatorio_formato_cirugia_descripcion_completa_ojo():
         assert res_bi["primer_ojo"]["cirugia"] == "CIRUGIA DE CATARATA (OJO DERECHO)"
         assert res_bi["segundo_ojo"]["cirugia"] == "CIRUGIA DE CATARATA (OJO IZQUIERDO)"
 
+
+@pytest.mark.asyncio
+async def test_handle_automated_interactive_action_confirma_turno_programado():
+    """
+    Verifica que al recibir la confirmación de WhatsApp (por ejemplo 'Confirmar Asistencia'):
+    1. Se recupere el turno_id y ojo desde los metadatos de la plantilla previa en mensajes.
+    2. Se actualice el turno de quirófano en estado 'programado' con recordatorio_estado='confirmado'.
+    3. Se actualice el checklist de la asesoría quirúrgica.
+    """
+    from app.services.whatsapp_cloud.worker import handle_automated_interactive_action
+
+    with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sb, \
+         patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=(None, None)):
+        
+        # Simular respuestas de supabase para mensajes previos
+        mock_mensajes = MagicMock()
+        mock_mensajes.select.return_value.eq.return_value.neq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{
+                "metadata_json": {
+                    "tipo": "template",
+                    "template_name": "recordatorio_cirugia_preparacion_v1",
+                    "turno_id": "t-prog-od",
+                    "ojo": "OD",
+                    "asesoria_id": "as-1"
+                }
+            }]
+        )
+
+        # Simular turnos_quirofano
+        mock_turnos = MagicMock()
+        mock_turnos.select.return_value.eq.return_value.execute.return_value = MagicMock(
+            data=[{
+                "id": "t-prog-od",
+                "asesoria_id": "as-1",
+                "paciente_id": "pac-123",
+                "ojo": "OD",
+                "fecha_cirugia": "2026-10-28",
+                "hora_inicio": "08:00:00",
+                "estado": "programado",
+                "checks_adicionales": {"recordatorio_estado": "enviado"},
+                "practica_nombre": "Facoemulsificación"
+            }]
+        )
+        mock_turnos.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
+
+        # Simular asesorias_quirurgicas
+        mock_asesorias = MagicMock()
+        mock_asesorias.select.return_value.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{
+                "id": "as-1",
+                "ojo": "AO",
+                "practica_nombre": "Facoemulsificación",
+                "checklist_prequirurgico": {
+                    "_meta_bilateral": {"modalidad": "escalonada", "orden": "OD_primero"},
+                    "_recordatorio_qx": {
+                        "es_bilateral_escalonada": True,
+                        "primer_ojo": {"estado": "enviado"}
+                    }
+                }
+            }]
+        )
+        mock_asesorias.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{}])
+
+        def table_side_effect(table_name):
+            if table_name == "mensajes":
+                return mock_mensajes
+            elif table_name == "turnos_quirofano":
+                return mock_turnos
+            elif table_name == "asesorias_quirurgicas":
+                return mock_asesorias
+            return MagicMock()
+
+        mock_sb.table.side_effect = table_side_effect
+
+        handled = await handle_automated_interactive_action(
+            button_id="confirmar_asistencia",
+            text_content="🔘 Confirmar Asistencia",
+            paciente_id="pac-123",
+            normalized_phone="5492615551234",
+            crm_conv_id="conv-1",
+            account_id=None
+        )
+
+        assert handled is True
+        # Verificar que se actualizó el turno con recordatorio_estado = 'confirmado'
+        mock_turnos.update.assert_called()
+        update_args = mock_turnos.update.call_args[0][0]
+        assert update_args["checks_adicionales"]["recordatorio_estado"] == "confirmado"
+        assert update_args["checks_adicionales"]["recordatorio_respuesta_texto"] == "🔘 Confirmar Asistencia"
+
+        # Verificar que se actualizó asesorias_quirurgicas
+        mock_asesorias.update.assert_called()
+        asesoria_update_args = mock_asesorias.update.call_args[0][0]
+        rec_qx = asesoria_update_args["checklist_prequirurgico"]["_recordatorio_qx"]
+        assert rec_qx["primer_ojo"]["estado"] == "confirmado"
+
+
