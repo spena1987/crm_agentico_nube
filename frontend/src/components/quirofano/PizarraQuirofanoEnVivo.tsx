@@ -334,7 +334,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   useEffect(() => {
     const loadQuirofanos = async () => {
       try {
-        const res = await apiFetch('/api/quirofanos?solo_activos=true')
+        const res = await apiFetch('/api/quirofanos?solo_activos=true&solo_pizarra=true')
         const data = await res.json()
         if (data.success && data.quirofanos) {
           setQuirofanos(data.quirofanos)
@@ -346,11 +346,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     loadQuirofanos()
   }, [])
 
-  // Cargar turnos del día
+  // Cargar turnos del día (solo salas destinadas a quirófano)
   const fetchTurnosDia = async () => {
     try {
       setCargando(true)
-      let url = `/api/turnos-quirofano-dia?fecha=${fecha}`
+      let url = `/api/turnos-quirofano-dia?fecha=${fecha}&solo_pizarra=true`
       if (quirofanoFiltro !== 'todos') {
         url += `&quirofano_id=${quirofanoFiltro}`
       }

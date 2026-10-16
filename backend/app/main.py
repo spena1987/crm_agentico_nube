@@ -4918,9 +4918,17 @@ def guardar_config_quirofano(payload: Dict[str, Any] = Body(...)):
 
 # Quirófanos / Salas
 @app.get("/api/quirofanos")
-def listar_quirofanos(solo_activos: bool = False):
+def listar_quirofanos(
+    solo_activos: bool = False,
+    solo_pizarra: bool = False,
+    solo_recepcion: bool = False
+):
     try:
-        salas = get_quirofanos(solo_activos=solo_activos)
+        salas = get_quirofanos(
+            solo_activos=solo_activos,
+            solo_pizarra=solo_pizarra,
+            solo_recepcion=solo_recepcion
+        )
         return {"success": True, "quirofanos": salas}
     except Exception as e:
         logger.error(f"Error al listar salas de quirófano: {e}")
@@ -7082,10 +7090,17 @@ def resolver_sku_lote_endpoint(payload: ResolverSkuLotePayload):
 @app.get("/api/turnos-quirofano-dia")
 def listar_turnos_dia_endpoint(
     fecha: str = Query(..., description="Fecha en formato YYYY-MM-DD"),
-    quirofano_id: Optional[str] = Query(None)
+    quirofano_id: Optional[str] = Query(None),
+    solo_pizarra: bool = Query(False),
+    solo_recepcion: bool = Query(False)
 ):
     try:
-        items = get_turnos_dia_ejecucion(fecha=fecha, quirofano_id=quirofano_id)
+        items = get_turnos_dia_ejecucion(
+            fecha=fecha, 
+            quirofano_id=quirofano_id,
+            solo_pizarra=solo_pizarra,
+            solo_recepcion=solo_recepcion
+        )
         return {"success": True, "turnos": items, "fecha": fecha}
     except Exception as e:
         logger.error(f"Error listando turnos del día ({fecha}): {e}")

@@ -6173,25 +6173,40 @@ def actualizar_configuracion_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"Error al actualizar configuración de quirófano: {e}")
         return {}
 
-def get_quirofanos(solo_activos: bool = False) -> List[Dict[str, Any]]:
-    """Lista las salas de quirófano configuradas."""
+def get_quirofanos(
+    solo_activos: bool = False,
+    solo_pizarra: bool = False,
+    solo_recepcion: bool = False
+) -> List[Dict[str, Any]]:
+    """Lista las salas de quirófano configuradas con filtros opcionales de ámbito y visibilidad."""
     if not supabase:
         return []
     try:
         query = supabase.table("quirofanos").select("*").order("orden", desc=False)
         if solo_activos:
             query = query.eq("activo", True)
+        if solo_pizarra:
+            query = query.eq("mostrar_en_pizarra", True)
+        if solo_recepcion:
+            query = query.eq("mostrar_en_recepcion", True)
         resp = query.execute()
         return resp.data or []
     except Exception as e:
         logger.error(f"Error al listar quirófanos: {e}")
         return []
 
+ALLOWED_KEYS_QUIROFANO = {
+    "nombre", "codigo", "descripcion", "color", "activo", "orden", 
+    "duracion_slot_minutos", "equipamiento", "mostrar_en_pizarra", 
+    "mostrar_en_recepcion", "tipo_sala"
+}
+
 def crear_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
     if not supabase:
         return {}
     try:
-        resp = supabase.table("quirofanos").insert(datos).execute()
+        clean_data = {k: v for k, v in datos.items() if k in ALLOWED_KEYS_QUIROFANO}
+        resp = supabase.table("quirofanos").insert(clean_data).execute()
         return resp.data[0] if resp.data else {}
     except Exception as e:
         logger.error(f"Error al crear quirófano: {e}")
@@ -6201,7 +6216,8 @@ def actualizar_quirofano(quirofano_id: str, datos: Dict[str, Any]) -> Dict[str, 
     if not supabase:
         return {}
     try:
-        resp = supabase.table("quirofanos").update(datos).eq("id", quirofano_id).execute()
+        clean_data = {k: v for k, v in datos.items() if k in ALLOWED_KEYS_QUIROFANO}
+        resp = supabase.table("quirofanos").update(clean_data).eq("id", quirofano_id).execute()
         return resp.data[0] if resp.data else {}
     except Exception as e:
         logger.error(f"Error al actualizar quirófano: {e}")
@@ -6298,7 +6314,7 @@ def get_turnos_quirofano(
     if not supabase:
         return []
     try:
-        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)")
+        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)")
         if fecha_desde:
             q = q.gte("fecha_cirugia", fecha_desde)
         if fecha_hasta:
@@ -6320,7 +6336,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
     if not supabase or not turno_id:
         return None
     try:
-        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)").eq("id", turno_id).limit(1).execute()
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)").eq("id", turno_id).limit(1).execute()
         if resp.data and len(resp.data) > 0:
             return resp.data[0]
         return None
@@ -8372,20 +8388,32 @@ def resolver_sku_lio(
 # EJECUCIÓN QUIRÚRGICA EN VIVO & SINCRONIZACIÓN DE ESTADOS
 # ====================================================================
 
-def get_turnos_dia_ejecucion(fecha: str, quirofano_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Obtiene los turnos programados para una fecha específica con todos sus joins."""
+def get_turnos_dia_ejecucion(
+    fecha: str, 
+    quirofano_id: Optional[str] = None,
+    solo_pizarra: bool = False,
+    solo_recepcion: bool = False
+) -> List[Dict[str, Any]]:
+    """Obtiene los turnos programados para una fecha específica con todos sus joins y filtros de visibilidad."""
     if not supabase or not fecha:
         return []
     try:
         q = supabase.table("turnos_quirofano") \
-            .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos), asesorias_quirurgicas(*)") \
+            .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(*)") \
             .eq("fecha_cirugia", fecha)
             
         if quirofano_id and quirofano_id != "todos":
             q = q.eq("quirofano_id", quirofano_id)
             
         resp = q.order("hora_inicio").execute()
-        return resp.data or []
+        turnos = resp.data or []
+
+        if solo_pizarra:
+            turnos = [t for t in turnos if (t.get("quirofanos") or {}).get("mostrar_en_pizarra", True)]
+        if solo_recepcion:
+            turnos = [t for t in turnos if (t.get("quirofanos") or {}).get("mostrar_en_recepcion", True)]
+
+        return turnos
     except Exception as e:
         logger.error(f"Error al obtener turnos del día ({fecha}): {e}")
         return []

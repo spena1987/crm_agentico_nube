@@ -1695,11 +1695,28 @@ export default function CasoFormularioActivo({
                             className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-amber-400 font-semibold"
                           >
                             <option value="">-- Seleccionar Quirófano / Sala --</option>
-                            {quirofanos.map((q: any) => (
-                              <option key={q.id} value={q.id}>
-                                {q.nombre} ({q.codigo || 'Qx'})
-                              </option>
-                            ))}
+                            {quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio').length > 0 && (
+                              <optgroup label="🏥 Quirófanos Estériles">
+                                {quirofanos
+                                  .filter((q: any) => q.tipo_sala !== 'consultorio')
+                                  .map((q: any) => (
+                                    <option key={q.id} value={q.id}>
+                                      {q.nombre} ({q.codigo || 'Qx'})
+                                    </option>
+                                  ))}
+                              </optgroup>
+                            )}
+                            {quirofanos.filter((q: any) => q.tipo_sala === 'consultorio').length > 0 && (
+                              <optgroup label="🏢 Salas de Consultorio / Tratamientos">
+                                {quirofanos
+                                  .filter((q: any) => q.tipo_sala === 'consultorio')
+                                  .map((q: any) => (
+                                    <option key={q.id} value={q.id}>
+                                      {q.nombre} ({q.codigo || 'Consultorio'})
+                                    </option>
+                                  ))}
+                              </optgroup>
+                            )}
                           </select>
                         </div>
 
@@ -1908,12 +1925,29 @@ export default function CasoFormularioActivo({
                               onChange={(e) => setQuirofanoId(e.target.value)}
                               className="w-full p-2 rounded-lg bg-neutral-900 border border-[var(--border)] text-xs text-white outline-none focus:border-blue-400 font-semibold"
                             >
-                              <option value="">-- Seleccionar Quirófano --</option>
-                              {quirofanos.map((q: any) => (
-                                <option key={q.id} value={q.id}>
-                                  {q.nombre} ({q.codigo || 'Qx'})
-                                </option>
-                              ))}
+                              <option value="">-- Seleccionar Quirófano / Sala --</option>
+                              {quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio').length > 0 && (
+                                <optgroup label="🏥 Quirófanos Estériles">
+                                  {quirofanos
+                                    .filter((q: any) => q.tipo_sala !== 'consultorio')
+                                    .map((q: any) => (
+                                      <option key={q.id} value={q.id}>
+                                        {q.nombre} ({q.codigo || 'Qx'})
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              )}
+                              {quirofanos.filter((q: any) => q.tipo_sala === 'consultorio').length > 0 && (
+                                <optgroup label="🏢 Salas de Consultorio / Tratamientos">
+                                  {quirofanos
+                                    .filter((q: any) => q.tipo_sala === 'consultorio')
+                                    .map((q: any) => (
+                                      <option key={q.id} value={q.id}>
+                                        {q.nombre} ({q.codigo || 'Consultorio'})
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              )}
                             </select>
                           </div>
 
@@ -2051,12 +2085,29 @@ export default function CasoFormularioActivo({
                               onChange={(e) => setQuirofanoId2doOjo(e.target.value)}
                               className="w-full p-2 rounded-lg bg-neutral-900 border border-purple-500/40 text-xs text-white outline-none focus:border-purple-400 font-semibold"
                             >
-                              <option value="">-- Seleccionar Quirófano --</option>
-                              {quirofanos.map((q: any) => (
-                                <option key={q.id} value={q.id}>
-                                  {q.nombre} ({q.codigo || 'Qx'})
-                                </option>
-                              ))}
+                              <option value="">-- Seleccionar Quirófano / Sala --</option>
+                              {quirofanos.filter((q: any) => q.tipo_sala !== 'consultorio').length > 0 && (
+                                <optgroup label="🏥 Quirófanos Estériles">
+                                  {quirofanos
+                                    .filter((q: any) => q.tipo_sala !== 'consultorio')
+                                    .map((q: any) => (
+                                      <option key={q.id} value={q.id}>
+                                        {q.nombre} ({q.codigo || 'Qx'})
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              )}
+                              {quirofanos.filter((q: any) => q.tipo_sala === 'consultorio').length > 0 && (
+                                <optgroup label="🏢 Salas de Consultorio / Tratamientos">
+                                  {quirofanos
+                                    .filter((q: any) => q.tipo_sala === 'consultorio')
+                                    .map((q: any) => (
+                                      <option key={q.id} value={q.id}>
+                                        {q.nombre} ({q.codigo || 'Consultorio'})
+                                      </option>
+                                    ))}
+                                </optgroup>
+                              )}
                             </select>
                           </div>
 

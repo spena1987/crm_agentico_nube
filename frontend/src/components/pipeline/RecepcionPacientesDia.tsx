@@ -66,6 +66,10 @@ interface TurnoRecepcion {
     id: string
     nombre: string
     codigo: string
+    color?: string
+    mostrar_en_pizarra?: boolean
+    mostrar_en_recepcion?: boolean
+    tipo_sala?: 'quirofano' | 'consultorio'
   }
   pacientes?: {
     id: string
@@ -98,6 +102,7 @@ export default function RecepcionPacientesDia() {
   const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['todos'])
   const [ultimoEstadoClickeado, setUltimoEstadoClickeado] = useState<string>('todos')
   const [busqueda, setBusqueda] = useState<string>('')
+  const [filtroTipoSala, setFiltroTipoSala] = useState<'todos' | 'quirofano' | 'consultorio'>('todos')
 
   // Estados de Pulsera Térmica y Escáner QR
   const [pulseraTurnoId, setPulseraTurnoId] = useState<string | null>(null)
@@ -257,7 +262,7 @@ export default function RecepcionPacientesDia() {
       // Fallback Supabase directo
       const { data: sbData, error } = await supabase
         .from('turnos_quirofano' as any)
-        .select('*, pacientes(*), quirofanos(id, nombre, codigo)')
+        .select('*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala)')
         .eq('fecha_cirugia', fecha)
         .order('hora_inicio', { ascending: true })
 
@@ -352,26 +357,51 @@ export default function RecepcionPacientesDia() {
     setFecha(d.toISOString().slice(0, 10))
   }
 
-  // Métricas del día
-  const metricas = useMemo(() => {
-    const total = turnos.length
-    const citados = turnos.filter((t) => t.estado === 'programado').length
-    const recepcionados = turnos.filter((t) => t.estado === 'en_espera').length
-    const preQuirofano = turnos.filter((t) => t.estado === 'pre_quirofano').length
-    const enQx = turnos.filter((t) => t.estado === 'en_operacion').length
-    const operados = turnos.filter((t) => t.estado === 'operado').length
-    return { total, citados, recepcionados, preQuirofano, enQx, operados }
+  // Filtrar primero los turnos que están habilitados para recepción
+  const turnosRecepcionables = useMemo(() => {
+    return turnos.filter((t) => (t.quirofanos?.mostrar_en_recepcion !== false))
   }, [turnos])
 
-  // Filtrado reactivo por pestaña y por buscador de texto
+  // Conteo de turnos por ámbito asistencial (Quirófano vs Consultorio)
+  const conteoSalas = useMemo(() => {
+    const qx = turnosRecepcionables.filter((t) => t.quirofanos?.tipo_sala !== 'consultorio').length
+    const consultorio = turnosRecepcionables.filter((t) => t.quirofanos?.tipo_sala === 'consultorio').length
+    return { todos: turnosRecepcionables.length, qx, consultorio }
+  }, [turnosRecepcionables])
+
+  // Métricas del día (adaptadas al ámbito de sala seleccionado)
+  const metricas = useMemo(() => {
+    const base = turnosRecepcionables.filter((t) => {
+      if (filtroTipoSala === 'quirofano' && t.quirofanos?.tipo_sala === 'consultorio') return false
+      if (filtroTipoSala === 'consultorio' && t.quirofanos?.tipo_sala !== 'consultorio') return false
+      return true
+    })
+    const total = base.length
+    const citados = base.filter((t) => t.estado === 'programado').length
+    const recepcionados = base.filter((t) => t.estado === 'en_espera').length
+    const preQuirofano = base.filter((t) => t.estado === 'pre_quirofano').length
+    const enQx = base.filter((t) => t.estado === 'en_operacion').length
+    const operados = base.filter((t) => t.estado === 'operado').length
+    return { total, citados, recepcionados, preQuirofano, enQx, operados }
+  }, [turnosRecepcionables, filtroTipoSala])
+
+  // Filtrado reactivo por tipo de sala, por pestaña de estado y por buscador de texto
   const turnosFiltrados = useMemo(() => {
-    return turnos.filter((t) => {
-      // 1. Filtro por multiselección de estado
+    return turnosRecepcionables.filter((t) => {
+      // 1. Filtro por tipo de sala (Quirófano vs Consultorio)
+      if (filtroTipoSala === 'quirofano' && t.quirofanos?.tipo_sala === 'consultorio') {
+        return false
+      }
+      if (filtroTipoSala === 'consultorio' && t.quirofanos?.tipo_sala !== 'consultorio') {
+        return false
+      }
+
+      // 2. Filtro por multiselección de estado
       if (!filtrosEstado.includes('todos') && !filtrosEstado.includes(t.estado)) {
         return false
       }
 
-      // 2. Filtro por buscador de texto (DNI, Nombre, Teléfono, Práctica, Cirujano)
+      // 3. Filtro por buscador de texto (DNI, Nombre, Teléfono, Práctica, Cirujano)
       if (busqueda.trim()) {
         const q = busqueda.toLowerCase().trim()
         const pacNombre = (t.pacientes?.nombre || t.paciente_nombre || '').toLowerCase()
@@ -391,7 +421,7 @@ export default function RecepcionPacientesDia() {
 
       return true
     })
-  }, [turnos, filtrosEstado, busqueda])
+  }, [turnosRecepcionables, filtroTipoSala, filtrosEstado, busqueda])
 
   const esMultiseleccionActiva = filtrosEstado.length > 1 && !filtrosEstado.includes('todos')
 
@@ -505,6 +535,64 @@ export default function RecepcionPacientesDia() {
             <RefreshCw size={14} className={cargando ? 'animate-spin text-blue-400' : ''} />
           </button>
         </div>
+      </div>
+
+      {/* ==================================================================== */}
+      {/* 1.1 SEGMENTACIÓN ASISTENCIAL: QUIRÓFANO VS CONSULTORIO */}
+      {/* ==================================================================== */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 px-1">
+        <div className="flex items-center gap-1.5 p-1 rounded-2xl bg-neutral-900/90 border border-[var(--border)]">
+          <button
+            type="button"
+            onClick={() => setFiltroTipoSala('todos')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              filtroTipoSala === 'todos'
+                ? 'bg-neutral-800 text-white shadow-sm ring-1 ring-slate-400/40'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <span>Todos los Pacientes</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] bg-neutral-950 font-mono font-bold text-gray-300">
+              {conteoSalas.todos}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFiltroTipoSala('quirofano')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              filtroTipoSala === 'quirofano'
+                ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-400/40'
+                : 'text-gray-400 hover:text-blue-400'
+            }`}
+          >
+            <span>🏥 Quirófano Estéril</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] bg-neutral-950 font-mono font-bold text-blue-300">
+              {conteoSalas.qx}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFiltroTipoSala('consultorio')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              filtroTipoSala === 'consultorio'
+                ? 'bg-purple-600 text-white shadow-sm ring-1 ring-purple-400/40'
+                : 'text-gray-400 hover:text-purple-400'
+            }`}
+          >
+            <span>🏢 Consultorio / Tratamientos</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] bg-neutral-950 font-mono font-bold text-purple-300">
+              {conteoSalas.consultorio}
+            </span>
+          </button>
+        </div>
+
+        {filtroTipoSala !== 'todos' && (
+          <span className="text-[11px] text-gray-400 italic">
+            Mostrando únicamente {filtroTipoSala === 'quirofano' ? 'cirugías de quirófano' : 'procedimientos de consultorio (Láser/Inyecciones)'}
+          </span>
+        )}
       </div>
 
       {/* ==================================================================== */}
@@ -750,6 +838,16 @@ export default function RecepcionPacientesDia() {
 
                     <span className="text-xs font-bold text-gray-300 px-2.5 py-1 rounded-xl bg-neutral-950 border border-gray-800">
                       {q.nombre || 'Quirófano Central'}
+                    </span>
+
+                    <span
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-lg border ${
+                        q.tipo_sala === 'consultorio'
+                          ? 'bg-purple-950/60 text-purple-300 border-purple-500/30'
+                          : 'bg-blue-950/60 text-blue-300 border-blue-500/30'
+                      }`}
+                    >
+                      {q.tipo_sala === 'consultorio' ? '🏢 Consultorio' : '🏥 Quirófano'}
                     </span>
 
                     <span className={`text-[10px] font-extrabold uppercase px-2.5 py-1 rounded-xl border flex items-center gap-1 ${badgeEstadoClasses}`}>

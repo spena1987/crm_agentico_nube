@@ -36,6 +36,9 @@ interface Quirofano {
   dias_operativos?: number[] // [1, 2, 3, 4, 5] donde 1=Lunes, 7=Domingo
   activo: boolean
   orden: number
+  mostrar_en_pizarra?: boolean
+  mostrar_en_recepcion?: boolean
+  tipo_sala?: 'quirofano' | 'consultorio'
 }
 
 interface BloqueMedico {
@@ -567,7 +570,10 @@ export default function QuirofanoSettingsCard({
                   hora_fin: '14:00',
                   dias_operativos: [1, 2, 3, 4, 5],
                   activo: true,
-                  orden: quirofanos.length + 1
+                  orden: quirofanos.length + 1,
+                  mostrar_en_pizarra: true,
+                  mostrar_en_recepcion: true,
+                  tipo_sala: 'quirofano'
                 })
                 setMostrandoFormSala(true)
               }}
@@ -584,7 +590,7 @@ export default function QuirofanoSettingsCard({
               <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
                 <h4 className="text-xs font-bold text-blue-600 uppercase tracking-wider flex items-center gap-1.5">
                   <Building2 size={15} />
-                  <span>{salaEnEdicion.id ? 'Editar Sala de Quirófano' : 'Nueva Sala de Quirófano'}</span>
+                  <span>{salaEnEdicion.id ? 'Editar Sala / Quirófano' : 'Nueva Sala / Quirófano'}</span>
                 </h4>
                 <button
                   type="button"
@@ -685,6 +691,93 @@ export default function QuirofanoSettingsCard({
                         title={c.label}
                       />
                     ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Ámbito de Destino y Visibilidad en Módulos */}
+              <div className="p-3.5 rounded-xl bg-[var(--card)] border border-[var(--border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--border)] pb-2">
+                  <span className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                    <Sliders size={14} className="text-indigo-600" />
+                    <span>Destino Asistencial y Visibilidad en Módulos</span>
+                  </span>
+                  <span className="text-[10px] text-[var(--secondary)]">
+                    Controla en qué módulos del CRM impacta esta sala
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Tipo de Sala */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[var(--secondary)] block mb-1">
+                      Tipo de Sala / Destino
+                    </label>
+                    <select
+                      value={salaEnEdicion.tipo_sala || 'quirofano'}
+                      onChange={(e) =>
+                        setSalaEnEdicion({
+                          ...salaEnEdicion,
+                          tipo_sala: e.target.value as 'quirofano' | 'consultorio',
+                          // Si es consultorio, por defecto desactivar de la pizarra qx
+                          mostrar_en_pizarra: e.target.value === 'consultorio' ? false : (salaEnEdicion.mostrar_en_pizarra ?? true)
+                        })
+                      }
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-[var(--border)] text-xs font-bold text-[var(--foreground)]"
+                    >
+                      <option value="quirofano">🏥 Quirófano Estéril (Cirugía)</option>
+                      <option value="consultorio">🏢 Consultorio / Tratamientos (Láser/Iny.)</option>
+                    </select>
+                  </div>
+
+                  {/* Switch Mostrar en Pizarra de Quirófano en Vivo */}
+                  <div className="flex flex-col justify-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-[var(--border)]">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-[11px] font-bold text-[var(--foreground)] flex items-center gap-1">
+                        📺 Pizarra de Quirófano en Vivo
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={salaEnEdicion.mostrar_en_pizarra !== false}
+                        onChange={(e) =>
+                          setSalaEnEdicion({
+                            ...salaEnEdicion,
+                            mostrar_en_pizarra: e.target.checked
+                          })
+                        }
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </label>
+                    <span className="text-[10px] text-[var(--secondary)] mt-1">
+                      {salaEnEdicion.mostrar_en_pizarra !== false
+                        ? 'Visible en la pantalla del quirófano'
+                        : 'Oculta en la pizarra en vivo de quirófano'}
+                    </span>
+                  </div>
+
+                  {/* Switch Mostrar en Recepción del Día */}
+                  <div className="flex flex-col justify-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-[var(--border)]">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-[11px] font-bold text-[var(--foreground)] flex items-center gap-1">
+                        📋 Recepción de Pacientes del Día
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={salaEnEdicion.mostrar_en_recepcion !== false}
+                        onChange={(e) =>
+                          setSalaEnEdicion({
+                            ...salaEnEdicion,
+                            mostrar_en_recepcion: e.target.checked
+                          })
+                        }
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </label>
+                    <span className="text-[10px] text-[var(--secondary)] mt-1">
+                      {salaEnEdicion.mostrar_en_recepcion !== false
+                        ? 'Habilitada en la mesa de entrada diaria'
+                        : 'No aparece en la lista de recepción'}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -855,6 +948,39 @@ export default function QuirofanoSettingsCard({
                         {q.hora_inicio || '08:00'} - {q.hora_fin || '14:00'} hs
                       </span>
                     </div>
+                  </div>
+
+                  {/* Badges de Visibilidad y Ámbito */}
+                  <div className="pt-2 border-t border-[var(--border)]/60 flex flex-wrap items-center gap-1.5 text-[10px]">
+                    <span
+                      className={`px-2 py-0.5 rounded-md font-bold flex items-center gap-1 ${
+                        q.tipo_sala === 'consultorio'
+                          ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-300/40'
+                          : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300/40'
+                      }`}
+                    >
+                      {q.tipo_sala === 'consultorio' ? '🏢 Consultorio / Tratamientos' : '🏥 Quirófano Estéril'}
+                    </span>
+
+                    {q.mostrar_en_pizarra !== false ? (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300/40">
+                        📺 Pizarra Qx
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
+                        🚫 Fuera de Pizarra
+                      </span>
+                    )}
+
+                    {q.mostrar_en_recepcion !== false ? (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-300 border border-cyan-300/40">
+                        📋 Recepción
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
+                        🚫 Sin Recepción
+                      </span>
+                    )}
                   </div>
                 </div>
               )
