@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import base64
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
@@ -898,10 +899,27 @@ def generar_html_consentimiento(
     
     settings = load_settings()
     plantilla_inst = settings.get("plantilla_presupuesto", {})
-    nombre_inst = plantilla_inst.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"
+    clinica_info = settings.get("clinica", {})
+    nombre_inst = plantilla_inst.get("nombre_institucion") or clinica_info.get("nombre") or "CLÍNICA MÉDICA NUBE"
     subtitulo_inst = plantilla_inst.get("subtitulo_institucion") or "Atención Oftalmológica & Quirúrgica"
     color_primario = "#1E3A8A"
     color_secundario = "#2563EB"
+    
+    # Cargar y codificar en base64 el logo institucional para renderizado autónomo en HTML / WeasyPrint
+    logo_base64 = None
+    try:
+        raw_logo_url = plantilla_inst.get("logo_url") or clinica_info.get("logo_url")
+        logo_path = obtener_o_cachear_logo_local(raw_logo_url)
+        if logo_path and os.path.exists(logo_path):
+            import mimetypes
+            mime_type, _ = mimetypes.guess_type(logo_path)
+            if not mime_type:
+                mime_type = "image/png"
+            with open(logo_path, "rb") as img_file:
+                b64_data = base64.b64encode(img_file.read()).decode("utf-8")
+                logo_base64 = f"data:{mime_type};base64,{b64_data}"
+    except Exception as err_logo:
+        logger.warning(f"No se pudo cargar logo_base64 en generar_html_consentimiento: {err_logo}")
     
     # Convertir Markdown a HTML con extensiones de listas, tablas y saltos de línea
     cuerpo_html = markdown.markdown(
@@ -923,7 +941,7 @@ def generar_html_consentimiento(
     if sig_b64 and not sig_b64.startswith("data:"):
         sig_b64 = f"data:image/png;base64,{sig_b64}"
         
-    import io, base64, qrcode
+    import io, qrcode
     token_val = (firma_metadata or {}).get("token") or turno.get("consentimiento_token") or turno.get("id") or "token"
     base_app_url = os.getenv("NEXT_PUBLIC_APP_URL") or "https://crmagenticonube-production.up.railway.app"
     verify_url = f"{base_app_url}/consentimiento/verificar/{token_val}"
@@ -938,6 +956,7 @@ def generar_html_consentimiento(
         logger.warning(f"No se pudo generar QR en HTML: {qe}")
 
     context = {
+        "logo_base64": logo_base64,
         "nombre_institucion": nombre_inst,
         "subtitulo_institucion": subtitulo_inst,
         "color_primario": color_primario,
@@ -1011,7 +1030,8 @@ def generar_pdf_consentimiento_informado(
     # 3. Motor de respaldo estructurado (ReportLab con parser completo de Markdown)
     settings = load_settings()
     plantilla = settings.get("plantilla_presupuesto", {})
-    nombre_inst = plantilla.get("nombre_institucion") or "CLÍNICA MÉDICA NUBE"
+    clinica_info = settings.get("clinica", {})
+    nombre_inst = plantilla.get("nombre_institucion") or clinica_info.get("nombre") or "CLÍNICA MÉDICA NUBE"
     subtitulo_inst = plantilla.get("subtitulo_institucion") or "Atención Oftalmológica & Quirúrgica"
     color_primario_hex = "#1E3A8A"
     color_secundario_hex = "#2563EB"
@@ -1142,17 +1162,45 @@ def generar_pdf_consentimiento_informado(
     story = []
 
     # 1. Cabecera Institucional
-    header_table = Table([
-        [
-            Paragraph(f"<b>{nombre_inst.upper()}</b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal),
-            Paragraph(f"<font size=9 color='#64748B'>DOCUMENTO MÉDICO-LEGAL</font><br/><b>CONSENTIMIENTO INFORMADO</b>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
-        ]
-    ], colWidths=[320, 220])
-    header_table.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 10),
-        ('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor(color_primario_hex))
-    ]))
+    logo_path = obtener_o_cachear_logo_local(plantilla.get("logo_url") or clinica_info.get("logo_url"))
+    inst_p = Paragraph(f"<b>{nombre_inst.upper()}</b><br/><font size=8 color='#64748B'>{subtitulo_inst}</font>", style_normal)
+    doc_p = Paragraph(f"<font size=9 color='#64748B'>DOCUMENTO MÉDICO-LEGAL</font><br/><b>CONSENTIMIENTO INFORMADO</b>", ParagraphStyle('HRight', parent=style_normal, alignment=2))
+
+    if logo_path and os.path.exists(logo_path):
+        try:
+            from PIL import Image as PILImage
+            with PILImage.open(logo_path) as pimg:
+                orig_w, orig_h = pimg.size
+                ratio = orig_w / float(orig_h) if orig_h > 0 else 1.0
+            target_h = 36.0
+            target_w = target_h * ratio
+            if target_w > 115.0:
+                target_w = 115.0
+                target_h = target_w / ratio
+            rl_logo = RLImage(logo_path, width=target_w, height=target_h)
+            rl_logo.hAlign = 'LEFT'
+            header_table = Table([[rl_logo, inst_p, doc_p]], colWidths=[115, 245, 180])
+            header_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                ('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor(color_primario_hex))
+            ]))
+        except Exception as e_l:
+            logger.warning(f"Error procesando logo en generar_pdf_consentimiento_informado: {e_l}")
+            header_table = Table([[inst_p, doc_p]], colWidths=[320, 220])
+            header_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'TOP'),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+                ('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor(color_primario_hex))
+            ]))
+    else:
+        header_table = Table([[inst_p, doc_p]], colWidths=[320, 220])
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+            ('LINEBELOW', (0,0), (-1,-1), 1.5, colors.HexColor(color_primario_hex))
+        ]))
     story.append(header_table)
     story.append(Spacer(1, 14))
 

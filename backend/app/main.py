@@ -429,7 +429,7 @@ app.include_router(whatsapp_cloud_router)
 # ====================================================================
 
 @app.get("/static/{filename}")
-def servir_archivo_estatico(filename: str):
+def servir_archivo_estatico(filename: str, regenerar: Optional[bool] = False):
     """
     Sirve archivos estáticos y PDFs de presupuestos.
     Si el archivo no existe en el disco local (ej: reinicio o nuevo despliegue de contenedor en Railway),
@@ -442,8 +442,8 @@ def servir_archivo_estatico(filename: str):
         
     file_path = os.path.join(PDF_DIR, safe_filename)
     
-    # 2. Si no existe en disco (o si es un consentimiento previo degradado < 15KB), regenerar on-demand
-    necesita_regenerar = not os.path.exists(file_path)
+    # 2. Si no existe en disco (o si se fuerza regeneración), regenerar on-demand
+    necesita_regenerar = not os.path.exists(file_path) or bool(regenerar)
     if not necesita_regenerar and safe_filename.startswith("consentimiento_") and safe_filename.endswith(".pdf"):
         try:
             if os.path.getsize(file_path) < 15000:
