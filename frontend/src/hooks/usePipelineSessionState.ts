@@ -27,7 +27,7 @@ export interface PipelineSessionData {
   filtros: PipelineFiltrosState
 }
 
-const STORAGE_KEY = 'crm_pipeline_session_v1'
+const STORAGE_KEY = 'crm_pipeline_session_v2'
 
 // Estado predeterminado inicial: todas las 5 etapas contraídas (true = colapsada)
 export const ETAPAS_COLAPSADAS_DEFAULT: Record<string, boolean> = {
@@ -45,7 +45,7 @@ export const FILTROS_DEFAULT: PipelineFiltrosState = {
   practica: 'todas',
   fechaTipo: 'todas',
   recordatorio: 'todos',
-  seguimiento: 'activos',
+  seguimiento: 'todos',
   soloAlertas: false,
   fechaDesde: '',
   fechaHasta: ''
@@ -92,7 +92,7 @@ export function usePipelineSessionState() {
         const esMismoUsuario = parsed.userId === userId
         const esMismoDia = parsed.fecha === fechaHoy
 
-        if (esMismoUsuario && esMismoDia && parsed.version === 1) {
+        if (esMismoUsuario && esMismoDia && parsed.version === 2) {
           // Restaurar sesión activa de la jornada
           if (parsed.modoVisualizacion) setModoVisualizacionState(parsed.modoVisualizacion)
           if (parsed.vistaActual) setVistaActualState(parsed.vistaActual)
@@ -134,7 +134,7 @@ export function usePipelineSessionState() {
     if (typeof window === 'undefined' || !yaCargadoRef.current) return
     try {
       const payload: PipelineSessionData = {
-        version: 1,
+        version: 2,
         userId,
         fecha: fechaHoy,
         modoVisualizacion: nuevoModo,

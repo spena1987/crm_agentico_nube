@@ -520,7 +520,7 @@ export default function PipelineQuirurgicoPage() {
     if (filtroPractica !== 'todas') c++
     if (filtroFechaTipo !== 'todas') c++
     if (filtroRecordatorio !== 'todos') c++
-    if (filtroSeguimiento !== 'activos') c++
+    if (filtroSeguimiento !== 'todos') c++
     if (soloAlertas) c++
     if (fechaDesde !== '' || fechaHasta !== '') c++
     return c
@@ -804,6 +804,15 @@ export default function PipelineQuirurgicoPage() {
     subfiltroCerrados
   ])
 
+  // Totales de casos visibles en pantalla (para sincronizar indicadores y badges de forma dinámica)
+  const totalCasosActivosVisibles = useMemo(() => {
+    return Object.values(etapasActivasFiltradas).reduce((acc, list) => acc + list.length, 0)
+  }, [etapasActivasFiltradas])
+
+  const totalCasosCerradosVisibles = useMemo(() => {
+    return casosCerradosFiltrados.length
+  }, [casosCerradosFiltrados])
+
   return (
     <div className="w-full max-w-none px-4 md:px-6 py-3 space-y-3 min-w-0 pb-12 animate-fade-in">
       
@@ -858,7 +867,9 @@ export default function PipelineQuirurgicoPage() {
               <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
                 vistaActual === 'activos' ? 'bg-blue-900 text-blue-100' : 'bg-neutral-800 text-gray-400'
               }`}>
-                {metricas?.casos_activos ?? 0}
+                {totalCasosActivosVisibles === (metricas?.casos_activos ?? 0)
+                  ? (metricas?.casos_activos ?? 0)
+                  : `${totalCasosActivosVisibles} / ${metricas?.casos_activos ?? 0}`}
               </span>
             </button>
 
@@ -876,7 +887,12 @@ export default function PipelineQuirurgicoPage() {
               <span className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
                 vistaActual === 'cerrados' ? 'bg-neutral-700 text-gray-200' : 'bg-neutral-800 text-gray-400'
               }`}>
-                {(metricas?.casos_operados ?? 0) + (metricas?.casos_cancelados ?? 0)}
+                {(() => {
+                  const totalCerrados = (metricas?.casos_operados ?? 0) + (metricas?.casos_cancelados ?? 0)
+                  return totalCasosCerradosVisibles === totalCerrados
+                    ? totalCerrados
+                    : `${totalCasosCerradosVisibles} / ${totalCerrados}`
+                })()}
               </span>
             </button>
           </div>
@@ -922,7 +938,16 @@ export default function PipelineQuirurgicoPage() {
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-950 border border-[var(--border)] text-gray-300">
                   <Stethoscope size={13} className="text-blue-400" />
                   <span className="text-[11px] text-gray-400">Activos:</span>
-                  <strong className="text-white font-mono font-black">{metricas.casos_activos}</strong>
+                  <strong className="text-white font-mono font-black">
+                    {totalCasosActivosVisibles === (metricas.casos_activos ?? 0)
+                      ? metricas.casos_activos
+                      : `${totalCasosActivosVisibles} / ${metricas.casos_activos}`}
+                  </strong>
+                  {totalCasosActivosVisibles !== metricas.casos_activos && (
+                    <span className="text-[10px] text-blue-400 font-medium">
+                      (filtrados)
+                    </span>
+                  )}
                 </div>
 
                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl border text-[11px] ${
@@ -1158,7 +1183,7 @@ export default function PipelineQuirurgicoPage() {
 
           {/* Filtro Específico de Seguimiento y Snooze (Cadencias Asistidas) */}
           {vistaActual === 'activos' && (
-            <div className="flex items-center gap-1 min-w-[160px] max-w-[220px]">
+            <div className="flex items-center gap-1 min-w-[170px] max-w-[240px]">
               <PauseCircle size={12} className="text-purple-400 shrink-0" />
               <select
                 value={filtroSeguimiento}
@@ -1166,10 +1191,10 @@ export default function PipelineQuirurgicoPage() {
                 className="w-full text-xs bg-neutral-950 border border-purple-500/30 text-purple-200 rounded-xl px-2 py-1 focus:outline-none focus:border-purple-500 cursor-pointer truncate font-medium"
                 title="Filtrar casos según estado de seguimiento asistido y postergaciones"
               >
-                <option value="activos">🎯 Activos en Gestión</option>
-                <option value="snooze">⏸️ Postergados (Snooze)</option>
-                <option value="reactivados">🔥 Reactivados / Atención</option>
-                <option value="todos">Todos los Estados</option>
+                <option value="todos">Todos los Estados ({metricas?.casos_activos ?? 0})</option>
+                <option value="activos">🎯 En Gestión Inmediata ({Math.max(0, (metricas?.casos_activos ?? 0) - (metricas?.casos_snooze ?? 0))})</option>
+                <option value="snooze">⏸️ Postergados / Snooze ({metricas?.casos_snooze ?? 0})</option>
+                <option value="reactivados">🔥 Reactivados / Atención ({metricas?.casos_reactivados_hoy ?? 0})</option>
               </select>
             </div>
           )}
@@ -1309,6 +1334,25 @@ export default function PipelineQuirurgicoPage() {
         )}
 
       </div>
+
+      {/* Aviso informativo contextual cuando hay casos postergados ocultos por filtro 'activos' */}
+      {vistaActual === 'activos' && filtroSeguimiento === 'activos' && (metricas?.casos_snooze ?? 0) > 0 && (
+        <div className="flex items-center justify-between gap-3 px-3.5 py-2 rounded-xl bg-purple-950/30 border border-purple-500/30 text-purple-200 text-xs animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <PauseCircle size={14} className="text-purple-400 shrink-0" />
+            <span>
+              Mostrando <strong>{totalCasosActivosVisibles} cirugías en gestión inmediata</strong>. Hay <strong>{metricas?.casos_snooze} pacientes postergados (snooze)</strong> temporalmente fuera del tablero.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFiltroSeguimiento('todos')}
+            className="text-[11px] font-bold text-purple-300 hover:text-white underline underline-offset-2 shrink-0 transition-colors"
+          >
+            Ver todos los {metricas?.casos_activos} activos
+          </button>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* 5A. TABLERO KANBAN DE ETAPAS ABIERTAS / ACTIVAS (5 COLUMNAS FULL-WIDTH) */}

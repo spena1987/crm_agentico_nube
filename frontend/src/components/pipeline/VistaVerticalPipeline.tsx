@@ -118,14 +118,21 @@ export default function VistaVerticalPipeline({
 
   const totalEtapas = columnasEtapas.length
   const etapasAbiertasCount = columnasEtapas.filter((c) => !colapsadasActivas[c.id]).length
+  const totalCirugiasVisibles = columnasEtapas.reduce(
+    (acc, col) => acc + (etapasActivasFiltradas[col.id]?.length || 0),
+    0
+  )
 
   return (
     <div className="w-full space-y-4 pb-12">
       {/* Barra de control rápido de acordeones */}
       <div className="flex items-center justify-between px-1 text-xs text-gray-400">
-        <span className="flex items-center gap-2 font-medium">
+        <span className="flex items-center gap-2 font-medium flex-wrap">
           <Layers size={14} className="text-blue-400" />
           <span>Vista Vertical de Flujo Continuo por Etapas</span>
+          <span className="text-[11px] px-2 py-0.5 rounded-full bg-blue-950/60 border border-blue-500/30 text-blue-300 font-mono font-bold">
+            {totalCirugiasVisibles} {totalCirugiasVisibles === 1 ? 'cirugía visible' : 'cirugías visibles'}
+          </span>
           <span className="text-[11px] px-2 py-0.5 rounded-full bg-neutral-900 border border-neutral-800 text-gray-400 font-normal">
             {etapasAbiertasCount === 0
               ? 'Todas contraídas'
