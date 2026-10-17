@@ -297,6 +297,7 @@ class SimuladorMensaje(BaseModel):
 
 class ToggleBotRequest(BaseModel):
     bot_disabled: bool
+    modo_atencion: Optional[str] = None
 
 class ItemPresupuestoInput(BaseModel):
     codigo_servicio: str
@@ -2201,7 +2202,7 @@ class SituationalAgentCreateUpdate(BaseModel):
     activo: Optional[bool] = True
     temperatura: Optional[float] = 0.2
     directiva_particular: str
-    herramientas_habilitadas: Optional[List[str]] = ["buscar_disponibilidad_turnos", "crear_borrador_presupuesto", "escalar_a_operador_humano"]
+    herramientas_habilitadas: Optional[List[str]] = ["solicitar_coordinacion_turno", "crear_borrador_presupuesto", "escalar_a_operador_humano"]
     criterios_activacion: Optional[Any] = []
     orden: Optional[int] = 0
 
@@ -2412,8 +2413,8 @@ def toggle_bot(conversacion_id: str, payload: ToggleBotRequest):
     """
     Habilita o deshabilita la atención del bot automático en una conversación específica.
     """
-    logger.info(f"Alternar bot en conversación {conversacion_id} a {payload.bot_disabled}")
-    res = actualizar_bot_disabled(conversacion_id, payload.bot_disabled)
+    logger.info(f"Alternar bot en conversación {conversacion_id} a {payload.bot_disabled} (modo: {payload.modo_atencion})")
+    res = actualizar_bot_disabled(conversacion_id, payload.bot_disabled, payload.modo_atencion)
     if not res:
         raise HTTPException(status_code=404, detail="Conversación no encontrada.")
     return {"success": True, "conversacion": res}

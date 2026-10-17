@@ -53,7 +53,9 @@ import {
   Plus,
   Link2,
   FolderOpen,
-  Forward
+  Forward,
+  Trash2,
+  Edit3
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import ToggleHuman from './ToggleHuman'
@@ -194,6 +196,7 @@ export default function ChatInbox() {
   const [filtroOperadorId, setFiltroOperadorId] = useState<string>('todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [showSimulator, setShowSimulator] = useState(false)
+  const [stagedAiDraft, setStagedAiDraft] = useState<string | null>(null)
 
   // Operadores disponibles y gestión de traspasos
   const [operadores, setOperadores] = useState<OperadorAsignado[]>([])
@@ -439,6 +442,7 @@ export default function ChatInbox() {
 
   useEffect(() => {
     selectedConvIdRef.current = selectedConvId
+    setStagedAiDraft(null)
   }, [selectedConvId])
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -1306,6 +1310,97 @@ export default function ChatInbox() {
 
   const selectedConv = conversaciones.find((c) => c.id === selectedConvId)
 
+  // Borrador Asistido Activo (Staged Draft de Copiloto)
+  const activeAiDraft = stagedAiDraft || (
+    selectedConv?.metadata_json?.draft_ai &&
+    selectedConv.metadata_json.draft_ai.estado !== 'descartado' &&
+    selectedConv.metadata_json.draft_ai.estado !== 'enviado'
+      ? selectedConv.metadata_json.draft_ai.texto
+      : null
+  )
+
+  const handleDescartarDraft = async () => {
+    setStagedAiDraft(null)
+    if (selectedConv?.id && selectedConv?.metadata_json?.draft_ai) {
+      try {
+        const updatedMeta = { ...selectedConv.metadata_json }
+        if (updatedMeta.draft_ai) {
+          updatedMeta.draft_ai = { ...updatedMeta.draft_ai, estado: 'descartado' }
+        }
+        setConversaciones((prev) =>
+          prev.map((c) => (c.id === selectedConv.id ? { ...c, metadata_json: updatedMeta } : c))
+        )
+        await (supabase as any)
+          .from('conversaciones')
+          .update({ metadata_json: updatedMeta, updated_at: new Date().toISOString() })
+          .eq('id', selectedConv.id)
+      } catch (err) {
+        console.warn('Error al descartar draft_ai en Supabase:', err)
+      }
+    }
+  }
+
+  const handleEditarDraft = () => {
+    if (!activeAiDraft) return
+    setNuevoMensaje(activeAiDraft)
+    handleDescartarDraft()
+    setTimeout(() => messageInputRef.current?.focus(), 50)
+  }
+
+  const handleAprobarYEnviarDraft = async () => {
+    if (!activeAiDraft || !selectedConvId || !selectedConv) return
+
+    if (metaWindow.isExpired) {
+      const abrirModal = window.confirm(
+        '⚠️ La ventana de 24 horas de WhatsApp está cerrada para este paciente.\n\nMeta no permite enviar mensajes de texto libre fuera de la ventana. Debes reabrir la conversación utilizando una Plantilla Oficial de Meta.\n\n¿Deseas abrir el selector de Plantillas Meta ahora?'
+      )
+      if (abrirModal) {
+        setShowTemplateModal(true)
+      }
+      return
+    }
+
+    const textoAEnviar = activeAiDraft.trim()
+    const tempId = `temp_${Date.now()}`
+    const metaOpt: any = {
+      delivery_status: 'enviado',
+      provider: 'meta_cloud_api',
+      operador_id: currentUserId,
+      operador_nombre: currentUserName,
+      aprobado_copiloto: true,
+    }
+
+    const optimisticMsg: Mensaje = {
+      id: tempId,
+      conversacion_id: selectedConvId,
+      emisor: 'operador',
+      contenido: textoAEnviar,
+      metadata_json: metaOpt,
+      created_at: new Date().toISOString(),
+    }
+    setMensajes((prev) => [...prev, optimisticMsg])
+    handleDescartarDraft()
+
+    try {
+      const paciente = getPatient(selectedConv)
+      const telefonoDestino = paciente?.telefono || ''
+      await fetch(`${BACKEND_URL}/api/messages/send-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversacion_id: selectedConvId,
+          to: telefonoDestino,
+          message: textoAEnviar,
+          autor: currentUserName,
+          operador_id: currentUserId,
+          operador_nombre: currentUserName,
+        }),
+      })
+    } catch (err) {
+      console.error('Error enviando borrador aprobado:', err)
+    }
+  }
+
   // Handlers del Menú Contextual (WhatsApp Web + Clínico)
   const handleOpenContextMenu = (e: React.MouseEvent, msg: Mensaje) => {
     e.preventDefault()
@@ -1805,8 +1900,7 @@ export default function ChatInbox() {
       if (res.ok) {
         const data = await res.json()
         if (data.sugerencia) {
-          setNuevoMensaje(data.sugerencia)
-          setTimeout(() => messageInputRef.current?.focus(), 50)
+          setStagedAiDraft(data.sugerencia)
         }
       }
     } catch (err) {
@@ -2588,13 +2682,27 @@ export default function ChatInbox() {
                   </button>
                 )}
 
-                {/* Switch de Atención Humano / Bot */}
+                {/* Switch de Atención Humano / Copiloto / Autónomo */}
                 <ToggleHuman
                   conversacionId={selectedConv.id}
                   botDisabled={selectedConv.bot_disabled}
+                  modoAtencion={selectedConv.metadata_json?.modo_atencion}
                   onToggle={(disabled) => {
                     setConversaciones((prev) =>
                       prev.map((c) => (c.id === selectedConv.id ? { ...c, bot_disabled: disabled } : c))
+                    )
+                  }}
+                  onModoChange={(modo) => {
+                    setConversaciones((prev) =>
+                      prev.map((c) =>
+                        c.id === selectedConv.id
+                          ? {
+                              ...c,
+                              bot_disabled: modo === 'humano',
+                              metadata_json: { ...c.metadata_json, modo_atencion: modo },
+                            }
+                          : c
+                      )
                     )
                   }}
                 />
@@ -2927,7 +3035,7 @@ export default function ChatInbox() {
                             <div
                               key={msg.id}
                               onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                              className={`flex ${isOperator ? 'justify-end' : 'justify-start'} group relative`}
+                              className={`flex ${isOperator || isBot ? 'justify-end' : 'justify-start'} group relative`}
                             >
                           {isSticker ? (
                             <div className="relative group p-1 max-w-[140px]">
@@ -2975,7 +3083,7 @@ export default function ChatInbox() {
                                     ? 'bg-blue-600 text-white rounded-tr-none shadow-blue-900/20'
                                     : 'bg-indigo-900/90 border border-purple-500/40 text-white rounded-tr-none shadow-purple-950/30 ring-1 ring-purple-500/20'
                                   : isBot
-                                  ? 'bg-[#0c221e] text-emerald-100 border border-emerald-800/60 rounded-tl-none'
+                                  ? 'bg-[#042820] text-emerald-100 border border-emerald-600/50 rounded-tr-none shadow-md shadow-emerald-950/40'
                                   : 'bg-[#131d35] border border-slate-700/60 text-slate-100 rounded-tl-none'
                               }`}
                             >
@@ -3021,8 +3129,8 @@ export default function ChatInbox() {
                                     </span>
                                   )
                                 ) : isBot ? (
-                                  <span className="text-teal-400 flex items-center gap-1 font-semibold">
-                                    <Bot size={11} /> Bot Gemini
+                                  <span className="text-emerald-400 flex items-center gap-1 font-semibold">
+                                    <Bot size={11} className="text-emerald-300" /> Asistente Virtual Centrovisión
                                   </span>
                                 ) : (
                                   <span className="text-emerald-400 font-bold">
@@ -3362,6 +3470,65 @@ export default function ChatInbox() {
                     <Send size={11} />
                     <span>Reabrir con Plantilla</span>
                   </button>
+                </div>
+              )}
+
+              {/* Tarjeta de Borrador Asistido (Staged Draft del Copiloto IA) */}
+              {activeAiDraft && (
+                <div className="mb-2.5 p-3 bg-[#06201b] border-2 border-emerald-500/70 rounded-2xl shadow-xl shadow-emerald-950/50 animate-in slide-in-from-bottom-2 duration-150">
+                  <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-emerald-800/40">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300">
+                      <Sparkles size={14} className="text-amber-400 animate-pulse" />
+                      <span>Sugerencia Asistida del Copiloto IA</span>
+                      <span className="text-[9.5px] px-1.5 py-0.5 bg-emerald-950 text-emerald-300 border border-emerald-700/60 rounded-full font-semibold">
+                        Revisión del Asesor
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleDescartarDraft}
+                      className="text-slate-400 hover:text-white p-1 hover:bg-emerald-900/40 rounded-lg transition"
+                      title="Descartar sugerencia"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div className="text-xs text-emerald-100 font-sans whitespace-pre-wrap leading-relaxed max-h-36 overflow-y-auto mb-2.5 bg-[#031512] p-2.5 rounded-xl border border-emerald-900/60">
+                    <WhatsAppFormattedText text={activeAiDraft} />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={handleDescartarDraft}
+                      className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-700/80 transition flex items-center gap-1 cursor-pointer"
+                      title="Ignorar esta sugerencia"
+                    >
+                      <Trash2 size={12} className="text-slate-400" />
+                      <span>Descartar</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleEditarDraft}
+                      className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-blue-200 hover:text-white bg-blue-900/60 hover:bg-blue-800/80 border border-blue-500/40 transition flex items-center gap-1 cursor-pointer"
+                      title="Cargar texto en el editor para realizar cambios antes de enviar"
+                    >
+                      <Edit3 size={12} className="text-blue-400" />
+                      <span>Editar en Mensaje</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleAprobarYEnviarDraft}
+                      className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 shadow-md shadow-emerald-900/40 transition flex items-center gap-1.5 cursor-pointer"
+                      title="Enviar inmediatamente al paciente por WhatsApp"
+                    >
+                      <CheckCircle2 size={13} className="text-emerald-100" />
+                      <span>Aprobar y Enviar</span>
+                    </button>
+                  </div>
                 </div>
               )}
 

@@ -19,6 +19,23 @@ from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 
 logger = logging.getLogger("whatsapp_cloud_worker")
 
+def check_human_handover_match(text: str, keywords: list) -> Optional[str]:
+    """Evalúa de forma determinística si un texto contiene palabras clave de escape o quirúrgicas."""
+    if not text or not keywords:
+        return None
+    import unicodedata
+    def _norm(s: str) -> str:
+        s = unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('utf-8')
+        return re.sub(r'[^a-z0-9\s]', ' ', s.lower()).strip()
+    clean_text = f" {_norm(text)} "
+    for kw in keywords:
+        norm_kw = _norm(kw)
+        if not norm_kw:
+            continue
+        if f" {norm_kw} " in clean_text or clean_text.strip() == norm_kw:
+            return kw
+    return None
+
 # Intentar inicializar cliente de Redis si está disponible en variables de entorno
 _redis = None
 try:
@@ -720,11 +737,12 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                 # 4.3 Despachar el Agente IA (Gemini) si no fue una acción interactiva determinística y el bot no está deshabilitado
                 from app.db import es_bot_activo_globalmente
                 bot_global_activo = es_bot_activo_globalmente()
+                modo_atencion = (c_meta.get("modo_atencion") or ("humano" if bot_disabled else "copiloto")).lower()
 
                 if not bot_global_activo:
                     logger.info(f"[Kill-Switch Central] Bot IA Gemini pausado centralmente en Ajustes. Omitiendo inferencia para paciente {paciente_id}.")
-                elif bot_disabled:
-                    logger.info(f"[Kill-Switch Paciente] Conversación {crm_conv_id} tiene bot_disabled=True (Atención Humana). Omitiendo inferencia para paciente {paciente_id}.")
+                elif modo_atencion == "humano" or (bot_disabled and modo_atencion != "copiloto"):
+                    logger.info(f"[Modo Humano] Conversación {crm_conv_id} en atención humana exclusiva (bot_disabled={bot_disabled}, modo={modo_atencion}). Omitiendo inferencia automática.")
                 elif not interactive_handled and text_content and msg_type in ("text", "interactive", "audio"):
                     import asyncio
                     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient
@@ -797,7 +815,79 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                                             }).eq("id", crm_conv_id).execute()
                                 return
 
-                            # 1. Fast-Path: Detección Determinística Inmediata de Escape Humano
+                            # 1. Fast-Path Quirúrgico y Reprogramación (Zero-Turn Handover)
+                            SURGICAL_SCHEDULE_KEYWORDS = [
+                                "reprogramar", "reprograma", "cambiar fecha", "cambio de fecha", "cambiar turno",
+                                "postergar", "suspender cirugia", "cancelar cirugia", "a que hora me opero",
+                                "a que hora es mi cirugia", "a que hora tengo que estar", "horario de mi cirugia",
+                                "fecha de cirugia", "fecha de mi cirugia", "cuando me operan", "dia de quirofano",
+                                "horario de quirofano", "confirmar fecha", "reprogramar cirugia", "turno para operarme",
+                                "cuándo me opero", "a qué hora me opero", "cambiar mi cirugia"
+                            ]
+                            matched_qx = check_human_handover_match(text_content, SURGICAL_SCHEDULE_KEYWORDS)
+                            if matched_qx:
+                                logger.info(f"[Fast-Path Quirúrgico] Consulta/reprogramación quirúrgica detectada ('{matched_qx}') para paciente {paciente_id}. Derivando a asesora.")
+                                msg_qx = (
+                                    "Comprendo tu consulta sobre la fecha y coordinación de tu procedimiento quirúrgico. "
+                                    "Para garantizar la máxima precisión y seguridad médica, he transferido tu caso directamente "
+                                    "a nuestra asesoría quirúrgica y secretaría para coordinarlo contigo de forma personalizada. "
+                                    "Un asesor del equipo se comunicará contigo a la brevedad."
+                                )
+                                phone_id, token = get_whatsapp_cloud_credentials()
+                                if phone_id and token:
+                                    wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+                                    send_res = await wa_client.send_free_text(normalized_phone, msg_qx)
+                                    bot_wamid = send_res.get("wamid")
+                                    await wa_client.close()
+
+                                    if crm_conv_id:
+                                        supabase.table("mensajes").insert({
+                                            "conversacion_id": crm_conv_id,
+                                            "emisor": "bot",
+                                            "contenido": msg_qx,
+                                            "metadata_json": {
+                                                "wamid": bot_wamid,
+                                                "tipo": "text",
+                                                "delivery_status": "enviado",
+                                                "provider": "meta_cloud_api",
+                                                "fast_path_quirurgico": True,
+                                                "keyword_matched": matched_qx
+                                            }
+                                        }).execute()
+
+                                        # Registrar nota interna para secretaría
+                                        supabase.table("mensajes").insert({
+                                            "conversacion_id": crm_conv_id,
+                                            "emisor": "sistema",
+                                            "contenido": f"🚨 SOLICITUD QUIRÚRGICA: El paciente consultó: '{text_content[:150]}'. Bot pausado y derivado a asesoría humana.",
+                                            "metadata_json": {
+                                                "tipo": "nota_interna",
+                                                "is_internal_note": True,
+                                                "evento": "escalado_humano",
+                                                "urgencia": "ALTA"
+                                            }
+                                        }).execute()
+
+                                        conv_res = supabase.table("conversaciones").select("metadata_json").eq("id", crm_conv_id).limit(1).execute()
+                                        curr_meta = (conv_res.data[0].get("metadata_json") or {}) if conv_res.data else {}
+                                        curr_meta.update({
+                                            "modo_atencion": "humano",
+                                            "bloqueo_humano_manual": True,
+                                            "handover_motivo": f"Consulta / reprogramación quirúrgica: '{matched_qx}'",
+                                            "handover_at": datetime.now(timezone.utc).isoformat()
+                                        })
+
+                                        supabase.table("conversaciones").update({
+                                            "bot_disabled": True,
+                                            "estado_gestion": "SIN_ASIGNAR",
+                                            "ultimo_mensaje": msg_qx,
+                                            "metadata_json": curr_meta,
+                                            "updated_at": datetime.now(timezone.utc).isoformat()
+                                        }).eq("id", crm_conv_id).execute()
+
+                                return
+
+                            # 2. Fast-Path: Detección Determinística Inmediata de Escape Humano
                             if handover_cfg.get("auto_escalamiento_activo", True):
                                 kw_list = handover_cfg.get("palabras_clave_escape") or bot_cfg.get("human_escalation_keywords") or []
                                 matched_kw = check_human_handover_match(text_content, kw_list)
@@ -847,9 +937,9 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                                     return
 
-                            # 2. Despachar Inferencia Semántica a Gemini
+                            # 3. Despachar Inferencia Semántica a Gemini
                             from app.agent import procesar_mensaje_agente
-                            logger.info(f"[Agente IA] Ejecutando Gemini para paciente {paciente_id}...")
+                            logger.info(f"[Agente IA] Ejecutando Gemini para paciente {paciente_id} (modo: {modo_atencion})...")
                             respuesta_bot = procesar_mensaje_agente(
                                 conversacion_id=crm_conv_id,
                                 mensaje_texto_o_paciente_id=paciente_id,
@@ -857,6 +947,25 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                                 guardar_en_db=False
                             )
                             if respuesta_bot:
+                                # Si la conversación está en MODO COPILOTO:
+                                # Guardamos la sugerencia como borrador en metadata_json para aprobación del asesor en CRM,
+                                # SIN ENVIAR automáticamente a WhatsApp.
+                                if modo_atencion == "copiloto":
+                                    logger.info(f"[Modo Copiloto] Borrador IA generado para conv {crm_conv_id}. Guardando en metadata_json para aprobación humana.")
+                                    if crm_conv_id:
+                                        conv_res = supabase.table("conversaciones").select("metadata_json").eq("id", crm_conv_id).limit(1).execute()
+                                        curr_meta = (conv_res.data[0].get("metadata_json") or {}) if conv_res.data else {}
+                                        curr_meta["draft_ai"] = {
+                                            "texto": respuesta_bot,
+                                            "generado_at": datetime.now(timezone.utc).isoformat(),
+                                            "estado": "pendiente"
+                                        }
+                                        supabase.table("conversaciones").update({
+                                            "metadata_json": curr_meta
+                                        }).eq("id", crm_conv_id).execute()
+                                    return
+
+                                # MODO AUTÓNOMO: Envío directo a WhatsApp
                                 phone_id, token = get_whatsapp_cloud_credentials()
                                 if phone_id and token:
                                     wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)

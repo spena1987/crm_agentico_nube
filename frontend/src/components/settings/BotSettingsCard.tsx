@@ -118,7 +118,7 @@ export default function BotSettingsCard() {
   } | null>(null)
 
   const toolOptions = [
-    { key: 'buscar_disponibilidad_turnos', label: '📅 Agenda & Turnos', desc: 'Búsqueda de slots y disponibilidad médica en Geclisa' },
+    { key: 'solicitar_coordinacion_turno', label: '📅 Solicitud de Turnos', desc: 'Registra la solicitud del paciente y la deriva a secretaría humana' },
     { key: 'crear_borrador_presupuesto', label: '💰 Presupuestador', desc: 'Cálculo de aranceles y emisión de cotizaciones' },
     { key: 'aprobar_presupuesto', label: '✅ Aprobador Presupuestos', desc: 'Confirma presupuestos aprobados y actualiza quirófano' },
     { key: 'desestimar_presupuesto', label: '❌ Desestimar Presupuestos', desc: 'Registra rechazo de presupuesto capturando motivo de baja' },
@@ -544,7 +544,7 @@ export default function BotSettingsCard() {
                   activo: true,
                   temperatura: 0.2,
                   directiva_particular: '',
-                  herramientas_habilitadas: ['buscar_disponibilidad_turnos', 'escalar_a_operador_humano']
+                  herramientas_habilitadas: ['solicitar_coordinacion_turno', 'escalar_a_operador_humano']
                 })
                 setIsCreatingAgent(true)
               }}
@@ -610,7 +610,7 @@ export default function BotSettingsCard() {
                   <div className="flex flex-wrap gap-1.5">
                     {ag.herramientas_habilitadas?.map((t) => (
                       <span key={t} className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-medium text-[var(--secondary)]">
-                        {t === 'buscar_disponibilidad_turnos' && '📅 Turnos'}
+                        {(t === 'solicitar_coordinacion_turno' || t === 'buscar_disponibilidad_turnos') && '📅 Solicitud Turnos'}
                         {t === 'crear_borrador_presupuesto' && '💰 Presupuestos'}
                         {t === 'escalar_a_operador_humano' && '🚨 Escalamiento'}
                       </span>

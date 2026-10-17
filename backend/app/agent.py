@@ -40,6 +40,28 @@ def bind_tools_to_context(
         if tracker is not None and fn_name not in tracker:
             tracker.append(fn_name)
 
+    def _build_solicitar_turno(fn):
+        def solicitar_coordinacion_turno(
+            especialidad: str = "Oftalmología General",
+            preferencia_horaria: str = "Indistinto",
+            motivo_consulta: str = "Control / Consulta médica"
+        ) -> dict:
+            """
+            Registra formalmente una solicitud de turno médico en el CRM para que el equipo
+            de secretaría médica humana consulte la agenda oficial en Geclisa y confirme la cita real.
+            Desactiva el bot automático para que la atención continúe bajo supervisión humana.
+            """
+            record_call("solicitar_coordinacion_turno")
+            return fn(
+                especialidad=especialidad,
+                preferencia_horaria=preferencia_horaria,
+                motivo_consulta=motivo_consulta,
+                paciente_id=paciente_id,
+                conversacion_id=conversacion_id
+            )
+        solicitar_coordinacion_turno.__doc__ = fn.__doc__ or solicitar_coordinacion_turno.__doc__
+        return solicitar_coordinacion_turno
+
     def _build_vincular_geclisa(fn):
         def vincular_paciente_geclisa(dni: str) -> dict:
             """
@@ -185,6 +207,7 @@ def bind_tools_to_context(
         return registrar_seguimiento_o_postergacion_quirurgica
 
     builders = {
+        "solicitar_coordinacion_turno": _build_solicitar_turno,
         "vincular_paciente_geclisa": _build_vincular_geclisa,
         "crear_borrador_presupuesto": _build_crear_borrador,
         "aprobar_presupuesto": _build_aprobar_presupuesto,
@@ -406,20 +429,17 @@ def procesar_mensaje_agente(
                         config=config
                     )
                 except Exception as fb_err2:
-                    logger.error(f"Falla también con {alt_model2} ({fb_err2}). Intentando último recurso degradado...")
+                    logger.critical(f"Falla crítica en todos los modelos de Gemini ({fb_err2}). Derivando de forma segura a operador humano para evitar alucinaciones...")
                     try:
-                        fallback_config_degraded = types.GenerateContentConfig(
-                            system_instruction=system_instruction,
-                            temperature=agent_temp
-                        )
-                        response = client.models.generate_content(
-                            model=alt_model,
-                            contents=final_texto or "Hola",
-                            config=fallback_config_degraded
-                        )
-                    except Exception as final_err:
-                        logger.critical(f"Falla crítica en todos los modelos de Gemini: {final_err}")
-                        raise final_err
+                        from app.services.tools import escalar_a_operador_humano
+                        if conversacion_id:
+                            escalar_a_operador_humano(conversacion_id=conversacion_id, motivo=f"Falla de disponibilidad en motor IA: {fb_err2}")
+                    except Exception as esc_err:
+                        logger.error(f"Error al auto-escalar por falla de IA: {esc_err}")
+                    return (
+                        "He transferido tu consulta con un asesor de nuestro equipo para atenderte de forma personalizada. "
+                        "Un operador de secretaría médica se comunicará contigo a la brevedad."
+                    )
 
         # 7. Consolidar herramientas ejecutadas durante Automatic Function Calling (AFC)
         if hasattr(response, "automatic_function_calling_history") and response.automatic_function_calling_history:

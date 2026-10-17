@@ -574,7 +574,7 @@ def buscar_servicio_por_codigo_o_nombre(termino: str):
         logger.error(f"Error al buscar servicios: {e}")
         return []
 
-def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
+def actualizar_bot_disabled(conversacion_id: str, disabled: bool, modo_atencion: Optional[str] = None):
     if not supabase:
         return None
     try:
@@ -582,6 +582,13 @@ def actualizar_bot_disabled(conversacion_id: str, disabled: bool):
         try:
             cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
             c_meta = dict(cur_conv.data[0].get("metadata_json") or {}) if cur_conv.data else {}
+            if modo_atencion:
+                c_meta["modo_atencion"] = modo_atencion
+            elif disabled:
+                c_meta["modo_atencion"] = "humano"
+            else:
+                c_meta["modo_atencion"] = "copiloto"
+
             if disabled:
                 import time
                 c_meta["bloqueo_humano_manual"] = True

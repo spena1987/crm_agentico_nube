@@ -18,7 +18,8 @@ from app.db import (
     cambiar_estado_presupuesto,
     get_presupuestos_by_paciente,
     vincular_o_fusionar_paciente_con_geclisa,
-    registrar_dni_paciente_nuevo_crm
+    registrar_dni_paciente_nuevo_crm,
+    is_valid_uuid
 )
 from app.services.pdf_service import generar_pdf_presupuesto
 from app.services.geclisa_client import GeclisaClient
@@ -27,36 +28,87 @@ from app.services.logger_service import log_event
 logger = logging.getLogger(__name__)
 geclisa_client = GeclisaClient()
 
-def buscar_disponibilidad_turnos(fecha_iso: str) -> dict:
+def solicitar_coordinacion_turno(
+    especialidad: str = "Oftalmología General",
+    preferencia_horaria: str = "Indistinto",
+    motivo_consulta: str = "Control / Consulta médica",
+    paciente_id: Optional[str] = None,
+    conversacion_id: Optional[str] = None
+) -> dict:
     """
-    Busca los turnos disponibles en la clínica para una fecha determinada.
+    Registra formalmente una solicitud de turno médico en el CRM para que el equipo
+    de secretaría médica humana consulte la agenda oficial en Geclisa y confirme la cita real.
+    Desactiva el bot automático para que la atención continúe bajo supervisión humana.
     
     Args:
-        fecha_iso: La fecha en formato ISO (YYYY-MM-DD), ej: '2026-08-15'.
+        especialidad: Especialidad oftalmológica o práctica requerida (ej: 'Cataratas', 'Refracción', 'Glaucoma', 'General').
+        preferencia_horaria: Preferencia de día u horario del paciente (ej: 'Mañana', 'Tarde', 'Próxima semana').
+        motivo_consulta: Breve motivo o síntoma expresado por el paciente.
+        paciente_id: UUID del paciente en el CRM (inyectado automáticamente).
+        conversacion_id: UUID de la conversación activa (inyectado automáticamente).
         
     Returns:
-        Un diccionario con la fecha y una lista de horarios de turnos disponibles.
+        Diccionario confirmando la recepción y traspaso a secretaría.
     """
-    logger.info(f"Herramienta: buscar_disponibilidad_turnos para la fecha {fecha_iso}")
-    try:
-        # Validar el formato de la fecha
-        fecha = datetime.strptime(fecha_iso, "%Y-%m-%d")
-    except ValueError:
-        return {"error": "Formato de fecha inválido. Utilice el formato YYYY-MM-DD."}
-
-    # No se agendan turnos los domingos (día 6)
-    if fecha.weekday() == 6:
-        return {"fecha": fecha_iso, "disponible": False, "mensaje": "La clínica permanece cerrada los domingos.", "turnos": []}
-
-    # Generamos algunos turnos de ejemplo de manera dinámica para que la experiencia sea fluida e interactiva.
-    # En producción esto consultaría una tabla de turnos libres.
-    turnos_disponibles = ["09:00", "10:30", "11:00", "14:30", "16:00", "17:30"]
+    logger.info(f"Herramienta: solicitar_coordinacion_turno para paciente {paciente_id} en conv {conversacion_id} (Esp: {especialidad}, Horario: {preferencia_horaria})")
     
+    if supabase and conversacion_id and is_valid_uuid(conversacion_id):
+        try:
+            # 1. Pausar bot y mover la conversación a la bandeja 'Espera' (SIN_ASIGNAR)
+            supabase.table("conversaciones").update({
+                "bot_disabled": True,
+                "estado_gestion": "SIN_ASIGNAR",
+                "unread_count": 1,
+                "updated_at": "now()"
+            }).eq("id", conversacion_id).execute()
+            
+            # 2. Registrar nota interna visible para secretaría
+            contenido_nota = (
+                f"📋 SOLICITUD DE TURNO MÉDICO DERIVADA A SECRETARÍA:\n"
+                f"• Especialidad / Motivo: {especialidad} - {motivo_consulta}\n"
+                f"• Franja horaria preferida: {preferencia_horaria}\n"
+                f"Acción requerida: Verificar agenda real en Geclisa y contactar al paciente para confirmar turno."
+            )
+            guardar_mensaje(
+                conversacion_id=conversacion_id,
+                emisor="bot",
+                contenido=contenido_nota,
+                metadata_json={
+                    "es_nota_interna": True,
+                    "sistema": True,
+                    "evento": "solicitud_coordinacion_turno",
+                    "especialidad": especialidad,
+                    "preferencia_horaria": preferencia_horaria,
+                    "motivo_consulta": motivo_consulta
+                }
+            )
+            
+            log_event(
+                nivel="INFO",
+                modulo="TURNOS",
+                accion="SOLICITAR_COORDINACION_TURNO",
+                mensaje=f"Solicitud de turno derivada: {especialidad} ({preferencia_horaria})",
+                detalles={
+                    "conversacion_id": conversacion_id,
+                    "paciente_id": paciente_id,
+                    "especialidad": especialidad,
+                    "preferencia_horaria": preferencia_horaria,
+                    "motivo": motivo_consulta
+                },
+                paciente_id=paciente_id
+            )
+        except Exception as e:
+            logger.error(f"Error al registrar solicitud de coordinación de turno: {e}")
+
     return {
-        "fecha": fecha_iso,
-        "disponible": True,
-        "turnos": turnos_disponibles,
-        "mensaje": f"Hay {len(turnos_disponibles)} turnos disponibles para el {fecha_iso}."
+        "success": True,
+        "solicitud_registrada": True,
+        "mensaje": (
+            f"Solicitud de turno para '{especialidad}' ({preferencia_horaria}) registrada exitosamente en el CRM. "
+            "El bot ha sido pausado y transferido al equipo de secretaría médica. "
+            "Responde al paciente con amabilidad confirmándole que su solicitud fue recibida y que una secretaria médica "
+            "se comunicará por este medio a la brevedad para verificar la agenda y confirmar su cita."
+        )
     }
 
 from pydantic import BaseModel, Field
