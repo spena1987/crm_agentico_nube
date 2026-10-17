@@ -861,11 +861,22 @@ def tomar_conversacion(conversacion_id: str, usuario_id: str, usuario_nombre: Op
     if not supabase:
         return None
     try:
+        c_meta = {}
+        try:
+            cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+            if cur_conv.data and cur_conv.data[0].get("metadata_json"):
+                c_meta = dict(cur_conv.data[0]["metadata_json"])
+        except Exception:
+            pass
+        c_meta["modo_atencion"] = "humano"
+        c_meta["bloqueo_humano_manual"] = True
+
         payload = {
             "asignado_a_usuario_id": usuario_id,
             "estado_gestion": "EN_GESTION",
             "bot_disabled": True,
-            "archivada": False
+            "archivada": False,
+            "metadata_json": c_meta
         }
         res = supabase.table("conversaciones").update(payload).eq("id", conversacion_id).execute()
         conv = res.data[0] if res.data else None
@@ -915,11 +926,22 @@ def derivar_conversacion(
     if not supabase:
         return None
     try:
+        c_meta = {}
+        try:
+            cur_conv = supabase.table("conversaciones").select("metadata_json").eq("id", conversacion_id).execute()
+            if cur_conv.data and cur_conv.data[0].get("metadata_json"):
+                c_meta = dict(cur_conv.data[0]["metadata_json"])
+        except Exception:
+            pass
+        c_meta["modo_atencion"] = "humano"
+        c_meta["bloqueo_humano_manual"] = True
+
         payload = {
             "asignado_a_usuario_id": nuevo_usuario_id,
             "estado_gestion": "EN_GESTION",
             "bot_disabled": True,
-            "archivada": False
+            "archivada": False,
+            "metadata_json": c_meta
         }
         res = supabase.table("conversaciones").update(payload).eq("id", conversacion_id).execute()
         conv = res.data[0] if res.data else None
@@ -977,6 +999,9 @@ def finalizar_conversacion(conversacion_id: str, usuario_nombre: Optional[str] =
         except Exception:
             pass
         c_meta["ultimo_mensaje_humano_at"] = 0
+        c_meta["bloqueo_humano_manual"] = False
+        c_meta["modo_atencion"] = "autonomo"
+        c_meta["fallback_strikes"] = 0
 
         payload = {
             "estado_gestion": "RESUELTO",

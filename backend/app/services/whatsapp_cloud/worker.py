@@ -649,28 +649,45 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
                     # Si el paciente vuelve a escribir en una conversación resuelta o archivada,
                     # reabrir automáticamente hacia la pestaña 'Espera' (SIN_ASIGNAR)
-                    # liberando la asignación previa y pausando el bot para que una asesora quirúrgica humana lo tome.
+                    # liberando la asignación previa y preservando/reactivando el bot si no tiene bloqueo manual humano.
                     hubo_reapertura = False
                     if conv_estado == "RESUELTO" or conv_archivada:
                         upd_payload["archivada"] = False
                         upd_payload["estado_gestion"] = "SIN_ASIGNAR"
                         upd_payload["asignado_a_usuario_id"] = None
-                        upd_payload["bot_disabled"] = True
-                        bot_disabled = True
+
+                        bloqueo_manual = bool(c_meta.get("bloqueo_humano_manual"))
+                        if bloqueo_manual:
+                            upd_payload["bot_disabled"] = True
+                            bot_disabled = True
+                            c_meta["modo_atencion"] = "humano"
+                        else:
+                            upd_payload["bot_disabled"] = False
+                            bot_disabled = False
+                            c_meta["modo_atencion"] = c_meta.get("modo_atencion") or "autonomo"
+                            c_meta["bloqueo_humano_manual"] = False
+                            c_meta["ultimo_mensaje_humano_at"] = 0
+                            c_meta["fallback_strikes"] = 0
+
                         c_meta["reabierto_automaticamente_at"] = inbound_now
                         c_meta["motivo_reapertura"] = "Nuevo mensaje entrante de paciente en conversación resuelta"
                         upd_payload["metadata_json"] = c_meta
                         hubo_reapertura = True
-                        logger.info(f"[Inbound Reopen] Chat {crm_conv_id} reabierto automáticamente a 'SIN_ASIGNAR' (Espera) tras nuevo mensaje de paciente.")
+                        logger.info(f"[Inbound Reopen] Chat {crm_conv_id} reabierto automáticamente a 'SIN_ASIGNAR' (bot_disabled={bot_disabled}, modo={c_meta.get('modo_atencion')}).")
 
                     supabase.table("conversaciones").update(upd_payload).eq("id", crm_conv_id).execute()
 
                     if hubo_reapertura:
                         try:
+                            nota_texto = (
+                                "💬 Conversación reabierta en 'Espera': nuevo mensaje recibido tras resolución. Atención humana requerida."
+                                if bot_disabled
+                                else "💬 Conversación reabierta: nuevo mensaje recibido del paciente tras resolución. Asistente Virtual activo."
+                            )
                             supabase.table("mensajes").insert({
                                 "conversacion_id": crm_conv_id,
                                 "emisor": "sistema",
-                                "contenido": "💬 Conversación reabierta en 'Espera': nuevo mensaje recibido del paciente tras haber sido resuelta.",
+                                "contenido": nota_texto,
                                 "metadata_json": {
                                     "es_nota_interna": True,
                                     "sistema": True,
@@ -734,15 +751,26 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
                         bot_disabled=bot_disabled
                     )
 
-                # 4.3 Despachar el Agente IA (Gemini) si no fue una acción interactiva determinística y el bot no está deshabilitado
                 from app.db import es_bot_activo_globalmente
                 bot_global_activo = es_bot_activo_globalmente()
-                modo_atencion = (c_meta.get("modo_atencion") or ("humano" if bot_disabled else "copiloto")).lower()
+
+                # Resolver modo de atención efectivo de forma armónica y consistente
+                modo_meta = (c_meta.get("modo_atencion") or "").lower()
+                bloqueo_manual = bool(c_meta.get("bloqueo_humano_manual"))
+
+                if bloqueo_manual or modo_meta == "humano":
+                    modo_atencion = "humano"
+                elif modo_meta in ("autonomo", "copiloto"):
+                    modo_atencion = modo_meta
+                elif bot_disabled:
+                    modo_atencion = "humano"
+                else:
+                    modo_atencion = "autonomo"
 
                 if not bot_global_activo:
                     logger.info(f"[Kill-Switch Central] Bot IA Gemini pausado centralmente en Ajustes. Omitiendo inferencia para paciente {paciente_id}.")
-                elif modo_atencion == "humano" or (bot_disabled and modo_atencion != "copiloto"):
-                    logger.info(f"[Modo Humano] Conversación {crm_conv_id} en atención humana exclusiva (bot_disabled={bot_disabled}, modo={modo_atencion}). Omitiendo inferencia automática.")
+                elif modo_atencion == "humano":
+                    logger.info(f"[Modo Humano] Conversación {crm_conv_id} en atención humana exclusiva (bot_disabled={bot_disabled}, modo={modo_atencion}, bloqueo_manual={bloqueo_manual}). Omitiendo inferencia automática.")
                 elif not interactive_handled and text_content and msg_type in ("text", "interactive", "audio"):
                     import asyncio
                     from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials, WhatsAppCloudClient

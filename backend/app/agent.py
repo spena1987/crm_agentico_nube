@@ -258,10 +258,17 @@ def procesar_mensaje_agente(
 
     if conversacion_id and supabase:
         try:
-            c_chk = supabase.table("conversaciones").select("bot_disabled").eq("id", conversacion_id).limit(1).execute()
-            if c_chk.data and c_chk.data[0].get("bot_disabled"):
-                logger.info(f"[Kill-Switch] Conversación {conversacion_id} tiene bot_disabled=True (Atención Humana). Omitiendo inferencia de IA.")
-                return ""
+            c_chk = supabase.table("conversaciones").select("bot_disabled, metadata_json").eq("id", conversacion_id).limit(1).execute()
+            if c_chk.data:
+                c_row = c_chk.data[0]
+                b_disabled = bool(c_row.get("bot_disabled"))
+                c_meta_chk = c_row.get("metadata_json") or {}
+                modo_chk = (c_meta_chk.get("modo_atencion") or "").lower()
+                bloqueo_manual = bool(c_meta_chk.get("bloqueo_humano_manual"))
+
+                if bloqueo_manual or modo_chk == "humano" or (b_disabled and modo_chk not in ("autonomo", "copiloto")):
+                    logger.info(f"[Kill-Switch] Conversación {conversacion_id} en Atención Humana (bot_disabled={b_disabled}, modo={modo_chk}). Omitiendo inferencia de IA.")
+                    return ""
         except Exception as err_chk:
             logger.warning(f"Error verificando bot_disabled en conversación {conversacion_id}: {err_chk}")
 
@@ -600,6 +607,8 @@ def procesar_mensaje_agente(
                 if conversacion_id:
                     try:
                         curr_meta.update({
+                            "modo_atencion": "humano",
+                            "bloqueo_humano_manual": True,
                             "fallback_strikes": strikes,
                             "handover_motivo": f"Límite de fallbacks por incomprensión superado ({strikes} strikes)",
                             "handover_at": datetime.now(timezone.utc).isoformat()

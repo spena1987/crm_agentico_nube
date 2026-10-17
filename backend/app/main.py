@@ -1494,6 +1494,7 @@ def send_message_api(payload: SendMessageRequest):
                 c_meta = conv_row.get("metadata_json") or {}
                 c_meta["ultimo_mensaje_humano_at"] = time.time()
                 c_meta["bloqueo_humano_manual"] = True
+                c_meta["modo_atencion"] = "humano"
                 upd_conv: Dict[str, Any] = {
                     "metadata_json": c_meta,
                     "bot_disabled": True

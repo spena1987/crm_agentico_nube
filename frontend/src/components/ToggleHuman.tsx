@@ -28,8 +28,8 @@ export default function ToggleHuman({
   const [loading, setLoading] = useState(false)
   const [botGlobalActivo, setBotGlobalActivo] = useState<boolean | null>(null)
 
-  // Determinar modo actual efectivo
-  const effectiveModo: ModoAtencion = modoAtencion || (botDisabled ? 'humano' : 'copiloto')
+  // Determinar modo actual efectivo alineado con el estado real del bot en base de datos
+  const effectiveModo: ModoAtencion = botDisabled ? 'humano' : (modoAtencion || 'autonomo')
 
   React.useEffect(() => {
     async function checkGlobalBot() {
@@ -49,9 +49,9 @@ export default function ToggleHuman({
   }, [])
 
   const handleChangeModo = async (targetModo: ModoAtencion) => {
-    if (!canIntervene || loading || targetModo === effectiveModo) return
-    setLoading(true)
     const isBotDisabled = targetModo === 'humano'
+    if (!canIntervene || loading || (targetModo === effectiveModo && isBotDisabled === botDisabled)) return
+    setLoading(true)
 
     try {
       // 1. Persistencia directa en Supabase
