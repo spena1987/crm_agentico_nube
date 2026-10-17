@@ -61,6 +61,7 @@ def test_actualizar_asesoria_quirurgica_persiste_todos_los_campos():
         # Mock para turnos_quirofano y configuracion_automatismos
         mock_table_turnos = MagicMock()
         mock_table_turnos.update.return_value.eq.return_value.neq.return_value.execute.return_value = MagicMock(data=[])
+        mock_table_turnos.select.return_value.eq.return_value.neq.return_value.execute.return_value = MagicMock(data=[])
 
         def table_side_effect(tabla):
             if tabla == "asesorias_quirurgicas":

@@ -42,7 +42,7 @@ class TestSmartTemplateConsentimiento(unittest.IsolatedAsyncioTestCase):
             }
         }
 
-    @patch("app.db.supabase")
+    @patch("app.services.seguimiento_quirurgico_service.supabase")
     @patch("app.db.get_turno_quirofano_by_id")
     @patch("app.db.check_patient_24h_window")
     @patch("app.db.registrar_envio_consentimiento_quirurgico")
@@ -92,7 +92,7 @@ class TestSmartTemplateConsentimiento(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reg_args["modo_envio"], "template")
         self.assertEqual(reg_args["template_name"], "consentimiento_informado_quirurgico_v1")
 
-    @patch("app.db.supabase")
+    @patch("app.services.seguimiento_quirurgico_service.supabase")
     @patch("app.db.get_turno_quirofano_by_id")
     @patch("app.db.check_patient_24h_window")
     @patch("app.db.registrar_envio_consentimiento_quirurgico")
@@ -121,7 +121,7 @@ class TestSmartTemplateConsentimiento(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(res["template_name"])
         mock_send_free_text.assert_called_once()
 
-    @patch("app.db.supabase")
+    @patch("app.services.seguimiento_quirurgico_service.supabase")
     @patch("app.db.get_turno_quirofano_by_id")
     @patch("app.db.check_patient_24h_window")
     @patch("app.db.registrar_envio_consentimiento_quirurgico")
@@ -188,9 +188,11 @@ class TestEndpointsConsentimiento(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["template_name"], "consentimiento_informado_quirurgico_v1")
 
+    @patch("app.db.supabase")
     @patch("app.services.seguimiento_quirurgico_service.despachar_consentimiento_informado_inteligente")
-    def test_endpoint_asesoria_enviar_consentimiento(self, mock_despachar):
+    def test_endpoint_asesoria_enviar_consentimiento(self, mock_despachar, mock_sb):
         """El endpoint POST /api/asesorias-quirurgicas/{asesoria_id}/enviar-consentimiento-wa debe delegar en el enrutador inteligente."""
+        mock_sb.table().select().eq().limit().execute.return_value = MagicMock(data=[{"id": "asesoria_123", "estado": "programado", "codigo_caso": "QX-26-001"}])
         mock_despachar.return_value = {
             "success": True,
             "modo_utilizado": "template",

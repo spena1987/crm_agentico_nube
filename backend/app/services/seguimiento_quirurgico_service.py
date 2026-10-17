@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional
 import os
 import requests
 
-from app.db import supabase, crear_evolucion_asesoria
+from app.db import supabase, crear_evolucion_asesoria, is_valid_uuid
 from app.whatsapp import whatsapp_manager
 from app.services.whatsapp_cloud.client import get_whatsapp_cloud_credentials
 from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
@@ -601,8 +601,8 @@ async def despachar_consentimiento_informado_inteligente(
     as_id = asesoria_id
 
     # Validación estricta de estado: solo casos en 'programado' o posterior
-    if as_id and sb:
-        res_c = sb.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+    if as_id and supabase and is_valid_uuid(as_id):
+        res_c = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
         if res_c.data:
             c_est = res_c.data[0].get("estado")
             if c_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):
@@ -630,8 +630,8 @@ async def despachar_consentimiento_informado_inteligente(
         turno = get_turno_quirofano_by_id(t_id)
         if turno and turno.get("asesoria_id") and not as_id:
             as_id = turno["asesoria_id"]
-            if sb:
-                res_c = sb.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
+            if supabase and is_valid_uuid(as_id):
+                res_c = supabase.table("asesorias_quirurgicas").select("id, estado").eq("id", as_id).limit(1).execute()
                 if res_c.data:
                     c_est = res_c.data[0].get("estado")
                     if c_est not in ("programado", "en_espera", "pre_quirofano", "en_operacion", "operado"):

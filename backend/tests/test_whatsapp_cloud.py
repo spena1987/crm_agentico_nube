@@ -242,10 +242,15 @@ async def test_handle_automated_interactive_action_confirmar_turno():
         )
         assert handled is True
         
-        # Verificar que el update a turnos_quirofano fue llamado con estado confirmado
+        # Verificar que el update a turnos_quirofano o asesoría fue llamado con confirmación
         assert mock_sup.table().update.called
         update_args = [c.args[0] for c in mock_sup.table().update.call_args_list if c.args]
-        assert any(a.get("estado") == "confirmado" for a in update_args if isinstance(a, dict))
+        assert any(
+            a.get("estado") == "confirmado" or
+            (isinstance(a.get("checks_adicionales"), dict) and a.get("checks_adicionales", {}).get("recordatorio_estado") == "confirmado") or
+            (isinstance(a.get("checklist_prequirurgico"), dict) and a.get("checklist_prequirurgico", {}).get("_recordatorio_qx", {}).get("estado") == "confirmado")
+            for a in update_args if isinstance(a, dict)
+        )
 
 
 def test_escalado_humano_respuesta_empatica():

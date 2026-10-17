@@ -104,24 +104,26 @@ def test_asegurar_turnos_para_consentimiento_asesoria_bilateral(asesoria_bilater
         assert res.get("segundo_ojo")["firmado"] is True
 
 def test_endpoint_datos_consentimiento_whatsapp_filtro_ojo(auth_headers):
-    with patch("app.db.get_datos_consentimiento_whatsapp") as mock_fn:
-        mock_fn.return_value = {
-            "ok": True,
-            "paciente_nombre": "LOOS, MARIO",
-            "cirugia": "Facoemulsificación con Implante de LIO (Ojo Izquierdo)",
-            "ojo": "OI",
-            "ojo_desc": "Ojo Izquierdo",
-            "fecha": "30/11/2026",
-            "enlace_firma": "https://crm-agentico-nube.vercel.app/consentimiento/token-oi-222",
-            "es_bilateral_escalonada": True
-        }
+    with patch("app.db.supabase") as mock_sb:
+        mock_sb.table().select().eq().limit().execute.return_value = MagicMock(data=[{"id": "mock-asesoria-bilateral-123", "estado": "programado"}])
+        with patch("app.db.get_datos_consentimiento_whatsapp") as mock_fn:
+            mock_fn.return_value = {
+                "ok": True,
+                "paciente_nombre": "LOOS, MARIO",
+                "cirugia": "Facoemulsificación con Implante de LIO (Ojo Izquierdo)",
+                "ojo": "OI",
+                "ojo_desc": "Ojo Izquierdo",
+                "fecha": "30/11/2026",
+                "enlace_firma": "https://crm-agentico-nube.vercel.app/consentimiento/token-oi-222",
+                "es_bilateral_escalonada": True
+            }
 
-        res = client.get(
-            "/api/asesorias-quirurgicas/mock-asesoria-bilateral-123/datos-consentimiento-whatsapp?ojo=OI",
-            headers=auth_headers
-        )
-        assert res.status_code == 200
-        data = res.json()
-        assert data.get("ok") is True
-        assert data.get("ojo") == "OI"
-        assert "Ojo Izquierdo" in data.get("cirugia")
+            res = client.get(
+                "/api/asesorias-quirurgicas/mock-asesoria-bilateral-123/datos-consentimiento-whatsapp?ojo=OI",
+                headers=auth_headers
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data.get("ok") is True
+            assert data.get("ojo") == "OI"
+            assert "Ojo Izquierdo" in data.get("cirugia")
