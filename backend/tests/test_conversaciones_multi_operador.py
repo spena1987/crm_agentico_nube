@@ -235,10 +235,50 @@ async def test_inbound_reapertura_conversacion_resuelta():
         await process_meta_webhook_payload(meta_payload)
 
         # Verificar que se actualizó conversaciones con archivada=False y estado_gestion='SIN_ASIGNAR'
+        # Caso A: sin bloqueo manual -> bot se mantiene activo en modo autónomo
         mock_conv.update.assert_called()
         upd_call_arg = mock_conv.update.call_args[0][0]
         assert upd_call_arg["archivada"] is False
         assert upd_call_arg["estado_gestion"] == "SIN_ASIGNAR"
         assert upd_call_arg["asignado_a_usuario_id"] is None
-        assert upd_call_arg["bot_disabled"] is True
+        assert upd_call_arg["bot_disabled"] is False
+        assert upd_call_arg["metadata_json"]["modo_atencion"] == "autonomo"
+
+        # Caso B: con bloqueo manual previo -> preserva modo humano y bot_disabled=True
+        meta_payload_b = {
+            "entry": [{
+                "changes": [{
+                    "value": {
+                        "messages": [{
+                            "from": "5492614703230",
+                            "id": "wamid.TEST_INBOUND_REOPEN_CASO_B",
+                            "timestamp": "1729100010",
+                            "type": "text",
+                            "text": {"body": "Hola, sigo con dudas."}
+                        }],
+                        "contacts": [{
+                            "wa_id": "5492614703230",
+                            "profile": {"name": "Juan Perez"}
+                        }]
+                    }
+                }]
+            }]
+        }
+        mock_conv.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{
+                "id": "conv-closed-100",
+                "bot_disabled": True,
+                "metadata_json": {"bloqueo_humano_manual": True, "modo_atencion": "humano"},
+                "unread_count": 0,
+                "estado_gestion": "RESUELTO",
+                "asignado_a_usuario_id": "user-previo",
+                "archivada": True
+            }]
+        )
+        await process_meta_webhook_payload(meta_payload_b)
+        upd_call_arg_b = mock_conv.update.call_args[0][0]
+        assert upd_call_arg_b["archivada"] is False
+        assert upd_call_arg_b["estado_gestion"] == "SIN_ASIGNAR"
+        assert upd_call_arg_b["bot_disabled"] is True
+        assert upd_call_arg_b["metadata_json"]["modo_atencion"] == "humano"
 
