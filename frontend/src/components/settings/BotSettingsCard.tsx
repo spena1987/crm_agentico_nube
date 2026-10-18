@@ -24,7 +24,9 @@ import {
   Check,
   RotateCcw,
   PhoneForwarded,
-  UserCheck
+  UserCheck,
+  BookOpen,
+  Search
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -62,8 +64,18 @@ interface SituationalAgent {
   orden?: number
 }
 
+export interface KnowledgeFaq {
+  id?: string
+  categoria: string
+  pregunta: string
+  respuesta: string
+  agente_aplicable: string
+  activo: boolean
+  orden?: number
+}
+
 export default function BotSettingsCard() {
-  const [subTab, setSubTab] = useState<'globales' | 'agentes' | 'handover' | 'simulador' | 'motor'>('agentes')
+  const [subTab, setSubTab] = useState<'globales' | 'agentes' | 'conocimiento' | 'handover' | 'simulador' | 'motor'>('agentes')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
@@ -75,7 +87,7 @@ export default function BotSettingsCard() {
     tono_general: 'Profesional, empático, claro y resolutivo en todo momento.',
     guardrails_medicos: 'PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. Si el paciente consulta sobre síntomas o requiere atención médica urgente, explícale que lo derivarás con un profesional de la salud y utiliza la herramienta de escalamiento.',
     politica_escalamiento: 'Si el paciente solicita hablar con un humano, presenta dudas clínicas complejas o expresa enojo/frustración, invoca de inmediato la herramienta escalar_a_operador_humano indicando el motivo.',
-    politica_turnos: 'Para turnos, ofrece un máximo de 2 opciones claras de fecha/horario y confirma nombre y DNI del paciente.',
+    politica_turnos: 'PROHIBICIÓN TOTAL DE TURNOS: La IA tiene terminantemente prohibido ofrecer horarios o gestionar turnos. Si el paciente solicita un turno, debe derivar a recepción humana con escalar_a_operador_humano.',
     politica_presupuestos: 'Para cotizaciones, informa los valores con claridad, formas de pago disponibles y aclara la vigencia del presupuesto.',
     agente_defecto_codigo: 'GENERAL'
   })
@@ -84,6 +96,13 @@ export default function BotSettingsCard() {
   const [agentes, setAgentes] = useState<SituationalAgent[]>([])
   const [editingAgent, setEditingAgent] = useState<SituationalAgent | null>(null)
   const [isCreatingAgent, setIsCreatingAgent] = useState(false)
+
+  // Base de Conocimiento & FAQ
+  const [faqs, setFaqs] = useState<KnowledgeFaq[]>([])
+  const [editingFaq, setEditingFaq] = useState<KnowledgeFaq | null>(null)
+  const [isCreatingFaq, setIsCreatingFaq] = useState(false)
+  const [faqCategoryFilter, setFaqCategoryFilter] = useState('ALL')
+  const [faqSearch, setFaqSearch] = useState('')
 
   // Políticas de Derivación & Handover
   const [handover, setHandover] = useState<HandoverSettings>({
@@ -144,6 +163,18 @@ export default function BotSettingsCard() {
         const data = await resAg.json()
         if (data.globales) setGlobales(data.globales)
         if (data.agentes) setAgentes(data.agentes)
+        if (data.faqs) setFaqs(data.faqs)
+      }
+
+      // Cargar FAQs adicionales si corresponde
+      try {
+        const resFaq = await fetch(`${BACKEND_URL}/api/agentes/conocimiento`)
+        if (resFaq.ok) {
+          const faqData = await resFaq.json()
+          if (faqData.faqs) setFaqs(faqData.faqs)
+        }
+      } catch (fe) {
+        console.warn('Error cargando FAQs:', fe)
       }
 
       // 2. Cargar Settings Generales
@@ -339,6 +370,85 @@ export default function BotSettingsCard() {
     }
   }
 
+  // Guardar / Actualizar FAQ en Base de Conocimiento
+  const handleSaveFaq = async (faqToSave: KnowledgeFaq) => {
+    try {
+      setSaving(true)
+      setErrorMessage(null)
+
+      let res
+      if (faqToSave.id) {
+        res = await fetch(`${BACKEND_URL}/api/agentes/conocimiento/${faqToSave.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(faqToSave)
+        })
+      } else {
+        res = await fetch(`${BACKEND_URL}/api/agentes/conocimiento`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(faqToSave)
+        })
+      }
+
+      if (res.ok) {
+        showFeedbackMsg(`¡Pregunta de conocimiento guardada exitosamente!`)
+        setEditingFaq(null)
+        setIsCreatingFaq(false)
+        await fetchData()
+      } else {
+        const err = await res.json()
+        setErrorMessage(err.detail || 'Error al guardar la FAQ.')
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error de conexión guardando FAQ.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Toggle Activo FAQ
+  const handleToggleFaqActive = async (faq: KnowledgeFaq) => {
+    if (!faq.id) return
+    try {
+      const updated = { ...faq, activo: !faq.activo }
+      const res = await fetch(`${BACKEND_URL}/api/agentes/conocimiento/${faq.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      })
+      if (res.ok) {
+        setFaqs(prev => prev.map(f => f.id === faq.id ? updated : f))
+        showFeedbackMsg(`FAQ '${faq.pregunta.slice(0, 30)}...' ${updated.activo ? 'activada' : 'pausada'}.`)
+      }
+    } catch (err) {
+      console.error('Error cambiando estado de FAQ:', err)
+    }
+  }
+
+  // Eliminar FAQ
+  const handleDeleteFaq = async (faqId?: string) => {
+    if (!faqId) return
+    if (!window.confirm(`¿Estás seguro de eliminar esta pregunta frecuente de la Base de Conocimiento?`)) return
+    try {
+      setSaving(true)
+      const res = await fetch(`${BACKEND_URL}/api/agentes/conocimiento/${faqId}`, {
+        method: 'DELETE'
+      })
+      if (res.ok) {
+        showFeedbackMsg('Pregunta frecuente eliminada.')
+        await fetchData()
+      } else {
+        const err = await res.json()
+        setErrorMessage(err.detail || 'Error al eliminar FAQ.')
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error eliminando FAQ.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   // Guardar Parámetros de Motor General
   const handleSaveMotorSettings = async () => {
     try {
@@ -482,6 +592,21 @@ export default function BotSettingsCard() {
             >
               <ShieldAlert size={14} />
               <span>Pautas & Directivas</span>
+            </button>
+
+            <button
+              onClick={() => setSubTab('conocimiento')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                subTab === 'conocimiento'
+                  ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <BookOpen size={14} />
+              <span>Base de Conocimiento & FAQ</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300">
+                {faqs.length}
+              </span>
             </button>
 
             <button
@@ -915,6 +1040,306 @@ export default function BotSettingsCard() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* 3. SUBTAB: BASE DE CONOCIMIENTO & FAQ                                */}
+      {/* ==================================================================== */}
+      {subTab === 'conocimiento' && (
+        <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-6 animate-fade-in">
+          {/* Cabecera */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[var(--border)]">
+            <div>
+              <div className="flex items-center gap-2">
+                <BookOpen className="text-emerald-600 dark:text-emerald-400" size={20} />
+                <h4 className="font-bold text-base">Base de Conocimiento y Preguntas Frecuentes (FAQ)</h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                  {faqs.filter(f => f.activo).length} activas
+                </span>
+              </div>
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Respuestas oficiales aprobadas para el bot. La IA responderá estas preguntas basándose estrictamente en esta información.
+              </p>
+            </div>
+
+            <button
+              onClick={() => {
+                setEditingFaq({
+                  categoria: 'Información General',
+                  pregunta: '',
+                  respuesta: '',
+                  agente_aplicable: 'GLOBAL',
+                  activo: true,
+                  orden: faqs.length + 1
+                })
+                setIsCreatingFaq(true)
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-md shadow-emerald-600/20"
+            >
+              <Plus size={16} />
+              <span>Nueva Pregunta / FAQ</span>
+            </button>
+          </div>
+
+          {/* Filtros y Buscador */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-[var(--border)]">
+            {/* Buscador */}
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+              <input
+                type="text"
+                value={faqSearch}
+                onChange={(e) => setFaqSearch(e.target.value)}
+                placeholder="Buscar por pregunta, respuesta o categoría..."
+                className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-xs"
+              />
+              {faqSearch && (
+                <button
+                  onClick={() => setFaqSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            {/* Categorías Pills */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {['ALL', 'Información General', 'Turnos y Citas', 'Obras Sociales y Pagos', 'Cirugías y Presupuestos'].map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setFaqCategoryFilter(cat)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition ${
+                    faqCategoryFilter === cat
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-white dark:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)] border border-[var(--border)]'
+                  }`}
+                >
+                  {cat === 'ALL' ? 'Todas' : cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Listado de FAQs */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {faqs
+              .filter(f => {
+                const matchCat = faqCategoryFilter === 'ALL' || f.categoria === faqCategoryFilter
+                const matchSearch = !faqSearch.trim() || 
+                  f.pregunta.toLowerCase().includes(faqSearch.toLowerCase()) || 
+                  f.respuesta.toLowerCase().includes(faqSearch.toLowerCase()) ||
+                  (f.categoria && f.categoria.toLowerCase().includes(faqSearch.toLowerCase()))
+                return matchCat && matchSearch
+              })
+              .map((faq) => (
+                <div 
+                  key={faq.id || faq.pregunta}
+                  className="p-4 rounded-xl border border-[var(--border)] bg-[var(--card)] hover:border-slate-300 dark:hover:border-slate-700 transition flex flex-col justify-between space-y-3"
+                >
+                  <div>
+                    {/* Header de la Tarjeta FAQ */}
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200/50 dark:border-blue-800/40">
+                          {faq.categoria || 'General'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-[var(--secondary)]">
+                          {faq.agente_aplicable === 'GLOBAL' ? '🌐 Todos los Agentes' : `Agente: ${faq.agente_aplicable}`}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => handleToggleFaqActive(faq)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition ${
+                          faq.activo 
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' 
+                            : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                        }`}
+                      >
+                        {faq.activo ? 'ACTIVO' : 'PAUSADO'}
+                      </button>
+                    </div>
+
+                    {/* Pregunta */}
+                    <h5 className="font-bold text-xs text-[var(--foreground)] leading-snug">
+                      "{faq.pregunta}"
+                    </h5>
+
+                    {/* Respuesta Oficial */}
+                    <div className="mt-2 p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-[var(--border)] text-xs text-[var(--secondary)] leading-relaxed italic">
+                      {faq.respuesta}
+                    </div>
+                  </div>
+
+                  {/* Acciones */}
+                  <div className="pt-2 border-t border-[var(--border)] flex items-center justify-end gap-1.5">
+                    <button
+                      onClick={() => {
+                        setEditingFaq({ ...faq })
+                        setIsCreatingFaq(false)
+                      }}
+                      className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-blue-600 transition"
+                      title="Editar FAQ"
+                    >
+                      <Edit3 size={15} />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteFaq(faq.id)}
+                      className="p-1.5 rounded-lg hover:bg-rose-100 dark:hover:bg-rose-950/40 text-rose-600 transition"
+                      title="Eliminar FAQ"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {faqs.length === 0 && (
+            <div className="p-8 text-center rounded-xl border border-dashed border-[var(--border)]">
+              <BookOpen className="text-slate-400 mx-auto mb-2" size={28} />
+              <p className="text-xs font-medium text-[var(--secondary)]">
+                Aún no has registrado preguntas frecuentes ni conocimiento institucional.
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Haz clic en "Nueva Pregunta / FAQ" para empezar a dotar al bot de información oficial.
+              </p>
+            </div>
+          )}
+
+          {/* Modal / Editor de FAQ */}
+          {editingFaq && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="w-full max-w-xl bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-emerald-600/10 text-emerald-600">
+                      <BookOpen size={20} />
+                    </div>
+                    <h4 className="font-bold text-base">
+                      {isCreatingFaq ? 'Nueva Pregunta / Dato de Conocimiento' : 'Editar Pregunta Frecuente'}
+                    </h4>
+                  </div>
+                  <button 
+                    onClick={() => setEditingFaq(null)}
+                    className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--secondary)]"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3.5 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block font-bold mb-1">Categoría</label>
+                      <input
+                        type="text"
+                        list="faq-categorias"
+                        value={editingFaq.categoria}
+                        onChange={(e) => setEditingFaq({ ...editingFaq, categoria: e.target.value })}
+                        className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] font-medium"
+                        placeholder="ej: Obras Sociales y Pagos"
+                      />
+                      <datalist id="faq-categorias">
+                        <option value="Información General" />
+                        <option value="Turnos y Citas" />
+                        <option value="Obras Sociales y Pagos" />
+                        <option value="Cirugías y Presupuestos" />
+                        <option value="Atención y Guardia" />
+                      </datalist>
+                    </div>
+
+                    <div>
+                      <label className="block font-bold mb-1">Agente Aplicable</label>
+                      <select
+                        value={editingFaq.agente_aplicable}
+                        onChange={(e) => setEditingFaq({ ...editingFaq, agente_aplicable: e.target.value })}
+                        className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] font-medium"
+                      >
+                        <option value="GLOBAL">🌐 Todos los Agentes (Global)</option>
+                        {agentes.map(a => (
+                          <option key={a.codigo} value={a.codigo}>
+                            {a.nombre} ({a.codigo})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold mb-1">Pregunta Frecuente o Duda del Paciente</label>
+                    <input
+                      type="text"
+                      value={editingFaq.pregunta}
+                      onChange={(e) => setEditingFaq({ ...editingFaq, pregunta: e.target.value })}
+                      className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--card)] font-semibold"
+                      placeholder="ej: ¿Qué obras sociales y prepagas reciben?"
+                    />
+                    <p className="text-[10px] text-[var(--secondary)] mt-1">
+                      Formula la pregunta en el estilo o vocabulario que habitualmente usan los pacientes.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold mb-1">Respuesta Oficial Aprobada</label>
+                    <textarea
+                      rows={4}
+                      value={editingFaq.respuesta}
+                      onChange={(e) => setEditingFaq({ ...editingFaq, respuesta: e.target.value })}
+                      className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--card)] leading-relaxed"
+                      placeholder="ej: Trabajamos con Swiss Medical, OSDE, Medifé, Galeno, OSEP... Recuerda traer tu credencial y DNI..."
+                    />
+                    <p className="text-[10px] text-[var(--secondary)] mt-1">
+                      Esta respuesta se inyectará en el prompt de la IA como verdad institucional inequívoca.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <label className="flex items-center gap-2 cursor-pointer font-bold">
+                      <input
+                        type="checkbox"
+                        checked={editingFaq.activo}
+                        onChange={(e) => setEditingFaq({ ...editingFaq, activo: e.target.checked })}
+                        className="rounded border-[var(--border)] text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+                      />
+                      <span>Pregunta activa (incorporada al bot)</span>
+                    </label>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-[var(--secondary)]">Orden:</span>
+                      <input
+                        type="number"
+                        value={editingFaq.orden || 0}
+                        onChange={(e) => setEditingFaq({ ...editingFaq, orden: parseInt(e.target.value) || 0 })}
+                        className="w-16 p-1.5 rounded-lg border border-[var(--border)] bg-[var(--card)] text-center text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2.5 pt-4 border-t border-[var(--border)]">
+                  <button
+                    type="button"
+                    onClick={() => setEditingFaq(null)}
+                    className="px-4 py-2 rounded-xl border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-bold transition"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving || !editingFaq.pregunta.trim() || !editingFaq.respuesta.trim()}
+                    onClick={() => handleSaveFaq(editingFaq)}
+                    className="flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition disabled:opacity-50 shadow-md shadow-emerald-600/20"
+                  >
+                    <Save size={16} />
+                    <span>{saving ? 'Guardando...' : 'Guardar FAQ'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

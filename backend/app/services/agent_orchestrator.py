@@ -65,9 +65,9 @@ DEFAULT_GLOBAL_DIRECTIVES = {
     "tono_general": "Profesional, empático, claro y resolutivo en todo momento.",
     "guardrails_medicos": (
         "PROHIBICIÓN ESTRICTA: No des diagnósticos médicos, interpretaciones de síntomas ni prescripciones farmacológicas. "
-        "NUNCA inventes, confirmes ni reprogrames fechas u horarios de cirugías ni turnos médicos por tu cuenta. "
-        "La agenda quirúrgica y médica es administrada exclusivamente por los coordinadores humanos en Geclisa. "
-        "Si el paciente solicita agendar o reprogramar un turno, utiliza ÚNICAMENTE 'solicitar_coordinacion_turno' para registrar su requerimiento y transferir a recepción. "
+        "PROHIBICIÓN TOTAL DE TURNOS: NUNCA inventes, confirmes, ofrezcas ni reprogrames fechas u horarios de cirugías ni turnos médicos por tu cuenta. "
+        "La IA tiene TERMINANTEMENTE PROHIBIDO ofrecer o coordinar turnos médicos. La agenda médica y quirúrgica es administrada exclusivamente por los coordinadores humanos en Geclisa. "
+        "Si el paciente solicita un turno, utiliza 'escalar_a_operador_humano' indicando 'Solicitud de turno de consulta médica'. "
         "NUNCA minimices las molestias o dolores de un paciente operado (jamás digas 'es normal'). "
         "Si un paciente operado reporta dolor fuerte/agudo, disminución o pérdida de visión, secreción, fotopsias, telón oscuro o traumatismo, "
         "INVOCA INMEDIATAMENTE la herramienta 'reportar_urgencia_postquirurgica' para alertar a su cirujano tratante por WhatsApp y derivarlo en el CRM. "
@@ -85,9 +85,9 @@ DEFAULT_GLOBAL_DIRECTIVES = {
         "utiliza la herramienta finalizar_y_cerrar_consulta y despídete con cordialidad."
     ),
     "politica_turnos": (
-        "POLÍTICA ESTRICTA DE TURNOS Y AGENDAS: Como asistente virtual NO tienes acceso a reservar turnos ni modificar agendas en Geclisa. "
-        "NUNCA ofrezcas horarios inventados ni confirmes citas. Cuando el paciente solicite un turno o cambio de fecha, toma nota de su motivo/especialidad deseada y disponibilidad preferida, "
-        "y ejecuta la herramienta 'solicitar_coordinacion_turno'. Luego infórmale con amabilidad que su solicitud fue registrada y derivada al área de recepción humana para coordinar su horario exacto."
+        "PROHIBICIÓN ABSOLUTA DE GESTIÓN O CONFIRMACIÓN DE TURNOS: La IA tiene TERMINANTEMENTE PROHIBIDO ofrecer opciones de horarios, sugerir fechas, agendar o afirmar que un turno ha quedado registrado. "
+        "Si el paciente solicita un turno o consulta disponibilidad de citas, aclárale cortésmente que la asignación y coordinación de turnos es realizada exclusivamente por el personal humano de recepción de la clínica, "
+        "e invoca de inmediato la herramienta 'escalar_a_operador_humano' indicando en el motivo 'Solicitud de turno de consulta médica'."
     ),
     "politica_presupuestos": "Para cotizaciones, informa los valores con claridad. Si el paciente aprueba, usa aprobar_presupuesto. Si el paciente manifiesta que desestima o cancela el presupuesto, indaga cortésmente el motivo si no lo brindó y ejecuta desestimar_presupuesto para registrarlo en el sistema.",
     "agente_defecto_codigo": "GENERAL"
@@ -98,16 +98,16 @@ DEFAULT_AGENTS = {
         "codigo": "GENERAL",
         "nombre": "Atención General y Orientación",
         "temperatura": 0.2,
-        "directiva_particular": "Tu objetivo es brindar información general sobre Centrovisión Oftalmología Integral, horarios de atención, ubicación física (Mitre 540, Mendoza) y consultas oftalmológicas disponibles. Para turnos nuevos o cambios de fecha, utiliza solicitar_coordinacion_turno para que secretaría humana coordine el turno. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente operado refiere dolor o síntomas de alarma, usa reportar_urgencia_postquirurgica. Si el paciente concluyó su consulta o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
-        "herramientas_habilitadas": ["solicitar_coordinacion_turno", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "Tu objetivo es brindar información institucional sobre Centrovisión Oftalmología Integral, horarios de atención, ubicación física (Mitre 540, Mendoza) y responder consultas basadas estrictamente en la Base de Conocimiento oficial. TIENES TERMINANTEMENTE PROHIBIDO dar turnos, inventar horarios o confirmar citas; ante cualquier solicitud de turno, transfiere a secretaría humana con escalar_a_operador_humano. Si el paciente consulta sobre su cirugía o preparación previa, usa consultar_preparacion_cirugia. Si aprueba un presupuesto usa aprobar_presupuesto; si lo rechaza o desestima usa desestimar_presupuesto registrando el motivo. Si el paciente operado refiere dolor o síntomas de alarma, usa reportar_urgencia_postquirurgica. Si el paciente concluyó su consulta o se despide, usa finalizar_y_cerrar_consulta. Si no puedes resolver su duda o solicita humano, usa escalar_a_operador_humano.",
+        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "TURNOS_CONCRETOS": {
         "codigo": "TURNOS_CONCRETOS",
         "nombre": "Orientación y Solicitud de Turnos",
         "temperatura": 0.1,
-        "directiva_particular": "El paciente busca gestionar o solicitar un turno médico. No inventes agendas ni confirmes horarios ficticios. Recaba su especialidad/motivo y preferencia horaria, y utiliza la herramienta 'solicitar_coordinacion_turno'. Cuando quede registrada la solicitud, infórmale con amabilidad que el equipo de recepción se comunicará a la brevedad.",
-        "herramientas_habilitadas": ["solicitar_coordinacion_turno", "vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente busca gestionar o solicitar un turno médico. Como asistente virtual tienes terminantemente prohibido inventar o confirmar horarios. Informa amablemente al paciente que la asignación de turnos la realiza de forma personalizada el equipo de recepción humana de la clínica, y transfiere de inmediato la consulta con la herramienta 'escalar_a_operador_humano' indicando 'Solicitud de turno médico'.",
+        "herramientas_habilitadas": ["vincular_paciente_geclisa", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "QUIRURGICO_EMPATICO": {
@@ -115,7 +115,7 @@ DEFAULT_AGENTS = {
         "nombre": "Atención Quirúrgica y Alta Contención",
         "temperatura": 0.35,
         "directiva_particular": "Este paciente se encuentra en evaluación o proceso de un procedimiento quirúrgico. Trátalo con máxima calidez humana, empatía y paciencia. Si pregunta sobre pautas de preparación prequirúrgica, ayuno o indicaciones de su cirugía, usa de inmediato consultar_preparacion_cirugia. Si aprueba el presupuesto de cirugía, utiliza aprobar_presupuesto. Si manifiesta dolor postoperatorio o signos de alarma, usa inmediatamente reportar_urgencia_postquirurgica. Si consulta sobre reprogramar, confirmar o modificar la fecha u hora de su cirugía, o si requiere reprogramar turnos prequirúrgicos, no inventes fechas y utiliza escalar_a_operador_humano. Si manifiesta que no se operará o desestima la cotización, indaga el motivo con respeto y usa desestimar_presupuesto. Si la consulta se resolvió, usa finalizar_y_cerrar_consulta.",
-        "herramientas_habilitadas": ["solicitar_coordinacion_turno", "crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "herramientas_habilitadas": ["crear_borrador_presupuesto", "aprobar_presupuesto", "desestimar_presupuesto", "consultar_presupuestos_paciente", "vincular_paciente_geclisa", "consultar_preparacion_cirugia", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     },
     "PRESUPUESTOS_COMERCIAL": {
@@ -130,8 +130,8 @@ DEFAULT_AGENTS = {
         "codigo": "POST_OPERATORIO",
         "nombre": "Seguimiento y Control Post-Quirúrgico",
         "temperatura": 0.2,
-        "directiva_particular": "El paciente ha sido intervenido recientemente. Pregunta amablemente cómo se siente. Si menciona síntomas de alarma, dolor no manejable, pérdida de visión, secreción o traumatismo, usa de inmediato la herramienta reportar_urgencia_postquirurgica para alertar a su cirujano tratante por WhatsApp y derivarlo a la guardia médica 24h. Si requiere un control médico o turno postquirúrgico, usa solicitar_coordinacion_turno. Si todo está bien y concluye el control, usa finalizar_y_cerrar_consulta.",
-        "herramientas_habilitadas": ["solicitar_coordinacion_turno", "reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
+        "directiva_particular": "El paciente ha sido intervenido recientemente. Pregunta amablemente cómo se siente. Si menciona síntomas de alarma, dolor no manejable, pérdida de visión, secreción o traumatismo, usa de inmediato la herramienta reportar_urgencia_postquirurgica para alertar a su cirujano tratante por WhatsApp y derivarlo a la guardia médica 24h. Si requiere un control médico o turno postquirúrgico, no inventes fechas y deriva con escalar_a_operador_humano. Si todo está bien y concluye el control, usa finalizar_y_cerrar_consulta.",
+        "herramientas_habilitadas": ["reportar_urgencia_postquirurgica", "finalizar_y_cerrar_consulta", "escalar_a_operador_humano"],
         "activo": True
     }
 }
@@ -140,6 +140,7 @@ class AgentOrchestrator:
     _instance = None
     _cache_globales: Optional[Dict[str, Any]] = None
     _cache_agentes: Optional[Dict[str, Dict[str, Any]]] = None
+    _cache_faqs: Optional[List[Dict[str, Any]]] = None
     _last_cache_time: float = 0
     CACHE_TTL: float = 60.0  # 60 segundos de caché en memoria
 
@@ -153,6 +154,7 @@ class AgentOrchestrator:
         """Invalida la memoria caché para forzar recarga inmediata desde Supabase."""
         self._cache_globales = None
         self._cache_agentes = None
+        self._cache_faqs = None
         self._last_cache_time = 0
         logger.info("Caché de AgentOrchestrator invalidada.")
 
@@ -196,6 +198,37 @@ class AgentOrchestrator:
         self._cache_globales = globales
         self._last_cache_time = now
         return self._cache_globales
+
+    def get_knowledge_faqs(self, agente_codigo: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Recupera las preguntas frecuentes y base de conocimiento institucional activas desde Supabase.
+        Filtra por aplicabilidad ('GLOBAL' o específico para el agente).
+        """
+        now = time.time()
+        if self._cache_faqs is not None and (now - self._last_cache_time < self.CACHE_TTL):
+            faqs_all = self._cache_faqs
+        else:
+            faqs_all = []
+            if supabase:
+                try:
+                    resp = supabase.table("agentes_conocimiento_faq")\
+                        .select("*")\
+                        .eq("activo", True)\
+                        .order("orden")\
+                        .execute()
+                    if resp.data:
+                        faqs_all = resp.data
+                        self._cache_faqs = faqs_all
+                except Exception as e:
+                    logger.warning(f"Error consultando agentes_conocimiento_faq en Supabase: {e}")
+
+        if not agente_codigo or agente_codigo == "GLOBAL":
+            return [f for f in faqs_all if f.get("agente_aplicable") in ["GLOBAL", None, ""]]
+        
+        return [
+            f for f in faqs_all 
+            if f.get("agente_aplicable") in ["GLOBAL", None, "", agente_codigo]
+        ]
 
     def get_all_agents(self) -> Dict[str, Dict[str, Any]]:
         """Recupera todos los agentes situacionales indexados por su código."""
@@ -341,6 +374,12 @@ class AgentOrchestrator:
             f"- {guardrails}",
             f"- Escalamiento a Operador Humano: {politica_esc}",
             "",
+            "=== PROHIBICIÓN ABSOLUTA DE GESTIÓN Y CONFIRMACIÓN DE TURNOS ===",
+            "- La IA tiene TERMINANTEMENTE PROHIBIDO ofrecer opciones de horarios, sugerir o inventar fechas, agendar citas o afirmar que un turno ha quedado registrado.",
+            "- Los turnos de consulta médica y estudios son coordinados y asignados EXCLUSIVAMENTE por el personal humano de recepción de Centrovisión.",
+            "- Si el paciente solicita un turno o disponibilidad, indícale cordialmente que el equipo de recepción coordinará su turno e invoca de inmediato la herramienta 'escalar_a_operador_humano' con el motivo 'Solicitud de turno de consulta médica'.",
+            "- Tu alcance está limitado a: brindar información institucional general (sede, horarios, guardia 24h), responder dudas frecuentes según la Base de Conocimiento oficial, consultar el estado del expediente/presupuestos del paciente y brindar pautas prequirúrgicas.",
+            "",
             "=== PROTOCOLO DE HERRAMIENTAS Y RESPUESTA AL PACIENTE ===",
             "- Si invocas 'escalar_a_operador_humano': NUNCA llames a ninguna otra herramienta en el mismo turno. Redacta inmediatamente tu mensaje final de respuesta al paciente informándole con empatía que has transferido su consulta a un asesor humano que se comunicará pronto.",
             "- Si invocas 'finalizar_y_cerrar_consulta': Despídete amablemente concluyendo la atención de forma cordial.",
@@ -357,6 +396,25 @@ class AgentOrchestrator:
             "- Para listas usa guiones '-' o viñetas '•'.",
             "- Mantén párrafos cortos y amables, fáciles de leer en dispositivos móviles.",
         ]
+
+        # Inyección de Base de Conocimiento y FAQ Oficiales
+        faqs = self.get_knowledge_faqs(agent.get("codigo"))
+        if faqs:
+            prompt_parts.append("\n=== BASE DE CONOCIMIENTO INSTITUCIONAL Y PREGUNTAS FRECUENTES (RESPUESTAS OFICIALES) ===")
+            prompt_parts.append("Cuando el paciente consulte sobre alguno de los siguientes temas o dudas frecuentes, responde estrictamente basándote en esta información oficial:")
+            
+            por_cat: Dict[str, List[Dict[str, Any]]] = {}
+            for faq in faqs:
+                cat = (faq.get("categoria") or "General").strip()
+                por_cat.setdefault(cat, []).append(faq)
+                
+            for cat, items in por_cat.items():
+                prompt_parts.append(f"\n[Categoría: {cat}]")
+                for item in items:
+                    preg = (item.get("pregunta") or "").strip()
+                    resp = (item.get("respuesta") or "").strip()
+                    if preg and resp:
+                        prompt_parts.append(f"• Pregunta: \"{preg}\"\n  Respuesta Oficial: {resp}")
 
         if paciente_info:
             p_data = paciente_info.get("paciente") or paciente_info

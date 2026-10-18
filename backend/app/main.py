@@ -2217,21 +2217,31 @@ class AgentSimulatorRequest(BaseModel):
 class AssignAgentConversationRequest(BaseModel):
     agente_codigo: str
 
+class ConocimientoFaqCreateUpdate(BaseModel):
+    categoria: Optional[str] = "General"
+    pregunta: str
+    respuesta: str
+    agente_aplicable: Optional[str] = "GLOBAL"
+    activo: Optional[bool] = True
+    orden: Optional[int] = 0
+
 @app.get("/api/agentes/config")
 def get_multiagent_config():
     """
     Retorna la configuración completa del sistema multi-agente:
-    directivas globales de la clínica, lista de agentes situacionales y herramientas disponibles.
+    directivas globales de la clínica, lista de agentes situacionales, herramientas disponibles y base de conocimiento.
     """
     try:
         globales = orchestrator.get_global_directives()
         agentes = list(orchestrator.get_all_agents().values())
         tools_list = list(AVAILABLE_TOOLS_MAP.keys())
+        faqs = orchestrator.get_knowledge_faqs()
         return {
             "success": True,
             "globales": globales,
             "agentes": agentes,
-            "available_tools": tools_list
+            "available_tools": tools_list,
+            "faqs": faqs
         }
     except Exception as e:
         logger.error(f"Error obteniendo configuración multi-agente: {e}", exc_info=True)
@@ -2345,6 +2355,92 @@ def delete_situational_agent(agente_id: str):
         return {"success": True, "deleted_id": agente_id}
     except Exception as e:
         logger.error(f"Error eliminando agente situacional: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/agentes/conocimiento")
+def get_conocimiento_faqs(agente_codigo: Optional[str] = None):
+    """
+    Retorna la lista de preguntas frecuentes y base de conocimiento institucional.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        query = supabase.table("agentes_conocimiento_faq").select("*")
+        if agente_codigo and agente_codigo != "ALL":
+            query = query.or_(f"agente_aplicable.eq.GLOBAL,agente_aplicable.eq.{agente_codigo}")
+        resp = query.order("categoria").order("orden").execute()
+        return {"success": True, "faqs": resp.data or []}
+    except Exception as e:
+        logger.error(f"Error obteniendo base de conocimiento FAQ: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/agentes/conocimiento")
+def create_conocimiento_faq(payload: ConocimientoFaqCreateUpdate):
+    """
+    Crea una nueva pregunta frecuente o dato de conocimiento institucional en Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        data = payload.dict()
+        data["updated_at"] = "now()"
+        resp = supabase.table("agentes_conocimiento_faq").insert(data).execute()
+        orchestrator.invalidate_cache()
+        log_event(
+            nivel="INFO",
+            modulo="SISTEMA",
+            accion="CREAR_CONOCIMIENTO_FAQ",
+            mensaje=f"FAQ creada en categoría '{payload.categoria}': {payload.pregunta[:50]}",
+            detalles=data
+        )
+        return {"success": True, "faq": resp.data[0] if resp.data else data}
+    except Exception as e:
+        logger.error(f"Error creando FAQ de conocimiento: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/agentes/conocimiento/{faq_id}")
+def update_conocimiento_faq(faq_id: str, payload: ConocimientoFaqCreateUpdate):
+    """
+    Actualiza una pregunta frecuente o dato de conocimiento existente.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        data = {k: v for k, v in payload.dict().items() if v is not None}
+        data["updated_at"] = "now()"
+        resp = supabase.table("agentes_conocimiento_faq").update(data).eq("id", faq_id).execute()
+        orchestrator.invalidate_cache()
+        log_event(
+            nivel="INFO",
+            modulo="SISTEMA",
+            accion="ACTUALIZAR_CONOCIMIENTO_FAQ",
+            mensaje=f"FAQ actualizada ({faq_id}): {payload.pregunta[:50]}",
+            detalles=data
+        )
+        return {"success": True, "faq": resp.data[0] if resp.data else data}
+    except Exception as e:
+        logger.error(f"Error actualizando FAQ de conocimiento: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/agentes/conocimiento/{faq_id}")
+def delete_conocimiento_faq(faq_id: str):
+    """
+    Elimina una pregunta frecuente de la base de conocimiento en Supabase.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase no configurado.")
+    try:
+        resp = supabase.table("agentes_conocimiento_faq").delete().eq("id", faq_id).execute()
+        orchestrator.invalidate_cache()
+        log_event(
+            nivel="INFO",
+            modulo="SISTEMA",
+            accion="ELIMINAR_CONOCIMIENTO_FAQ",
+            mensaje=f"FAQ eliminada ({faq_id})"
+        )
+        return {"success": True, "deleted_id": faq_id}
+    except Exception as e:
+        logger.error(f"Error eliminando FAQ de conocimiento: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/agentes/simulador")

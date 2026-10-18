@@ -391,11 +391,13 @@ def procesar_mensaje_agente(
 
         # 5. Configurar generación con Directivas Dinámicas y Tools vinculadas
         afc_config = types.AutomaticFunctionCallingConfig(maximum_remote_calls=3) if bound_tools else None
+        thinking_cfg = types.ThinkingConfig(thinking_budget=0)
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=bound_tools if bound_tools else None,
             temperature=agent_temp,
-            automatic_function_calling=afc_config
+            automatic_function_calling=afc_config,
+            thinking_config=thinking_cfg
         )
 
         # 6. Ejecutar consulta inicial (con fallback multicapa resiliente)
