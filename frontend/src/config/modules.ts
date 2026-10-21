@@ -153,6 +153,18 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     ],
   },
   {
+    code: 'estudios-tecnicos',
+    name: 'Envío de Estudios (Técnicos)',
+    description: 'Consola para técnicos oftalmólogos: archivo automático en Geclisa y envío digital por WhatsApp (2da línea exclusiva).',
+    icon: 'Eye',
+    order: 10.5,
+    actions: [
+      { code: 'ver', label: 'Acceder al Módulo de Estudios', description: 'Buscar pacientes en Geclisa y consultar historial de estudios enviados' },
+      { code: 'enviar', label: 'Archivar en Geclisa y Enviar por WhatsApp', description: 'Subir estudios diagnósticos (PDF/JPG/PNG) a Geclisa y despacharlos por WhatsApp' },
+      { code: 'reenviar', label: 'Reenviar Estudios', description: 'Reenviar estudios históricos de Geclisa por WhatsApp' },
+    ],
+  },
+  {
     code: 'logs',
     name: 'Logs & Auditoría',
     description: 'Monitor de eventos del sistema, llamadas a APIs externas e incidencias de IA.',
@@ -218,6 +230,7 @@ export const LANDING_PAGE_OPTIONS: LandingPageOption[] = [
   { route: '/calculo-lio', label: 'Cálculo de LIO', moduleCode: 'calculo-lio' },
   { route: '/presupuestos', label: 'Presupuestos Médicos', moduleCode: 'presupuestos' },
   { route: '/pacientes', label: 'Expedientes de Pacientes', moduleCode: 'pacientes' },
+  { route: '/estudios-tecnicos', label: 'Envío de Estudios (Técnicos)', moduleCode: 'estudios-tecnicos' },
   { route: '/logs', label: 'Logs & Auditoría', moduleCode: 'logs' },
   { route: '/ajustes', label: 'Ajustes & Administración', moduleCode: 'ajustes' },
   { route: '/ajustes?tab=lios', label: 'Ajustes: Lentes Intraoculares (LIO)', moduleCode: 'ajustes' },

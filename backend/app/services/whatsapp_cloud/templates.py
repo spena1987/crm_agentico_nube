@@ -233,7 +233,10 @@ async def sync_templates_from_meta():
             "seguimiento_analisis_t1": {"1": "paciente_nombre", "2": "practica_nombre"},
             "seguimiento_analisis_t2": {"1": "paciente_nombre", "2": "practica_nombre"},
             "seguimiento_analisis_t3": {"1": "paciente_nombre", "2": "practica_nombre"},
-            "seguimiento_analisis_t4": {"1": "paciente_nombre", "2": "practica_nombre"}
+            "seguimiento_analisis_t4": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "entrega_estudio_oftalmologico_pdf": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "entrega_estudio_oftalmologico_img": {"1": "paciente_nombre", "2": "practica_nombre"},
+            "entrega_estudio_oftalmologico_v1": {"1": "paciente_nombre", "2": "practica_nombre"}
         }
 
         try:
@@ -256,6 +259,82 @@ async def sync_templates_from_meta():
         "synced_count": synced_count,
         "message": f"Se sincronizaron {synced_count} plantillas correctamente desde Meta."
     }
+
+
+async def _upload_sample_media_for_template_header(token: str, header_type: str) -> Optional[str]:
+    """
+    Obtiene un `header_handle` ('4::...') oficial mediante la Resumable Upload API de Meta Graph API v21.0,
+    exigido por Meta para crear plantillas con HEADER de tipo DOCUMENT o IMAGE.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            # 1. Descubrir App ID asociado al System User Access Token
+            app_id = os.getenv("META_WA_APP_ID")
+            if not app_id:
+                app_res = await client.get(
+                    "https://graph.facebook.com/v21.0/app",
+                    headers={"Authorization": f"Bearer {token}"}
+                )
+                if app_res.status_code == 200:
+                    app_id = app_res.json().get("id")
+            if not app_id:
+                logger.warning("[Templates] No se pudo obtener app_id para Resumable Upload API.")
+                return None
+
+            # 2. Generar binario mínimo válido (PDF o PNG 1x1) para la muestra de revisión de Meta
+            if header_type.upper() == "DOCUMENT":
+                mime_type = "application/pdf"
+                file_bytes = (
+                    b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj "
+                    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj "
+                    b"3 0 obj<</Type/Page/MediaBox[0 0 595 842]/Parent 2 0 R>>endobj\n"
+                    b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n"
+                    b"0000000052 00000 n \n0000000101 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n165\n%%EOF"
+                )
+                file_name = "estudio_oftalmologico_ejemplo.pdf"
+            else:
+                mime_type = "image/png"
+                import base64
+                file_bytes = base64.b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                )
+                file_name = "estudio_oftalmologico_ejemplo.png"
+
+            # 3. Iniciar sesión de subida en Resumable Upload API
+            session_res = await client.post(
+                f"https://graph.facebook.com/v21.0/{app_id}/uploads",
+                params={
+                    "file_name": file_name,
+                    "file_length": len(file_bytes),
+                    "file_type": mime_type
+                },
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if session_res.status_code not in (200, 201):
+                logger.warning(f"[Templates] Falló inicio de sesión Resumable Upload: {session_res.text}")
+                return None
+
+            upload_session_id = session_res.json().get("id")
+            if not upload_session_id:
+                return None
+
+            # 4. Subir bytes y obtener el handle 'h'
+            upload_res = await client.post(
+                f"https://graph.facebook.com/v21.0/{upload_session_id}",
+                headers={
+                    "Authorization": f"OAuth {token}",
+                    "file_offset": "0",
+                    "Content-Type": mime_type
+                },
+                content=file_bytes
+            )
+            if upload_res.status_code in (200, 201):
+                handle = upload_res.json().get("h")
+                return handle
+            logger.warning(f"[Templates] Falló carga de bytes en Resumable Upload: {upload_res.text}")
+    except Exception as e:
+        logger.warning(f"[Templates] Excepción en _upload_sample_media_for_template_header: {e}")
+    return None
 
 
 @templates_router.post("", status_code=status.HTTP_201_CREATED)
@@ -289,6 +368,15 @@ async def create_template(req: TemplateCreateRequest):
             "format": "TEXT",
             "text": clean_header
         })
+    elif req.header_type in ("DOCUMENT", "IMAGE"):
+        header_handle = await _upload_sample_media_for_template_header(token, req.header_type)
+        header_comp: Dict[str, Any] = {
+            "type": "HEADER",
+            "format": req.header_type
+        }
+        if header_handle:
+            header_comp["example"] = {"header_handle": [header_handle]}
+        components.append(header_comp)
 
     # Cuerpo
     body_comp: Dict[str, Any] = {
@@ -723,6 +811,198 @@ async def registrar_plantillas_seguimiento_en_meta():
     return {
         "status": "success",
         "total": len(SEGUIMIENTO_TEMPLATES_CATALOG),
+        "resultados": resultados
+    }
+
+
+ESTUDIOS_TEMPLATES_CATALOG = [
+    {
+        "name": "entrega_estudio_oftalmologico_pdf",
+        "category": "UTILITY",
+        "header_type": "DOCUMENT",
+        "header_content": None,
+        "body_text": "Hola {{1}}, le adjuntamos en formato digital su estudio oftalmologico ({{2}}) realizado en Centrovision. Queda a su disposicion para descargar y presentar a su profesional medico.",
+        "footer_text": "Centrovision Estudios Oftalmologicos",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Maria Lopez", "OCT Macular y Papilar"],
+        "buttons": []
+    },
+    {
+        "name": "entrega_estudio_oftalmologico_img",
+        "category": "UTILITY",
+        "header_type": "IMAGE",
+        "header_content": None,
+        "body_text": "Hola {{1}}, le compartimos en formato digital la imagen de su estudio oftalmologico ({{2}}) realizado en Centrovision.",
+        "footer_text": "Centrovision Estudios Oftalmologicos",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Maria Lopez", "Retinografia Color"],
+        "buttons": []
+    },
+    {
+        "name": "entrega_estudio_oftalmologico_v1",
+        "category": "UTILITY",
+        "header_type": "TEXT",
+        "header_content": "Entrega de Estudio Oftalmologico",
+        "body_text": "Hola {{1}}, le informamos desde Centrovision que su estudio oftalmologico ({{2}}) ya se encuentra digitalizado y listo. Presione el boton a continuacion para recibir el archivo inmediatamente en este chat.",
+        "footer_text": "Centrovision Estudios Oftalmologicos",
+        "variable_mappings": {"1": "paciente_nombre", "2": "practica_nombre"},
+        "sample_values": ["Maria Lopez", "Campo Visual Computarizado"],
+        "buttons": [
+            {"type": "QUICK_REPLY", "text": "Recibir estudio"}
+        ]
+    }
+]
+
+
+@templates_router.post("/registrar-estudios", status_code=status.HTTP_200_OK)
+async def registrar_plantillas_estudios_en_meta():
+    """
+    Registra las plantillas oficiales del módulo de Estudios Oftalmológicos (DOCUMENT, IMAGE y fallback interactivo)
+    en Meta WhatsApp Cloud API y las sincroniza en la base de datos de Supabase.
+    """
+    waba_id, token = get_waba_credentials()
+    if not waba_id or not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Credenciales WABA (WABA ID o Access Token) no configuradas en el sistema."
+        )
+
+    resultados: List[Dict[str, Any]] = []
+
+    for tpl_spec in ESTUDIOS_TEMPLATES_CATALOG:
+        tpl_name = tpl_spec["name"]
+        try:
+            exist_res = supabase.table("whatsapp_templates").select("id, status, meta_template_id").eq("name", tpl_name).execute()
+            if exist_res.data and len(exist_res.data) > 0 and exist_res.data[0].get("meta_template_id"):
+                resultados.append({
+                    "name": tpl_name,
+                    "status": exist_res.data[0].get("status", "EXISTS"),
+                    "action": "ya_registrada",
+                    "meta_id": exist_res.data[0].get("meta_template_id")
+                })
+                continue
+
+            components: List[Dict[str, Any]] = []
+            h_type = tpl_spec["header_type"]
+            if h_type == "TEXT" and tpl_spec.get("header_content"):
+                components.append({
+                    "type": "HEADER",
+                    "format": "TEXT",
+                    "text": clean_header_text(tpl_spec["header_content"])
+                })
+            elif h_type in ("DOCUMENT", "IMAGE"):
+                handle = await _upload_sample_media_for_template_header(token, h_type)
+                h_comp: Dict[str, Any] = {"type": "HEADER", "format": h_type}
+                if handle:
+                    h_comp["example"] = {"header_handle": [handle]}
+                components.append(h_comp)
+
+            components.append({
+                "type": "BODY",
+                "text": tpl_spec["body_text"],
+                "example": {
+                    "body_text": [tpl_spec["sample_values"]]
+                }
+            })
+
+            if tpl_spec.get("footer_text"):
+                components.append({
+                    "type": "FOOTER",
+                    "text": tpl_spec["footer_text"]
+                })
+
+            if tpl_spec.get("buttons"):
+                components.append({
+                    "type": "BUTTONS",
+                    "buttons": [
+                        {"type": b["type"], "text": b["text"]}
+                        for b in tpl_spec["buttons"]
+                    ]
+                })
+
+            meta_payload = {
+                "name": tpl_name,
+                "category": tpl_spec["category"],
+                "language": "es_AR",
+                "components": components
+            }
+
+            url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates"
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+
+            meta_data = res.json() if res.content else {}
+
+            if res.status_code in (200, 201):
+                meta_id = meta_data.get("id")
+                meta_status = meta_data.get("status", "PENDING")
+                db_record = {
+                    "waba_id": waba_id,
+                    "meta_template_id": meta_id,
+                    "name": tpl_name,
+                    "category": tpl_spec["category"],
+                    "language": "es_AR",
+                    "status": meta_status,
+                    "header_type": h_type,
+                    "header_content": tpl_spec.get("header_content"),
+                    "body_text": tpl_spec["body_text"],
+                    "footer_text": tpl_spec["footer_text"],
+                    "buttons": tpl_spec["buttons"],
+                    "variable_mappings": tpl_spec["variable_mappings"],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+                supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+                resultados.append({
+                    "name": tpl_name,
+                    "status": meta_status,
+                    "action": "creada_en_meta",
+                    "meta_id": meta_id
+                })
+            else:
+                error_msg = meta_data.get("error", {}).get("message", res.text)
+                if "already exists" in error_msg.lower():
+                    db_record = {
+                        "waba_id": waba_id,
+                        "name": tpl_name,
+                        "category": tpl_spec["category"],
+                        "language": "es_AR",
+                        "status": "APPROVED",
+                        "header_type": h_type,
+                        "header_content": tpl_spec.get("header_content"),
+                        "body_text": tpl_spec["body_text"],
+                        "footer_text": tpl_spec["footer_text"],
+                        "buttons": tpl_spec["buttons"],
+                        "variable_mappings": tpl_spec["variable_mappings"],
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }
+                    supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+                    resultados.append({
+                        "name": tpl_name,
+                        "status": "APPROVED",
+                        "action": "ya_existia_en_meta_sincronizada_local",
+                        "detail": "Ya existía en Meta. Se vinculó localmente."
+                    })
+                else:
+                    resultados.append({
+                        "name": tpl_name,
+                        "status": "ERROR",
+                        "action": "fallo_meta",
+                        "detail": error_msg
+                    })
+        except Exception as e:
+            logger.error(f"Error procesando plantilla de estudio {tpl_name}: {e}")
+            resultados.append({
+                "name": tpl_name,
+                "status": "EXCEPTION",
+                "action": "error_interno",
+                "detail": str(e)
+            })
+
+    return {
+        "status": "success",
+        "total": len(ESTUDIOS_TEMPLATES_CATALOG),
         "resultados": resultados
     }
 

@@ -282,6 +282,17 @@ class HistoriaOftalmoService:
             consultas_res = supabase.table("consultas_oftalmo").select("*").eq("paciente_id", paciente_id).order("fecha", desc=True).order("created_at", desc=True).execute()
             consultas = consultas_res.data or []
 
+            # Auto-vincular estudios oftalmológicos enviados por técnicos cuando el paciente aún no existía en public.pacientes
+            try:
+                p_dni_clean = "".join(filter(str.isdigit, str(paciente.get("dni") or "")))
+                p_ficha_id = paciente.get("geclisa_ficha_id")
+                if p_ficha_id:
+                    supabase.table("estudios_oftalmo").update({"paciente_id": paciente_id}).is_("paciente_id", "null").eq("geclisa_ficha_id", int(p_ficha_id)).execute()
+                if p_dni_clean and len(p_dni_clean) >= 6:
+                    supabase.table("estudios_oftalmo").update({"paciente_id": paciente_id}).is_("paciente_id", "null").eq("dni_paciente", p_dni_clean).execute()
+            except Exception as link_est_err:
+                logger.debug(f"No se pudieron auto-vincular estudios previos para paciente {paciente_id}: {link_est_err}")
+
             estudios_res = supabase.table("estudios_oftalmo").select("*").eq("paciente_id", paciente_id).order("fecha", desc=True).execute()
             estudios = estudios_res.data or []
 

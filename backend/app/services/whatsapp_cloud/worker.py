@@ -231,15 +231,177 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
     except Exception as sync_err:
         logger.warning(f"[Worker Status] Error sincronizando tilde en public.mensajes: {sync_err}")
 
+    # 3. Sincronizar estado en public.estudios_oftalmo (Línea dedicada de Estudios Oftalmológicos)
+    if wamid:
+        try:
+            est_res = supabase.table("estudios_oftalmo").select("id, whatsapp_status").eq("wamid", wamid).limit(1).execute()
+            if est_res.data and len(est_res.data) > 0:
+                est_id = est_res.data[0]["id"]
+                est_upd: Dict[str, Any] = {"whatsapp_status": status_name}
+                if status_name == "sent":
+                    est_upd["whatsapp_sent_at"] = dt_event
+                elif status_name == "delivered":
+                    est_upd["whatsapp_delivered_at"] = dt_event
+                elif status_name == "read":
+                    est_upd["whatsapp_read_at"] = dt_event
+                elif status_name == "failed":
+                    errors = status_dict.get("errors", [{}])
+                    first_err = errors[0] if errors else {}
+                    err_code = first_err.get("code")
+                    err_msg = first_err.get("message") or first_err.get("title") or "Error de entrega en Meta"
+                    est_upd["whatsapp_error"] = f"[{err_code}] {err_msg}" if err_code else str(err_msg)
+                supabase.table("estudios_oftalmo").update(est_upd).eq("id", est_id).execute()
+                logger.info(f"[Worker Status Estudios] estudios_oftalmo id={est_id} (wamid={wamid}) -> '{status_name}'")
+        except Exception as est_sync_err:
+            logger.debug(f"[Worker Status Estudios] Error actualizando estudios_oftalmo para wamid={wamid}: {est_sync_err}")
+
+
+_ESTUDIOS_AUTOREPLY_CACHE: Dict[str, float] = {}
+
+
+async def handle_estudios_line_inbound_message(
+    msg_dict: Dict[str, Any],
+    phone_number_id: str,
+    contact_name: Optional[str] = None
+):
+    """
+    Maneja de forma 100% aislada cualquier mensaje entrante dirigido a la Línea 2 (Estudios Oftalmológicos).
+    REGLA DE ORO ARQUITECTÓNICA:
+      - NUNCA crea registros en `public.pacientes`.
+      - NUNCA crea ni actualiza registros en `public.conversaciones` ni `public.mensajes`.
+      - Si el paciente presionó el botón rápido 'Recibir estudio' (fallback en 2 pasos), le envía el archivo
+        desde el `whatsapp_media_id` o descargándolo en vivo desde Geclisa (`geclisa_as_id`).
+      - Si el paciente escribe una consulta libre, responde con un mensaje institucional de cortesía
+        derivándolo con un enlace directo `wa.me/` a la línea de atención / asesoramiento quirúrgico.
+    """
+    import time
+    from app.services.whatsapp_cloud.client import (
+        WhatsAppCloudClient,
+        get_whatsapp_estudios_config,
+        get_whatsapp_estudios_credentials
+    )
+
+    wamid = msg_dict.get("id")
+    raw_sender = msg_dict.get("from")
+    normalized_phone = normalize_to_meta_e164(raw_sender)
+    msg_type = msg_dict.get("type", "text")
+
+    est_phone_id, est_token = get_whatsapp_estudios_credentials()
+    if not est_phone_id or not est_token:
+        logger.warning("[Worker Estudios] Credenciales de línea de estudios no disponibles para responder inbound.")
+        return
+
+    wa_client = WhatsAppCloudClient(phone_number_id=est_phone_id, access_token=est_token, line="estudios")
+    try:
+        if wamid:
+            try:
+                await wa_client.mark_as_read(wamid)
+            except Exception:
+                pass
+
+        # Extraer texto o botón presionado
+        btn_text = ""
+        if msg_type == "button":
+            btn_text = (msg_dict.get("button", {}).get("text") or msg_dict.get("button", {}).get("payload") or "").strip()
+        elif msg_type == "interactive":
+            inter = msg_dict.get("interactive", {})
+            btn_text = (inter.get("button_reply", {}).get("title") or inter.get("button_reply", {}).get("id") or "").strip()
+        elif msg_type == "text":
+            btn_text = (msg_dict.get("text", {}).get("body") or "").strip()
+
+        # 1. ¿El paciente pulsó el botón de recepción de estudio (Fallback 2 pasos)?
+        if btn_text.lower() in ("recibir estudio", "recibir estudio digital", "descargar estudio", "ver estudio"):
+            ultimos8 = "".join(filter(str.isdigit, normalized_phone))[-8:]
+            if ultimos8:
+                est_q = (
+                    supabase.table("estudios_oftalmo")
+                    .select("*")
+                    .ilike("telefono_destino", f"%{ultimos8}%")
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if est_q.data and len(est_q.data) > 0:
+                    est_row = est_q.data[0]
+                    media_id = est_row.get("whatsapp_media_id")
+                    mime = (est_row.get("mime_type") or "application/pdf").lower()
+                    fname = est_row.get("nombre_archivo") or est_row.get("archivo_nombre") or f"{est_row.get('tipo', 'Estudio')}.pdf"
+                    caption = f"📋 *{est_row.get('tipo') or 'Estudio Oftalmológico'}*\n👤 Paciente: {est_row.get('nombre_paciente') or ''}\n🏥 Centrovisión Oftalmología"
+
+                    # Si no hay media_id en caché pero sí geclisa_as_id, recuperar binario desde Geclisa On-Premise
+                    if not media_id and est_row.get("geclisa_as_id"):
+                        from app.services.geclisa_client import GeclisaClient
+                        g_client = GeclisaClient()
+                        dl_res = g_client.descargar_archivo_historia_clinica(int(est_row["geclisa_as_id"]))
+                        if dl_res.get("exito") and dl_res.get("content"):
+                            media_id = await wa_client.upload_media_bytes(
+                                file_bytes=dl_res["content"],
+                                filename=fname,
+                                mime_type=mime
+                            )
+
+                    if media_id:
+                        if "image" in mime:
+                            send_res = await wa_client.send_image_by_id(to_phone=normalized_phone, media_id=media_id, caption=caption)
+                        else:
+                            send_res = await wa_client.send_document_by_id(to_phone=normalized_phone, media_id=media_id, filename=fname, caption=caption)
+                        new_wamid = send_res.get("wamid")
+                        supabase.table("estudios_oftalmo").update({
+                            "wamid": new_wamid or est_row.get("wamid"),
+                            "whatsapp_media_id": media_id,
+                            "whatsapp_status": "sent",
+                            "whatsapp_sent_at": datetime.now(timezone.utc).isoformat()
+                        }).eq("id", est_row["id"]).execute()
+                        logger.info(f"[Worker Estudios] Archivo despachado por Quick Reply a {normalized_phone} (estudio_id={est_row['id']})")
+                        return
+
+        # 2. Respuesta automática institucional de cortesía (con cooldown de 12h por número para no generar bucles)
+        cfg = get_whatsapp_estudios_config()
+        if not cfg.get("estudios_auto_reply_enabled", True):
+            logger.info(f"[Worker Estudios] Auto-reply desactivado. Mensaje en línea de estudios de {normalized_phone} ignorado silenciosamente.")
+            return
+
+        now_ts = time.time()
+        last_reply_ts = _ESTUDIOS_AUTOREPLY_CACHE.get(normalized_phone, 0.0)
+        if now_ts - last_reply_ts < 12 * 3600:
+            logger.info(f"[Worker Estudios] Cooldown activo para {normalized_phone}. No se repite auto-reply.")
+            return
+
+        _ESTUDIOS_AUTOREPLY_CACHE[normalized_phone] = now_ts
+        reply_text = str(cfg.get("estudios_auto_reply_text") or "").strip()
+        if not reply_text:
+            reply_text = (
+                "🏥 *Centrovisión Oftalmología*\n\n"
+                "Hola 👋 Esta línea de WhatsApp es *exclusiva para el envío automatizado de estudios oftalmológicos* y no recibe consultas médicas ni administrativas."
+            )
+
+        deriv_phone = "".join(filter(str.isdigit, str(cfg.get("estudios_derivacion_telefono") or "")))
+        if deriv_phone:
+            wa_link = f"https://wa.me/{deriv_phone}?text=Hola%2C%20recib%C3%AD%20mis%20estudios%20y%20quiero%20realizar%20una%20consulta"
+            reply_text = f"{reply_text}\n\n👉 {wa_link}"
+
+        await wa_client.send_free_text(to_phone=normalized_phone, text=reply_text, preview_url=True)
+        logger.info(f"[Worker Estudios] Auto-respuesta informativa enviada a {normalized_phone} desde Línea 2 (0 pacientes/conversaciones creados).")
+    except Exception as e:
+        logger.error(f"[Worker Estudios] Error procesando mensaje entrante en línea de estudios: {e}")
+    finally:
+        await wa_client.close()
+
 
 async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Optional[str], contact_name: Optional[str]):
     """
     Maneja un mensaje de paciente entrante:
-      - Normaliza el teléfono E.164
-      - Renueva la ventana de 24 horas
-      - Descarga y transcribe notas de voz o imágenes
-      - Persiste el mensaje y rutea al agente IA o respuestas interactivas de turnos
+      - Si el phone_number_id pertenece a la Línea 2 (Estudios Oftalmológicos), delega a
+        handle_estudios_line_inbound_message sin tocar pacientes ni conversaciones del CRM quirúrgico.
+      - En la Línea 1 (Quirúrgico), normaliza el teléfono E.164, renueva la ventana de 24 horas,
+        descarga/transcribe notas de voz o imágenes y rutea al agente IA o bandeja de asesores.
     """
+    if phone_number_id:
+        from app.services.whatsapp_cloud.client import get_whatsapp_estudios_credentials
+        est_phone_id, _ = get_whatsapp_estudios_credentials()
+        if est_phone_id and str(phone_number_id).strip() == str(est_phone_id).strip():
+            await handle_estudios_line_inbound_message(msg_dict, str(phone_number_id).strip(), contact_name)
+            return
     wamid = msg_dict.get("id")
     raw_sender = msg_dict.get("from")
     normalized_phone = normalize_to_meta_e164(raw_sender)

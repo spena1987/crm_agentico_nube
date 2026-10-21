@@ -14,10 +14,14 @@ import {
   KeyRound,
   Globe,
   Radio,
-  Activity
+  Activity,
+  Eye,
+  Save,
+  Lock,
+  MessageSquareReply
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
-import { BACKEND_URL } from '@/lib/api'
+import { apiFetch, BACKEND_URL } from '@/lib/api'
 
 interface WhatsAppStatus {
   available: boolean
@@ -41,12 +45,56 @@ interface WhatsAppStatus {
   }
 }
 
+interface LineHealthInfo {
+  configured: boolean
+  connected?: boolean
+  phone_number_id?: string | null
+  display_phone_number?: string | null
+  verified_name?: string | null
+  quality_rating?: string | null
+  messaging_limit_tier?: string | null
+  code_verification_status?: string | null
+  account_status?: string | null
+  status?: string | null
+  error?: string | null
+  config?: {
+    estudios_phone_number_id?: string
+    estudios_display_phone?: string
+    estudios_verified_name?: string
+    estudios_template_pdf?: string
+    estudios_template_img?: string
+    estudios_auto_reply_enabled?: boolean
+    estudios_derivacion_telefono?: string
+    estudios_auto_reply_text?: string
+  }
+}
+
 export default function WhatsAppConfigCard() {
   const [statusData, setStatusData] = useState<WhatsAppStatus | null>(null)
   const [cargando, setCargando] = useState<boolean>(true)
   const [verificando, setVerificando] = useState<boolean>(false)
 
+  // Estado Multi-Línea (Línea 1: Quirúrgico | Línea 2: Estudios Oftalmológicos)
+  const [lineaQuirurgica, setLineaQuirurgica] = useState<LineHealthInfo | null>(null)
+  const [lineaEstudios, setLineaEstudios] = useState<LineHealthInfo | null>(null)
+  const [estudiosPhoneId, setEstudiosPhoneId] = useState('')
+  const [estudiosDisplayPhone, setEstudiosDisplayPhone] = useState('')
+  const [estudiosVerifiedName, setEstudiosVerifiedName] = useState('Centrovisión Estudios')
+  const [estudiosTemplatePdf, setEstudiosTemplatePdf] = useState('entrega_estudio_oftalmologico_pdf')
+  const [estudiosTemplateImg, setEstudiosTemplateImg] = useState('entrega_estudio_oftalmologico_img')
+  const [estudiosAutoReplyEnabled, setEstudiosAutoReplyEnabled] = useState(true)
+  const [estudiosDerivacionTelefono, setEstudiosDerivacionTelefono] = useState('')
+  const [estudiosAutoReplyText, setEstudiosAutoReplyText] = useState('')
+  const [guardandoLinea2, setGuardandoLinea2] = useState(false)
+  const [linea2Feedback, setLinea2Feedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  // Registro de PIN 2FA (/register en Cloud API)
+  const [showPinModal, setShowPinModal] = useState(false)
+  const [pin2FA, setPin2FA] = useState('')
+  const [registrandoPin, setRegistrandoPin] = useState(false)
+
   // Mensaje de prueba
+  const [testLine, setTestLine] = useState<'quirurgico' | 'estudios'>('quirurgico')
   const [testPhone, setTestPhone] = useState('')
   const [testMsg, setTestMsg] = useState('¡Hola! Este es un mensaje de prueba desde MedCRM vía Meta Cloud API. 🩺')
   const [enviandoTest, setEnviandoTest] = useState(false)
@@ -68,12 +116,31 @@ export default function WhatsAppConfigCard() {
     setTimeout(() => setCopiedKey(null), 2500)
   }
 
-  const fetchStatus = async () => {
+  const fetchStatus = async (populateForm: boolean = false) => {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/status`)
-      if (res.ok) {
-        const data: WhatsAppStatus = await res.json()
+      const [resStatus, resLines] = await Promise.all([
+        apiFetch('/api/whatsapp/status'),
+        apiFetch('/api/whatsapp/lines')
+      ])
+      if (resStatus.ok) {
+        const data: WhatsAppStatus = await resStatus.json()
         setStatusData(data)
+      }
+      if (resLines.ok) {
+        const linesData = await resLines.json()
+        setLineaQuirurgica(linesData.linea_quirurgica || null)
+        setLineaEstudios(linesData.linea_estudios || null)
+        const cfg = linesData.linea_estudios?.config
+        if (cfg && populateForm) {
+          setEstudiosPhoneId(cfg.estudios_phone_number_id || '')
+          setEstudiosDisplayPhone(cfg.estudios_display_phone || '')
+          setEstudiosVerifiedName(cfg.estudios_verified_name || 'Centrovisión Estudios')
+          setEstudiosTemplatePdf(cfg.estudios_template_pdf || 'entrega_estudio_oftalmologico_pdf')
+          setEstudiosTemplateImg(cfg.estudios_template_img || 'entrega_estudio_oftalmologico_img')
+          setEstudiosAutoReplyEnabled(cfg.estudios_auto_reply_enabled !== false)
+          setEstudiosDerivacionTelefono(cfg.estudios_derivacion_telefono || '')
+          setEstudiosAutoReplyText(cfg.estudios_auto_reply_text || '')
+        }
       }
     } catch (err) {
       console.error('Error obteniendo estado de WhatsApp Cloud API:', err)
@@ -83,24 +150,104 @@ export default function WhatsAppConfigCard() {
   }
 
   useEffect(() => {
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 8000)
+    fetchStatus(true)
+    const interval = setInterval(() => fetchStatus(false), 12000)
     return () => clearInterval(interval)
   }, [])
 
   const handleCheckConnection = async () => {
     try {
       setVerificando(true)
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/connect?force=true`, {
+      const res = await apiFetch('/api/whatsapp/connect?force=true', {
         method: 'POST'
       })
       if (res.ok) {
-        await fetchStatus()
+        await fetchStatus(false)
       }
     } catch (err) {
       console.error('Error al sincronizar WhatsApp Cloud:', err)
     } finally {
       setVerificando(false)
+    }
+  }
+
+  const handleSaveLinea2 = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setGuardandoLinea2(true)
+    setLinea2Feedback(null)
+    try {
+      const res = await apiFetch('/api/whatsapp/lines', {
+        method: 'PUT',
+        body: JSON.stringify({
+          estudios_phone_number_id: estudiosPhoneId.trim(),
+          estudios_display_phone: estudiosDisplayPhone.trim(),
+          estudios_verified_name: estudiosVerifiedName.trim(),
+          estudios_template_pdf: estudiosTemplatePdf.trim(),
+          estudios_template_img: estudiosTemplateImg.trim(),
+          estudios_auto_reply_enabled: estudiosAutoReplyEnabled,
+          estudios_derivacion_telefono: estudiosDerivacionTelefono.trim(),
+          estudios_auto_reply_text: estudiosAutoReplyText
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setLineaQuirurgica(data.linea_quirurgica || null)
+        setLineaEstudios(data.linea_estudios || null)
+        setLinea2Feedback({
+          type: 'success',
+          text: data.linea_estudios?.connected
+            ? '¡Línea 2 de Estudios Oftalmológicos guardada y verificada en vivo con Meta Graph API!'
+            : 'Configuración de Línea 2 guardada. Si el número es nuevo en Meta, recuerda activarlo con su PIN 2FA.'
+        })
+      } else {
+        setLinea2Feedback({
+          type: 'error',
+          text: data.detail || 'Error al guardar la configuración de la Línea 2.'
+        })
+      }
+    } catch (err: any) {
+      setLinea2Feedback({ type: 'error', text: err.message || 'Error de red.' })
+    } finally {
+      setGuardandoLinea2(false)
+    }
+  }
+
+  const handleRegisterPinCloudApi = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (pin2FA.replace(/\D/g, '').length !== 6) {
+      setLinea2Feedback({ type: 'error', text: 'El PIN de verificación en dos pasos debe tener exactamente 6 dígitos.' })
+      return
+    }
+    setRegistrandoPin(true)
+    setLinea2Feedback(null)
+    try {
+      const res = await apiFetch('/api/whatsapp/register-line', {
+        method: 'POST',
+        body: JSON.stringify({
+          line: 'estudios',
+          phone_number_id: estudiosPhoneId.trim(),
+          pin: pin2FA.replace(/\D/g, '')
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setShowPinModal(false)
+        setPin2FA('')
+        setLinea2Feedback({
+          type: 'success',
+          text: data.mensaje || '¡Número registrado y activado en Meta WhatsApp Cloud API!'
+        })
+        await fetchStatus(false)
+      } else {
+        setLinea2Feedback({
+          type: 'error',
+          text: data.detail || 'Meta rechazó el registro del PIN.'
+        })
+      }
+    } catch (err: any) {
+      setLinea2Feedback({ type: 'error', text: err.message || 'Error al registrar PIN.' })
+    } finally {
+      setRegistrandoPin(false)
     }
   }
 
@@ -114,10 +261,11 @@ export default function WhatsAppConfigCard() {
     setEnviandoTest(true)
     setTestFeedback(null)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/whatsapp/send-test`, {
+      const endpoint = testLine === 'estudios' ? '/api/whatsapp/send-test-line' : '/api/whatsapp/send-test'
+      const res = await apiFetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          line: testLine,
           telefono: testPhone,
           mensaje: testMsg
         })
@@ -127,7 +275,7 @@ export default function WhatsAppConfigCard() {
         setTestFeedback({ 
           type: 'success', 
           text: data.enviado_real 
-            ? '¡Mensaje despachado exitosamente a WhatsApp mediante Meta Cloud API!' 
+            ? `¡Mensaje despachado exitosamente desde la línea ${testLine === 'estudios' ? 'de Estudios Oftalmológicos' : 'Quirúrgica'}!` 
             : 'Mensaje registrado en la base de datos de MedCRM.' 
         })
       } else {
@@ -163,14 +311,14 @@ export default function WhatsAppConfigCard() {
             </div>
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <h2 className="text-lg font-bold">Meta WhatsApp Cloud API</h2>
+                <h2 className="text-lg font-bold">Meta WhatsApp Cloud API • Arquitectura Multi-Línea</h2>
                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold tracking-wide uppercase flex items-center gap-1.5 ${
                   isConnected 
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300' 
                     : 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300'
                 }`}>
                   <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                  {isConnected ? 'Conectado y Operativo' : 'Configuración Pendiente'}
+                  {isConnected ? 'WABA Conectada y Operativa' : 'Configuración Pendiente'}
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 text-[11px] font-mono font-semibold">
                   Graph API v21+
@@ -178,7 +326,7 @@ export default function WhatsAppConfigCard() {
               </div>
               <p className="text-sm text-[var(--secondary)] mt-1">
                 {isConnected 
-                  ? `Pasarela oficial de WhatsApp activa • Phone ID: ${statusData?.phone_number_id || statusData?.device_info?.phone || 'Configurado'}`
+                  ? `Misma App de Meta y WABA operando líneas independientes por unidad de negocio (Quirúrgico vs Estudios Oftalmológicos).`
                   : 'Se requiere configurar las credenciales de Meta for Developers para activar el canal.'}
               </p>
             </div>
@@ -190,14 +338,253 @@ export default function WhatsAppConfigCard() {
               onClick={handleCheckConnection}
               disabled={verificando}
               className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-[var(--card)] border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] flex items-center gap-2 transition-all shadow-sm"
-              title="Comprobar enlace con Meta Cloud API"
+              title="Comprobar enlace de ambas líneas con Meta Cloud API"
             >
               <RefreshCw size={14} className={verificando ? 'animate-spin text-blue-600' : ''} />
-              <span>{verificando ? 'Verificando...' : 'Comprobar Enlace'}</span>
+              <span>{verificando ? 'Verificando...' : 'Comprobar Líneas'}</span>
             </button>
           </div>
         </div>
       </div>
+
+      {/* PANEL DUAL DE LÍNEAS TELEFÓNICAS (LÍNEA 1 QUIRÚRGICO VS LÍNEA 2 ESTUDIOS OFTALMOLÓGICOS) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* TARJETA LÍNEA 1: ASESORAMIENTO QUIRÚRGICO */}
+        <div className="p-6 rounded-2xl border border-emerald-500/30 bg-[var(--card)] shadow-sm flex flex-col justify-between space-y-4">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-xs font-bold uppercase tracking-wider">
+                  Línea 1 • Principal
+                </span>
+                <h3 className="font-bold text-base text-[var(--foreground)]">
+                  Asesoramiento Quirúrgico & CRM
+                </h3>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 text-[11px] font-bold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                Conectada
+              </span>
+            </div>
+
+            <p className="text-xs text-[var(--secondary)] leading-relaxed">
+              Línea vinculada a la bandeja de entrada de chats quirúrgicos, Agente IA Gemini, presupuestos, consentimientos informados y seguimiento prequirúrgico.
+            </p>
+
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)]">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--secondary)] block">
+                  Phone Number ID (Meta)
+                </span>
+                <span className="font-mono text-xs font-bold text-[var(--foreground)] select-all mt-0.5 block truncate">
+                  {lineaQuirurgica?.phone_number_id || statusData?.phone_number_id || 'Configurado'}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)]">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--secondary)] block">
+                  Número / Nombre Verificado
+                </span>
+                <span className="text-xs font-bold text-[var(--foreground)] mt-0.5 block truncate">
+                  {lineaQuirurgica?.display_phone_number || statusData?.display_phone_number || 'Oficial'} • {lineaQuirurgica?.verified_name || statusData?.verified_name || 'Centrovisión'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/20 flex items-center justify-between text-xs">
+            <span className="text-[var(--secondary)] font-medium">
+              Calidad Meta: <strong className="text-emerald-600 dark:text-emerald-400">{lineaQuirurgica?.quality_rating || statusData?.quality_rating || 'GREEN'}</strong>
+            </span>
+            <span className="text-[var(--secondary)] font-medium">
+              Límite: <strong className="text-[var(--foreground)]">{lineaQuirurgica?.messaging_limit_tier || statusData?.messaging_limit_tier || 'TIER_1K'}</strong>
+            </span>
+          </div>
+        </div>
+
+        {/* TARJETA LÍNEA 2: UNIDAD DE ESTUDIOS OFTALMOLÓGICOS (EXCLUSIVA TÉCNICOS) */}
+        <div className="p-6 rounded-2xl border border-cyan-500/40 bg-[var(--card)] shadow-sm space-y-4">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2.5">
+              <span className="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                <Eye size={13} />
+                Línea 2 • Estudios
+              </span>
+              <h3 className="font-bold text-base text-[var(--foreground)]">
+                Unidad de Estudios Oftalmológicos
+              </h3>
+            </div>
+            <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1.5 ${
+              lineaEstudios?.connected
+                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                : estudiosPhoneId
+                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                lineaEstudios?.connected ? 'bg-emerald-500 animate-pulse' : estudiosPhoneId ? 'bg-amber-500' : 'bg-slate-400'
+              }`} />
+              {lineaEstudios?.connected
+                ? `Conectada (${lineaEstudios.display_phone_number || 'Activa'})`
+                : estudiosPhoneId
+                ? 'Pendiente Registro / Verificación'
+                : 'Sin Phone ID asignado'}
+            </span>
+          </div>
+
+          <p className="text-xs text-[var(--secondary)] leading-relaxed">
+            Número dedicado exclusivamente al despacho de estudios diagnósticos (`PDF`, `JPG`, `PNG`). <strong>Aislamiento estricto:</strong> los envíos y respuestas en esta línea nunca crean pacientes ni conversaciones en la bandeja quirúrgica.
+          </p>
+
+          <form onSubmit={handleSaveLinea2} className="space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
+                  Phone Number ID (Línea Estudios)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: 109876543210987"
+                  value={estudiosPhoneId}
+                  onChange={(e) => setEstudiosPhoneId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
+                  Teléfono Derivación Consultas (wa.me)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: 5492614703230"
+                  value={estudiosDerivacionTelefono}
+                  onChange={(e) => setEstudiosDerivacionTelefono(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                />
+              </div>
+            </div>
+
+            {/* Auto-reply toggle */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold flex items-center gap-1.5 text-[var(--foreground)]">
+                  <MessageSquareReply size={14} className="text-cyan-600" />
+                  Respuesta automática si el paciente escribe a la línea de estudios
+                </span>
+                <input
+                  type="checkbox"
+                  checked={estudiosAutoReplyEnabled}
+                  onChange={(e) => setEstudiosAutoReplyEnabled(e.target.checked)}
+                  className="h-4 w-4 accent-cyan-600 rounded cursor-pointer"
+                />
+              </div>
+              {estudiosAutoReplyEnabled && (
+                <textarea
+                  rows={2}
+                  value={estudiosAutoReplyText}
+                  onChange={(e) => setEstudiosAutoReplyText(e.target.value)}
+                  placeholder="Mensaje automático de cortesía informando que esta línea es solo para envío de estudios..."
+                  className="w-full px-2.5 py-1.5 rounded-lg text-[11px] bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                />
+              )}
+            </div>
+
+            {linea2Feedback && (
+              <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                linea2Feedback.type === 'success'
+                  ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                  : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
+              }`}>
+                {linea2Feedback.type === 'success' ? <CheckCircle2 size={15} className="shrink-0" /> : <AlertTriangle size={15} className="shrink-0" />}
+                <span>{linea2Feedback.text}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-1 flex-wrap">
+              <button
+                type="submit"
+                disabled={guardandoLinea2}
+                className="flex-1 py-2 px-4 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 shadow-sm"
+              >
+                <Save size={14} />
+                <span>{guardandoLinea2 ? 'Guardando...' : 'Guardar Línea 2 (Estudios)'}</span>
+              </button>
+
+              {estudiosPhoneId && (
+                <button
+                  type="button"
+                  onClick={() => setShowPinModal(true)}
+                  className="py-2 px-3 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)] border border-[var(--border)] flex items-center gap-1.5 transition-all"
+                  title="Ejecutar POST /{phone_number_id}/register con el PIN de 6 dígitos en Meta Cloud API"
+                >
+                  <Lock size={13} className="text-cyan-600" />
+                  <span>Activar PIN 2FA</span>
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Modal para activar número nuevo con PIN de 6 dígitos en Meta Cloud API */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-500">
+                  <Lock size={20} />
+                </div>
+                <div>
+                  <h4 className="font-bold text-sm">Registrar Número en Meta Cloud API</h4>
+                  <p className="text-[11px] text-[var(--secondary)]">Phone ID: {estudiosPhoneId}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPinModal(false)}
+                className="text-xs text-[var(--secondary)] hover:text-[var(--foreground)] px-2 py-1"
+              >
+                Cerrar
+              </button>
+            </div>
+            <p className="text-xs text-[var(--secondary)] leading-relaxed">
+              Cuando agregas un número nuevo en el portafolio de Meta y verificas el SMS/llamada, Meta exige invocar por única vez el endpoint <code>/register</code> con el <strong>PIN de 6 dígitos</strong> de verificación en dos pasos para que pase a estado <strong>Conectado</strong>.
+            </p>
+            <form onSubmit={handleRegisterPinCloudApi} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-[var(--secondary)] mb-1">
+                  PIN de 6 dígitos (Verificación en 2 pasos de Meta)
+                </label>
+                <input
+                  type="password"
+                  maxLength={6}
+                  placeholder="123456"
+                  value={pin2FA}
+                  onChange={(e) => setPin2FA(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="w-full px-3.5 py-2.5 rounded-xl text-center text-lg tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  required
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPinModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={registrandoPin || pin2FA.length !== 6}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50"
+                >
+                  {registrandoPin ? 'Activando en Meta...' : 'Confirmar y Activar Número'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Monitor de Salud y Observabilidad de la Línea Meta (Phase 4) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
@@ -259,7 +646,7 @@ export default function WhatsAppConfigCard() {
             </span>
           </div>
           <p className="text-[10px] text-[var(--secondary)] mt-1.5 leading-tight">
-            Recepción bidireccional y validación HMAC SHA-256.
+            Ruteo inteligente por <code>phone_number_id</code>.
           </p>
         </div>
 
@@ -275,7 +662,7 @@ export default function WhatsAppConfigCard() {
             </span>
           </div>
           <p className="text-[10px] text-[var(--secondary)] mt-1.5 leading-tight">
-            Filtro de enmascaramiento activo para DNIs y teléfonos.
+            0 bytes en Supabase Storage para estudios médicos.
           </p>
         </div>
       </div>
@@ -291,8 +678,8 @@ export default function WhatsAppConfigCard() {
                 <Server size={22} />
               </div>
               <div>
-                <h3 className="font-bold text-base">Parámetros del Gateway Cloud</h3>
-                <p className="text-xs text-[var(--secondary)]">Datos para la configuración del Webhook en Meta for Developers</p>
+                <h3 className="font-bold text-base">Parámetros del Gateway Cloud (Compartido WABA)</h3>
+                <p className="text-xs text-[var(--secondary)]">Un único Webhook recibe eventos de ambos números y los separa por <code>metadata.phone_number_id</code></p>
               </div>
             </div>
 
@@ -325,7 +712,7 @@ export default function WhatsAppConfigCard() {
               <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider">
-                    Phone Number ID
+                    Phone ID Quirúrgico (Línea 1)
                   </span>
                   {statusData?.phone_number_id && (
                     <button
@@ -342,7 +729,7 @@ export default function WhatsAppConfigCard() {
                   {statusData?.phone_number_id || 'Configurado en Railway'}
                 </p>
                 <span className="inline-block text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
-                  ✓ Número oficial Meta
+                  ✓ Bandeja Quirúrgica & IA
                 </span>
               </div>
 
@@ -379,7 +766,7 @@ export default function WhatsAppConfigCard() {
                 </span>
               </div>
               <div className="flex flex-wrap gap-2 pt-1">
-                {['messages', 'message_deliveries', 'message_reads'].map((field) => (
+                {['messages', 'message_deliveries', 'message_reads', 'message_template_status_update'].map((field) => (
                   <span 
                     key={field}
                     className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-blue-200 dark:border-blue-900/40 text-[11px] font-mono font-semibold text-blue-700 dark:text-blue-300"
@@ -389,19 +776,8 @@ export default function WhatsAppConfigCard() {
                 ))}
               </div>
               <p className="text-[11px] text-slate-600 dark:text-slate-400">
-                Al activar estos tres campos, MedCRM recibe mensajes entrantes, confirmaciones de entrega (doble tilde gris) y confirmaciones de lectura (doble tilde azul).
+                Al activar estos campos, el CRM actualiza automáticamente los estados de entrega y lectura (doble tilde azul) tanto en los chats quirúrgicos como en la tabla de auditoría de Estudios Oftalmológicos.
               </p>
-            </div>
-
-            {/* Ventana de Atención de 24 Horas */}
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] flex items-start gap-3">
-              <Zap className="text-amber-500 shrink-0 mt-0.5" size={18} />
-              <div className="text-xs space-y-1">
-                <p className="font-bold text-[var(--foreground)]">Ventana de Atención al Paciente (24 Horas)</p>
-                <p className="text-[11px] text-[var(--secondary)] leading-relaxed">
-                  Meta permite enviar mensajes de texto libre durante 24 horas después de que el paciente envía un mensaje. Si la ventana expira, el sistema automáticamente solicita el uso de una plantilla pre-aprobada de Meta.
-                </p>
-              </div>
             </div>
           </div>
         </div>
@@ -409,17 +785,49 @@ export default function WhatsAppConfigCard() {
         {/* Columna Derecha: Enviar Mensaje de Prueba & URLs de Cumplimiento */}
         <div className="lg:col-span-5 space-y-6">
           
-          {/* Mensaje de Prueba */}
+          {/* Mensaje de Prueba con selector de línea */}
           <div className="p-6 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm space-y-4">
-            <div className="flex items-center gap-2">
-              <Send className="text-blue-600" size={20} />
-              <h3 className="font-bold text-base">Enviar Mensaje de Prueba</h3>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Send className="text-blue-600" size={20} />
+                <h3 className="font-bold text-base">Enviar Mensaje de Prueba</h3>
+              </div>
             </div>
             <p className="text-xs text-[var(--secondary)]">
-              Verifica la entrega en tiempo real desde la pasarela oficial hacia cualquier número móvil.
+              Verifica la entrega en tiempo real seleccionando desde qué línea deseas despachar el mensaje.
             </p>
 
             <form onSubmit={handleSendTest} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
+                  Línea Emisora
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTestLine('quirurgico')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                      testLine === 'quirurgico'
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-slate-50 dark:bg-slate-800/40 border-[var(--border)] text-[var(--foreground)]'
+                    }`}
+                  >
+                    Línea 1: Quirúrgica
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestLine('estudios')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                      testLine === 'estudios'
+                        ? 'bg-cyan-600 text-white border-cyan-600'
+                        : 'bg-slate-50 dark:bg-slate-800/40 border-[var(--border)] text-[var(--foreground)]'
+                    }`}
+                  >
+                    Línea 2: Estudios Oftalmo
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
                   Número de Teléfono Destino
@@ -469,7 +877,7 @@ export default function WhatsAppConfigCard() {
                 className="w-full py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 glow-primary transition-all disabled:opacity-50"
               >
                 <Send size={14} className={enviandoTest ? 'animate-bounce' : ''} />
-                <span>{enviandoTest ? 'Despachando...' : 'Despachar Mensaje de Prueba'}</span>
+                <span>{enviandoTest ? 'Despachando...' : `Probar Envío desde ${testLine === 'estudios' ? 'Línea 2 (Estudios)' : 'Línea 1 (Quirúrgica)'}`}</span>
               </button>
             </form>
           </div>

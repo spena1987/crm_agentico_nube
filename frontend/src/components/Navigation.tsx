@@ -74,6 +74,7 @@ const allNavItems: NavItem[] = [
   },
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
+  { code: 'estudios-tecnicos', label: 'Estudios (Técnicos)', href: '/estudios-tecnicos', icon: Eye },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },
   { code: 'ajustes', label: 'Ajustes', href: '/ajustes', icon: Settings },
   { code: 'ayuda', label: 'Centro de Ayuda', href: '/ayuda', icon: HelpCircle },

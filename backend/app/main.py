@@ -425,6 +425,10 @@ app.add_middleware(AuthSecurityMiddleware)
 from app.services.whatsapp_cloud import whatsapp_cloud_router
 app.include_router(whatsapp_cloud_router)
 
+# Módulo de Estudios Oftalmológicos (Técnicos) y Gestión Multi-Línea de WhatsApp
+from app.services.estudios_tecnicos_service import estudios_router
+app.include_router(estudios_router)
+
 # ====================================================================
 # SERVIDOR INTELIGENTE DE ESTÁTICOS Y PDFs ON-DEMAND (CON AUTO-REGENERACIÓN)
 # ====================================================================

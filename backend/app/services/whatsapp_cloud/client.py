@@ -100,6 +100,8 @@ class SimpleCircuitBreaker:
 _CREDENTIALS_CACHE: Dict[str, Any] = {
     "phone_id": None,
     "token": None,
+    "estudios_phone_id": None,
+    "estudios_config": None,
     "expires_at": 0.0
 }
 
@@ -120,9 +122,70 @@ def invalidate_whatsapp_credentials_cache():
     _CREDENTIALS_CACHE["expires_at"] = 0.0
     _CREDENTIALS_CACHE["phone_id"] = None
     _CREDENTIALS_CACHE["token"] = None
+    _CREDENTIALS_CACHE["estudios_phone_id"] = None
+    _CREDENTIALS_CACHE["estudios_config"] = None
     _APP_SECRET_CACHE["expires_at"] = 0.0
     _APP_SECRET_CACHE["secret"] = None
     logger.info("[Credentials Cache] Memoria caché de credenciales WABA invalidada.")
+
+
+def get_whatsapp_estudios_config() -> Dict[str, Any]:
+    """
+    Obtiene la configuración de la 2da línea dedicada a Estudios Oftalmológicos desde
+    configuracion_sistema (clave='whatsapp_lineas') o variables de entorno.
+    """
+    import time
+    import os
+    global _CREDENTIALS_CACHE
+
+    now = time.time()
+    if _CREDENTIALS_CACHE["expires_at"] > now and _CREDENTIALS_CACHE.get("estudios_config") is not None:
+        return _CREDENTIALS_CACHE["estudios_config"]
+
+    cfg: Dict[str, Any] = {
+        "estudios_phone_number_id": os.getenv("META_WA_PHONE_NUMBER_ID_ESTUDIOS") or os.getenv("META_PHONE_NUMBER_ID_ESTUDIOS") or "",
+        "estudios_display_phone": os.getenv("META_WA_DISPLAY_PHONE_ESTUDIOS") or "",
+        "estudios_verified_name": "Centrovisión Estudios",
+        "estudios_template_pdf": "entrega_estudio_oftalmologico_pdf",
+        "estudios_template_img": "entrega_estudio_oftalmologico_img",
+        "estudios_auto_reply_enabled": True,
+        "estudios_derivacion_telefono": "",
+        "estudios_auto_reply_text": (
+            "🏥 *Centrovisión Oftalmología*\n\n"
+            "Hola 👋 Esta línea de WhatsApp es *exclusiva para el envío automatizado de estudios oftalmológicos* y no recibe consultas médicas ni administrativas.\n\n"
+            "Si deseás solicitar un turno o realizar consultas sobre estudios o cirugías, por favor comunicate con nuestra línea de atención tocando el siguiente enlace:"
+        )
+    }
+
+    try:
+        from app.db import supabase
+        if supabase:
+            res = supabase.table("configuracion_sistema").select("valor").eq("clave", "whatsapp_lineas").limit(1).execute()
+            if res.data and len(res.data) > 0:
+                val = res.data[0].get("valor")
+                if isinstance(val, dict):
+                    for k, v in val.items():
+                        if v is not None and str(v).strip() != "":
+                            cfg[k] = v
+                        elif isinstance(v, bool):
+                            cfg[k] = v
+    except Exception as e:
+        logger.debug(f"[Credentials] Error leyendo whatsapp_lineas de configuracion_sistema: {e}")
+
+    _CREDENTIALS_CACHE["estudios_config"] = cfg
+    _CREDENTIALS_CACHE["estudios_phone_id"] = str(cfg.get("estudios_phone_number_id") or "").strip() or None
+    return cfg
+
+
+def get_whatsapp_estudios_credentials() -> tuple[Optional[str], Optional[str]]:
+    """
+    Retorna (estudios_phone_number_id, system_user_access_token) para la Línea 2 (Estudios Oftalmológicos).
+    Comparte el System User Access Token y WABA de la cuenta principal de Meta.
+    """
+    _, token = get_whatsapp_cloud_credentials()
+    cfg = get_whatsapp_estudios_config()
+    estudios_phone_id = str(cfg.get("estudios_phone_number_id") or "").strip() or None
+    return estudios_phone_id, token
 
 
 def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
@@ -210,14 +273,26 @@ class WhatsAppCloudClient:
 
     def __init__(
         self,
-        phone_number_id: str,
-        access_token: str,
+        phone_number_id: Optional[str] = None,
+        access_token: Optional[str] = None,
         graph_version: str = DEFAULT_GRAPH_VERSION,
         max_retries: int = 3,
-        timeout_seconds: float = 12.0
+        timeout_seconds: float = 12.0,
+        line: str = "quirurgico"
     ):
-        self.phone_number_id = phone_number_id
-        self.access_token = access_token
+        if not phone_number_id or not access_token:
+            if line == "estudios":
+                est_phone, est_token = get_whatsapp_estudios_credentials()
+                phone_number_id = phone_number_id or est_phone
+                access_token = access_token or est_token
+            else:
+                q_phone, q_token = get_whatsapp_cloud_credentials()
+                phone_number_id = phone_number_id or q_phone
+                access_token = access_token or q_token
+
+        self.phone_number_id = str(phone_number_id or "").strip()
+        self.access_token = str(access_token or "").strip()
+        self.line = line
         self.graph_version = graph_version
         self.max_retries = max_retries
         self.timeout = httpx.Timeout(timeout_seconds, connect=5.0)
@@ -602,8 +677,10 @@ class WhatsAppCloudClient:
         Consulta en tiempo real la salud de la línea en Meta: verified_name, display_phone_number,
         quality_rating (GREEN, YELLOW, RED), messaging_limit_tier (TIER_250, TIER_1K, etc.) y code_verification_status.
         """
+        if not self.phone_number_id or not self.access_token:
+            return {}
         client = await self.get_http_client()
-        url = f"{self.BASE_URL}/{self.graph_version}/{self.phone_number_id}?fields=verified_name,display_phone_number,quality_rating,messaging_limit_tier,code_verification_status"
+        url = f"{self.BASE_URL}/{self.graph_version}/{self.phone_number_id}?fields=verified_name,display_phone_number,quality_rating,messaging_limit_tier,code_verification_status,status,name_status"
         try:
             res = await client.get(url)
             if res.status_code == 200:
@@ -612,4 +689,123 @@ class WhatsAppCloudClient:
         except Exception as e:
             logger.debug(f"[WhatsAppClient] Excepción consultando salud de línea: {e}")
         return {}
+
+    async def upload_media_bytes(
+        self,
+        file_bytes: bytes,
+        filename: str,
+        mime_type: str = "application/pdf"
+    ) -> str:
+        """
+        Sube un archivo binario desde memoria RAM directamente al repositorio efímero de Meta Graph API
+        (`POST /{phone_number_id}/media`) y retorna el `media_id` oficial de Meta.
+        Nota oficial de Meta: El `media_id` devuelto queda vinculado exclusivamente al `self.phone_number_id`
+        que realizó la subida y tiene una vigencia de 30 días en los servidores de Meta (0 bytes en Supabase).
+        """
+        if not self.phone_number_id or not self.access_token:
+            raise ValueError("Phone Number ID o Access Token no configurados para subir multimedia a Meta.")
+
+        url = f"{self.BASE_URL}/{self.graph_version}/{self.phone_number_id}/media"
+        files = {
+            "file": (filename, file_bytes, mime_type)
+        }
+        data = {
+            "messaging_product": "whatsapp",
+            "type": mime_type
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0)) as mp_client:
+            res = await mp_client.post(
+                url,
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                data=data,
+                files=files
+            )
+        if res.status_code not in (200, 201):
+            try:
+                err_json = res.json().get("error", {})
+                raise MetaAPIError(
+                    err_json.get("code", res.status_code),
+                    err_json.get("error_subcode"),
+                    err_json.get("message", res.text),
+                    err_json.get("fbtrace_id")
+                )
+            except MetaAPIError:
+                raise
+            except Exception:
+                raise RuntimeError(f"Error subiendo archivo a Meta Graph API ({res.status_code}): {res.text}")
+
+        body = res.json()
+        media_id = body.get("id")
+        if not media_id:
+            raise RuntimeError(f"Meta Graph API no devolvió media_id al subir {filename}: {body}")
+        return str(media_id)
+
+    async def send_document_by_id(
+        self,
+        to_phone: str,
+        media_id: str,
+        filename: Optional[str] = None,
+        caption: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Envía un documento (PDF) previamente subido a Meta utilizando su `media_id`.
+        """
+        doc_data: Dict[str, Any] = {"id": media_id}
+        if filename:
+            doc_data["filename"] = filename
+        if caption:
+            doc_data["caption"] = caption
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_phone,
+            "type": "document",
+            "document": doc_data
+        }
+        res = await self._request_with_retry("POST", "messages", payload)
+        return {
+            "wamid": res.get("messages", [{}])[0].get("id"),
+            "raw_response": res
+        }
+
+    async def send_image_by_id(
+        self,
+        to_phone: str,
+        media_id: str,
+        caption: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Envía una imagen (JPG/PNG) previamente subida a Meta utilizando su `media_id`.
+        """
+        img_data: Dict[str, Any] = {"id": media_id}
+        if caption:
+            img_data["caption"] = caption
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_phone,
+            "type": "image",
+            "image": img_data
+        }
+        res = await self._request_with_retry("POST", "messages", payload)
+        return {
+            "wamid": res.get("messages", [{}])[0].get("id"),
+            "raw_response": res
+        }
+
+    async def register_phone_number(self, pin: str) -> Dict[str, Any]:
+        """
+        Registra y activa un número recién verificado en Meta WhatsApp Cloud API (`POST /{phone_number_id}/register`).
+        Requiere el PIN de 6 dígitos de verificación en dos pasos (2FA) del número.
+        """
+        clean_pin = "".join(filter(str.isdigit, str(pin or "")))
+        if len(clean_pin) != 6:
+            raise ValueError("El PIN de verificación en dos pasos de Meta debe tener exactamente 6 dígitos numéricos.")
+        payload = {
+            "messaging_product": "whatsapp",
+            "pin": clean_pin
+        }
+        return await self._request_with_retry("POST", "register", payload)
 

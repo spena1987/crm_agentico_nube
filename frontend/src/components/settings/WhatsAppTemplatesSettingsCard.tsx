@@ -315,6 +315,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const [loading, setLoading] = useState<boolean>(true)
   const [syncing, setSyncing] = useState<boolean>(false)
   const [registeringFollowUp, setRegisteringFollowUp] = useState<boolean>(false)
+  const [registeringEstudios, setRegisteringEstudios] = useState<boolean>(false)
   const [searchFilter, setSearchFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL')
 
@@ -405,6 +406,31 @@ export default function WhatsAppTemplatesSettingsCard() {
       setErrorFeedback(`Error de conexión: ${err.message}`)
     } finally {
       setRegisteringFollowUp(false)
+    }
+  }
+
+  // Registrar las plantillas oficiales del Módulo de Estudios Oftalmológicos en Meta
+  const handleRegisterEstudiosTemplates = async () => {
+    try {
+      setRegisteringEstudios(true)
+      setErrorFeedback(null)
+      const res = await apiFetch('/api/whatsapp/cloud/templates/registrar-estudios', {
+        method: 'POST'
+      })
+      const data = await res.json()
+      if (res.ok && data.status === 'success') {
+        const creadas = data.resultados?.filter((r: any) => r.action === 'creada_en_meta').length || 0
+        const existentes = data.resultados?.filter((r: any) => r.action === 'ya_registrada' || r.action === 'ya_existia_en_meta_sincronizada_local').length || 0
+        setSuccessFeedback(`Plantillas de Estudios Oftalmológicos procesadas: ${creadas} enviadas a Meta, ${existentes} vinculadas en el CRM.`)
+        setTimeout(() => setSuccessFeedback(null), 5000)
+        fetchTemplates()
+      } else {
+        setErrorFeedback(data.detail || 'Error registrando plantillas de estudios oftalmológicos.')
+      }
+    } catch (err: any) {
+      setErrorFeedback(`Error de conexión: ${err.message}`)
+    } finally {
+      setRegisteringEstudios(false)
     }
   }
 
@@ -586,6 +612,16 @@ export default function WhatsAppTemplatesSettingsCard() {
           </div>
 
           <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            <button
+              onClick={handleRegisterEstudiosTemplates}
+              disabled={registeringEstudios}
+              className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white rounded-lg text-sm font-semibold shadow-sm transition-all disabled:opacity-50"
+              title="Registrar las plantillas oficiales de entrega de Estudios Oftalmológicos (PDF / Imagen / Interactivo) en Meta Graph API"
+            >
+              <Eye className={`w-4 h-4 ${registeringEstudios ? 'animate-spin text-white' : 'text-cyan-100'}`} />
+              <span>{registeringEstudios ? 'Registrando...' : 'Pack Estudios Oftalmo'}</span>
+            </button>
+
             <button
               onClick={handleRegisterFollowUpTemplates}
               disabled={registeringFollowUp}

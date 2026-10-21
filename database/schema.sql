@@ -924,7 +924,7 @@ CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_geclisa_hc_id ON public.consult
 
 CREATE TABLE IF NOT EXISTS public.estudios_oftalmo (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE NOT NULL,
+    paciente_id UUID REFERENCES public.pacientes(id) ON DELETE CASCADE,
     consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
     tipo VARCHAR(100) NOT NULL,
     ojo VARCHAR(5) DEFAULT 'AO' NOT NULL,
@@ -933,10 +933,33 @@ CREATE TABLE IF NOT EXISTS public.estudios_oftalmo (
     archivo_url TEXT,
     archivo_nombre VARCHAR(255),
     geclisa_archivo_id INTEGER,
+    geclisa_pac_id INTEGER,
+    geclisa_ficha_id INTEGER,
+    geclisa_as_id INTEGER,
+    dni_paciente TEXT,
+    nombre_paciente TEXT,
+    telefono_destino TEXT,
+    nombre_archivo TEXT,
+    mime_type TEXT,
+    tamano_bytes INTEGER,
+    wamid TEXT,
+    whatsapp_media_id TEXT,
+    whatsapp_status TEXT DEFAULT 'pending',
+    whatsapp_error TEXT,
+    whatsapp_sent_at TIMESTAMP WITH TIME ZONE,
+    whatsapp_delivered_at TIMESTAMP WITH TIME ZONE,
+    whatsapp_read_at TIMESTAMP WITH TIME ZONE,
+    tecnico_usuario_id UUID,
+    tecnico_nombre TEXT,
+    tecnico_pre_id INTEGER,
+    observaciones TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_estudios_oftalmo_paciente ON public.estudios_oftalmo(paciente_id);
+CREATE INDEX IF NOT EXISTS idx_estudios_oftalmo_wamid ON public.estudios_oftalmo(wamid);
+CREATE INDEX IF NOT EXISTS idx_estudios_oftalmo_dni ON public.estudios_oftalmo(dni_paciente);
+CREATE INDEX IF NOT EXISTS idx_estudios_oftalmo_created_at ON public.estudios_oftalmo(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.recetas_anteojos_oftalmo (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
