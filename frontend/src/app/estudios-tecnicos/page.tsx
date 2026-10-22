@@ -411,11 +411,31 @@ export default function EstudiosTecnicosPage() {
         return
       }
 
-      if (data.geclisa_ok && data.whatsapp_ok) {
+      const onlyGeclisa = guardarEnGeclisa && !enviarWhatsapp
+      const onlyWa = !guardarEnGeclisa && enviarWhatsapp
+      const both = guardarEnGeclisa && enviarWhatsapp
+
+      if (both && data.geclisa_ok && data.whatsapp_ok) {
         setFeedback({
           type: 'success',
           title: '¡Estudio archivado en Geclisa y enviado por WhatsApp!',
           detail: `Guardado en Ficha #${paciente.geclisa_ficha_id} (AS_ID #${data.geclisa_as_id || 'OK'}) y despachado a ${formatPhoneDisplay(telefonoDestino)}.`
+        })
+        setSelectedFiles([])
+        setObservaciones('')
+      } else if (onlyGeclisa && data.geclisa_ok) {
+        setFeedback({
+          type: 'success',
+          title: '¡Estudio guardado exitosamente en Geclisa!',
+          detail: `El archivo quedó archivado en la Historia Clínica (Ficha #${paciente.geclisa_ficha_id}, AS_ID #${data.geclisa_as_id || 'OK'}).`
+        })
+        setSelectedFiles([])
+        setObservaciones('')
+      } else if (onlyWa && data.whatsapp_ok) {
+        setFeedback({
+          type: 'success',
+          title: '¡Estudio enviado por WhatsApp!',
+          detail: `Despachado con éxito a ${formatPhoneDisplay(telefonoDestino)}.`
         })
         setSelectedFiles([])
         setObservaciones('')
@@ -426,11 +446,17 @@ export default function EstudiosTecnicosPage() {
           detail: `El archivo ya quedó seguro en Geclisa (AS_ID #${data.geclisa_as_id}). Motivo WhatsApp: ${data.whatsapp_error}. Puedes reintentar desde la tabla inferior sin duplicar el archivo.`
         })
         setSelectedFiles([])
-      } else {
+      } else if (!data.geclisa_ok && data.whatsapp_ok && both) {
         setFeedback({
           type: 'warning',
-          title: 'Enviado por WhatsApp OK, pero Geclisa reportó una advertencia',
-          detail: `Detalle Geclisa: ${data.geclisa_error}`
+          title: 'Enviado por WhatsApp OK, pero NO se pudo guardar en Geclisa',
+          detail: `Detalle Geclisa: ${data.geclisa_error || 'Error desconocido'}`
+        })
+      } else {
+        setFeedback({
+          type: 'error',
+          title: 'No se pudo guardar en Geclisa',
+          detail: data.geclisa_error || 'Ocurrió un error al guardar el estudio en la Historia Clínica.'
         })
       }
 

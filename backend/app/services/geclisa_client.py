@@ -1670,7 +1670,9 @@ class GeclisaClient:
         turno_id: Optional[int] = None,
         clase_id: int = 1,
         fecha_iso: Optional[str] = None,
-        hora: Optional[int] = None
+        hora: Optional[int] = None,
+        content_type: Optional[str] = None,
+        **kwargs
     ) -> dict:
         """
         Sube un archivo PDF o imagen a la historia clínica del paciente en Geclisa.
@@ -1721,9 +1723,19 @@ class GeclisaClient:
         if not fn_limpio.lower().endswith(".pdf") and filename.lower().endswith(".pdf"):
             fn_limpio += ".pdf"
             
-        content_type = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
+        if content_type:
+            eff_content_type = content_type
+        elif fn_limpio.lower().endswith(".pdf"):
+            eff_content_type = "application/pdf"
+        elif fn_limpio.lower().endswith((".jpg", ".jpeg")):
+            eff_content_type = "image/jpeg"
+        elif fn_limpio.lower().endswith(".png"):
+            eff_content_type = "image/png"
+        else:
+            eff_content_type = "application/octet-stream"
+
         files = {
-            "Archivo": (fn_limpio, file_bytes, content_type)
+            "Archivo": (fn_limpio, file_bytes, eff_content_type)
         }
         data = {
             "FichaId": str(int(ficha_id)),

@@ -790,13 +790,13 @@ async def enviar_y_archivar_estudio_oftalmologico(
         return await asyncio.to_thread(
             geclisa_client.adjuntar_archivo_historia_clinica,
             ficha_id=int(geclisa_ficha_id),
-            pre_id=int(resolved_pre_id),
-            titulo=titulo_completo[:120],
-            observaciones=obs_geclisa[:250],
             file_bytes=final_bytes,
             filename=final_filename,
-            content_type=final_mime,
-            clase_id=1
+            titulo=titulo_completo[:45],
+            observaciones=obs_geclisa[:100],
+            pre_id=int(resolved_pre_id),
+            clase_id=1,
+            content_type=final_mime
         )
 
     async def _task_whatsapp() -> Dict[str, Any]:
@@ -940,10 +940,20 @@ async def enviar_y_archivar_estudio_oftalmologico(
         }
     )
 
-    if not geclisa_ok and not wa_ok:
+    if guardar_en_geclisa and not geclisa_ok and enviar_whatsapp and not wa_ok:
         raise HTTPException(
             status_code=500,
-            detail=f"Falló el guardado en Geclisa ({geclisa_err}) y el envío por WhatsApp ({wa_err})."
+            detail=f"Falló tanto el guardado en Geclisa ({geclisa_err}) como el envío por WhatsApp ({wa_err})."
+        )
+    if guardar_en_geclisa and not geclisa_ok and not enviar_whatsapp:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo guardar el archivo en la Historia Clínica de Geclisa: {geclisa_err}"
+        )
+    if not guardar_en_geclisa and enviar_whatsapp and not wa_ok:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo enviar el archivo por WhatsApp: {wa_err}"
         )
 
     return {
