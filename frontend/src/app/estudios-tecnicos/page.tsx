@@ -274,9 +274,42 @@ export default function EstudiosTecnicosPage() {
         return
       }
 
-      setPaciente(data.paciente)
-      setTelefonoDestino(data.paciente.telefono_normalizado || data.paciente.telefono_geclisa || '')
-      setArchivosGeclisa(data.archivos_geclisa || [])
+      const rawPaciente = data.paciente || {}
+      const fichaId = rawPaciente.geclisa_ficha_id ?? rawPaciente.ficha_id ?? data.ficha_id ?? null
+      const pacId = rawPaciente.geclisa_pac_id ?? rawPaciente.pac_id ?? data.pac_id ?? fichaId
+      const telNorm = rawPaciente.telefono_normalizado || normalizePhoneNumber(rawPaciente.telefono_geclisa || '')
+
+      const normalizedPaciente: PacienteGeclisaInfo = {
+        dni: rawPaciente.dni || cleanDni,
+        nombre_completo: rawPaciente.nombre_completo || 'Paciente',
+        geclisa_pac_id: pacId ? Number(pacId) : null,
+        geclisa_ficha_id: fichaId ? Number(fichaId) : null,
+        telefono_geclisa: rawPaciente.telefono_geclisa || '',
+        telefono_normalizado: telNorm,
+        telefono_display: rawPaciente.telefono_display || (telNorm ? formatPhoneDisplay(telNorm) : ''),
+        obra_social: rawPaciente.obra_social || '',
+        plan: rawPaciente.plan || rawPaciente.plan_cobertura || '',
+        nro_afiliado: rawPaciente.nro_afiliado || '',
+        email: rawPaciente.email || '',
+        existe_en_crm_quirurgico: Boolean(rawPaciente.existe_en_crm_quirurgico),
+        paciente_crm_id: rawPaciente.paciente_crm_id || null
+      }
+
+      setPaciente(normalizedPaciente)
+      setTelefonoDestino(normalizedPaciente.telefono_normalizado || normalizedPaciente.telefono_geclisa || '')
+
+      const rawArchivos = Array.isArray(data.archivos_geclisa) ? data.archivos_geclisa : []
+      const normalizedArchivos: ArchivoGeclisaItem[] = rawArchivos.map((arc: any) => ({
+        as_id: Number(arc.as_id ?? arc.asId ?? arc.id ?? 0),
+        ficha_id: Number(arc.ficha_id ?? arc.fichaId ?? normalizedPaciente.geclisa_ficha_id ?? 0),
+        fecha: arc.fecha || '',
+        hora: arc.hora || '',
+        titulo: arc.titulo || 'Estudio / Documento',
+        extension: arc.extension || 'pdf',
+        observaciones: arc.observaciones || '',
+        prestador: arc.prestador || arc.preNombre || ''
+      }))
+      setArchivosGeclisa(normalizedArchivos)
     } catch (err: any) {
       setErrorBusqueda(err.message || 'Error consultando Geclisa.')
     } finally {

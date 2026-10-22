@@ -597,11 +597,28 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
             detail=res_geclisa.get("mensaje") or f"No se encontró ningún paciente con DNI {dni_limpio} en Geclisa."
         )
 
-    pac_id = res_geclisa.get("geclisa_pac_id") or res_geclisa.get("PacId")
-    ficha_id = res_geclisa.get("geclisa_ficha_id") or res_geclisa.get("FichaId")
+    raw_data = res_geclisa.get("raw") or {}
+    ficha_id = res_geclisa.get("ficha_id") or res_geclisa.get("geclisa_ficha_id") or res_geclisa.get("FichaId") or raw_data.get("fichaId")
+    if ficha_id is not None:
+        try:
+            ficha_id = int(ficha_id)
+        except (ValueError, TypeError):
+            pass
+
+    pac_id = res_geclisa.get("pac_id") or res_geclisa.get("geclisa_pac_id") or res_geclisa.get("PacId") or raw_data.get("pacId") or ficha_id
+    if pac_id is not None:
+        try:
+            pac_id = int(pac_id)
+        except (ValueError, TypeError):
+            pass
+
     nombre = res_geclisa.get("nombre_completo") or res_geclisa.get("nombre") or "Paciente"
     raw_tel = res_geclisa.get("telefono") or res_geclisa.get("celular") or ""
     tel_norm = normalize_phone_number(raw_tel) if raw_tel else ""
+
+    obra_social = res_geclisa.get("obra_social") or raw_data.get("osNombre") or ""
+    plan_cobertura = res_geclisa.get("plan_cobertura") or res_geclisa.get("plan") or res_geclisa.get("plan_os") or ""
+    nro_afiliado = res_geclisa.get("nro_afiliado") or raw_data.get("nroAfiliado") or ""
 
     # Verificar (SOLO LECTURA) si el paciente ya existe en public.pacientes del CRM
     paciente_crm = None
@@ -618,7 +635,18 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
     archivos_geclisa = []
     if ficha_id:
         try:
-            archivos_geclisa = geclisa_client.listar_archivos_historia_clinica(int(ficha_id))
+            archivos_raw = geclisa_client.listar_archivos_historia_clinica(int(ficha_id))
+            for a in (archivos_raw or []):
+                archivos_geclisa.append({
+                    "as_id": a.get("asId") or a.get("id"),
+                    "ficha_id": int(ficha_id),
+                    "fecha": a.get("fecha") or "",
+                    "hora": a.get("hora") or "",
+                    "titulo": a.get("titulo") or "Estudio / Documento",
+                    "extension": a.get("extension") or "pdf",
+                    "observaciones": a.get("observaciones") or "",
+                    "prestador": a.get("preNombre") or ""
+                })
         except Exception as e:
             logger.warning(f"[Estudios] No se pudieron listar archivos de Geclisa para FichaId={ficha_id}: {e}")
 
@@ -648,9 +676,9 @@ def buscar_paciente_geclisa_para_estudio(dni: str = Query(..., description="DNI 
             "telefono_geclisa": raw_tel,
             "telefono_normalizado": tel_norm,
             "telefono_display": format_phone_display(tel_norm) if tel_norm else "",
-            "obra_social": res_geclisa.get("obra_social") or "",
-            "plan": res_geclisa.get("plan_os") or "",
-            "nro_afiliado": res_geclisa.get("nro_afiliado") or "",
+            "obra_social": obra_social,
+            "plan": plan_cobertura,
+            "nro_afiliado": nro_afiliado,
             "email": res_geclisa.get("email") or "",
             "existe_en_crm_quirurgico": bool(paciente_crm),
             "paciente_crm_id": paciente_crm.get("id") if paciente_crm else None
@@ -798,9 +826,14 @@ async def enviar_y_archivar_estudio_oftalmologico(
     elif isinstance(geclisa_res, dict):
         if geclisa_res.get("skipped"):
             geclisa_ok = True
-        elif geclisa_res.get("exito"):
+        elif geclisa_res.get("exito") or geclisa_res.get("success"):
             geclisa_ok = True
-            geclisa_as_id = geclisa_res.get("geclisa_as_id")
+            geclisa_as_id = (
+                geclisa_res.get("as_id")
+                or geclisa_res.get("archivo_id")
+                or geclisa_res.get("geclisa_as_id")
+                or geclisa_res.get("hca_id")
+            )
             # Si Geclisa no devolvió el AS_ID en el body del POST, intentar resolver el último archivo de la ficha
             if not geclisa_as_id:
                 try:
@@ -809,7 +842,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
                         int(geclisa_ficha_id)
                     )
                     if archivos and len(archivos) > 0:
-                        geclisa_as_id = archivos[0].get("as_id")
+                        geclisa_as_id = archivos[0].get("asId") or archivos[0].get("as_id") or archivos[0].get("id")
                 except Exception:
                     pass
         else:
@@ -944,15 +977,32 @@ async def enviar_archivo_existente_geclisa_por_whatsapp(
         geclisa_client.descargar_archivo_historia_clinica,
         int(payload.geclisa_as_id)
     )
-    if not dl_res.get("exito") or not dl_res.get("content"):
+    if isinstance(dl_res, (list, tuple)):
+        file_bytes = dl_res[0] if len(dl_res) > 0 else None
+        mime_type = (dl_res[1] if len(dl_res) > 1 else None) or "application/pdf"
+        dl_fname = dl_res[2] if len(dl_res) > 2 else f"Estudio_{payload.geclisa_as_id}.pdf"
+        dl_ok = bool(file_bytes)
+        dl_err = None if dl_ok else f"No se pudo recuperar el archivo #{payload.geclisa_as_id} desde Geclisa."
+    elif isinstance(dl_res, dict):
+        file_bytes = dl_res.get("content")
+        mime_type = dl_res.get("content_type") or "application/pdf"
+        dl_fname = dl_res.get("filename") or f"Estudio_{payload.geclisa_as_id}.pdf"
+        dl_ok = bool(dl_res.get("exito") or dl_res.get("success") or file_bytes)
+        dl_err = dl_res.get("error") or f"No se pudo recuperar el archivo #{payload.geclisa_as_id} desde Geclisa."
+    else:
+        file_bytes = None
+        mime_type = "application/pdf"
+        dl_fname = f"Estudio_{payload.geclisa_as_id}.pdf"
+        dl_ok = False
+        dl_err = "Respuesta inesperada al descargar archivo desde Geclisa."
+
+    if not dl_ok or not file_bytes:
         raise HTTPException(
             status_code=404,
-            detail=dl_res.get("error") or f"No se pudo recuperar el archivo #{payload.geclisa_as_id} desde Geclisa."
+            detail=dl_err
         )
 
-    file_bytes: bytes = dl_res["content"]
-    mime_type: str = dl_res.get("content_type") or "application/pdf"
-    filename: str = payload.nombre_archivo or dl_res.get("filename") or f"Estudio_{payload.geclisa_as_id}.pdf"
+    filename: str = payload.nombre_archivo or dl_fname or f"Estudio_{payload.geclisa_as_id}.pdf"
     titulo_completo = f"{payload.tipo_estudio.strip()} ({payload.ojo.strip()})" if payload.ojo else payload.tipo_estudio.strip()
 
     user_state = getattr(request.state, "user", None) or {}
@@ -1060,22 +1110,41 @@ async def reintentar_envio_whatsapp_estudio(
         geclisa_client.descargar_archivo_historia_clinica,
         int(as_id)
     )
-    if not dl_res.get("exito") or not dl_res.get("content"):
+    if isinstance(dl_res, (list, tuple)):
+        file_content = dl_res[0] if len(dl_res) > 0 else None
+        dl_mime = (dl_res[1] if len(dl_res) > 1 else None) or "application/pdf"
+        dl_fname = dl_res[2] if len(dl_res) > 2 else f"Estudio_{as_id}.pdf"
+        dl_ok = bool(file_content)
+        dl_err = None if dl_ok else f"No se pudo descargar el archivo #{as_id} desde Geclisa."
+    elif isinstance(dl_res, dict):
+        file_content = dl_res.get("content")
+        dl_mime = dl_res.get("content_type") or "application/pdf"
+        dl_fname = dl_res.get("filename") or f"Estudio_{as_id}.pdf"
+        dl_ok = bool(dl_res.get("exito") or dl_res.get("success") or file_content)
+        dl_err = dl_res.get("error") or f"No se pudo descargar el archivo #{as_id} desde Geclisa."
+    else:
+        file_content = None
+        dl_mime = "application/pdf"
+        dl_fname = f"Estudio_{as_id}.pdf"
+        dl_ok = False
+        dl_err = "Respuesta inesperada al descargar archivo desde Geclisa."
+
+    if not dl_ok or not file_content:
         raise HTTPException(
             status_code=404,
-            detail=dl_res.get("error") or f"No se pudo descargar el archivo #{as_id} desde Geclisa."
+            detail=dl_err
         )
 
     titulo_completo = f"{row.get('tipo') or 'Estudio'} ({row.get('ojo') or 'AO'})"
-    fname = row.get("nombre_archivo") or row.get("archivo_nombre") or dl_res.get("filename") or f"Estudio_{as_id}.pdf"
-    mime = row.get("mime_type") or dl_res.get("content_type") or "application/pdf"
+    fname = row.get("nombre_archivo") or row.get("archivo_nombre") or dl_fname or f"Estudio_{as_id}.pdf"
+    mime = row.get("mime_type") or dl_mime or "application/pdf"
 
     try:
         wa_res = await _dispatch_study_via_meta_line2(
             to_phone=tel_norm,
             nombre_paciente=row.get("nombre_paciente") or "Paciente",
             titulo_estudio=titulo_completo,
-            file_bytes=dl_res["content"],
+            file_bytes=file_content,
             filename=fname,
             mime_type=mime
         )
