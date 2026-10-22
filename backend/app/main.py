@@ -3193,6 +3193,7 @@ def eliminar_paciente_crm(paciente_id: str):
         raise HTTPException(status_code=500, detail=f"Error al eliminar paciente: {str(e)}")
 
 
+@app.get("/api/geclisa/prestadores")
 @app.get("/api/geclisa/prestadores/buscar")
 def buscar_geclisa_prestadores(query: Optional[str] = None, q: Optional[str] = None):
     """

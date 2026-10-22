@@ -733,9 +733,21 @@ export default function UsuariosPage() {
 
               {/* Selector Buscable de Prestador Geclisa */}
               <div className="p-3.5 bg-blue-50/40 dark:bg-slate-800/60 border border-blue-200/60 dark:border-slate-700 rounded-xl space-y-2 relative">
-                <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 uppercase flex items-center gap-1.5">
-                  <Stethoscope size={14} className="text-blue-600" /> Prestador Geclisa por Defecto
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 uppercase flex items-center gap-1.5">
+                    <Stethoscope size={14} className="text-blue-600" /> Prestador Geclisa por Defecto
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => cargarPrestadores('')}
+                    disabled={cargandoPrestadores}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 flex items-center gap-1 font-semibold"
+                    title="Recargar catálogo oficial desde Geclisa"
+                  >
+                    <RefreshCw size={11} className={cargandoPrestadores ? 'animate-spin' : ''} />
+                    <span>Actualizar</span>
+                  </button>
+                </div>
                 <p className="text-[11px] text-slate-500">
                   Asigna el prestador para precargar automáticamente su agenda de turnos en el CRM.
                 </p>
@@ -808,7 +820,14 @@ export default function UsuariosPage() {
                               className="w-full text-left p-2.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors flex items-center justify-between text-xs"
                             >
                               <div>
-                                <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
+                                  {p.especialidad?.toUpperCase().includes('TECNIC') && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                                      TÉCNICO
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400">
                                   {p.especialidad || 'Médico'} • Mat: {p.matricula || 'S/N'}
                                 </p>
@@ -919,9 +938,21 @@ export default function UsuariosPage() {
 
               {/* Selector Buscable de Prestador Geclisa en Edición */}
               <div className="p-3.5 bg-blue-50/40 dark:bg-slate-800/60 border border-blue-200/60 dark:border-slate-700 rounded-xl space-y-2 relative">
-                <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 uppercase flex items-center gap-1.5">
-                  <Stethoscope size={14} className="text-blue-600" /> Prestador Geclisa Asignado
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-blue-700 dark:text-blue-300 uppercase flex items-center gap-1.5">
+                    <Stethoscope size={14} className="text-blue-600" /> Prestador Geclisa Asignado
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => cargarPrestadores('')}
+                    disabled={cargandoPrestadores}
+                    className="text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 flex items-center gap-1 font-semibold"
+                    title="Recargar catálogo oficial desde Geclisa"
+                  >
+                    <RefreshCw size={11} className={cargandoPrestadores ? 'animate-spin' : ''} />
+                    <span>Actualizar</span>
+                  </button>
+                </div>
                 <p className="text-[11px] text-slate-500">
                   Asigna la matrícula y prestador de Geclisa para precargar su agenda en el CRM.
                 </p>
@@ -994,7 +1025,14 @@ export default function UsuariosPage() {
                               className="w-full text-left p-2.5 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors flex items-center justify-between text-xs"
                             >
                               <div>
-                                <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="font-bold text-[var(--foreground)]">{p.nombre}</p>
+                                  {p.especialidad?.toUpperCase().includes('TECNIC') && (
+                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                                      TÉCNICO
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400">
                                   {p.especialidad || 'Médico'} • Mat: {p.matricula || 'S/N'}
                                 </p>
