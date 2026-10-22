@@ -100,7 +100,7 @@ interface EstudioHistorialItem {
 
 export default function EstudiosTecnicosPage() {
   const { user } = useAuth()
-  const { profile, isAdmin } = usePermissions()
+  const { profile, isAdmin, refreshPermissions } = usePermissions()
 
   // Estado de la Línea 2 de WhatsApp
   const [lineaEstudiosStatus, setLineaEstudiosStatus] = useState<{
@@ -162,8 +162,8 @@ export default function EstudiosTecnicosPage() {
 
   const tecnicoPreId = profile?.geclisa_pre_id || (manualPreId ? parseInt(manualPreId, 10) : null)
   const tecnicoNombre =
-    profile?.nombre_completo ||
     profile?.geclisa_prestador_nombre ||
+    profile?.nombre_completo ||
     user?.email?.split('@')[0] ||
     'Técnico Oftalmólogo'
 
@@ -198,6 +198,7 @@ export default function EstudiosTecnicosPage() {
   }, [filtroDniHistorial, filtroStatusWa])
 
   useEffect(() => {
+    refreshPermissions()
     fetchLineaStatus()
     fetchHistorial()
 
@@ -588,7 +589,9 @@ export default function EstudiosTecnicosPage() {
           }`}>
             <Database size={15} />
             <div>
-              <span className="block text-[10px] uppercase font-bold opacity-75">Firma Geclisa</span>
+              <span className="block text-[10px] uppercase font-bold opacity-75">
+                Firma Geclisa {profile?.nombre_completo ? `• ${profile.nombre_completo}` : ''}
+              </span>
               <span className="font-bold">
                 {tecnicoPreId ? `${tecnicoNombre} (PreId #${tecnicoPreId})` : 'Sin PreId asignado'}
               </span>
@@ -615,7 +618,7 @@ export default function EstudiosTecnicosPage() {
       </div>
 
       {/* Alerta si el técnico no tiene geclisa_pre_id vinculado */}
-      {!profile?.geclisa_pre_id && (
+      {!tecnicoPreId && (
         <div className="p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3 text-xs text-amber-800 dark:text-amber-200">
             <AlertTriangle size={20} className="text-amber-500 shrink-0" />

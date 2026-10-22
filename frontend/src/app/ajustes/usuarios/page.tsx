@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
+import { usePermissions } from '@/hooks/usePermissions'
 import { 
   UserPlus, 
   Search, 
@@ -59,6 +61,8 @@ interface PrestadorGeclisa {
 }
 
 export default function UsuariosPage() {
+  const { user } = useAuth()
+  const { refreshPermissions } = usePermissions()
   const [users, setUsers] = useState<UserItem[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [prestadores, setPrestadores] = useState<PrestadorGeclisa[]>([])
@@ -292,6 +296,9 @@ export default function UsuariosPage() {
         message: `Perfil de ${editNombre} actualizado correctamente.`,
       })
       setShowEditModal(false)
+      if (selectedUser.id === user?.id) {
+        await refreshPermissions()
+      }
       await loadData()
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })

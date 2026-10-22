@@ -82,7 +82,13 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
         token_ref = unverified.get("ref") or ""
         token_iss = unverified.get("iss") or ""
 
-        if token_iss == "supabase" and (not project_ref or token_ref == project_ref):
+        is_project_token = (
+            (token_iss == "supabase" and (not project_ref or token_ref == project_ref)) or
+            (bool(project_ref) and project_ref in token_iss) or
+            ("supabase.co" in token_iss and unverified.get("aud") in ("authenticated", "anon"))
+        )
+
+        if is_project_token:
             exp = unverified.get("exp")
             if exp and exp < time.time():
                 raise HTTPException(status_code=401, detail="El token de acceso ha expirado.")
