@@ -55,7 +55,8 @@ class UpdateWhatsAppLinesPayload(BaseModel):
 
 
 class LinkPhoneNumberPayload(BaseModel):
-    telefono: str
+    telefono: Optional[str] = None
+    phone_number: Optional[str] = None
     verified_name: Optional[str] = "Centrovisión - Estudios Oftalmológicos"
     derivacion_telefono: Optional[str] = None
 
@@ -543,7 +544,8 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
             detail="No se encontraron credenciales activas de WABA o Access Token en el servidor."
         )
 
-    raw_digits = "".join(filter(str.isdigit, str(payload.telefono or "")))
+    raw_input_phone = payload.telefono or payload.phone_number or ""
+    raw_digits = "".join(filter(str.isdigit, str(raw_input_phone)))
     if len(raw_digits) < 10:
         raise HTTPException(
             status_code=400,
@@ -648,10 +650,11 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
     return {
         **status_payload,
         "action": action_taken,
+        "phone_number_id": resolved_phone_id,
         "linked_phone_number_id": resolved_phone_id,
         "linked_display_phone": norm_tel,
         "mensaje": (
-            f"¡Número {format_phone_display(norm_tel)} encontrado en tu WABA y vinculado con ID {resolved_phone_id}!"
+            f"¡Número {format_phone_display(norm_tel)} encontrado en tu WABA y vinculado con ID {resolved_phone_id}! Haz clic en 'Enviar Código por SMS' para verificarlo."
             if action_taken == "found_in_waba"
             else f"¡Número {format_phone_display(norm_tel)} dado de alta en Meta WABA con ID {resolved_phone_id}! Ahora solicita el código SMS/llamada para verificarlo."
         )

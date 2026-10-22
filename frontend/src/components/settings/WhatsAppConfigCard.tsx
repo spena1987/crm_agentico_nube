@@ -121,6 +121,21 @@ export default function WhatsAppConfigCard() {
     setTimeout(() => setCopiedKey(null), 2500)
   }
 
+  const extractErrorMessage = (data: any, fallback: string): string => {
+    if (!data) return fallback
+    const detail = data.detail ?? data.error ?? data.message
+    if (typeof detail === 'string' && detail.trim()) return detail
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => (typeof item === 'string' ? item : item?.msg || JSON.stringify(item)))
+        .join(' | ')
+    }
+    if (detail && typeof detail === 'object') {
+      return detail.message || detail.msg || JSON.stringify(detail)
+    }
+    return fallback
+  }
+
   const fetchStatus = async (populateForm: boolean = false) => {
     try {
       const [resStatus, resLines] = await Promise.all([
@@ -190,31 +205,39 @@ export default function WhatsAppConfigCard() {
       const res = await apiFetch('/api/whatsapp/link-phone-number', {
         method: 'POST',
         body: JSON.stringify({
+          telefono: estudiosDisplayPhone.trim(),
           phone_number: estudiosDisplayPhone.trim(),
-          verified_name: estudiosVerifiedName.trim() || 'Centrovision - Estudios Oftalmologicos'
+          verified_name: estudiosVerifiedName.trim() || 'Centrovision - Estudios Oftalmologicos',
+          derivacion_telefono: estudiosDerivacionTelefono.trim() || undefined
         })
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        if (data.phone_number_id) {
-          setEstudiosPhoneId(data.phone_number_id)
+        const resolvedId = data.phone_number_id || data.linked_phone_number_id || data.linea_estudios?.phone_number_id
+        if (resolvedId) {
+          setEstudiosPhoneId(String(resolvedId))
         }
         if (data.linea_estudios) {
           setLineaEstudios(data.linea_estudios)
         }
         setLinea2Feedback({
           type: 'success',
-          text: data.mensaje || `Número vinculado en Meta con Phone ID ${data.phone_number_id}.`
+          text: typeof data.mensaje === 'string'
+            ? data.mensaje
+            : `Número vinculado en Meta con Phone ID ${resolvedId || ''}.`
         })
+        if (!data.linea_estudios?.connected) {
+          setShowPinModal(true)
+        }
         await fetchStatus(false)
       } else {
         setLinea2Feedback({
           type: 'error',
-          text: data.detail || 'No se pudo vincular el número en Meta WABA.'
+          text: extractErrorMessage(data, 'No se pudo vincular el número en Meta WABA.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: err.message || 'Error de red al vincular con Meta.' })
+      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error de red al vincular con Meta.') })
     } finally {
       setVinculandoNumero(false)
     }
@@ -235,15 +258,19 @@ export default function WhatsAppConfigCard() {
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        setOtpSentMessage(data.mensaje || `Código enviado por ${otpMethod} al número de la Línea 2.`)
+        setOtpSentMessage(
+          typeof data.mensaje === 'string'
+            ? data.mensaje
+            : `Código enviado por ${otpMethod} al número de la Línea 2.`
+        )
       } else {
         setLinea2Feedback({
           type: 'error',
-          text: data.detail || 'Error al solicitar el código de verificación a Meta.'
+          text: extractErrorMessage(data, 'Error al solicitar el código de verificación a Meta.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: err.message || 'Error al solicitar código OTP.' })
+      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error al solicitar código OTP.') })
     } finally {
       setSolicitandoOtp(false)
     }
@@ -272,7 +299,7 @@ export default function WhatsAppConfigCard() {
         setLineaQuirurgica(data.linea_quirurgica || null)
         setLineaEstudios(data.linea_estudios || null)
         if (data.linea_estudios?.phone_number_id) {
-          setEstudiosPhoneId(data.linea_estudios.phone_number_id)
+          setEstudiosPhoneId(String(data.linea_estudios.phone_number_id))
         }
         setLinea2Feedback({
           type: 'success',
@@ -283,11 +310,11 @@ export default function WhatsAppConfigCard() {
       } else {
         setLinea2Feedback({
           type: 'error',
-          text: data.detail || 'Error al guardar la configuración de la Línea 2.'
+          text: extractErrorMessage(data, 'Error al guardar la configuración de la Línea 2.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: err.message || 'Error de red.' })
+      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error de red.') })
     } finally {
       setGuardandoLinea2(false)
     }
@@ -335,17 +362,19 @@ export default function WhatsAppConfigCard() {
         setOtpSentMessage(null)
         setLinea2Feedback({
           type: 'success',
-          text: data.mensaje || '¡Número verificado y activado en Meta WhatsApp Cloud API!'
+          text: typeof data.mensaje === 'string'
+            ? data.mensaje
+            : '¡Número verificado y activado en Meta WhatsApp Cloud API!'
         })
         await fetchStatus(false)
       } else {
         setLinea2Feedback({
           type: 'error',
-          text: data.detail || 'Meta rechazó el código o el PIN.'
+          text: extractErrorMessage(data, 'Meta rechazó el código o el PIN.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: err.message || 'Error al verificar/activar número en Meta.' })
+      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error al verificar/activar número en Meta.') })
     } finally {
       setRegistrandoPin(false)
     }
@@ -379,10 +408,10 @@ export default function WhatsAppConfigCard() {
             : 'Mensaje registrado en la base de datos de MedCRM.' 
         })
       } else {
-        setTestFeedback({ type: 'error', text: data.detail || data.error || 'Error al enviar el mensaje de prueba.' })
+        setTestFeedback({ type: 'error', text: extractErrorMessage(data, 'Error al enviar el mensaje de prueba.') })
       }
     } catch (err: any) {
-      setTestFeedback({ type: 'error', text: err.message || 'Error de comunicación con el backend.' })
+      setTestFeedback({ type: 'error', text: String(err?.message || 'Error de comunicación con el backend.') })
     } finally {
       setEnviandoTest(false)
     }
@@ -766,6 +795,17 @@ export default function WhatsAppConfigCard() {
                   Este PIN de 6 dígitos protege la línea en Meta Cloud API y la deja en estado <strong>CONNECTED</strong>.
                 </p>
               </div>
+
+              {linea2Feedback && (
+                <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                  linea2Feedback.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
+                }`}>
+                  {linea2Feedback.type === 'success' ? <CheckCircle2 size={15} className="shrink-0" /> : <AlertTriangle size={15} className="shrink-0" />}
+                  <span>{String(linea2Feedback.text)}</span>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
