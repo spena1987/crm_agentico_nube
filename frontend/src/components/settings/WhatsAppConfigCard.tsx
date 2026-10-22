@@ -78,18 +78,23 @@ export default function WhatsAppConfigCard() {
   const [lineaQuirurgica, setLineaQuirurgica] = useState<LineHealthInfo | null>(null)
   const [lineaEstudios, setLineaEstudios] = useState<LineHealthInfo | null>(null)
   const [estudiosPhoneId, setEstudiosPhoneId] = useState('')
-  const [estudiosDisplayPhone, setEstudiosDisplayPhone] = useState('')
-  const [estudiosVerifiedName, setEstudiosVerifiedName] = useState('Centrovisión Estudios')
+  const [estudiosDisplayPhone, setEstudiosDisplayPhone] = useState('5492615739990')
+  const [estudiosVerifiedName, setEstudiosVerifiedName] = useState('Centrovision - Estudios Oftalmologicos')
   const [estudiosTemplatePdf, setEstudiosTemplatePdf] = useState('entrega_estudio_oftalmologico_pdf')
   const [estudiosTemplateImg, setEstudiosTemplateImg] = useState('entrega_estudio_oftalmologico_img')
   const [estudiosAutoReplyEnabled, setEstudiosAutoReplyEnabled] = useState(true)
-  const [estudiosDerivacionTelefono, setEstudiosDerivacionTelefono] = useState('')
+  const [estudiosDerivacionTelefono, setEstudiosDerivacionTelefono] = useState('5492616859303')
   const [estudiosAutoReplyText, setEstudiosAutoReplyText] = useState('')
   const [guardandoLinea2, setGuardandoLinea2] = useState(false)
+  const [vinculandoNumero, setVinculandoNumero] = useState(false)
   const [linea2Feedback, setLinea2Feedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // Registro de PIN 2FA (/register en Cloud API)
+  // Modal de Verificación OTP (SMS/Voz) + Registro de PIN 2FA (/register en Cloud API)
   const [showPinModal, setShowPinModal] = useState(false)
+  const [otpMethod, setOtpMethod] = useState<'SMS' | 'VOICE'>('SMS')
+  const [otpCode, setOtpCode] = useState('')
+  const [solicitandoOtp, setSolicitandoOtp] = useState(false)
+  const [otpSentMessage, setOtpSentMessage] = useState<string | null>(null)
   const [pin2FA, setPin2FA] = useState('')
   const [registrandoPin, setRegistrandoPin] = useState(false)
 
@@ -132,13 +137,13 @@ export default function WhatsAppConfigCard() {
         setLineaEstudios(linesData.linea_estudios || null)
         const cfg = linesData.linea_estudios?.config
         if (cfg && populateForm) {
-          setEstudiosPhoneId(cfg.estudios_phone_number_id || '')
-          setEstudiosDisplayPhone(cfg.estudios_display_phone || '')
-          setEstudiosVerifiedName(cfg.estudios_verified_name || 'Centrovisión Estudios')
+          setEstudiosPhoneId(cfg.estudios_phone_number_id || linesData.linea_estudios?.phone_number_id || '')
+          setEstudiosDisplayPhone(cfg.estudios_display_phone || linesData.linea_estudios?.display_phone_number || '5492615739990')
+          setEstudiosVerifiedName(cfg.estudios_verified_name || linesData.linea_estudios?.verified_name || 'Centrovision - Estudios Oftalmologicos')
           setEstudiosTemplatePdf(cfg.estudios_template_pdf || 'entrega_estudio_oftalmologico_pdf')
           setEstudiosTemplateImg(cfg.estudios_template_img || 'entrega_estudio_oftalmologico_img')
           setEstudiosAutoReplyEnabled(cfg.estudios_auto_reply_enabled !== false)
-          setEstudiosDerivacionTelefono(cfg.estudios_derivacion_telefono || '')
+          setEstudiosDerivacionTelefono(cfg.estudios_derivacion_telefono || '5492616859303')
           setEstudiosAutoReplyText(cfg.estudios_auto_reply_text || '')
         }
       }
@@ -171,6 +176,79 @@ export default function WhatsAppConfigCard() {
     }
   }
 
+  const handleLinkPhoneNumber = async () => {
+    if (!estudiosDisplayPhone.trim()) {
+      setLinea2Feedback({
+        type: 'error',
+        text: 'Ingresa el número de teléfono de la Línea 2 (ej: 5492615739990) para vincularlo con Meta.'
+      })
+      return
+    }
+    setVinculandoNumero(true)
+    setLinea2Feedback(null)
+    try {
+      const res = await apiFetch('/api/whatsapp/link-phone-number', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone_number: estudiosDisplayPhone.trim(),
+          verified_name: estudiosVerifiedName.trim() || 'Centrovision - Estudios Oftalmologicos'
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        if (data.phone_number_id) {
+          setEstudiosPhoneId(data.phone_number_id)
+        }
+        if (data.linea_estudios) {
+          setLineaEstudios(data.linea_estudios)
+        }
+        setLinea2Feedback({
+          type: 'success',
+          text: data.mensaje || `Número vinculado en Meta con Phone ID ${data.phone_number_id}.`
+        })
+        await fetchStatus(false)
+      } else {
+        setLinea2Feedback({
+          type: 'error',
+          text: data.detail || 'No se pudo vincular el número en Meta WABA.'
+        })
+      }
+    } catch (err: any) {
+      setLinea2Feedback({ type: 'error', text: err.message || 'Error de red al vincular con Meta.' })
+    } finally {
+      setVinculandoNumero(false)
+    }
+  }
+
+  const handleRequestOtpCode = async () => {
+    setSolicitandoOtp(true)
+    setOtpSentMessage(null)
+    setLinea2Feedback(null)
+    try {
+      const res = await apiFetch('/api/whatsapp/request-verification-code', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone_number_id: estudiosPhoneId.trim(),
+          code_method: otpMethod,
+          language: 'es_AR'
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setOtpSentMessage(data.mensaje || `Código enviado por ${otpMethod} al número de la Línea 2.`)
+      } else {
+        setLinea2Feedback({
+          type: 'error',
+          text: data.detail || 'Error al solicitar el código de verificación a Meta.'
+        })
+      }
+    } catch (err: any) {
+      setLinea2Feedback({ type: 'error', text: err.message || 'Error al solicitar código OTP.' })
+    } finally {
+      setSolicitandoOtp(false)
+    }
+  }
+
   const handleSaveLinea2 = async (e: React.FormEvent) => {
     e.preventDefault()
     setGuardandoLinea2(true)
@@ -193,11 +271,14 @@ export default function WhatsAppConfigCard() {
       if (res.ok && data.success) {
         setLineaQuirurgica(data.linea_quirurgica || null)
         setLineaEstudios(data.linea_estudios || null)
+        if (data.linea_estudios?.phone_number_id) {
+          setEstudiosPhoneId(data.linea_estudios.phone_number_id)
+        }
         setLinea2Feedback({
           type: 'success',
           text: data.linea_estudios?.connected
             ? '¡Línea 2 de Estudios Oftalmológicos guardada y verificada en vivo con Meta Graph API!'
-            : 'Configuración de Línea 2 guardada. Si el número es nuevo en Meta, recuerda activarlo con su PIN 2FA.'
+            : 'Configuración de Línea 2 guardada. Si el número está pendiente de verificación en Meta, haz clic en "Verificar SMS / Activar Línea".'
         })
       } else {
         setLinea2Feedback({
@@ -214,38 +295,57 @@ export default function WhatsAppConfigCard() {
 
   const handleRegisterPinCloudApi = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (pin2FA.replace(/\D/g, '').length !== 6) {
-      setLinea2Feedback({ type: 'error', text: 'El PIN de verificación en dos pasos debe tener exactamente 6 dígitos.' })
+    const cleanOtp = otpCode.replace(/\D/g, '')
+    const cleanPin = pin2FA.replace(/\D/g, '')
+
+    if (cleanOtp && cleanOtp.length !== 6) {
+      setLinea2Feedback({ type: 'error', text: 'El código SMS/Voz de Meta debe tener 6 dígitos.' })
       return
     }
+    if (cleanPin.length !== 6) {
+      setLinea2Feedback({ type: 'error', text: 'El PIN de verificación en dos pasos (2FA) debe tener exactamente 6 dígitos.' })
+      return
+    }
+
     setRegistrandoPin(true)
     setLinea2Feedback(null)
     try {
-      const res = await apiFetch('/api/whatsapp/register-line', {
+      const endpoint = cleanOtp ? '/api/whatsapp/verify-code' : '/api/whatsapp/register-line'
+      const payload = cleanOtp
+        ? {
+            phone_number_id: estudiosPhoneId.trim(),
+            code: cleanOtp,
+            pin: cleanPin
+          }
+        : {
+            line: 'estudios',
+            phone_number_id: estudiosPhoneId.trim(),
+            pin: cleanPin
+          }
+
+      const res = await apiFetch(endpoint, {
         method: 'POST',
-        body: JSON.stringify({
-          line: 'estudios',
-          phone_number_id: estudiosPhoneId.trim(),
-          pin: pin2FA.replace(/\D/g, '')
-        })
+        body: JSON.stringify(payload)
       })
       const data = await res.json()
       if (res.ok && data.success) {
         setShowPinModal(false)
+        setOtpCode('')
         setPin2FA('')
+        setOtpSentMessage(null)
         setLinea2Feedback({
           type: 'success',
-          text: data.mensaje || '¡Número registrado y activado en Meta WhatsApp Cloud API!'
+          text: data.mensaje || '¡Número verificado y activado en Meta WhatsApp Cloud API!'
         })
         await fetchStatus(false)
       } else {
         setLinea2Feedback({
           type: 'error',
-          text: data.detail || 'Meta rechazó el registro del PIN.'
+          text: data.detail || 'Meta rechazó el código o el PIN.'
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: err.message || 'Error al registrar PIN.' })
+      setLinea2Feedback({ type: 'error', text: err.message || 'Error al verificar/activar número en Meta.' })
     } finally {
       setRegistrandoPin(false)
     }
@@ -426,7 +526,7 @@ export default function WhatsAppConfigCard() {
               {lineaEstudios?.connected
                 ? `Conectada (${lineaEstudios.display_phone_number || 'Activa'})`
                 : estudiosPhoneId
-                ? 'Pendiente Registro / Verificación'
+                ? `Phone ID Asignado (${lineaEstudios?.code_verification_status === 'NOT_VERIFIED' ? 'Falta Verificar SMS' : 'Pendiente Activar PIN'})`
                 : 'Sin Phone ID asignado'}
             </span>
           </div>
@@ -436,14 +536,59 @@ export default function WhatsAppConfigCard() {
           </p>
 
           <form onSubmit={handleSaveLinea2} className="space-y-3">
+            {/* Paso 1: Número de Teléfono real de Línea 2 + Botón de Vinculación Automática con Meta */}
+            <div className="p-3 rounded-xl bg-cyan-500/5 border border-cyan-500/20 space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                <div className="sm:col-span-5">
+                  <label className="block text-[11px] font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-1">
+                    Número Teléfono Línea 2 (Estudios)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: 5492615739990"
+                    value={estudiosDisplayPhone}
+                    onChange={(e) => setEstudiosDisplayPhone(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold bg-white dark:bg-slate-900 border border-cyan-500/30 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  />
+                </div>
+                <div className="sm:col-span-4">
+                  <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
+                    Nombre Visible en WhatsApp
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Centrovision - Estudios Oftalmologicos"
+                    value={estudiosVerifiedName}
+                    onChange={(e) => setEstudiosVerifiedName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  />
+                </div>
+                <div className="sm:col-span-3">
+                  <button
+                    type="button"
+                    onClick={handleLinkPhoneNumber}
+                    disabled={vinculandoNumero}
+                    className="w-full py-2 px-2.5 rounded-xl text-xs font-bold bg-cyan-600/15 hover:bg-cyan-600/25 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+                    title="Registra o descubre automáticamente el Phone Number ID en el portafolio WABA de Meta a partir del número telefónico"
+                  >
+                    <RefreshCw size={13} className={vinculandoNumero ? 'animate-spin' : ''} />
+                    <span>{vinculandoNumero ? 'Vinculando...' : 'Vincular en Meta'}</span>
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-[var(--secondary)]">
+                Ingresa tu número (ej. <code>5492615739990</code>) y pulsa <strong>Vincular en Meta</strong>: el CRM obtendrá automáticamente el <code>Phone Number ID</code> oficial en tu WABA sin que tengas que buscarlo en Meta Developers.
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
-                  Phone Number ID (Línea Estudios)
+                  Phone Number ID (Autocompletado por Meta)
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: 109876543210987"
+                  placeholder="Ej: 1414762618382779"
                   value={estudiosPhoneId}
                   onChange={(e) => setEstudiosPhoneId(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
@@ -451,11 +596,11 @@ export default function WhatsAppConfigCard() {
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
-                  Teléfono Derivación Consultas (wa.me)
+                  Teléfono Derivación Consultas (Recepción wa.me)
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: 5492614703230"
+                  placeholder="Ej: 5492616859303"
                   value={estudiosDerivacionTelefono}
                   onChange={(e) => setEstudiosDerivacionTelefono(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
@@ -513,11 +658,11 @@ export default function WhatsAppConfigCard() {
                 <button
                   type="button"
                   onClick={() => setShowPinModal(true)}
-                  className="py-2 px-3 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)] border border-[var(--border)] flex items-center gap-1.5 transition-all"
-                  title="Ejecutar POST /{phone_number_id}/register con el PIN de 6 dígitos en Meta Cloud API"
+                  className="py-2 px-3 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1.5 transition-all"
+                  title="Solicitar código SMS/Voz de Meta y activar la línea con PIN de 6 dígitos"
                 >
-                  <Lock size={13} className="text-cyan-600" />
-                  <span>Activar PIN 2FA</span>
+                  <Lock size={13} className="text-amber-600 dark:text-amber-400" />
+                  <span>Verificar SMS / Activar Línea</span>
                 </button>
               )}
             </div>
@@ -525,18 +670,20 @@ export default function WhatsAppConfigCard() {
         </div>
       </div>
 
-      {/* Modal para activar número nuevo con PIN de 6 dígitos en Meta Cloud API */}
+      {/* Modal para verificar código OTP (SMS/Voz) y activar número nuevo con PIN de 6 dígitos en Meta Cloud API */}
       {showPinModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-500">
                   <Lock size={20} />
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm">Registrar Número en Meta Cloud API</h4>
-                  <p className="text-[11px] text-[var(--secondary)]">Phone ID: {estudiosPhoneId}</p>
+                  <h4 className="font-bold text-sm">Verificación SMS y Activación en Meta Cloud API</h4>
+                  <p className="text-[11px] text-[var(--secondary)]">
+                    Teléfono: <strong>{estudiosDisplayPhone || '+54 9 261 573-9990'}</strong> • Phone ID: <code>{estudiosPhoneId}</code>
+                  </p>
                 </div>
               </div>
               <button
@@ -547,24 +694,79 @@ export default function WhatsAppConfigCard() {
                 Cerrar
               </button>
             </div>
-            <p className="text-xs text-[var(--secondary)] leading-relaxed">
-              Cuando agregas un número nuevo en el portafolio de Meta y verificas el SMS/llamada, Meta exige invocar por única vez el endpoint <code>/register</code> con el <strong>PIN de 6 dígitos</strong> de verificación en dos pasos para que pase a estado <strong>Conectado</strong>.
-            </p>
+
+            {/* Paso 1: Solicitar SMS o Llamada de Voz a Meta */}
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[var(--foreground)]">
+                  Paso 1: Recibir código de 6 dígitos en el teléfono {estudiosDisplayPhone}
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 font-bold">
+                  {lineaEstudios?.code_verification_status === 'VERIFIED' ? '✓ Ya Verificado' : 'Requerido si es línea nueva'}
+                </span>
+              </div>
+              <p className="text-[11px] text-[var(--secondary)]">
+                Haz clic en <strong>Enviar Código ahora</strong> para que Meta envíe un SMS o llamada automática con el código de 6 dígitos al chip <code>{estudiosDisplayPhone}</code>.
+              </p>
+              <div className="flex items-center gap-2">
+                <select
+                  value={otpMethod}
+                  onChange={(e) => setOtpMethod(e.target.value as 'SMS' | 'VOICE')}
+                  className="px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-[var(--border)]"
+                >
+                  <option value="SMS">Vía SMS (Mensaje de Texto)</option>
+                  <option value="VOICE">Vía Llamada de Voz</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={handleRequestOtpCode}
+                  disabled={solicitandoOtp}
+                  className="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-all"
+                >
+                  {solicitandoOtp ? 'Solicitando a Meta...' : `Enviar Código por ${otpMethod} ahora`}
+                </button>
+              </div>
+              {otpSentMessage && (
+                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                  ✓ {otpSentMessage}
+                </p>
+              )}
+            </div>
+
+            {/* Paso 2: Ingresar el código OTP recibido + PIN 2FA de 6 dígitos */}
             <form onSubmit={handleRegisterPinCloudApi} className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-[var(--secondary)] mb-1">
-                  PIN de 6 dígitos (Verificación en 2 pasos de Meta)
+                  Código de 6 dígitos recibido por SMS / Llamada (Dejar vacío si el número ya figura VERIFIED)
+                </label>
+                <input
+                  type="text"
+                  maxLength={6}
+                  placeholder="Ej: 849201"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  className="w-full px-3.5 py-2 rounded-xl text-center text-base tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[var(--secondary)] mb-1">
+                  Paso 2: PIN de 6 dígitos (Verificación en 2 pasos de Meta Cloud API)
                 </label>
                 <input
                   type="password"
                   maxLength={6}
-                  placeholder="123456"
+                  placeholder="Define o ingresa tu PIN de 6 dígitos (ej: 123456)"
                   value={pin2FA}
                   onChange={(e) => setPin2FA(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="w-full px-3.5 py-2.5 rounded-xl text-center text-lg tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl text-center text-base tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
                   required
                 />
+                <p className="text-[10px] text-[var(--secondary)] mt-1">
+                  Este PIN de 6 dígitos protege la línea en Meta Cloud API y la deja en estado <strong>CONNECTED</strong>.
+                </p>
               </div>
+
               <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -578,7 +780,7 @@ export default function WhatsAppConfigCard() {
                   disabled={registrandoPin || pin2FA.length !== 6}
                   className="px-4 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50"
                 >
-                  {registrandoPin ? 'Activando en Meta...' : 'Confirmar y Activar Número'}
+                  {registrandoPin ? 'Activando en Meta...' : 'Confirmar y Activar Línea 2'}
                 </button>
               </div>
             </form>

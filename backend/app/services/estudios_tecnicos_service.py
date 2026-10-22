@@ -24,6 +24,7 @@ from app.services.phone_normalizer import normalize_phone_number, format_phone_d
 from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 from app.services.whatsapp_cloud.client import (
     WhatsAppCloudClient,
+    get_whatsapp_waba_id,
     get_whatsapp_cloud_credentials,
     get_whatsapp_estudios_credentials,
     get_whatsapp_estudios_config,
@@ -51,6 +52,24 @@ class UpdateWhatsAppLinesPayload(BaseModel):
     estudios_auto_reply_enabled: Optional[bool] = True
     estudios_derivacion_telefono: Optional[str] = ""
     estudios_auto_reply_text: Optional[str] = None
+
+
+class LinkPhoneNumberPayload(BaseModel):
+    telefono: str
+    verified_name: Optional[str] = "Centrovisión - Estudios Oftalmológicos"
+    derivacion_telefono: Optional[str] = None
+
+
+class RequestVerificationCodePayload(BaseModel):
+    phone_number_id: Optional[str] = None
+    code_method: str = "SMS"  # "SMS" | "VOICE"
+    language: str = "es_AR"
+
+
+class VerifyCodePayload(BaseModel):
+    phone_number_id: Optional[str] = None
+    code: str
+    pin: Optional[str] = None
 
 
 class RegisterLinePinPayload(BaseModel):
@@ -372,14 +391,35 @@ async def _dispatch_study_via_meta_line2(
 # ENDPOINTS DE CONFIGURACIÓN MULTI-LÍNEA (LÍNEA 1 QUIRÚRGICA + LÍNEA 2 ESTUDIOS)
 # =========================================================================
 
+def _persist_whatsapp_lineas_config(new_cfg: Dict[str, Any]) -> None:
+    """Guarda el diccionario `whatsapp_lineas` en `public.configuracion_sistema` e invalida la caché."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no disponible.")
+    exist = supabase.table("configuracion_sistema").select("clave").eq("clave", "whatsapp_lineas").execute()
+    if exist.data and len(exist.data) > 0:
+        supabase.table("configuracion_sistema").update({
+            "valor": new_cfg,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }).eq("clave", "whatsapp_lineas").execute()
+    else:
+        supabase.table("configuracion_sistema").insert({
+            "clave": "whatsapp_lineas",
+            "valor": new_cfg,
+            "descripcion": "Configuración multi-línea de WhatsApp Cloud API (Línea 2: Estudios Oftalmológicos)"
+        }).execute()
+    invalidate_whatsapp_credentials_cache()
+
+
 @estudios_router.get("/api/whatsapp/lines")
 async def get_whatsapp_lines_status():
     """
     Consulta en vivo el estado y la salud en Meta Graph API de las 2 líneas de WhatsApp:
       - Línea 1: Asesoramiento Quirúrgico & Turnos (Principal)
       - Línea 2: Unidad de Estudios Oftalmológicos (Exclusiva Técnicos)
+    Además devuelve los números registrados actualmente en el portafolio WABA.
     """
     q_phone_id, token = get_whatsapp_cloud_credentials()
+    waba_id = get_whatsapp_waba_id()
     est_cfg = get_whatsapp_estudios_config()
     est_phone_id = str(est_cfg.get("estudios_phone_number_id") or "").strip() or None
 
@@ -387,6 +427,7 @@ async def get_whatsapp_lines_status():
         if not pid or not token:
             return {
                 "configured": False,
+                "connected": False,
                 "phone_number_id": pid,
                 "status": "NOT_CONFIGURED"
             }
@@ -394,16 +435,21 @@ async def get_whatsapp_lines_status():
         try:
             det = await client.get_phone_number_details()
             if det and (det.get("display_phone_number") or det.get("verified_name")):
+                acc_status = (det.get("status") or "CONNECTED").upper()
+                verif_status = (det.get("code_verification_status") or "").upper()
+                is_connected = acc_status == "CONNECTED" and verif_status != "NOT_VERIFIED"
                 return {
                     "configured": True,
-                    "connected": True,
+                    "connected": is_connected,
+                    "requires_otp": verif_status == "NOT_VERIFIED",
+                    "requires_pin_register": verif_status in ("VERIFIED", "EXPIRED") and acc_status != "CONNECTED",
                     "phone_number_id": pid,
                     "display_phone_number": det.get("display_phone_number"),
                     "verified_name": det.get("verified_name"),
                     "quality_rating": det.get("quality_rating") or "GREEN",
                     "messaging_limit_tier": det.get("messaging_limit_tier") or "TIER_250",
-                    "code_verification_status": det.get("code_verification_status") or "VERIFIED",
-                    "account_status": det.get("status") or "CONNECTED"
+                    "code_verification_status": verif_status or "VERIFIED",
+                    "account_status": acc_status
                 }
             return {
                 "configured": True,
@@ -421,17 +467,56 @@ async def get_whatsapp_lines_status():
         finally:
             await client.close()
 
-    linea_quirurgica, linea_estudios = await asyncio.gather(
+    async def _fetch_waba_numbers() -> List[Dict[str, Any]]:
+        if not waba_id or not token:
+            return []
+        try:
+            return await WhatsAppCloudClient.list_waba_phone_numbers(waba_id, token)
+        except Exception:
+            return []
+
+    linea_quirurgica, linea_estudios, waba_numbers = await asyncio.gather(
         _fetch_line_health(q_phone_id, "quirurgico"),
-        _fetch_line_health(est_phone_id, "estudios")
+        _fetch_line_health(est_phone_id, "estudios"),
+        _fetch_waba_numbers()
     )
 
-    # Si no teníamos teléfono de derivación configurado en Línea 2, sugerir el de la Línea 1
-    if not est_cfg.get("estudios_derivacion_telefono") and linea_quirurgica.get("display_phone_number"):
-        est_cfg["estudios_derivacion_telefono"] = normalize_phone_number(linea_quirurgica["display_phone_number"])
+    q_display_norm = normalize_phone_number(linea_quirurgica.get("display_phone_number") or "")
+
+    # Auto-corrección UX: Si el usuario colocó por error el teléfono de la Línea 2 en 'estudios_derivacion_telefono'
+    # y dejó 'estudios_display_phone' vacío, migrarlo automáticamente al campo correcto.
+    deriv_actual = normalize_phone_number(est_cfg.get("estudios_derivacion_telefono") or "")
+    disp_actual = normalize_phone_number(est_cfg.get("estudios_display_phone") or "")
+    if not disp_actual and deriv_actual and q_display_norm and deriv_actual[-10:] != q_display_norm[-10:]:
+        est_cfg["estudios_display_phone"] = deriv_actual
+        est_cfg["estudios_derivacion_telefono"] = q_display_norm
+        disp_actual = deriv_actual
+
+    # Si no teníamos teléfono de derivación configurado en Línea 2, usar el de la Línea 1 (Quirúrgica/Recepción)
+    if not est_cfg.get("estudios_derivacion_telefono") and q_display_norm:
+        est_cfg["estudios_derivacion_telefono"] = q_display_norm
+
+    # Si el Phone ID guardado ya no existe en la WABA (ej. fue eliminado en Meta) y aún no está conectado, limpiar el ID obsoleto
+    waba_ids = {str(n.get("id")) for n in (waba_numbers or []) if n.get("id")}
+    if est_phone_id and waba_ids and est_phone_id not in waba_ids and not linea_estudios.get("connected"):
+        # Buscar si el teléfono de estudios ya figura en la WABA bajo un nuevo Phone ID
+        matched_id = None
+        if disp_actual and len(disp_actual) >= 8:
+            last10 = disp_actual[-10:]
+            for n in waba_numbers:
+                n_digits = "".join(filter(str.isdigit, str(n.get("display_phone_number") or "")))
+                if n_digits.endswith(last10) and str(n.get("id")) != str(q_phone_id):
+                    matched_id = str(n.get("id"))
+                    break
+        est_cfg["estudios_phone_number_id"] = matched_id or ""
+        linea_estudios["phone_number_id"] = matched_id
+        linea_estudios["configured"] = bool(matched_id)
+        linea_estudios["status"] = "NOT_CONFIGURED" if not matched_id else linea_estudios.get("status")
 
     return {
         "success": True,
+        "waba_id": waba_id,
+        "waba_numbers": waba_numbers,
         "linea_quirurgica": linea_quirurgica,
         "linea_estudios": {
             **linea_estudios,
@@ -440,22 +525,299 @@ async def get_whatsapp_lines_status():
     }
 
 
+@estudios_router.post("/api/whatsapp/link-phone-number")
+async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
+    """
+    Vincula un número de teléfono (ej: `5492615739990`) a la Línea 2 (Estudios Oftalmológicos) sin
+    requerir que el usuario conozca el `Phone Number ID`:
+      1. Consulta el portafolio de la WABA (`GET /v21.0/{waba_id}/phone_numbers`). Si el número ya existe,
+         toma su `Phone Number ID` automáticamente.
+      2. Si el número no existe aún en la WABA, lo da de alta vía `POST /v21.0/{waba_id}/phone_numbers`
+         con `cc='54'`, obtiene el nuevo `Phone Number ID` asignado por Meta y lo guarda en `configuracion_sistema`.
+    """
+    q_phone_id, token = get_whatsapp_cloud_credentials()
+    waba_id = get_whatsapp_waba_id()
+    if not token or not waba_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No se encontraron credenciales activas de WABA o Access Token en el servidor."
+        )
+
+    raw_digits = "".join(filter(str.isdigit, str(payload.telefono or "")))
+    if len(raw_digits) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Ingresa un número de teléfono válido con código de área (ej: 2615739990 o 5492615739990)."
+        )
+
+    norm_tel = normalize_phone_number(raw_digits)
+    last_10 = raw_digits[-10:]
+    verified_name = (payload.verified_name or "Centrovisión - Estudios Oftalmológicos").strip()
+
+    # Verificar que no sea el mismo número de la Línea 1 Quirúrgica
+    waba_numbers = await WhatsAppCloudClient.list_waba_phone_numbers(waba_id, token)
+    for item in waba_numbers:
+        item_digits = "".join(filter(str.isdigit, str(item.get("display_phone_number") or "")))
+        if item_digits.endswith(last_10) and str(item.get("id")) == str(q_phone_id):
+            raise HTTPException(
+                status_code=400,
+                detail="Ese número de teléfono corresponde a la Línea 1 (Asesoramiento Quirúrgico). Ingresa el número exclusivo de Estudios Oftalmológicos."
+            )
+
+    # 1. Buscar si ya está dado de alta en la WABA
+    resolved_phone_id = None
+    action_taken = "found_in_waba"
+    for item in waba_numbers:
+        item_digits = "".join(filter(str.isdigit, str(item.get("display_phone_number") or "")))
+        if item_digits.endswith(last_10):
+            resolved_phone_id = str(item.get("id"))
+            if item.get("verified_name"):
+                verified_name = item["verified_name"]
+            break
+
+    # 2. Si no existe en la WABA, darlo de alta programáticamente en Meta Graph API
+    if not resolved_phone_id:
+        action_taken = "created_in_waba"
+        try:
+            # En Argentina Meta utiliza cc="54" y phone_number="9" + 10 dígitos (ej: 92615739990)
+            add_res = await WhatsAppCloudClient.add_phone_number_to_waba(
+                waba_id=waba_id,
+                access_token=token,
+                cc="54",
+                phone_number=f"9{last_10}",
+                verified_name=verified_name
+            )
+            resolved_phone_id = str(add_res.get("id") or "").strip()
+        except MetaAPIError as me_err:
+            # Fallback sin el prefijo 9 por si Meta requiere 10 dígitos nacionales directos
+            try:
+                add_res = await WhatsAppCloudClient.add_phone_number_to_waba(
+                    waba_id=waba_id,
+                    access_token=token,
+                    cc="54",
+                    phone_number=last_10,
+                    verified_name=verified_name
+                )
+                resolved_phone_id = str(add_res.get("id") or "").strip()
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Meta rechazó el alta del número {format_phone_display(norm_tel)} en la WABA: {me_err.message}"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se pudo agregar el número a la WABA en Meta: {str(e)}"
+            )
+
+    if not resolved_phone_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Meta no devolvió un Phone Number ID para el número ingresado."
+        )
+
+    # 3. Guardar automáticamente en configuracion_sistema
+    current_cfg = get_whatsapp_estudios_config()
+    deriv_tel = (payload.derivacion_telefono or current_cfg.get("estudios_derivacion_telefono") or "").strip()
+    deriv_digits = "".join(filter(str.isdigit, deriv_tel))
+    if not deriv_digits or deriv_digits.endswith(last_10):
+        # Usar por defecto el teléfono de la Línea 1 para derivación de consultas
+        for item in waba_numbers:
+            if str(item.get("id")) == str(q_phone_id) and item.get("display_phone_number"):
+                deriv_tel = normalize_phone_number(item["display_phone_number"])
+                break
+
+    new_cfg = {
+        **current_cfg,
+        "estudios_phone_number_id": resolved_phone_id,
+        "estudios_display_phone": norm_tel,
+        "estudios_verified_name": verified_name,
+        "estudios_derivacion_telefono": deriv_tel or "5492616859303"
+    }
+    _persist_whatsapp_lineas_config(new_cfg)
+
+    log_event(
+        nivel="INFO",
+        modulo="WHATSAPP",
+        accion="VINCULAR_NUMERO_LINEA_ESTUDIOS",
+        mensaje=f"Número {norm_tel} vinculado a Línea 2 (Estudios) con Phone ID {resolved_phone_id} ({action_taken}).",
+        detalles={"phone_number_id": resolved_phone_id, "telefono": norm_tel, "action": action_taken}
+    )
+
+    status_payload = await get_whatsapp_lines_status()
+    return {
+        **status_payload,
+        "action": action_taken,
+        "linked_phone_number_id": resolved_phone_id,
+        "linked_display_phone": norm_tel,
+        "mensaje": (
+            f"¡Número {format_phone_display(norm_tel)} encontrado en tu WABA y vinculado con ID {resolved_phone_id}!"
+            if action_taken == "found_in_waba"
+            else f"¡Número {format_phone_display(norm_tel)} dado de alta en Meta WABA con ID {resolved_phone_id}! Ahora solicita el código SMS/llamada para verificarlo."
+        )
+    }
+
+
+@estudios_router.post("/api/whatsapp/request-verification-code")
+async def request_meta_otp_verification_code(payload: RequestVerificationCodePayload):
+    """
+    Solicita a Meta el envío del código de 6 dígitos por SMS o llamada de voz (`VOICE`)
+    al número físico de la Línea 2 (`POST /v21.0/{phone_number_id}/request_code`).
+    """
+    _, token = get_whatsapp_cloud_credentials()
+    if not token:
+        raise HTTPException(status_code=400, detail="Access Token de Meta no configurado.")
+
+    target_phone_id = (payload.phone_number_id or "").strip()
+    if not target_phone_id:
+        target_phone_id, _ = get_whatsapp_estudios_credentials()
+    if not target_phone_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Primero vincula el número de teléfono para obtener su Phone Number ID."
+        )
+
+    client = WhatsAppCloudClient(phone_number_id=target_phone_id, access_token=token, line="estudios")
+    try:
+        res = await client.request_verification_code(
+            code_method=payload.code_method,
+            language=payload.language or "es_AR"
+        )
+        log_event(
+            nivel="INFO",
+            modulo="WHATSAPP",
+            accion="SOLICITAR_CODIGO_OTP_META",
+            mensaje=f"Código de verificación ({payload.code_method}) solicitado a Meta para Phone ID {target_phone_id}.",
+            detalles={"phone_number_id": target_phone_id, "method": payload.code_method, "response": res}
+        )
+        return {
+            "success": True,
+            "mensaje": f"Meta envió el código de 6 dígitos por {payload.code_method} al teléfono de Estudios. Ingrésalo en el Paso 2.",
+            "meta_response": res
+        }
+    except MetaAPIError as me:
+        raise HTTPException(status_code=400, detail=f"Meta rechazó el envío del código: {me.message}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        await client.close()
+
+
+@estudios_router.post("/api/whatsapp/verify-code")
+async def verify_meta_otp_code(payload: VerifyCodePayload):
+    """
+    Verifica el código OTP de 6 dígitos recibido por SMS o llamada (`POST /v21.0/{phone_number_id}/verify_code`).
+    Si además se envía el `pin` de 6 dígitos, registra y activa inmediatamente el número en Cloud API (`/register`).
+    """
+    _, token = get_whatsapp_cloud_credentials()
+    waba_id = get_whatsapp_waba_id()
+    if not token:
+        raise HTTPException(status_code=400, detail="Access Token de Meta no configurado.")
+
+    target_phone_id = (payload.phone_number_id or "").strip()
+    if not target_phone_id:
+        target_phone_id, _ = get_whatsapp_estudios_credentials()
+    if not target_phone_id:
+        raise HTTPException(status_code=400, detail="Falta el Phone Number ID del número a verificar.")
+
+    client = WhatsAppCloudClient(phone_number_id=target_phone_id, access_token=token, line="estudios")
+    try:
+        verify_res = await client.verify_code(payload.code)
+        registered = False
+        reg_res = None
+
+        if payload.pin and len("".join(filter(str.isdigit, payload.pin))) == 6:
+            reg_res = await client.register_phone_number(payload.pin)
+            registered = True
+            if waba_id:
+                await WhatsAppCloudClient.subscribe_waba_to_webhook(waba_id, token)
+
+        invalidate_whatsapp_credentials_cache()
+        log_event(
+            nivel="INFO",
+            modulo="WHATSAPP",
+            accion="VERIFICAR_CODIGO_OTP_META",
+            mensaje=f"Código OTP verificado con éxito para Phone ID {target_phone_id} (registrado={registered}).",
+            detalles={"phone_number_id": target_phone_id, "registered": registered}
+        )
+        status_payload = await get_whatsapp_lines_status()
+        return {
+            **status_payload,
+            "success": True,
+            "registered": registered,
+            "verify_response": verify_res,
+            "register_response": reg_res,
+            "mensaje": (
+                "¡Código verificado y número activado exitosamente en Meta WhatsApp Cloud API!"
+                if registered
+                else "¡Código SMS/Voz verificado con éxito! Ahora ingresa tu PIN de 6 dígitos para finalizar la activación."
+            )
+        }
+    except MetaAPIError as me:
+        raise HTTPException(status_code=400, detail=f"Error de Meta al verificar código: {me.message}")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        await client.close()
+
+
 @estudios_router.put("/api/whatsapp/lines")
 async def update_whatsapp_lines_config(payload: UpdateWhatsAppLinesPayload):
     """
     Guarda en `public.configuracion_sistema` (`clave = 'whatsapp_lineas'`) los parámetros
     de la Línea 2 (Estudios Oftalmológicos), invalida la caché de credenciales en memoria
     y devuelve el estado actualizado en tiempo real desde Meta Graph API.
+    Si el usuario ingresó `estudios_display_phone` pero no tiene `estudios_phone_number_id`,
+    intenta vincularlo o resolverlo automáticamente en la WABA.
     """
     if not supabase:
         raise HTTPException(status_code=500, detail="Base de datos Supabase no disponible.")
 
     current_cfg = get_whatsapp_estudios_config()
+    input_phone_id = (payload.estudios_phone_number_id or "").strip()
+    input_display_phone = normalize_phone_number(payload.estudios_display_phone or "") if payload.estudios_display_phone else ""
+    input_verified_name = (payload.estudios_verified_name or "Centrovisión - Estudios Oftalmológicos").strip()
+
+    # Si no hay Phone ID pero sí ingresó el número de teléfono de la Línea 2, resolverlo/crearlo en WABA
+    if not input_phone_id and input_display_phone and len(input_display_phone) >= 10:
+        q_phone_id, token = get_whatsapp_cloud_credentials()
+        waba_id = get_whatsapp_waba_id()
+        last_10 = input_display_phone[-10:]
+        if waba_id and token:
+            waba_numbers = await WhatsAppCloudClient.list_waba_phone_numbers(waba_id, token)
+            for item in waba_numbers:
+                item_digits = "".join(filter(str.isdigit, str(item.get("display_phone_number") or "")))
+                if item_digits.endswith(last_10) and str(item.get("id")) != str(q_phone_id):
+                    input_phone_id = str(item.get("id"))
+                    break
+            if not input_phone_id:
+                try:
+                    add_res = await WhatsAppCloudClient.add_phone_number_to_waba(
+                        waba_id=waba_id,
+                        access_token=token,
+                        cc="54",
+                        phone_number=f"9{last_10}",
+                        verified_name=input_verified_name
+                    )
+                    input_phone_id = str(add_res.get("id") or "").strip()
+                except Exception:
+                    try:
+                        add_res = await WhatsAppCloudClient.add_phone_number_to_waba(
+                            waba_id=waba_id,
+                            access_token=token,
+                            cc="54",
+                            phone_number=last_10,
+                            verified_name=input_verified_name
+                        )
+                        input_phone_id = str(add_res.get("id") or "").strip()
+                    except Exception as add_err:
+                        logger.warning(f"[WABA] No se pudo auto-crear número {input_display_phone} en WABA: {add_err}")
+
     new_cfg = {
         **current_cfg,
-        "estudios_phone_number_id": (payload.estudios_phone_number_id or "").strip(),
-        "estudios_display_phone": (payload.estudios_display_phone or "").strip(),
-        "estudios_verified_name": (payload.estudios_verified_name or "Centrovisión Estudios").strip(),
+        "estudios_phone_number_id": input_phone_id,
+        "estudios_display_phone": input_display_phone,
+        "estudios_verified_name": input_verified_name,
         "estudios_template_pdf": (payload.estudios_template_pdf or "entrega_estudio_oftalmologico_pdf").strip(),
         "estudios_template_img": (payload.estudios_template_img or "entrega_estudio_oftalmologico_img").strip(),
         "estudios_auto_reply_enabled": bool(payload.estudios_auto_reply_enabled),
@@ -465,20 +827,7 @@ async def update_whatsapp_lines_config(payload: UpdateWhatsAppLinesPayload):
         new_cfg["estudios_auto_reply_text"] = payload.estudios_auto_reply_text.strip()
 
     try:
-        exist = supabase.table("configuracion_sistema").select("clave").eq("clave", "whatsapp_lineas").execute()
-        if exist.data and len(exist.data) > 0:
-            supabase.table("configuracion_sistema").update({
-                "valor": new_cfg,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("clave", "whatsapp_lineas").execute()
-        else:
-            supabase.table("configuracion_sistema").insert({
-                "clave": "whatsapp_lineas",
-                "valor": new_cfg,
-                "descripcion": "Configuración multi-línea de WhatsApp Cloud API (Línea 2: Estudios Oftalmológicos)"
-            }).execute()
-
-        invalidate_whatsapp_credentials_cache()
+        _persist_whatsapp_lineas_config(new_cfg)
         log_event(
             nivel="INFO",
             modulo="WHATSAPP",
@@ -499,6 +848,7 @@ async def register_whatsapp_line_in_cloud_api(payload: RegisterLinePinPayload):
     para activar un número recién verificado en Meta WhatsApp Cloud API.
     """
     _, token = get_whatsapp_cloud_credentials()
+    waba_id = get_whatsapp_waba_id()
     if not token:
         raise HTTPException(status_code=400, detail="Access Token de Meta no configurado.")
 
@@ -515,6 +865,8 @@ async def register_whatsapp_line_in_cloud_api(payload: RegisterLinePinPayload):
     client = WhatsAppCloudClient(phone_number_id=target_phone_id, access_token=token, line=payload.line)
     try:
         res = await client.register_phone_number(payload.pin)
+        if waba_id:
+            await WhatsAppCloudClient.subscribe_waba_to_webhook(waba_id, token)
         invalidate_whatsapp_credentials_cache()
         log_event(
             nivel="INFO",

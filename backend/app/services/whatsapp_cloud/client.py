@@ -98,6 +98,7 @@ class SimpleCircuitBreaker:
 # CACHÉ EN MEMORIA CON TTL PARA CREDENCIALES WABA (Fase 2: Rendimiento & Estabilidad)
 # =========================================================================
 _CREDENTIALS_CACHE: Dict[str, Any] = {
+    "waba_id": None,
     "phone_id": None,
     "token": None,
     "estudios_phone_id": None,
@@ -120,6 +121,7 @@ def invalidate_whatsapp_credentials_cache():
     """
     global _CREDENTIALS_CACHE, _APP_SECRET_CACHE
     _CREDENTIALS_CACHE["expires_at"] = 0.0
+    _CREDENTIALS_CACHE["waba_id"] = None
     _CREDENTIALS_CACHE["phone_id"] = None
     _CREDENTIALS_CACHE["token"] = None
     _CREDENTIALS_CACHE["estudios_phone_id"] = None
@@ -203,13 +205,16 @@ def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
     if _CREDENTIALS_CACHE["expires_at"] > now and _CREDENTIALS_CACHE["phone_id"] and _CREDENTIALS_CACHE["token"]:
         return _CREDENTIALS_CACHE["phone_id"], _CREDENTIALS_CACHE["token"]
 
-    phone_id, token = None, None
+    phone_id, token, waba_id = None, None, None
     try:
         from app.db import supabase
-        acc_res = supabase.table("whatsapp_accounts").select("phone_number_id, system_user_token_encrypted").eq("is_active", True).limit(1).execute()
+        acc_res = supabase.table("whatsapp_accounts").select("waba_id, phone_number_id, system_user_token_encrypted").eq("is_active", True).limit(1).execute()
         if acc_res.data and len(acc_res.data) > 0:
+            db_waba = acc_res.data[0].get("waba_id")
             db_phone = acc_res.data[0].get("phone_number_id")
             db_token = acc_res.data[0].get("system_user_token_encrypted")
+            if db_waba:
+                waba_id = db_waba
             if db_phone and db_token:
                 phone_id, token = db_phone, db_token
     except Exception as e:
@@ -218,13 +223,46 @@ def get_whatsapp_cloud_credentials() -> tuple[Optional[str], Optional[str]]:
     if not phone_id or not token:
         phone_id = os.getenv("META_WA_PHONE_NUMBER_ID")
         token = os.getenv("META_WA_ACCESS_TOKEN")
+    if not waba_id:
+        waba_id = os.getenv("META_WA_WABA_ID") or os.getenv("META_WABA_ID")
 
     if phone_id and token:
+        _CREDENTIALS_CACHE["waba_id"] = waba_id
         _CREDENTIALS_CACHE["phone_id"] = phone_id
         _CREDENTIALS_CACHE["token"] = token
         _CREDENTIALS_CACHE["expires_at"] = now + CREDENTIALS_CACHE_TTL_SECONDS
 
     return phone_id, token
+
+
+def get_whatsapp_waba_id() -> Optional[str]:
+    """
+    Retorna el WABA ID (WhatsApp Business Account ID, ej: '3731563350343089') activo.
+    """
+    import time
+    import os
+    global _CREDENTIALS_CACHE
+
+    now = time.time()
+    if _CREDENTIALS_CACHE["expires_at"] > now and _CREDENTIALS_CACHE.get("waba_id"):
+        return _CREDENTIALS_CACHE["waba_id"]
+
+    # Forzar lectura si no estaba en caché
+    get_whatsapp_cloud_credentials()
+    if _CREDENTIALS_CACHE.get("waba_id"):
+        return _CREDENTIALS_CACHE["waba_id"]
+
+    try:
+        from app.db import supabase
+        if supabase:
+            acc_res = supabase.table("whatsapp_accounts").select("waba_id").eq("is_active", True).limit(1).execute()
+            if acc_res.data and len(acc_res.data) > 0 and acc_res.data[0].get("waba_id"):
+                _CREDENTIALS_CACHE["waba_id"] = str(acc_res.data[0]["waba_id"]).strip()
+                return _CREDENTIALS_CACHE["waba_id"]
+    except Exception as e:
+        logger.debug(f"[Credentials] Error consultando waba_id: {e}")
+
+    return os.getenv("META_WA_WABA_ID") or os.getenv("META_WABA_ID")
 
 
 def get_whatsapp_app_secret() -> Optional[str]:
@@ -808,4 +846,109 @@ class WhatsAppCloudClient:
             "pin": clean_pin
         }
         return await self._request_with_retry("POST", "register", payload)
+
+    async def request_verification_code(self, code_method: str = "SMS", language: str = "es_AR") -> Dict[str, Any]:
+        """
+        Solicita a Meta el envío del código OTP de 6 dígitos por SMS o llamada de voz (`VOICE`)
+        al número físico (`POST /{phone_number_id}/request_code`).
+        """
+        method = "VOICE" if str(code_method).upper() in ("VOICE", "LLAMADA", "CALL") else "SMS"
+        payload = {
+            "code_method": method,
+            "language": language or "es_AR"
+        }
+        return await self._request_with_retry("POST", "request_code", payload)
+
+    async def verify_code(self, code: str) -> Dict[str, Any]:
+        """
+        Verifica el código OTP de 6 dígitos recibido por SMS o llamada (`POST /{phone_number_id}/verify_code`).
+        """
+        clean_code = "".join(filter(str.isdigit, str(code or "")))
+        if len(clean_code) != 6:
+            raise ValueError("El código de verificación recibido por SMS/llamada debe tener 6 dígitos.")
+        payload = {
+            "code": clean_code
+        }
+        return await self._request_with_retry("POST", "verify_code", payload)
+
+    @classmethod
+    async def list_waba_phone_numbers(cls, waba_id: str, access_token: str) -> List[Dict[str, Any]]:
+        """
+        Lista todos los números de teléfono registrados dentro del portafolio de la WABA en Meta Graph API:
+        `GET /v21.0/{waba_id}/phone_numbers`
+        """
+        if not waba_id or not access_token:
+            return []
+        url = f"{cls.BASE_URL}/v21.0/{waba_id}/phone_numbers"
+        params = {
+            "fields": "id,display_phone_number,verified_name,quality_rating,code_verification_status,status,messaging_limit_tier,name_status"
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=8.0)) as client:
+            res = await client.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"})
+            if res.status_code == 200:
+                body = res.json()
+                return body.get("data", [])
+            logger.warning(f"[WABA] Error listando phone_numbers de WABA {waba_id}: {res.status_code} {res.text}")
+            return []
+
+    @classmethod
+    async def add_phone_number_to_waba(
+        cls,
+        waba_id: str,
+        access_token: str,
+        cc: str,
+        phone_number: str,
+        verified_name: str,
+        migrate_phone_number: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Da de alta un número de teléfono nuevo dentro de la WABA en Meta Graph API:
+        `POST /v21.0/{waba_id}/phone_numbers`
+        Retorna `{"id": "<phone_number_id>"}`.
+        """
+        if not waba_id or not access_token:
+            raise ValueError("WABA ID o Access Token no configurados.")
+        url = f"{cls.BASE_URL}/v21.0/{waba_id}/phone_numbers"
+        payload = {
+            "cc": str(cc).strip(),
+            "phone_number": str(phone_number).strip(),
+            "verified_name": str(verified_name or "Centrovisión Estudios").strip(),
+            "migrate_phone_number": bool(migrate_phone_number)
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            res = await client.post(
+                url,
+                json=payload,
+                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+            )
+            if res.status_code in (200, 201):
+                return res.json()
+            try:
+                err_json = res.json().get("error", {})
+                msg = err_json.get("error_user_msg") or err_json.get("message") or res.text
+                raise MetaAPIError(
+                    err_json.get("code", res.status_code),
+                    err_json.get("error_subcode"),
+                    msg,
+                    err_json.get("fbtrace_id")
+                )
+            except MetaAPIError:
+                raise
+            except Exception:
+                raise RuntimeError(f"Error de Meta al agregar número a la WABA ({res.status_code}): {res.text}")
+
+    @classmethod
+    async def subscribe_waba_to_webhook(cls, waba_id: str, access_token: str) -> Dict[str, Any]:
+        """
+        Suscribe la aplicación actual a los eventos de Webhook de la WABA (`POST /v21.0/{waba_id}/subscribed_apps`).
+        """
+        if not waba_id or not access_token:
+            return {"success": False}
+        url = f"{cls.BASE_URL}/v21.0/{waba_id}/subscribed_apps"
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=8.0)) as client:
+            res = await client.post(url, headers={"Authorization": f"Bearer {access_token}"})
+            if res.status_code in (200, 201):
+                return res.json()
+            return {"success": False, "detail": res.text}
+
 
