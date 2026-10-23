@@ -68,6 +68,7 @@ export const CRM_TEMPLATE_GROUPS = [
 // Catálogo de variables clínicas inteligentes disponibles
 const CLINICAL_VARIABLES = [
   { id: 'paciente_nombre', label: 'Nombre Paciente', icon: User, sample: 'Carlos Menéndez' },
+  { id: 'mensaje_asistencial', label: 'Mensaje Asistencial Libre', icon: MessageSquareText, sample: 'Le informamos que sus estudios prequirúrgicos ya fueron recibidos por el especialista y se encuentran autorizados.' },
   { id: 'turno_fecha', label: 'Fecha Turno', icon: Calendar, sample: 'Jueves 15 de Octubre' },
   { id: 'turno_hora', label: 'Hora Turno', icon: Clock, sample: '10:30 hs' },
   { id: 'medico_nombre', label: 'Profesional / Médico', icon: Stethoscope, sample: 'Dr. Roberto Gómez' },
@@ -91,6 +92,21 @@ interface PremadeTemplate {
 
 // Plantillas pre-diseñadas para carga rápida (con soporte de ambas opciones de botones)
 const PREMADE_TEMPLATES: PremadeTemplate[] = [
+  {
+    title: 'Apertura Asistencial con Mensaje Libre (UTILITY)',
+    name: 'comunicacion_asistencial_paciente_v1',
+    category: 'UTILITY' as const,
+    header_content: '',
+    body_text: 'Hola {{1}}, le escribimos desde el centro de atención médica de Centrovisión en relación a su gestión de asesoramiento:\n\n{{2}}\n\nAnte cualquier duda, puede responder a este mensaje y un asesor lo atenderá a la brevedad.',
+    footer_text: 'Centrovisión • Oftalmología Integral',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'mensaje_asistencial'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Responder consulta' }
+    ]
+  },
   {
     title: 'Consentimiento Informado Quirúrgico (Firma Digital)',
     name: 'consentimiento_informado_quirurgico_v1',

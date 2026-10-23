@@ -293,6 +293,9 @@ export default function ModalSelectorPlantillasMeta({
         if (key === 'paciente_nombre' || idx === 1) {
           return (pacienteNombre || 'Estimado/a Paciente').trim()
         }
+        if (key === 'mensaje_asistencial' || (selectedTemplate.name === 'comunicacion_asistencial_paciente_v1' && idx === 2)) {
+          return ''
+        }
         if (key === 'turno_fecha' || idx === 2) {
           return fechaSoloStr
         }
@@ -735,6 +738,16 @@ export default function ModalSelectorPlantillasMeta({
                     else if (varKey === 'turno_fecha') labelName = 'Fecha y Hora del Turno'
                     else if (varKey === 'profesional_nombre') labelName = 'Especialista / Médico'
                     else if (varKey === 'presupuesto_total') labelName = 'Monto del Presupuesto'
+                    else if (varKey === 'mensaje_asistencial' || varKey === 'observaciones') {
+                      labelName = 'Mensaje o Indicación Puntual para el Paciente'
+                    }
+
+                    const isLongText = 
+                      varKey === 'mensaje_asistencial' ||
+                      varKey === 'observaciones' ||
+                      varKey.includes('mensaje') ||
+                      varKey.includes('observacion') ||
+                      (selectedTemplate.name === 'comunicacion_asistencial_paciente_v1' && varNum === 2)
 
                     return (
                       <div key={varNum} className="space-y-1">
@@ -742,18 +755,44 @@ export default function ModalSelectorPlantillasMeta({
                           <span className="text-slate-300 font-medium">
                             <span className="text-blue-400 font-mono font-bold">{`{{${varNum}}}`}</span> - {labelName}
                           </span>
+                          {isLongText && (
+                            <span className="text-[10px] text-amber-400/90 font-medium">
+                              Texto libre asistencial
+                            </span>
+                          )}
                         </div>
-                        <input
-                          type="text"
-                          value={paramValues[idx] || ''}
-                          onChange={(e) => {
-                            const newVals = [...paramValues]
-                            newVals[idx] = e.target.value
-                            setParamValues(newVals)
-                          }}
-                          className="w-full bg-[#0b1324] border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          placeholder={`Valor para {{${varNum}}}...`}
-                        />
+
+                        {isLongText ? (
+                          <div className="relative">
+                            <textarea
+                              rows={3}
+                              maxLength={500}
+                              value={paramValues[idx] || ''}
+                              onChange={(e) => {
+                                const newVals = [...paramValues]
+                                newVals[idx] = e.target.value
+                                setParamValues(newVals)
+                              }}
+                              className="w-full bg-[#0b1324] border border-slate-700/80 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500 resize-none leading-relaxed"
+                              placeholder="Escriba aquí la indicación puntual, aclaración de estudios, turno o respuesta médica..."
+                            />
+                            <div className="text-[10px] text-slate-500 text-right mt-0.5 pr-1 font-mono">
+                              {(paramValues[idx] || '').length}/500 caracteres
+                            </div>
+                          </div>
+                        ) : (
+                          <input
+                            type="text"
+                            value={paramValues[idx] || ''}
+                            onChange={(e) => {
+                              const newVals = [...paramValues]
+                              newVals[idx] = e.target.value
+                              setParamValues(newVals)
+                            }}
+                            className="w-full bg-[#0b1324] border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            placeholder={`Valor para {{${varNum}}}...`}
+                          />
+                        )}
                       </div>
                     )
                   })}

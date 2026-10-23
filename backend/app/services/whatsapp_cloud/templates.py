@@ -1091,3 +1091,180 @@ async def registrar_plantillas_estudios_en_meta():
         "resultados": resultados
     }
 
+
+# ---------------------------------------------------------------------
+# Catálogo de Plantilla Oficial de Apertura Asistencial con Mensaje Libre
+# ---------------------------------------------------------------------
+APERTURA_ASISTENCIAL_TEMPLATE_SPEC: Dict[str, Any] = {
+    "name": "comunicacion_asistencial_paciente_v1",
+    "titulo_amigable": "Apertura Asistencial con Mensaje Libre",
+    "category": "UTILITY",
+    "header_type": "NONE",
+    "header_content": None,
+    "body_text": "Hola {{1}}, le escribimos desde el centro de atención médica de Centrovisión en relación a su gestión de asesoramiento:\n\n{{2}}\n\nAnte cualquier duda, puede responder a este mensaje y un asesor lo atenderá a la brevedad.",
+    "footer_text": "Centrovisión • Oftalmología Integral",
+    "buttons": [
+        {"type": "QUICK_REPLY", "text": "Responder consulta"}
+    ],
+    "variable_mappings": {
+        "1": "paciente_nombre",
+        "2": "mensaje_asistencial"
+    },
+    "sample_values": [
+        "Carlos Menéndez",
+        "Le informamos que sus estudios prequirúrgicos ya fueron recibidos por el especialista y se encuentran autorizados por su cobertura médica."
+    ],
+    "grupo_crm": "Atención General",
+    "descripcion": "Plantilla UTILITY oficial para iniciar o reactivar conversaciones enviando un mensaje o indicación puntual sin esperar respuesta pasiva."
+}
+
+
+@templates_router.post("/registrar-apertura-asistencial")
+async def registrar_apertura_asistencial():
+    """
+    Registra la plantilla oficial de Apertura Asistencial con Mensaje Libre en Meta Graph API v21+
+    y la sincroniza en la base de datos de Supabase con gobernanza predeterminada activa y visible en chat.
+    """
+    waba_id, token = get_waba_credentials()
+
+    if not waba_id or not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Credenciales WABA (WABA ID o Access Token) no configuradas en el sistema."
+        )
+
+    tpl_spec = APERTURA_ASISTENCIAL_TEMPLATE_SPEC
+    tpl_name = tpl_spec["name"]
+
+    try:
+        # 1. Comprobar si ya existe en Supabase
+        exist_res = supabase.table("whatsapp_templates").select("id, status, meta_template_id").eq("name", tpl_name).execute()
+        if exist_res.data and len(exist_res.data) > 0 and exist_res.data[0].get("meta_template_id"):
+            return {
+                "status": "success",
+                "action": "ya_registrada",
+                "name": tpl_name,
+                "meta_id": exist_res.data[0].get("meta_template_id"),
+                "template_status": exist_res.data[0].get("status", "APPROVED")
+            }
+
+        # 2. Construir componentes para Meta Graph API
+        components: List[Dict[str, Any]] = [
+            {
+                "type": "BODY",
+                "text": tpl_spec["body_text"],
+                "example": {
+                    "body_text": [tpl_spec["sample_values"]]
+                }
+            }
+        ]
+
+        if tpl_spec.get("footer_text"):
+            components.append({
+                "type": "FOOTER",
+                "text": tpl_spec["footer_text"]
+            })
+
+        if tpl_spec.get("buttons"):
+            components.append({
+                "type": "BUTTONS",
+                "buttons": [
+                    {"type": b["type"], "text": b["text"]}
+                    for b in tpl_spec["buttons"]
+                ]
+            })
+
+        meta_payload = {
+            "name": tpl_name,
+            "category": tpl_spec["category"],
+            "language": "es_AR",
+            "components": components
+        }
+
+        url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates"
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.post(url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+
+        meta_data = res.json() if res.content else {}
+
+        if res.status_code in (200, 201):
+            meta_id = meta_data.get("id")
+            meta_status = meta_data.get("status", "PENDING")
+            db_record = {
+                "waba_id": waba_id,
+                "meta_template_id": meta_id,
+                "name": tpl_name,
+                "category": tpl_spec["category"],
+                "language": "es_AR",
+                "status": meta_status,
+                "header_type": tpl_spec["header_type"],
+                "header_content": tpl_spec.get("header_content"),
+                "body_text": tpl_spec["body_text"],
+                "footer_text": tpl_spec["footer_text"],
+                "buttons": tpl_spec["buttons"],
+                "variable_mappings": tpl_spec["variable_mappings"],
+                "activo": True,
+                "visible_en_chat": True,
+                "grupo_crm": tpl_spec["grupo_crm"],
+                "titulo_amigable": tpl_spec["titulo_amigable"],
+                "descripcion": tpl_spec["descripcion"],
+                "orden": 1,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+            return {
+                "status": "success",
+                "action": "creada_en_meta",
+                "name": tpl_name,
+                "meta_id": meta_id,
+                "template_status": meta_status
+            }
+        else:
+            error_msg = meta_data.get("error", {}).get("message", res.text)
+            if "already exists" in error_msg.lower():
+                db_record = {
+                    "waba_id": waba_id,
+                    "name": tpl_name,
+                    "category": tpl_spec["category"],
+                    "language": "es_AR",
+                    "status": "APPROVED",
+                    "header_type": tpl_spec["header_type"],
+                    "header_content": tpl_spec.get("header_content"),
+                    "body_text": tpl_spec["body_text"],
+                    "footer_text": tpl_spec["footer_text"],
+                    "buttons": tpl_spec["buttons"],
+                    "variable_mappings": tpl_spec["variable_mappings"],
+                    "activo": True,
+                    "visible_en_chat": True,
+                    "grupo_crm": tpl_spec["grupo_crm"],
+                    "titulo_amigable": tpl_spec["titulo_amigable"],
+                    "descripcion": tpl_spec["descripcion"],
+                    "orden": 1,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+                supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+                return {
+                    "status": "success",
+                    "action": "ya_existia_en_meta_sincronizada_local",
+                    "name": tpl_name,
+                    "template_status": "APPROVED",
+                    "detail": "Ya existía en Meta. Se vinculó localmente."
+                }
+            else:
+                logger.error(f"Error registrando plantilla en Meta: {error_msg}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Meta rechazó la plantilla: {error_msg}"
+                )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error procesando plantilla de apertura asistencial: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error interno procesando plantilla: {str(e)}"
+        )
+
+
