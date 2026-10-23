@@ -27,6 +27,13 @@ class TestCaratulaHibrida(unittest.TestCase):
             "observaciones": "Control oftalmológico de rutina"
         }
 
+    def test_huso_horario_argentina(self):
+        from app.services.caratula_estudios_service import get_argentina_now, ARGENTINA_TZ
+        now_arg = get_argentina_now()
+        self.assertEqual(now_arg.tzinfo, ARGENTINA_TZ)
+        hora_str = now_arg.strftime("%H:%M hs")
+        self.assertTrue(hora_str.endswith(" hs"))
+
     def test_generar_portada_pdf_a4(self):
         pdf_bytes = generar_portada_pdf_a4(self.paciente, self.estudio)
         self.assertGreater(len(pdf_bytes), 1000)

@@ -25,6 +25,14 @@ BANNER_LOCAL_PATH = os.path.join(
 )
 
 
+ARGENTINA_TZ = timezone(timedelta(hours=-3))
+
+
+def get_argentina_now() -> datetime:
+    """Retorna la fecha y hora actual en el huso horario oficial de Argentina (UTC-3)."""
+    return datetime.now(ARGENTINA_TZ)
+
+
 def _load_pil_font(candidates: List[str], size: int) -> ImageFont.ImageFont:
     """Intenta cargar la primera fuente válida en candidates o usa el fallback vectorial con tamaño explícito."""
     for font_name in candidates:
@@ -238,8 +246,9 @@ def generar_portada_pdf_a4(
     cob_str = f"{cobertura} ({plan})" if plan else (cobertura or "Particular / Sin especificar")
 
     tecnico_nom = estudio.get("tecnico_nombre") or "Técnico Oficial"
-    fecha_estudio = estudio.get("fecha_str") or datetime.now().strftime("%d/%m/%Y")
-    hora_estudio = estudio.get("hora_str") or datetime.now().strftime("%H:%M hs")
+    now_arg = get_argentina_now()
+    fecha_estudio = estudio.get("fecha_str") or now_arg.strftime("%d/%m/%Y")
+    hora_estudio = estudio.get("hora_str") or now_arg.strftime("%H:%M hs")
     obs_pac = (estudio.get("observaciones") or "").strip()
 
     info_rows = [
@@ -454,7 +463,9 @@ def componer_lamina_digital_imagen(
     ojo = (estudio.get("ojo") or "AO").upper().strip()
     nombre_pac = (paciente.get("nombre") or paciente.get("nombre_completo") or "PACIENTE").upper().strip()
     dni_pac = str(paciente.get("dni") or "N/A").strip()
-    fecha_str = estudio.get("fecha_str") or datetime.now().strftime("%d/%m/%Y")
+    now_arg = get_argentina_now()
+    fecha_str = estudio.get("fecha_str") or now_arg.strftime("%d/%m/%Y")
+    hora_str = estudio.get("hora_str") or now_arg.strftime("%H:%M hs")
     tecnico_str = (estudio.get("tecnico_nombre") or "").upper().strip()
 
     # Tipografía adaptativa para Windows y Linux (servidor Railway)
@@ -485,7 +496,7 @@ def componer_lamina_digital_imagen(
     pac_line = f"PACIENTE: {nombre_pac[:30]}   |   DNI: {dni_pac}"
     if tecnico_str:
         pac_line += f"   |   TÉCNICO: {tecnico_str[:22]}"
-    pac_line += f"   |   FECHA: {fecha_str}"
+    pac_line += f"   |   FECHA: {fecha_str} {hora_str}"
     draw.text((60, bar_y1 + 54), pac_line, fill=(71, 85, 105), font=font_info)
 
     # 6. Área del Estudio Diagnóstico (Ubicación continua inmediatamente después de la barra)

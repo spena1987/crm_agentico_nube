@@ -1252,11 +1252,14 @@ async def enviar_y_archivar_estudio_oftalmologico(
                 "ficha_id": geclisa_ficha_id,
                 "geclisa_ficha_id": geclisa_ficha_id
             }
+            now_mza = datetime.now(timezone(timedelta(hours=-3)))
             estudio_meta = {
                 "tipo_estudio": tipo_estudio,
                 "ojo": ojo,
                 "tecnico_nombre": resolved_tecnico_nombre,
-                "observaciones": observaciones
+                "observaciones": observaciones,
+                "fecha_str": now_mza.strftime("%d/%m/%Y"),
+                "hora_str": now_mza.strftime("%H:%M hs")
             }
             final_bytes, final_filename, final_mime = componer_estudio_hibrido(
                 files_data=raw_files,
@@ -1388,11 +1391,12 @@ async def enviar_y_archivar_estudio_oftalmologico(
 
     # Persistir registro en public.estudios_oftalmo (0 bytes en Supabase Storage)
     ahora_iso = datetime.now(timezone.utc).isoformat()
+    now_mza_save = datetime.now(timezone(timedelta(hours=-3)))
     db_row: Dict[str, Any] = {
         "paciente_id": existing_paciente_id,
         "tipo": tipo_estudio.strip(),
         "ojo": ojo.strip() or "AO",
-        "fecha": date.today().isoformat(),
+        "fecha": now_mza_save.date().isoformat(),
         "notas": observaciones or "",
         "observaciones": observaciones or "",
         "archivo_url": f"/api/geclisa/archivos/{geclisa_as_id}/ver" if geclisa_as_id else None,
@@ -1879,7 +1883,8 @@ async def preview_caratula_estudio(
     from app.services.caratula_estudios_service import (
         generar_portada_pdf_a4,
         componer_lamina_digital_imagen,
-        _get_caratula_config
+        _get_caratula_config,
+        get_argentina_now
     )
     paciente_demo = {
         "nombre": "PEÑA, JUAN SEBASTIAN",
@@ -1888,11 +1893,14 @@ async def preview_caratula_estudio(
         "obra_social": "OSDE",
         "plan": "210"
     }
+    now_arg = get_argentina_now()
     estudio_demo = {
         "tipo_estudio": tipo_estudio,
         "ojo": ojo,
         "tecnico_nombre": "TARIFEÑO, CAMILA",
-        "observaciones": "Control oftalmológico preventivo"
+        "observaciones": "Control oftalmológico preventivo",
+        "fecha_str": now_arg.strftime("%d/%m/%Y"),
+        "hora_str": now_arg.strftime("%H:%M hs")
     }
     cfg = _get_caratula_config()
 
