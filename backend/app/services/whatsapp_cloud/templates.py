@@ -52,6 +52,17 @@ class TemplateCreateRequest(BaseModel):
     )
 
 
+class TemplateUpdateRequest(BaseModel):
+    category: Optional[str] = Field(default="UTILITY", description="UTILITY, MARKETING, AUTHENTICATION")
+    header_type: Optional[str] = Field(default="NONE", description="NONE, TEXT, IMAGE, DOCUMENT, VIDEO")
+    header_content: Optional[str] = Field(default=None, description="Texto de cabecera si header_type es TEXT")
+    body_text: str = Field(..., max_length=1024, description="Texto del cuerpo con variables {{1}}, {{2}}, etc.")
+    footer_text: Optional[str] = Field(default=None, max_length=60, description="Pie de página opcional")
+    buttons: Optional[List[TemplateButton]] = Field(default=None, description="Botones de respuesta rápida o acción")
+    variable_mappings: Optional[Dict[str, str]] = Field(default=None, description="Mapeo de variables clínicas")
+    sample_values: Optional[List[str]] = Field(default=None, description="Valores reales de ejemplo requeridos por Meta")
+
+
 class RenderPreviewRequest(BaseModel):
     body_text: str
     variable_mappings: Optional[Dict[str, str]] = None
@@ -543,6 +554,176 @@ async def create_template(req: TemplateCreateRequest):
     except Exception as db_err:
         logger.error(f"[Template DB Save Error] {db_err}")
         return {"status": "warning", "message": f"Creada en Meta (ID {meta_id}) pero falló guardado local: {db_err}", "meta": meta_res}
+
+
+@templates_router.put("/{name}", status_code=status.HTTP_200_OK)
+async def update_template(name: str, req: TemplateUpdateRequest):
+    """
+    Edita una plantilla existente en Meta Graph API v21+ utilizando su meta_template_id,
+    preservando su trazabilidad, estadísticas acumuladas y nombre técnico sin crear duplicados.
+    """
+    waba_id, token = get_waba_credentials()
+    if not waba_id or not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Credenciales WABA (WABA ID o Access Token) no configuradas en el sistema."
+        )
+
+    # 1. Obtener la plantilla de la base de datos local
+    tpl_res = supabase.table("whatsapp_templates").select("*").eq("name", name).limit(1).execute()
+    if not tpl_res.data or len(tpl_res.data) == 0:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Plantilla '{name}' no encontrada en el sistema.")
+
+    local_tpl = tpl_res.data[0]
+    meta_template_id = local_tpl.get("meta_template_id")
+
+    # 2. Si no tiene meta_template_id localmente, intentar resolverlo desde Meta
+    if not meta_template_id:
+        lookup_url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates?name={name}"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            lookup_res = await client.get(lookup_url, headers={"Authorization": f"Bearer {token}"})
+            if lookup_res.status_code == 200:
+                meta_matches = lookup_res.json().get("data", [])
+                if meta_matches:
+                    meta_template_id = meta_matches[0].get("id")
+
+    if not meta_template_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No se pudo determinar el ID oficial de Meta para la plantilla '{name}'. Asegúrese de que esté sincronizada."
+        )
+
+    # 3. Construir componentes para Meta Graph API
+    clean_header = clean_header_text(req.header_content) if req.header_type == "TEXT" else None
+    components = []
+
+    # Header
+    if req.header_type == "TEXT" and clean_header:
+        components.append({
+            "type": "HEADER",
+            "format": "TEXT",
+            "text": clean_header
+        })
+
+    # Body
+    body_comp: Dict[str, Any] = {
+        "type": "BODY",
+        "text": req.body_text
+    }
+    var_matches = re.findall(r"\{\{(\d+)\}\}", req.body_text)
+    num_vars = len(set(var_matches))
+    if num_vars > 0:
+        samples = req.sample_values or []
+        default_samples = [
+            "Juan Pérez", "15 de Octubre de 2026", "10:30 hs", "Dr. Gómez", "Clínica Médica", "Consultorio 3"
+        ]
+        while len(samples) < num_vars:
+            idx = len(samples)
+            fallback_val = default_samples[idx] if idx < len(default_samples) else f"Valor {idx+1}"
+            samples.append(fallback_val)
+
+        body_comp["example"] = {
+            "body_text": [samples[:num_vars]]
+        }
+    components.append(body_comp)
+
+    # Footer
+    if req.footer_text:
+        components.append({
+            "type": "FOOTER",
+            "text": req.footer_text
+        })
+
+    # Buttons
+    if req.buttons and len(req.buttons) > 0:
+        buttons_payload = []
+        for b in req.buttons[:3]:
+            if b.type == "QUICK_REPLY":
+                buttons_payload.append({
+                    "type": "QUICK_REPLY",
+                    "text": b.text
+                })
+            elif b.type == "URL" and b.url:
+                clean_url = b.url.strip()
+                if "/presupuesto_{{1}}.pdf" in clean_url:
+                    clean_url = clean_url.replace("/presupuesto_{{1}}.pdf", "/api/presupuestos/pdf/{{1}}")
+                elif "/static/presupuesto_{{1}}.pdf" in clean_url:
+                    clean_url = clean_url.replace("/static/presupuesto_{{1}}.pdf", "/api/presupuestos/pdf/{{1}}")
+
+                url_btn: Dict[str, Any] = {
+                    "type": "URL",
+                    "text": b.text.strip(),
+                    "url": clean_url
+                }
+                if "{{" in clean_url:
+                    if b.example and len(b.example) > 0 and str(b.example[0]).startswith("http"):
+                        url_btn["example"] = b.example
+                    else:
+                        sample_url = clean_url.replace("{{1}}", "demo_presupuesto_123")
+                        sample_url = re.sub(r"\{\{\d+\}\}", "demo123", sample_url)
+                        url_btn["example"] = [sample_url]
+                buttons_payload.append(url_btn)
+            elif b.type == "PHONE_NUMBER" and b.phone_number:
+                buttons_payload.append({
+                    "type": "PHONE_NUMBER",
+                    "text": b.text,
+                    "phone_number": b.phone_number
+                })
+        if buttons_payload:
+            components.append({
+                "type": "BUTTONS",
+                "buttons": buttons_payload
+            })
+
+    # 4. Despachar edición a Meta Graph API: POST /{meta_template_id}
+    meta_payload: Dict[str, Any] = {
+        "components": components
+    }
+    if req.category:
+        meta_payload["category"] = req.category.upper()
+
+    edit_url = f"https://graph.facebook.com/v21.0/{meta_template_id}"
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        res = await client.post(edit_url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+
+    if res.status_code not in (200, 201):
+        err_data = res.json() if res.content else {}
+        err_msg = err_data.get("error", {}).get("message", res.text)
+        logger.error(f"[Template Edit Failed] Status={res.status_code}, Msg={err_msg}")
+
+        # Traducir error común de rate limit de 24 horas de Meta
+        if "24 hours" in err_msg.lower() or "once every" in err_msg.lower():
+            friendly_detail = "Meta permite editar una plantilla únicamente 1 vez cada 24 horas. Por favor espera a que transcurra el plazo antes de enviar una nueva edición."
+        else:
+            friendly_detail = f"Meta rechazó la actualización: {err_msg}"
+
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=friendly_detail)
+
+    meta_res = res.json()
+    new_meta_status = meta_res.get("status", "PENDING")
+
+    # 5. Actualizar en Supabase
+    update_record = {
+        "meta_template_id": meta_template_id,
+        "category": req.category.upper() if req.category else local_tpl.get("category", "UTILITY"),
+        "status": new_meta_status,
+        "header_type": req.header_type,
+        "header_content": clean_header,
+        "body_text": req.body_text,
+        "footer_text": req.footer_text,
+        "buttons": [b.model_dump() for b in req.buttons] if req.buttons else [],
+        "variable_mappings": req.variable_mappings or local_tpl.get("variable_mappings", {}),
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    supabase.table("whatsapp_templates").update(update_record).eq("name", name).execute()
+
+    return {
+        "status": "success",
+        "name": name,
+        "meta_template_id": meta_template_id,
+        "template_status": new_meta_status,
+        "message": f"Plantilla '{name}' actualizada con éxito en Meta. Estado actual: {new_meta_status}."
+    }
 
 
 @templates_router.delete("/{name}", status_code=status.HTTP_200_OK)

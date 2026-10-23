@@ -27,7 +27,8 @@ import {
   Search,
   Link as LinkIcon,
   ExternalLink,
-  Zap
+  Zap,
+  Pencil
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import WhatsAppPhoneSimulator from './whatsapp/WhatsAppPhoneSimulator'
@@ -400,6 +401,7 @@ export default function WhatsAppTemplatesSettingsCard() {
 
   // Modal de Creación / Edición
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false)
+  const [editingTemplate, setEditingTemplate] = useState<TemplateItem | null>(null)
   const [creating, setCreating] = useState<boolean>(false)
   const [errorFeedback, setErrorFeedback] = useState<string | null>(null)
   const [successFeedback, setSuccessFeedback] = useState<string | null>(null)
@@ -619,26 +621,72 @@ export default function WhatsAppTemplatesSettingsCard() {
         sample_values: orderedSampleValues
       }
 
-      const res = await apiFetch('/api/whatsapp/cloud/templates', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
+      if (editingTemplate) {
+        // Actualizar plantilla existente en Meta sin crear duplicados (PUT)
+        const res = await apiFetch(`/api/whatsapp/cloud/templates/${editingTemplate.name}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        })
 
-      const data = await res.json()
-      if (res.ok) {
-        setSuccessFeedback(`¡Plantilla '${payload.name}' enviada con éxito a Meta! Estado inicial: ${data.template?.status || 'PENDING'}`)
-        setTimeout(() => setSuccessFeedback(null), 5000)
-        setIsCreateModalOpen(false)
-        resetForm()
-        fetchTemplates()
+        const data = await res.json()
+        if (res.ok) {
+          setSuccessFeedback(`¡Plantilla '${editingTemplate.name}' actualizada con éxito y enviada a revisión en Meta! Estado: ${data.template_status || 'PENDING'}`)
+          setTimeout(() => setSuccessFeedback(null), 6000)
+          setIsCreateModalOpen(false)
+          resetForm()
+          fetchTemplates()
+        } else {
+          setErrorFeedback(data.detail || 'Meta rechazó la actualización de la plantilla.')
+        }
       } else {
-        setErrorFeedback(data.detail || 'Meta rechazó la plantilla. Revisa el formato.')
+        // Crear nueva plantilla en Meta (POST)
+        const res = await apiFetch('/api/whatsapp/cloud/templates', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        })
+
+        const data = await res.json()
+        if (res.ok) {
+          setSuccessFeedback(`¡Plantilla '${payload.name}' enviada con éxito a Meta! Estado inicial: ${data.template?.status || 'PENDING'}`)
+          setTimeout(() => setSuccessFeedback(null), 5000)
+          setIsCreateModalOpen(false)
+          resetForm()
+          fetchTemplates()
+        } else {
+          setErrorFeedback(data.detail || 'Meta rechazó la plantilla. Revisa el formato.')
+        }
       }
     } catch (err: any) {
       setErrorFeedback(`Error en la solicitud: ${err.message}`)
     } finally {
       setCreating(false)
     }
+  }
+
+  // Cargar plantilla en modo edición
+  const handleStartEdit = (tpl: TemplateItem) => {
+    setEditingTemplate(tpl)
+    setName(tpl.name)
+    setCategory(tpl.category === 'MARKETING' ? 'MARKETING' : 'UTILITY')
+    setLanguage(tpl.language || 'es_AR')
+    setHeaderType(tpl.header_type || 'NONE')
+    setHeaderContent(tpl.header_content || '')
+    setBodyText(tpl.body_text || '')
+    setFooterText(tpl.footer_text || '')
+    setButtons(tpl.buttons && tpl.buttons.length > 0 ? tpl.buttons : [])
+    setVariableMappings(tpl.variable_mappings || {})
+
+    // Autogenerar valores de muestra para previsualización
+    const samples: Record<string, string> = {}
+    const varMatches = Array.from(new Set((tpl.body_text.match(/\{\{(\d+)\}\}/g) || []).map(m => m.replace(/\D/g, ''))))
+    varMatches.forEach(vNum => {
+      const fieldId = tpl.variable_mappings ? tpl.variable_mappings[vNum] : null
+      const foundVar = fieldId ? CLINICAL_VARIABLES.find(v => v.id === fieldId) : null
+      samples[vNum] = foundVar ? foundVar.sample : `Muestra ${vNum}`
+    })
+    setSampleValues(samples)
+    setErrorFeedback(null)
+    setIsCreateModalOpen(true)
   }
 
   // Eliminar plantilla
@@ -690,12 +738,13 @@ export default function WhatsAppTemplatesSettingsCard() {
   }
 
   const resetForm = () => {
+    setEditingTemplate(null)
     setName('')
     setCategory('UTILITY')
     setHeaderType('TEXT')
     setHeaderContent('')
     setBodyText('')
-    setFooterText('MedCRM • Clínica Médica')
+    setFooterText('Centrovisión Oftalmología Integral')
     setButtons([{ type: 'QUICK_REPLY', text: 'Confirmar Turno' }])
     setVariableMappings({})
     setSampleValues({})
@@ -1137,16 +1186,26 @@ export default function WhatsAppTemplatesSettingsCard() {
 
                 {/* Acciones de la Tarjeta */}
                 <div className="pt-3 border-t border-[#1e2d42] flex items-center justify-between mt-2">
-                  <button
-                    onClick={() => setPreviewTemplate(tpl)}
-                    className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-colors cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" /> Ver en Simulador
-                  </button>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      onClick={() => setPreviewTemplate(tpl)}
+                      className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-colors cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> Ver en Simulador
+                    </button>
+
+                    <button
+                      onClick={() => handleStartEdit(tpl)}
+                      className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 font-medium transition-colors cursor-pointer"
+                      title="Editar contenido y revalidar en Meta manteniendo trazabilidad"
+                    >
+                      <Pencil className="w-3.5 h-3.5" /> Editar
+                    </button>
+                  </div>
 
                   <button
                     onClick={() => handleDeleteTemplate(tpl.name)}
-                    className="text-slate-400 hover:text-red-400 transition-colors p-1 rounded"
+                    className="text-slate-400 hover:text-red-400 transition-colors p-1 rounded cursor-pointer"
                     title="Eliminar plantilla"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -1168,11 +1227,23 @@ export default function WhatsAppTemplatesSettingsCard() {
             <div className="px-6 py-4 border-b border-[#1e2d42] flex items-center justify-between">
               <div>
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-emerald-400" />
-                  Diseñador de Plantilla WhatsApp (Meta Graph API v21+)
+                  {editingTemplate ? (
+                    <>
+                      <Pencil className="w-5 h-5 text-cyan-400" />
+                      Editar Plantilla en Meta (Actualizar Contenido)
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-5 h-5 text-emerald-400" />
+                      Diseñador de Plantilla WhatsApp (Meta Graph API v21+)
+                    </>
+                  )}
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Redacta el mensaje, inserta variables clínicas y previsualiza en tiempo real el teléfono de WhatsApp.
+                  {editingTemplate 
+                    ? `Modifica el texto o componentes de '${editingTemplate.name}'. Meta revisará la actualización manteniendo intacta la trazabilidad y métricas.`
+                    : 'Redacta el mensaje, inserta variables clínicas y previsualiza en tiempo real el teléfono de WhatsApp.'
+                  }
                 </p>
               </div>
               <button 
@@ -1187,40 +1258,54 @@ export default function WhatsAppTemplatesSettingsCard() {
             <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
               {/* Columna Izquierda: Formulario (7 Cols) */}
               <form onSubmit={handleCreateTemplate} className="lg:col-span-7 space-y-4">
-                {/* Accesos Rápidos de Plantillas Pre-diseñadas */}
-                <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-xl p-3">
-                  <div className="text-xs font-semibold text-emerald-300 mb-1.5 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5" /> Plantillas Médicas Pre-armadas (1 Clic)
+                {/* Accesos Rápidos de Plantillas Pre-diseñadas (Solo si es nueva plantilla) */}
+                {!editingTemplate && (
+                  <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-xl p-3">
+                    <div className="text-xs font-semibold text-emerald-300 mb-1.5 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5" /> Plantillas Médicas Pre-armadas (1 Clic)
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PREMADE_TEMPLATES.map((pm, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleLoadPremade(pm)}
+                          className="px-2.5 py-1 bg-[#1a2738] hover:bg-[#25374d] text-emerald-300 rounded-md text-xs font-medium border border-emerald-800/40 shadow-2xs transition-colors"
+                        >
+                          {pm.title}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {PREMADE_TEMPLATES.map((pm, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => handleLoadPremade(pm)}
-                        className="px-2.5 py-1 bg-[#1a2738] hover:bg-[#25374d] text-emerald-300 rounded-md text-xs font-medium border border-emerald-800/40 shadow-2xs transition-colors"
-                      >
-                        {pm.title}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                )}
 
                 {/* Nombre y Categoría */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      Nombre Técnico (Meta) *
+                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Nombre Técnico (Meta) *</span>
+                      {editingTemplate && (
+                        <span className="text-[10px] text-cyan-400 font-normal">Inmutable en Meta</span>
+                      )}
                     </label>
                     <input
                       type="text"
                       value={name}
+                      disabled={!!editingTemplate}
                       onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
                       placeholder="ej: recordatorio_turno_medico"
-                      className="w-full px-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500"
+                      className={`w-full px-3 py-2 border rounded-lg text-sm text-white font-mono text-xs focus:ring-2 focus:ring-emerald-500 ${
+                        editingTemplate 
+                          ? 'bg-[#0f1722] border-slate-700/60 opacity-80 cursor-not-allowed text-slate-300' 
+                          : 'bg-[#162232] border-[#233348]'
+                      }`}
                       required
                     />
-                    <span className="text-[10px] text-slate-400 mt-0.5 block">Solo minúsculas, números y guiones bajos.</span>
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                      {editingTemplate 
+                        ? 'Se actualiza la plantilla existente sin crear duplicados.' 
+                        : 'Solo minúsculas, números y guiones bajos.'}
+                    </span>
                   </div>
 
                   <div>
@@ -1505,17 +1590,21 @@ export default function WhatsAppTemplatesSettingsCard() {
                   type="button"
                   disabled={creating}
                   onClick={handleCreateTemplate}
-                  className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-semibold shadow-md transition-colors disabled:opacity-50"
+                  className={`flex items-center gap-2 px-5 py-2 text-white rounded-lg text-sm font-semibold shadow-md transition-colors disabled:opacity-50 cursor-pointer ${
+                    editingTemplate 
+                      ? 'bg-cyan-600 hover:bg-cyan-500 shadow-cyan-600/20' 
+                      : 'bg-emerald-600 hover:bg-emerald-500'
+                  }`}
                 >
                   {creating ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Enviando a Meta...</span>
+                      <span>{editingTemplate ? 'Actualizando en Meta...' : 'Enviando a Meta...'}</span>
                     </>
                   ) : (
                     <>
-                      <Send className="w-4 h-4" />
-                      <span>Guardar y Enviar a Revisión</span>
+                      {editingTemplate ? <Pencil className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                      <span>{editingTemplate ? 'Guardar Cambios y Revalidar en Meta' : 'Guardar y Enviar a Revisión'}</span>
                     </>
                   )}
                 </button>
