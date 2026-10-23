@@ -9,6 +9,7 @@ import {
   Terminal, 
   BookOpen, 
   FileCheck, 
+  FileText,
   ShieldCheck, 
   Stethoscope, 
   CalendarClock, 
@@ -39,6 +40,7 @@ import SurgicalSettingsCard from '@/components/settings/SurgicalSettingsCard'
 import QuirofanoSettingsCard from '@/components/settings/QuirofanoSettingsCard'
 import PrestadoresSettingsCard from '@/components/settings/PrestadoresSettingsCard'
 import LioSettingsCard from '@/components/settings/LioSettingsCard'
+import CaratulaEstudiosSettingsCard from '@/components/settings/CaratulaEstudiosSettingsCard'
 import { usePermissions } from '@/hooks/usePermissions'
 
 type TabType = 
@@ -53,6 +55,7 @@ type TabType =
   | 'clinica' 
   | 'nomenclador' 
   | 'plantilla_presupuesto' 
+  | 'caratula_estudios'
   | 'seguridad' 
   | 'logs'
 
@@ -68,6 +71,7 @@ const TAB_PERMISSION_MAP: Record<TabType, string> = {
   clinica: 'ver_clinica',
   nomenclador: 'ver_nomencladores',
   plantilla_presupuesto: 'ver_plantilla_presupuesto',
+  caratula_estudios: 'ver_clinica',
   seguridad: 'ver_seguridad',
   logs: 'ver_logs',
 }
@@ -118,6 +122,7 @@ const tabCategories: TabCategory[] = [
       { id: 'clinica', label: 'Perfil del Centro Médico', icon: Building2, description: 'Datos y membrete institucional' },
       { id: 'nomenclador', label: 'Nomencladores & Aranceles', icon: BookOpen, description: 'Catálogo de prácticas y valores' },
       { id: 'plantilla_presupuesto', label: 'Diseñador de Presupuestos', icon: FileCheck, description: 'Plantillas y estilo PDF' },
+      { id: 'caratula_estudios', label: 'Carátula de Estudios', icon: FileText, description: 'Diseñador de membretes y portadas para estudios diagnósticos', badge: 'Híbrido' },
     ]
   },
   {
@@ -480,6 +485,7 @@ function AjustesContent() {
             {activeTab === 'clinica' && isTabAllowed('clinica') && <ClinicProfileCard />}
             {activeTab === 'nomenclador' && isTabAllowed('nomenclador') && <NomencladorSettingsCard />}
             {activeTab === 'plantilla_presupuesto' && isTabAllowed('plantilla_presupuesto') && <BudgetTemplateDesignerCard />}
+            {activeTab === 'caratula_estudios' && isTabAllowed('caratula_estudios') && <CaratulaEstudiosSettingsCard />}
             {activeTab === 'seguridad' && isTabAllowed('seguridad') && <SecuritySettingsCard />}
             {activeTab === 'logs' && isTabAllowed('logs') && <SystemLogsCard />}
           </div>

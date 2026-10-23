@@ -65,6 +65,27 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "texto_firma": "Firma y Sello Profesional / Autorización Médica",
         "logo_url": "",
         "mostrar_logo": True
+    },
+    "caratula_estudios": {
+        "activo": True,
+        "modo_hibrido": True,
+        "titulo_informe": "INFORME DE DIAGNÓSTICO OFTALMOLÓGICO",
+        "subtitulo": "CENTROVISIÓN • OFTALMOLOGÍA INTEGRAL",
+        "color_primario": "#007A87",
+        "color_secundario": "#0F172A",
+        "mostrar_ficha": True,
+        "mostrar_tecnico": True,
+        "mostrar_cobertura": True,
+        "mostrar_sedes": True,
+        "sedes": [
+            "Mitre 540 | Ciudad de Mendoza",
+            "Roca 71 | Luján de Cuyo | Mendoza",
+            "Boedo 2879 | Carrodilla - Luján de Cuyo"
+        ],
+        "telefono_0800": "0-800-222-4040",
+        "whatsapp_contacto": "261 553-0888",
+        "texto_indicaciones": "Presente este informe a su médico oftalmólogo en su próxima consulta de control.",
+        "pie_legal": "Documento e informe técnico generado electrónicamente por Centrovisión Oftalmología Integral."
     }
 }
 

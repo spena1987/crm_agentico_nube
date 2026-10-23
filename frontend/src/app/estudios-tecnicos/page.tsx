@@ -150,6 +150,7 @@ export default function EstudiosTecnicosPage() {
   // Paso 3: Archivos (Drag & Drop + Ctrl+V)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [unificarEnPdf, setUnificarEnPdf] = useState(true)
+  const [aplicarCaratula, setAplicarCaratula] = useState(true)
   const [guardarEnGeclisa, setGuardarEnGeclisa] = useState(true)
   const [enviarWhatsapp, setEnviarWhatsapp] = useState(true)
   const [isDragging, setIsDragging] = useState(false)
@@ -470,6 +471,7 @@ export default function EstudiosTecnicosPage() {
       formData.append('ojo', ojo)
       formData.append('observaciones', observaciones.trim())
       formData.append('unificar_en_pdf', String(unificarEnPdf))
+      formData.append('aplicar_caratula', String(aplicarCaratula))
       formData.append('guardar_en_geclisa', String(guardarEnGeclisa))
       formData.append('enviar_whatsapp', String(enviarWhatsapp))
       if (enviarWhatsapp && plantillaSeleccionada && plantillaSeleccionada !== 'auto') {
@@ -1246,7 +1248,7 @@ export default function EstudiosTecnicosPage() {
 
               {/* Opciones de destino */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <div className="flex items-center gap-4 text-xs">
+                <div className="flex flex-wrap items-center gap-4 text-xs">
                   <label className="flex items-center gap-1.5 cursor-pointer font-semibold">
                     <input
                       type="checkbox"
@@ -1264,6 +1266,15 @@ export default function EstudiosTecnicosPage() {
                       className="h-4 w-4 accent-cyan-600 rounded"
                     />
                     <span>Enviar por WhatsApp (Línea 2)</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-teal-600 dark:text-teal-400">
+                    <input
+                      type="checkbox"
+                      checked={aplicarCaratula}
+                      onChange={(e) => setAplicarCaratula(e.target.checked)}
+                      className="h-4 w-4 accent-teal-600 rounded"
+                    />
+                    <span>Incluir membrete institucional Centrovisión</span>
                   </label>
                 </div>
 

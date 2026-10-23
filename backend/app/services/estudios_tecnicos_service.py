@@ -1144,7 +1144,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
     usuario_id: Optional[str] = Form(None),
     usuario_nombre: Optional[str] = Form(None),
     tecnico_pre_id: Optional[int] = Form(None),
-    plantilla_whatsapp: Optional[str] = Form(None)
+    plantilla_whatsapp: Optional[str] = Form(None),
+    aplicar_caratula: bool = Form(True)
 ):
     """
     Flujo Maestro de Estudios Oftalmológicos:
@@ -1230,11 +1231,40 @@ async def enviar_y_archivar_estudio_oftalmologico(
     titulo_geclisa = f"Estudio - {titulo_estudio_limpio}"[:45]
     titulo_completo = titulo_geclisa
 
-    final_bytes, final_filename, final_mime = _consolidate_or_optimize_files_in_ram(
-        files_data=raw_files,
-        unificar_en_pdf=unificar_en_pdf,
-        base_filename=base_fname
-    )
+    if aplicar_caratula:
+        try:
+            from app.services.caratula_estudios_service import componer_estudio_hibrido
+            paciente_meta = {
+                "nombre": nombre_paciente,
+                "dni": dni_limpio,
+                "ficha_id": geclisa_ficha_id,
+                "geclisa_ficha_id": geclisa_ficha_id
+            }
+            estudio_meta = {
+                "tipo_estudio": tipo_estudio,
+                "ojo": ojo,
+                "tecnico_nombre": resolved_tecnico_nombre,
+                "observaciones": observaciones
+            }
+            final_bytes, final_filename, final_mime = componer_estudio_hibrido(
+                files_data=raw_files,
+                paciente_info=paciente_meta,
+                estudio_info=estudio_meta,
+                base_filename=base_fname
+            )
+        except Exception as e:
+            logger.error(f"Aviso componiendo caratula hibrida de estudio: {e}. Aplicando consolidacion plana de respaldo.")
+            final_bytes, final_filename, final_mime = _consolidate_or_optimize_files_in_ram(
+                files_data=raw_files,
+                unificar_en_pdf=unificar_en_pdf,
+                base_filename=base_fname
+            )
+    else:
+        final_bytes, final_filename, final_mime = _consolidate_or_optimize_files_in_ram(
+            files_data=raw_files,
+            unificar_en_pdf=unificar_en_pdf,
+            base_filename=base_fname
+        )
 
     obs_geclisa = (observaciones or "").strip()
     if obs_geclisa:
@@ -1819,3 +1849,50 @@ async def update_whatsapp_line_business_profile(payload: UpdateBusinessProfilePa
             raise HTTPException(status_code=400, detail=data.get("error", {}).get("message", res.text))
 
     return await get_whatsapp_line_business_profile(target_phone_id)
+
+
+@estudios_router.get("/api/estudios-tecnicos/preview-caratula")
+async def preview_caratula_estudio(
+    modo: str = "a4",
+    tipo_estudio: str = "OCT Macular y Papilar",
+    ojo: str = "AO"
+):
+    """
+    Genera un PDF de previsualización en vivo de la carátula de estudios
+    para el Diseñador en Ajustes.
+    modo: 'a4' (Carátula de informe completa) o 'mobile' (Lámina mobile-first con imagen de muestra)
+    """
+    from fastapi.responses import Response
+    from app.services.caratula_estudios_service import (
+        generar_portada_pdf_a4,
+        componer_lamina_digital_imagen,
+        _get_caratula_config
+    )
+    paciente_demo = {
+        "nombre": "PEÑA, JUAN SEBASTIAN",
+        "dni": "33516799",
+        "geclisa_ficha_id": 242646,
+        "obra_social": "OSDE",
+        "plan": "210"
+    }
+    estudio_demo = {
+        "tipo_estudio": tipo_estudio,
+        "ojo": ojo,
+        "tecnico_nombre": "TARIFEÑO, CAMILA",
+        "observaciones": "Control oftalmológico preventivo"
+    }
+    cfg = _get_caratula_config()
+
+    if modo == "mobile":
+        from PIL import Image, ImageDraw
+        dummy_img = Image.new("RGB", (900, 600), (15, 23, 42))
+        d = ImageDraw.Draw(dummy_img)
+        d.rectangle([30, 30, 870, 570], outline=(0, 122, 135), width=3)
+        d.text((150, 280), f"SCANNER {tipo_estudio.upper()} ({ojo})", fill=(255, 255, 255))
+        buf = io.BytesIO()
+        dummy_img.save(buf, format="JPEG")
+        pdf_bytes = componer_lamina_digital_imagen(buf.getvalue(), paciente_demo, estudio_demo, config=cfg)
+    else:
+        pdf_bytes = generar_portada_pdf_a4(paciente_demo, estudio_demo, config=cfg)
+
+    return Response(content=pdf_bytes, media_type="application/pdf")
