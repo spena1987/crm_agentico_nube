@@ -27,13 +27,20 @@ import {
   ClipboardPaste,
   FolderOpen,
   RotateCcw,
-  MessageSquare
+  MessageSquare,
+  ChevronDown
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
-import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
+import {
+  formatPhoneDisplay,
+  normalizePhoneNumber,
+  extractLocalArgentineNumber,
+  cleanLocalInputDigits,
+  assembleInternationalPhone
+} from '@/lib/phoneUtils'
 
 const ESTUDIOS_PRESETS = [
   'OCT Macular y Papilar',
@@ -132,8 +139,10 @@ export default function EstudiosTecnicosPage() {
   const [archivosGeclisa, setArchivosGeclisa] = useState<ArchivoGeclisaItem[]>([])
   const [showArchivosGeclisa, setShowArchivosGeclisa] = useState(false)
 
-  // Paso 2: Datos del Estudio y Teléfono
-  const [telefonoDestino, setTelefonoDestino] = useState('')
+  // Paso 2: Datos del Estudio y Teléfono (Estrategia 1: Prefijo Fijo + Celular Local)
+  const [codigoPais, setCodigoPais] = useState('549')
+  const [telefonoLocal, setTelefonoLocal] = useState('')
+  const telefonoDestino = assembleInternationalPhone(telefonoLocal, codigoPais)
   const [tipoEstudio, setTipoEstudio] = useState('OCT Macular y Papilar')
   const [ojo, setOjo] = useState<'AO' | 'OD' | 'OI'>('AO')
   const [observaciones, setObservaciones] = useState('')
@@ -357,7 +366,9 @@ export default function EstudiosTecnicosPage() {
       }
 
       setPaciente(normalizedPaciente)
-      setTelefonoDestino(normalizedPaciente.telefono_normalizado || normalizedPaciente.telefono_geclisa || '')
+      const rawTel = normalizedPaciente.telefono_geclisa || normalizedPaciente.telefono_normalizado || ''
+      setTelefonoLocal(extractLocalArgentineNumber(rawTel))
+      setCodigoPais('549')
 
       const rawArchivos = Array.isArray(data.archivos_geclisa) ? data.archivos_geclisa : []
       const normalizedArchivos: ArchivoGeclisaItem[] = rawArchivos.map((arc: any) => ({
@@ -425,11 +436,19 @@ export default function EstudiosTecnicosPage() {
       })
       return
     }
-    if (enviarWhatsapp && !telefonoDestino.trim()) {
+    if (enviarWhatsapp && (!telefonoLocal.trim() || !telefonoDestino.trim())) {
       setFeedback({
         type: 'error',
         title: 'Teléfono requerido',
         detail: 'Ingresa el número de celular del paciente para enviar el estudio por WhatsApp.'
+      })
+      return
+    }
+    if (enviarWhatsapp && codigoPais === '549' && telefonoLocal.length < 10) {
+      setFeedback({
+        type: 'error',
+        title: 'Celular incompleto',
+        detail: `El celular para Argentina debe tener 10 dígitos (código de área + número, ej: 261 470 3230). Actualmente tiene ${telefonoLocal.length} dígitos.`
       })
       return
     }
@@ -596,19 +615,21 @@ export default function EstudiosTecnicosPage() {
   }
 
   const handleReintentarWhatsapp = async (item: EstudioHistorialItem) => {
+    const defaultLocal = extractLocalArgentineNumber(item.telefono_destino || telefonoDestino)
     const nuevoTel = window.prompt(
-      `Confirmar o corregir número de WhatsApp para ${item.nombre_paciente}:`,
-      item.telefono_destino || telefonoDestino
+      `Confirmar o corregir celular de WhatsApp para ${item.nombre_paciente} (código de área + número, sin 0 ni 15):\nEjemplo: 261 470 3230`,
+      defaultLocal || item.telefono_destino || ''
     )
     if (!nuevoTel) return
 
+    const normalizedTel = normalizePhoneNumber(nuevoTel.trim())
     setReintentandoId(item.id)
     setFeedback(null)
     try {
       const res = await apiFetch(`/api/estudios-tecnicos/${item.id}/reintentar-whatsapp`, {
         method: 'POST',
         body: JSON.stringify({
-          telefono: nuevoTel.trim(),
+          telefono: normalizedTel,
           plantilla_whatsapp: plantillaSeleccionada !== 'auto' ? plantillaSeleccionada : undefined
         })
       })
@@ -899,22 +920,74 @@ export default function EstudiosTecnicosPage() {
                   </div>
                 )}
 
-                {/* Campo editable de Celular para WhatsApp */}
+                {/* Campo editable de Celular para WhatsApp con Prefijo Fijo (+54 9) y Entrada Local */}
                 <div className="pt-1">
-                  <label className="block text-xs font-bold text-[var(--foreground)] mb-1 flex items-center gap-1.5">
-                    <Phone size={13} className="text-cyan-600" />
-                    Celular del Paciente (Editable si cambió)
-                  </label>
-                  <input
-                    type="text"
-                    value={telefonoDestino}
-                    onChange={(e) => setTelefonoDestino(e.target.value)}
-                    placeholder="Ej: 2614703230 o 5492614703230"
-                    className="w-full px-3.5 py-2 rounded-xl text-sm font-mono bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                  />
-                  {telefonoDestino && (
-                    <p className="text-[11px] text-cyan-600 dark:text-cyan-400 font-semibold mt-1">
-                      Destino WhatsApp: <strong>{formatPhoneDisplay(telefonoDestino)}</strong> ({normalizePhoneNumber(telefonoDestino)})
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+                      <Phone size={13} className="text-cyan-500" />
+                      Celular del Paciente (Editable si cambió)
+                    </label>
+                    <span className="text-[10px] text-[var(--secondary)] font-medium">
+                      Área + Número (sin 0 ni 15)
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Badge / Selector de Prefijo de País */}
+                    <div className="relative shrink-0">
+                      <select
+                        value={codigoPais}
+                        onChange={(e) => setCodigoPais(e.target.value)}
+                        className="appearance-none bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700/80 border border-[var(--border)] text-xs font-bold px-3 py-2.5 pr-7 rounded-xl cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-500 text-[var(--foreground)] transition-colors shadow-sm"
+                        title="Prefijo internacional para WhatsApp"
+                      >
+                        <option value="549">🇦🇷 +54 9 (Arg)</option>
+                        <option value="569">🇨🇱 +56 9 (Chile)</option>
+                        <option value="598">🇺🇾 +598 (Uruguay)</option>
+                        <option value="55">🇧🇷 +55 (Brasil)</option>
+                        <option value="">🌐 + (Otro)</option>
+                      </select>
+                      <ChevronDown size={12} className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--secondary)]" />
+                    </div>
+
+                    {/* Input de dígitos locales */}
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={telefonoLocal}
+                        onChange={(e) => setTelefonoLocal(cleanLocalInputDigits(e.target.value, codigoPais))}
+                        placeholder={codigoPais === '549' ? 'Ej: 261 470 3230 o 11 4123 4567' : 'Número móvil sin prefijo'}
+                        className="w-full px-3.5 py-2.5 rounded-xl text-sm font-mono bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500 placeholder:text-slate-400 dark:placeholder:text-slate-500 shadow-sm"
+                      />
+                      {telefonoLocal && (
+                        <button
+                          type="button"
+                          onClick={() => setTelefonoLocal('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs px-1.5 py-0.5 rounded"
+                          title="Limpiar número"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Resumen dinámico y validación visual */}
+                  {telefonoLocal ? (
+                    <div className="flex items-center gap-1.5 mt-2 text-[11px] text-cyan-600 dark:text-cyan-400 font-semibold">
+                      <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />
+                      <span>
+                        Destino WhatsApp verificado: <strong>{formatPhoneDisplay(telefonoDestino)}</strong>
+                      </span>
+                      {codigoPais === '549' && telefonoLocal.length < 10 && (
+                        <span className="text-amber-500 text-[10px] font-normal ml-auto">
+                          (Faltan {10 - telefonoLocal.length} dígitos para los 10 de Argentina)
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1.5">
+                      Ingresá solo el código de área y el número (sin 0 y sin 15). Ej: para Mendoza <span className="font-mono text-cyan-500">261 470-3230</span>, CABA/GBA <span className="font-mono text-cyan-500">11 4123-4567</span>.
                     </p>
                   )}
                 </div>
