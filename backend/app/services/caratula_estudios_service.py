@@ -25,6 +25,19 @@ BANNER_LOCAL_PATH = os.path.join(
 )
 
 
+def _load_pil_font(candidates: List[str], size: int) -> ImageFont.ImageFont:
+    """Intenta cargar la primera fuente válida en candidates o usa el fallback vectorial con tamaño explícito."""
+    for font_name in candidates:
+        try:
+            return ImageFont.truetype(font_name, size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+
 def _get_caratula_config() -> Dict[str, Any]:
     """Obtiene la configuración activa de carátulas desde el servicio de configuración central."""
     try:
@@ -409,15 +422,26 @@ def componer_lamina_digital_imagen(
     fecha_str = estudio.get("fecha_str") or datetime.now().strftime("%d/%m/%Y")
     tecnico_str = (estudio.get("tecnico_nombre") or "").upper()
 
-    # Tipografía por defecto
-    try:
-        font_title = ImageFont.truetype("arialbd.ttf", 26)
-        font_badge = ImageFont.truetype("arialbd.ttf", 22)
-        font_info = ImageFont.truetype("arial.ttf", 19)
-        font_bold = ImageFont.truetype("arialbd.ttf", 19)
-        font_footer = ImageFont.truetype("arial.ttf", 15)
-    except Exception:
-        font_title = font_badge = font_info = font_bold = font_footer = ImageFont.load_default()
+    # Tipografía adaptativa para Windows y Linux (servidor Railway)
+    bold_fonts = [
+        "DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "arialbd.ttf",
+        "LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+    ]
+    reg_fonts = [
+        "DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "arial.ttf",
+        "LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+    ]
+    font_title = _load_pil_font(bold_fonts, 26)
+    font_badge = _load_pil_font(bold_fonts, 22)
+    font_info = _load_pil_font(reg_fonts, 19)
+    font_bold = _load_pil_font(bold_fonts, 19)
+    font_footer = _load_pil_font(reg_fonts, 15)
 
     # Texto Fila 1 en barra
     draw.text((60, bar_y1 + 16), tipo_estudio[:45], fill=(15, 23, 42), font=font_title)
