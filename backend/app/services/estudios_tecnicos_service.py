@@ -1586,3 +1586,129 @@ def listar_historial_estudios_enviados(
     except Exception as e:
         logger.error(f"[Estudios] Error listando historial de estudios: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+class UpdateBusinessProfilePayload(BaseModel):
+    phone_number_id: Optional[str] = None
+    about: Optional[str] = "Centrovisión - Envío de Estudios Oftalmológicos"
+    address: Optional[str] = "Avenida Mitre 540 - Ciudad - Mendoza - Argentina"
+    description: Optional[str] = (
+        "Canal oficial exclusivo para el envío digital de estudios e informes oftalmológicos "
+        "de Centrovisión Clínica Oftalmológica. Para turnos o consultas comunicate al +54 9 261 553-0888."
+    )
+    email: Optional[str] = None
+    website: Optional[str] = "https://centrovision.com.ar/"
+    vertical: Optional[str] = "HEALTH"
+    copy_logo_from_line1: Optional[bool] = True
+
+
+@estudios_router.get("/api/whatsapp/line-profile")
+async def get_whatsapp_line_business_profile(phone_number_id: Optional[str] = Query(None)):
+    """
+    Obtiene desde Meta Graph API el perfil público comercial (`whatsapp_business_profile`)
+    del número de Estudios Oftalmológicos (Foto, Estado/About, Dirección, Descripción, Web, Categoría).
+    """
+    import httpx
+    _, token = get_whatsapp_cloud_credentials()
+    target_phone_id = (phone_number_id or "").strip()
+    if not target_phone_id:
+        target_phone_id, _ = get_whatsapp_estudios_credentials()
+    if not target_phone_id or not token:
+        raise HTTPException(status_code=400, detail="Phone Number ID o Access Token no configurados.")
+
+    url = (
+        f"https://graph.facebook.com/v21.0/{target_phone_id}/whatsapp_business_profile"
+        f"?fields=about,address,description,email,profile_picture_url,websites,vertical"
+    )
+    async with httpx.AsyncClient(timeout=15.0) as hc:
+        res = await hc.get(url, headers={"Authorization": f"Bearer {token}"})
+        data = res.json() if res.content else {}
+        if res.status_code >= 400:
+            raise HTTPException(status_code=400, detail=data.get("error", {}).get("message", res.text))
+        items = data.get("data") or []
+        profile = items[0] if items else {}
+        return {
+            "success": True,
+            "phone_number_id": target_phone_id,
+            "waba_id": get_whatsapp_waba_id(),
+            "profile": profile
+        }
+
+
+@estudios_router.put("/api/whatsapp/line-profile")
+async def update_whatsapp_line_business_profile(payload: UpdateBusinessProfilePayload):
+    """
+    Actualiza directamente en Meta Graph API el perfil público de WhatsApp Business
+    (`POST /v21.0/{phone_number_id}/whatsapp_business_profile`) de la Línea 2 (Estudios),
+    y opcionalmente sincroniza el logo institucional desde la Línea 1.
+    """
+    import httpx
+    q_phone_id, token = get_whatsapp_cloud_credentials()
+    target_phone_id = (payload.phone_number_id or "").strip()
+    if not target_phone_id:
+        target_phone_id, _ = get_whatsapp_estudios_credentials()
+    if not target_phone_id or not token:
+        raise HTTPException(status_code=400, detail="Phone Number ID o Access Token no configurados.")
+
+    meta_body: Dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "vertical": (payload.vertical or "HEALTH").strip()
+    }
+    if payload.about is not None:
+        meta_body["about"] = payload.about.strip()[:139]
+    if payload.address is not None:
+        meta_body["address"] = payload.address.strip()[:256]
+    if payload.description is not None:
+        meta_body["description"] = payload.description.strip()[:512]
+    if payload.email:
+        meta_body["email"] = payload.email.strip()[:128]
+    if payload.website:
+        meta_body["websites"] = [payload.website.strip()]
+
+    async with httpx.AsyncClient(timeout=25.0) as hc:
+        if payload.copy_logo_from_line1 and q_phone_id:
+            try:
+                p1_res = await hc.get(
+                    f"https://graph.facebook.com/v21.0/{q_phone_id}/whatsapp_business_profile?fields=profile_picture_url",
+                    headers={"Authorization": f"Bearer {token}"}
+                )
+                p1_data = (p1_res.json().get("data") or [{}])[0]
+                pic_url = p1_data.get("profile_picture_url")
+                if pic_url:
+                    img_resp = await hc.get(pic_url)
+                    if img_resp.status_code == 200 and img_resp.content:
+                        img_bytes = img_resp.content
+                        app_res = await hc.get(
+                            "https://graph.facebook.com/v21.0/app",
+                            headers={"Authorization": f"Bearer {token}"}
+                        )
+                        app_id = app_res.json().get("id") or "1611907453862739"
+                        up_sess = await hc.post(
+                            f"https://graph.facebook.com/v21.0/{app_id}/uploads",
+                            params={"file_length": len(img_bytes), "file_type": "image/jpeg"},
+                            headers={"Authorization": f"Bearer {token}"}
+                        )
+                        upload_id = up_sess.json().get("id")
+                        if upload_id:
+                            up_bin = await hc.post(
+                                f"https://graph.facebook.com/v21.0/{upload_id}",
+                                headers={"Authorization": f"OAuth {token}", "file_offset": "0"},
+                                content=img_bytes
+                            )
+                            handle = up_bin.json().get("h")
+                            if handle:
+                                meta_body["profile_picture_handle"] = handle
+            except Exception as logo_err:
+                logger.warning(f"[WhatsApp Profile] No se pudo clonar el logo desde Línea 1: {logo_err}")
+
+        res = await hc.post(
+            f"https://graph.facebook.com/v21.0/{target_phone_id}/whatsapp_business_profile",
+            headers={"Authorization": f"Bearer {token}"},
+            json=meta_body
+        )
+        data = res.json() if res.content else {}
+        if res.status_code >= 400:
+            raise HTTPException(status_code=400, detail=data.get("error", {}).get("message", res.text))
+
+    return await get_whatsapp_line_business_profile(target_phone_id)

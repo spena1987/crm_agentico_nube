@@ -695,6 +695,36 @@ export default function WhatsAppConfigCard() {
                 </button>
               )}
             </div>
+
+            {/* Acceso directo a la cuenta WABA exacta en Meta Business Manager */}
+            <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
+              <div className="text-[var(--secondary)]">
+                <strong className="text-[var(--foreground)]">Cuenta WABA en Meta Business:</strong>{' '}
+                <code>Centrovisión - Asesoramiento Quirúrgico (ID: 3731563350343089)</code>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href="https://business.facebook.com/wa/manage/phone-numbers/?waba_id=3731563350343089"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-blue-600/15 hover:bg-blue-600/25 text-blue-700 dark:text-blue-300 font-bold flex items-center gap-1 transition-all"
+                  title="Abrir directamente la sección Números de Teléfono de la WABA 3731563350343089 en Meta Business Suite"
+                >
+                  <ExternalLink size={12} />
+                  <span>Ver Número en Meta</span>
+                </a>
+                <a
+                  href="https://business.facebook.com/wa/manage/message-templates/?waba_id=3731563350343089"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-[var(--foreground)] font-semibold flex items-center gap-1 transition-all"
+                  title="Abrir directamente las Plantillas de la WABA 3731563350343089 en Meta Business Suite"
+                >
+                  <ExternalLink size={12} />
+                  <span>Ver Plantillas</span>
+                </a>
+              </div>
+            </div>
           </form>
         </div>
       </div>
