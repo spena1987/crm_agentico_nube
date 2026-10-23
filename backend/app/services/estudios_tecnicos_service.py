@@ -130,9 +130,10 @@ def _consolidate_or_optimize_files_in_ram(
     # Caso 1: Un único archivo PDF
     if len(files_data) == 1 and files_data[0][2] == "application/pdf":
         fname, fbytes, fmime = files_data[0]
-        if not fname.lower().endswith(".pdf"):
-            fname = f"{fname}.pdf"
-        return fbytes, fname, "application/pdf"
+        safe_fname = base_filename if base_filename else fname
+        if not safe_fname.lower().endswith(".pdf"):
+            safe_fname = f"{safe_fname}.pdf"
+        return fbytes, safe_fname, "application/pdf"
 
     # Caso 2: Múltiples imágenes o solicitud expresa de unificar imágenes en un único PDF
     all_images = all(m.startswith("image/") for _, _, m in files_data)
@@ -189,9 +190,12 @@ def _consolidate_or_optimize_files_in_ram(
             img.save(out_jpg, format="JPEG", quality=85, optimize=True)
             fbytes = out_jpg.getvalue()
             fmime = "image/jpeg"
-            if not fname.lower().endswith((".jpg", ".jpeg")):
-                fname = os.path.splitext(fname)[0] + ".jpg"
-        return fbytes, fname, fmime
+
+        ext = ".jpg" if fmime == "image/jpeg" or fname.lower().endswith((".jpg", ".jpeg")) else ".png"
+        safe_img_name = base_filename if base_filename else os.path.splitext(fname)[0]
+        if not safe_img_name.lower().endswith(ext):
+            safe_img_name = f"{safe_img_name}{ext}"
+        return fbytes, safe_img_name, fmime
 
     return fbytes, fname, fmime
 
@@ -1204,8 +1208,28 @@ async def enviar_y_archivar_estudio_oftalmologico(
             raise HTTPException(status_code=400, detail=f"El archivo {fname} supera el límite máximo de 20 MB.")
         raw_files.append((fname, f_bytes, mime))
 
-    titulo_completo = f"{tipo_estudio.strip()} ({ojo.strip()})" if ojo and ojo != "N/A" else tipo_estudio.strip()
-    base_fname = f"{tipo_estudio.strip()}_{ojo.strip()}_{dni_limpio}"
+    # Construir nombre estandarizado profesional para Geclisa y WhatsApp:
+    # Formato: Estudio_{Tipo}_{Ojo}_{PrimerApellido}_{DNI}.{ext}
+    import unicodedata
+    def _slug(s: str) -> str:
+        if not s:
+            return ""
+        nfkd = unicodedata.normalize('NFKD', str(s))
+        ascii_txt = "".join([c for c in nfkd if not unicodedata.combining(c)])
+        clean = re.sub(r'[^a-zA-Z0-9]', '_', ascii_txt)
+        return re.sub(r'_+', '_', clean).strip('_')
+
+    tipo_slug = _slug(tipo_estudio)[:20] or "Estudio"
+    ojo_slug = _slug(ojo)[:4] if ojo and ojo != "N/A" else "AO"
+    primer_ape = (nombre_paciente.split(',')[0] if ',' in nombre_paciente else nombre_paciente.split()[0]) if nombre_paciente else "PACIENTE"
+    ape_slug = _slug(primer_ape)[:15] or "PACIENTE"
+
+    base_fname = f"Estudio_{tipo_slug}_{ojo_slug}_{ape_slug}_{dni_limpio}"
+
+    titulo_estudio_limpio = f"{tipo_estudio.strip()} ({ojo.strip()})" if ojo and ojo != "N/A" else tipo_estudio.strip()
+    titulo_geclisa = f"Estudio - {titulo_estudio_limpio}"[:45]
+    titulo_completo = titulo_geclisa
+
     final_bytes, final_filename, final_mime = _consolidate_or_optimize_files_in_ram(
         files_data=raw_files,
         unificar_en_pdf=unificar_en_pdf,
@@ -1214,9 +1238,9 @@ async def enviar_y_archivar_estudio_oftalmologico(
 
     obs_geclisa = (observaciones or "").strip()
     if obs_geclisa:
-        obs_geclisa = f"{obs_geclisa} | Cargado desde CRM por {resolved_tecnico_nombre}"
+        obs_geclisa = f"{obs_geclisa} | Cargado vía CRM por {resolved_tecnico_nombre}"
     else:
-        obs_geclisa = f"Estudio digital cargado y enviado por WhatsApp desde CRM por {resolved_tecnico_nombre}"
+        obs_geclisa = f"Estudio digital cargado vía CRM por {resolved_tecnico_nombre}"
 
     # Tareas asíncronas en paralelo (Geclisa + Meta Cloud API Línea 2)
     async def _task_geclisa() -> Dict[str, Any]:
@@ -1227,7 +1251,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
             ficha_id=int(geclisa_ficha_id),
             file_bytes=final_bytes,
             filename=final_filename,
-            titulo=titulo_completo[:45],
+            titulo=titulo_geclisa,
             observaciones=obs_geclisa[:100],
             pre_id=int(resolved_pre_id),
             clase_id=1,
@@ -1240,7 +1264,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
         return await _dispatch_study_via_meta_line2(
             to_phone=tel_norm,
             nombre_paciente=nombre_paciente,
-            titulo_estudio=titulo_completo,
+            titulo_estudio=titulo_estudio_limpio,
             file_bytes=final_bytes,
             filename=final_filename,
             mime_type=final_mime,

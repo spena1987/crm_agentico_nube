@@ -1706,7 +1706,7 @@ class GeclisaClient:
         else:
             hora_int = now_mza.hour * 100 + now_mza.minute
         
-        import unicodedata, re
+        import unicodedata, re, os
         def _clean_str(s: str, max_len: int = 45) -> str:
             if not s:
                 return ""
@@ -1719,17 +1719,32 @@ class GeclisaClient:
 
         titulo_limpio = _clean_str(titulo or filename, 45)
         obs_limpia = _clean_str(observaciones or "", 100)
-        fn_limpio = _clean_str(filename, 45)
-        if not fn_limpio.lower().endswith(".pdf") and filename.lower().endswith(".pdf"):
-            fn_limpio += ".pdf"
-            
+
+        # Sanitizar nombre de archivo preservando SIEMPRE la extensión original (.pdf, .jpg, .png)
+        base_name, file_ext = os.path.splitext(filename or "estudio.pdf")
+        clean_ext = file_ext.lower().strip()
+        if not clean_ext:
+            if content_type and "pdf" in content_type.lower():
+                clean_ext = ".pdf"
+            elif content_type and "jpeg" in content_type.lower():
+                clean_ext = ".jpg"
+            elif content_type and "png" in content_type.lower():
+                clean_ext = ".png"
+            else:
+                clean_ext = ".pdf"
+
+        # Acotar base para que base + extensión nunca superen 45 caracteres en Geclisa
+        max_base_len = max(10, 45 - len(clean_ext))
+        clean_base = _clean_str(base_name, max_base_len).replace(" ", "_")
+        fn_limpio = f"{clean_base}{clean_ext}"
+
         if content_type:
             eff_content_type = content_type
-        elif fn_limpio.lower().endswith(".pdf"):
+        elif clean_ext == ".pdf":
             eff_content_type = "application/pdf"
-        elif fn_limpio.lower().endswith((".jpg", ".jpeg")):
+        elif clean_ext in (".jpg", ".jpeg"):
             eff_content_type = "image/jpeg"
-        elif fn_limpio.lower().endswith(".png"):
+        elif clean_ext == ".png":
             eff_content_type = "image/png"
         else:
             eff_content_type = "application/octet-stream"

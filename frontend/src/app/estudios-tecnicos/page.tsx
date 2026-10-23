@@ -483,7 +483,7 @@ export default function EstudiosTecnicosPage() {
         setFeedback({
           type: 'success',
           title: '¡Estudio archivado en Geclisa y enviado por WhatsApp!',
-          detail: `Guardado en Ficha #${paciente.geclisa_ficha_id} (AS_ID #${data.geclisa_as_id || 'OK'}) y despachado a ${formatPhoneDisplay(telefonoDestino)}.`
+          detail: `Guardado en Ficha #${paciente.geclisa_ficha_id} (Solapa Archivos Clínicos, AS_ID #${data.geclisa_as_id || 'OK'}) y despachado a ${formatPhoneDisplay(telefonoDestino)}.`
         })
         setSelectedFiles([])
         setObservaciones('')
@@ -491,7 +491,7 @@ export default function EstudiosTecnicosPage() {
         setFeedback({
           type: 'success',
           title: '¡Estudio guardado exitosamente en Geclisa!',
-          detail: `El archivo quedó archivado en la Historia Clínica (Ficha #${paciente.geclisa_ficha_id}, AS_ID #${data.geclisa_as_id || 'OK'}).`
+          detail: `El archivo quedó archivado en la Historia Clínica (Ficha #${paciente.geclisa_ficha_id}, Solapa Archivos Clínicos, AS_ID #${data.geclisa_as_id || 'OK'}).`
         })
         setSelectedFiles([])
         setObservaciones('')
@@ -929,7 +929,7 @@ export default function EstudiosTecnicosPage() {
                     >
                       <span className="flex items-center gap-1.5">
                         <FolderOpen size={14} />
-                        Archivos ya guardados en Geclisa ({archivosGeclisa.length})
+                        Archivos en Geclisa (Solapa Archivos Clínicos) ({archivosGeclisa.length})
                       </span>
                       <span>{showArchivosGeclisa ? 'Ocultar ▲' : 'Ver / Enviar ▼'}</span>
                     </button>
