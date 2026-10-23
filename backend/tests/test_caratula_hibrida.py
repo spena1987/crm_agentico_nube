@@ -44,6 +44,26 @@ class TestCaratulaHibrida(unittest.TestCase):
         # En modo mobile-first debe ser exactamente 1 página
         self.assertEqual(len(reader.pages), 1)
 
+    def test_componer_lamina_digital_imagen_panoramica(self):
+        # Imagen horizontal 16:9 (1920x1080) típica de IOL Master o campímetro
+        img = Image.new("RGB", (1920, 1080), (20, 80, 140))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+
+        # Probar exportación a JPEG
+        jpg_bytes = componer_lamina_digital_imagen(
+            buf.getvalue(),
+            self.paciente,
+            self.estudio,
+            export_format="JPEG"
+        )
+        self.assertGreater(len(jpg_bytes), 1000)
+        res_img = Image.open(io.BytesIO(jpg_bytes))
+        self.assertEqual(res_img.width, 1240)
+        # La altura debe ser dinámica/compacta (~1040 px) y mucho menor al A4 rígido de 1754 px
+        self.assertLess(res_img.height, 1250)
+        self.assertGreater(res_img.height, 900)
+
     def test_componer_estudio_hibrido_caso_imagen(self):
         img = Image.new("RGB", (640, 480), (10, 50, 90))
         buf = io.BytesIO()

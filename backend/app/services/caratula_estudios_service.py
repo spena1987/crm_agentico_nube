@@ -381,48 +381,81 @@ def componer_lamina_digital_imagen(
     export_format: str = "PDF"
 ) -> bytes:
     """
-    Opción 2 (Modo Mobile-First para imagen única):
-    Compone una lámina digital unificada (A4 vertical a 150 DPI: 1240 x 1754 px)
-    con el membrete de Centrovisión arriba, los datos clínicos destacados y la imagen
-    del estudio centrada con máxima definición.
+    Opción 2 (Lienzo Dinámico Mobile-First 'Zero White-Space'):
+    Calcula la altura exacta de la lámina según el aspect ratio real de la imagen médica
+    (panorámica, cuadrada o vertical). La imagen ocupa el ancho completo útil (1160 px)
+    y el pie institucional se ubica inmediatamente debajo, eliminando todo espacio en blanco.
     export_format: 'JPEG' para envío nativo como imagen en WhatsApp (render directo en chat)
-                   o 'PDF' para documento descargable.
+                   o 'PDF' para documento descargable o archivo Geclisa.
     """
     cfg = config or _get_caratula_config()
     PAGE_W = 1240
-    PAGE_H = 1754
+    max_w = PAGE_W - 80  # 1160 px (40 px de margen a cada lado)
 
-    # Crear lienzo blanco A4
-    canvas_img = Image.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
-    draw = ImageDraw.Draw(canvas_img)
+    # 1. Cargar y preparar imagen médica diagnóstica
+    study_img = Image.open(io.BytesIO(image_bytes))
+    study_img = ImageOps.exif_transpose(study_img) or study_img
+    if study_img.mode != "RGB":
+        study_img = study_img.convert("RGB")
 
-    # 1. Pegar Banner Oficial de Centrovisión en el margen superior
-    banner_y = 20
-    banner_bottom = 20
+    # Escalar imagen médica manteniendo proporción
+    scale = max_w / max(1, study_img.width)
+    new_w = max_w
+    new_h = int(study_img.height * scale)
+
+    # Límite superior de seguridad para escaneos ultra-largos
+    max_study_h = 2600
+    if new_h > max_study_h:
+        scale_limit = max_study_h / new_h
+        new_h = max_study_h
+        new_w = int(new_w * scale_limit)
+
+    study_resized = study_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    # 2. Medir dimensiones del Banner Oficial de Centrovisión
+    margin_top = 20
+    banner_src = None
+    banner_h = 115
     if os.path.exists(BANNER_LOCAL_PATH):
         try:
             banner_src = Image.open(BANNER_LOCAL_PATH)
-            # Escalar proporcionalmente para que ocupe ~1160 px de ancho (con 40 px de margen a cada lado)
-            target_bw = 1160
-            target_bh = int(target_bw * (banner_src.height / banner_src.width))
-            banner_resized = banner_src.resize((target_bw, target_bh), Image.Resampling.LANCZOS)
+            banner_h = int(max_w * (banner_src.height / banner_src.width))
+        except Exception as e:
+            logger.warning(f"Aviso leyendo dimensiones del banner: {e}")
+            banner_h = 115
+
+    spacing = 15
+    bar_h = 92
+    footer_h = 80
+    margin_bottom = 20
+
+    # 3. Calcular ALTURA TOTAL DINÁMICA de la lámina (Cero espacio muerto)
+    PAGE_H = margin_top + banner_h + spacing + bar_h + spacing + new_h + spacing + footer_h + margin_bottom
+
+    # Crear lienzo elástico blanco
+    canvas_img = Image.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas_img)
+
+    # 4. Estampar Banner Oficial Superior
+    banner_y = margin_top
+    if banner_src:
+        try:
+            banner_resized = banner_src.resize((max_w, banner_h), Image.Resampling.LANCZOS)
             canvas_img.paste(banner_resized, (40, banner_y), banner_resized if "A" in banner_resized.mode else None)
-            banner_bottom = banner_y + target_bh + 15
         except Exception as e:
             logger.warning(f"No se pudo estampar banner en lámina: {e}")
-            banner_bottom = 120
 
-    # 2. Barra de Datos Clínicos y Lateralidad
-    bar_y1 = banner_bottom
-    bar_y2 = bar_y1 + 100
+    # 5. Barra de Datos Clínicos y Lateralidad (Diseño compacto continuo)
+    bar_y1 = banner_y + banner_h + spacing
+    bar_y2 = bar_y1 + bar_h
     draw.rectangle([40, bar_y1, PAGE_W - 40, bar_y2], fill=(248, 250, 252), outline=(0, 122, 135), width=2)
 
-    tipo_estudio = (estudio.get("tipo_estudio") or "ESTUDIO OFTALMOLÓGICO").upper()
-    ojo = (estudio.get("ojo") or "AO").upper()
-    nombre_pac = (paciente.get("nombre") or paciente.get("nombre_completo") or "PACIENTE").upper()
-    dni_pac = paciente.get("dni") or "N/A"
+    tipo_estudio = (estudio.get("tipo_estudio") or "ESTUDIO OFTALMOLÓGICO").upper().strip()
+    ojo = (estudio.get("ojo") or "AO").upper().strip()
+    nombre_pac = (paciente.get("nombre") or paciente.get("nombre_completo") or "PACIENTE").upper().strip()
+    dni_pac = str(paciente.get("dni") or "N/A").strip()
     fecha_str = estudio.get("fecha_str") or datetime.now().strftime("%d/%m/%Y")
-    tecnico_str = (estudio.get("tecnico_nombre") or "").upper()
+    tecnico_str = (estudio.get("tecnico_nombre") or "").upper().strip()
 
     # Tipografía adaptativa para Windows y Linux (servidor Railway)
     bold_fonts = [
@@ -439,62 +472,42 @@ def componer_lamina_digital_imagen(
         "LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
     ]
-    font_title = _load_pil_font(bold_fonts, 26)
-    font_badge = _load_pil_font(bold_fonts, 22)
-    font_info = _load_pil_font(reg_fonts, 19)
-    font_bold = _load_pil_font(bold_fonts, 19)
-    font_footer = _load_pil_font(reg_fonts, 15)
+    font_title = _load_pil_font(bold_fonts, 25)
+    font_badge = _load_pil_font(bold_fonts, 21)
+    font_info = _load_pil_font(reg_fonts, 18)
+    font_footer = _load_pil_font(reg_fonts, 14)
 
     # Texto Fila 1 en barra
-    draw.text((60, bar_y1 + 16), tipo_estudio[:45], fill=(15, 23, 42), font=font_title)
-    draw.text((PAGE_W - 250, bar_y1 + 18), f"OJO: {ojo}", fill=(0, 122, 135), font=font_badge)
+    draw.text((60, bar_y1 + 14), tipo_estudio[:45], fill=(15, 23, 42), font=font_title)
+    draw.text((PAGE_W - 240, bar_y1 + 16), f"OJO: {ojo}", fill=(0, 122, 135), font=font_badge)
 
-    # Texto Fila 2 en barra
-    pac_line = f"PACIENTE: {nombre_pac[:30]}   •   DNI: {dni_pac}"
+    # Texto Fila 2 en barra (separadores universales limpios para evitar caracteres de reemplazo)
+    pac_line = f"PACIENTE: {nombre_pac[:30]}   |   DNI: {dni_pac}"
     if tecnico_str:
-        pac_line += f"   •   TÉCNICO: {tecnico_str[:20]}"
-    pac_line += f"   •   FECHA: {fecha_str}"
-    draw.text((60, bar_y1 + 58), pac_line, fill=(71, 85, 105), font=font_info)
+        pac_line += f"   |   TÉCNICO: {tecnico_str[:22]}"
+    pac_line += f"   |   FECHA: {fecha_str}"
+    draw.text((60, bar_y1 + 54), pac_line, fill=(71, 85, 105), font=font_info)
 
-    # 3. Área Central: Estudio Diagnóstico
-    # Margen inferior para el footer de sedes: 100 px
-    footer_h = 90
-    area_y1 = bar_y2 + 20
-    area_y2 = PAGE_H - footer_h - 20
-    max_w = PAGE_W - 80 # 1160 px
-    max_h = area_y2 - area_y1
-
-    study_img = Image.open(io.BytesIO(image_bytes))
-    study_img = ImageOps.exif_transpose(study_img) or study_img
-    if study_img.mode != "RGB":
-        study_img = study_img.convert("RGB")
-
-    # Escalar imagen del estudio manteniendo proporción
-    scale = min(max_w / study_img.width, max_h / study_img.height)
-    new_w = int(study_img.width * scale)
-    new_h = int(study_img.height * scale)
-    study_resized = study_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-    # Centrar imagen en el área disponible
+    # 6. Área del Estudio Diagnóstico (Ubicación continua inmediatamente después de la barra)
+    study_y = bar_y2 + spacing
     pos_x = 40 + (max_w - new_w) // 2
-    pos_y = area_y1 + (max_h - new_h) // 2
 
     # Marco sutil para la imagen médica
-    draw.rectangle([pos_x - 1, pos_y - 1, pos_x + new_w + 1, pos_y + new_h + 1], outline=(226, 232, 240), width=1)
-    canvas_img.paste(study_resized, (pos_x, pos_y))
+    draw.rectangle([pos_x - 1, study_y - 1, pos_x + new_w + 1, study_y + new_h + 1], outline=(226, 232, 240), width=1)
+    canvas_img.paste(study_resized, (pos_x, study_y))
 
-    # 4. Pie Institucional Inferior
-    foot_y = PAGE_H - footer_h
+    # 7. Pie Institucional Inferior (Anclado justo al terminar la imagen médica)
+    foot_y = study_y + new_h + spacing
     draw.line([40, foot_y, PAGE_W - 40, foot_y], fill=(226, 232, 240), width=1)
     linea_0800 = cfg.get("telefono_0800", "0-800-222-4040")
     wa_num = cfg.get("whatsapp_contacto", "261 553-0888")
     sedes = cfg.get("sedes") or [
         "Mitre 540 (Ciudad)", "Roca 71 (Luján)", "Boedo 2879 (Carrodilla)"
     ]
-    foot_txt1 = f"Centrovisión • Urgencias: {linea_0800}  |  WhatsApp: {wa_num}  |  Sedes: {' • '.join(sedes)}"
+    foot_txt1 = f"Centrovisión  |  Urgencias: {linea_0800}  |  WhatsApp: {wa_num}  |  Sedes: {'  •  '.join(sedes)}"
     foot_txt2 = "Presente este estudio a su médico oftalmólogo en su próxima consulta. Emitido digitalmente."
     draw.text((60, foot_y + 14), foot_txt1, fill=(100, 116, 139), font=font_footer)
-    draw.text((60, foot_y + 42), foot_txt2, fill=(148, 163, 184), font=font_footer)
+    draw.text((60, foot_y + 40), foot_txt2, fill=(148, 163, 184), font=font_footer)
 
     # Exportar según el formato solicitado
     if str(export_format).upper() in ("JPEG", "JPG"):
