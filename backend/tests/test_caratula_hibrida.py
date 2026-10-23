@@ -50,15 +50,29 @@ class TestCaratulaHibrida(unittest.TestCase):
         img.save(buf, format="JPEG")
 
         files_data = [("oct_scan.jpg", buf.getvalue(), "image/jpeg")]
+        # Modo por defecto para imagen única (JPEG nativo para WhatsApp)
         final_bytes, fname, mime = componer_estudio_hibrido(
             files_data=files_data,
             paciente_info=self.paciente,
             estudio_info=self.estudio,
-            base_filename="Estudio_OCT_AO"
+            base_filename="Estudio_OCT_AO",
+            unificar_en_pdf=False
         )
-        self.assertEqual(mime, "application/pdf")
-        self.assertTrue(fname.endswith(".pdf"))
-        reader = pypdf.PdfReader(io.BytesIO(final_bytes))
+        self.assertEqual(mime, "image/jpeg")
+        self.assertTrue(fname.endswith(".jpg"))
+        self.assertGreater(len(final_bytes), 1000)
+
+        # Modo forzado a PDF
+        final_pdf_bytes, fname_pdf, mime_pdf = componer_estudio_hibrido(
+            files_data=files_data,
+            paciente_info=self.paciente,
+            estudio_info=self.estudio,
+            base_filename="Estudio_OCT_AO",
+            unificar_en_pdf=True
+        )
+        self.assertEqual(mime_pdf, "application/pdf")
+        self.assertTrue(fname_pdf.endswith(".pdf"))
+        reader = pypdf.PdfReader(io.BytesIO(final_pdf_bytes))
         self.assertEqual(len(reader.pages), 1)
 
     def test_componer_estudio_hibrido_caso_pdf(self):

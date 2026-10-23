@@ -377,14 +377,16 @@ def componer_lamina_digital_imagen(
     image_bytes: bytes,
     paciente: Dict[str, Any],
     estudio: Dict[str, Any],
-    config: Optional[Dict[str, Any]] = None
+    config: Optional[Dict[str, Any]] = None,
+    export_format: str = "PDF"
 ) -> bytes:
     """
     Opción 2 (Modo Mobile-First para imagen única):
     Compone una lámina digital unificada (A4 vertical a 150 DPI: 1240 x 1754 px)
     con el membrete de Centrovisión arriba, los datos clínicos destacados y la imagen
     del estudio centrada con máxima definición.
-    Retorna los bytes de un archivo PDF de 1 página listo para WhatsApp y Geclisa.
+    export_format: 'JPEG' para envío nativo como imagen en WhatsApp (render directo en chat)
+                   o 'PDF' para documento descargable.
     """
     cfg = config or _get_caratula_config()
     PAGE_W = 1240
@@ -494,6 +496,12 @@ def componer_lamina_digital_imagen(
     draw.text((60, foot_y + 14), foot_txt1, fill=(100, 116, 139), font=font_footer)
     draw.text((60, foot_y + 42), foot_txt2, fill=(148, 163, 184), font=font_footer)
 
+    # Exportar según el formato solicitado
+    if str(export_format).upper() in ("JPEG", "JPG"):
+        out_jpg = io.BytesIO()
+        canvas_img.save(out_jpg, format="JPEG", quality=90, optimize=True)
+        return out_jpg.getvalue()
+
     # Guardar en PDF de 1 página de alta definición
     out_pdf = io.BytesIO()
     canvas_img.save(out_pdf, format="PDF", resolution=150.0)
@@ -505,13 +513,15 @@ def componer_estudio_hibrido(
     paciente_info: Dict[str, Any],
     estudio_info: Dict[str, Any],
     config: Optional[Dict[str, Any]] = None,
-    base_filename: str = "Estudio_Oftalmologico"
+    base_filename: str = "Estudio_Oftalmologico",
+    unificar_en_pdf: bool = False
 ) -> Tuple[bytes, str, str]:
     """
     Función orquestadora principal para la Opción 2:
       1. Si la configuración 'activo' es False, retorna el archivo consolidado normal sin membrete.
       2. Si se recibió 1 sola imagen y 'modo_hibrido' es True:
-         Compone la Lámina Digital Mobile-First (1 sola página PDF con membrete y estudio unificado).
+         - Si unificar_en_pdf=False: Compone la Lámina Digital como Imagen JPEG (render directo en WhatsApp con plantilla IMG).
+         - Si unificar_en_pdf=True: Compone la Lámina Digital como PDF de 1 página (plantilla PDF).
       3. Si se recibió un PDF o múltiples imágenes:
          Genera la portada A4 independiente (Pág 1) y la fusiona al frente del PDF.
     Retorna: (final_bytes, final_filename, final_mime_type)
@@ -520,8 +530,9 @@ def componer_estudio_hibrido(
         raise ValueError("No se recibieron archivos para componer el estudio.")
 
     cfg = config or _get_caratula_config()
+    clean_base = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", base_filename).strip("_")
 
-    safe_name = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", base_filename).strip("_")
+    safe_name = clean_base
     if not safe_name.lower().endswith(".pdf"):
         safe_name = f"{safe_name}.pdf"
 
@@ -540,12 +551,26 @@ def componer_estudio_hibrido(
     # =========================================================================
     if is_single_image and modo_hibrido:
         _, raw_img_bytes, _ = files_data[0]
-        lamina_pdf_bytes = componer_lamina_digital_imagen(
-            image_bytes=raw_img_bytes,
-            paciente=paciente_info,
-            estudio=estudio_info,
-            config=cfg
-        )
+        if not unificar_en_pdf:
+            safe_jpg_name = f"{os.path.splitext(clean_base)[0]}.jpg"
+            lamina_jpg = componer_lamina_digital_imagen(
+                image_bytes=raw_img_bytes,
+                paciente=paciente_info,
+                estudio=estudio_info,
+                config=cfg,
+                export_format="JPEG"
+            )
+            return lamina_jpg, safe_jpg_name, "image/jpeg"
+        else:
+            safe_pdf_name = f"{os.path.splitext(clean_base)[0]}.pdf"
+            lamina_pdf = componer_lamina_digital_imagen(
+                image_bytes=raw_img_bytes,
+                paciente=paciente_info,
+                estudio=estudio_info,
+                config=cfg,
+                export_format="PDF"
+            )
+            return lamina_pdf, safe_pdf_name, "application/pdf"
         return lamina_pdf_bytes, safe_name, "application/pdf"
 
     # =========================================================================

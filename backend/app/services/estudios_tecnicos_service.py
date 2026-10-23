@@ -305,6 +305,18 @@ async def _dispatch_study_via_meta_line2(
         except Exception:
             pass
 
+        # PREVENCIÓN ESTRICTA DE ERROR 131053 (Media upload error / type mismatch):
+        # Si el archivo es PDF pero la plantilla seleccionada exige IMAGE (o viceversa),
+        # corregir automáticamente a la plantilla oficial correspondiente para evitar el rechazo de Meta.
+        if is_image and header_type == "DOCUMENT":
+            logger.info(f"[Estudios WA] Archivo es imagen ({mime_type}) pero plantilla '{primary_tpl}' pide DOCUMENT. Ajustando a plantilla de imagen.")
+            primary_tpl = cfg.get("estudios_template_img") or "entrega_estudio_oftalmologico_img"
+            header_type = "IMAGE"
+        elif not is_image and header_type == "IMAGE":
+            logger.info(f"[Estudios WA] Archivo es PDF ({mime_type}) pero plantilla '{primary_tpl}' pide IMAGE. Ajustando a plantilla de documento PDF.")
+            primary_tpl = cfg.get("estudios_template_pdf") or "entrega_estudio_oftalmologico_pdf"
+            header_type = "DOCUMENT"
+
         components: List[Dict[str, Any]] = []
         if header_type in ("DOCUMENT", "IMAGE"):
             if header_type == "IMAGE":
@@ -1250,7 +1262,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
                 files_data=raw_files,
                 paciente_info=paciente_meta,
                 estudio_info=estudio_meta,
-                base_filename=base_fname
+                base_filename=base_fname,
+                unificar_en_pdf=unificar_en_pdf
             )
         except Exception as e:
             logger.error(f"Aviso componiendo caratula hibrida de estudio: {e}. Aplicando consolidacion plana de respaldo.")
