@@ -1686,9 +1686,10 @@ class GeclisaClient:
         }
         
         from datetime import datetime, timezone, timedelta
-        # Zona horaria Argentina/Mendoza (UTC-3)
+        # Zona horaria Argentina/Mendoza (UTC-3) con margen de seguridad de 2 minutos
+        # para evitar rechazo 'No es posible registrar con fecha y hora a futuro' por desfase de reloj en servidor Geclisa
         tz_mza = timezone(timedelta(hours=-3))
-        now_mza = datetime.now(tz_mza)
+        now_mza = datetime.now(tz_mza) - timedelta(minutes=2)
         hoy_str = now_mza.strftime("%Y-%m-%d")
         
         if fecha_iso:
