@@ -48,7 +48,22 @@ interface TemplateItem {
   variable_mappings?: Record<string, string>
   rejection_reason?: string
   created_at?: string
+  activo?: boolean
+  visible_en_chat?: boolean
+  grupo_crm?: string
+  titulo_amigable?: string
+  descripcion?: string
+  orden?: number
 }
+
+// Grupos funcionales en el CRM
+export const CRM_TEMPLATE_GROUPS = [
+  'Seguimiento Quirúrgico',
+  'Recordatorios de Turnos',
+  'Entrega de Estudios',
+  'Presupuestos',
+  'Atención General'
+] as const
 
 // Catálogo de variables clínicas inteligentes disponibles
 const CLINICAL_VARIABLES = [
@@ -318,6 +333,9 @@ export default function WhatsAppTemplatesSettingsCard() {
   const [registeringEstudios, setRegisteringEstudios] = useState<boolean>(false)
   const [searchFilter, setSearchFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL')
+  const [groupFilter, setGroupFilter] = useState<string>('ALL')
+  const [statusUsageFilter, setStatusUsageFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE' | 'CHAT_ONLY'>('ALL')
+  const [updatingGovernance, setUpdatingGovernance] = useState<string | null>(null)
 
   // Modal de Creación / Edición
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false)
@@ -563,6 +581,36 @@ export default function WhatsAppTemplatesSettingsCard() {
     }
   }
 
+  // Actualizar gobernanza (activo, visible_en_chat, grupo_crm)
+  const handleUpdateGovernance = async (
+    tplName: string,
+    patch: { activo?: boolean; visible_en_chat?: boolean; grupo_crm?: string; titulo_amigable?: string }
+  ) => {
+    // Actualización optimista en memoria
+    setTemplates(prev => prev.map(t => t.name === tplName ? { ...t, ...patch } : t))
+    setUpdatingGovernance(tplName)
+
+    try {
+      const res = await apiFetch(`/api/whatsapp/cloud/templates/${tplName}/config`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch)
+      })
+      if (!res.ok) {
+        const errData = await res.json()
+        throw new Error(errData.detail || 'Error al actualizar configuración de plantilla')
+      }
+      setSuccessFeedback(`Configuración de '${tplName}' guardada con éxito.`)
+      setTimeout(() => setSuccessFeedback(null), 3000)
+    } catch (err: any) {
+      console.error('Error guardando gobernanza de plantilla:', err)
+      setErrorFeedback(`No se pudo guardar la configuración: ${err.message}`)
+      setTimeout(() => setErrorFeedback(null), 5000)
+      fetchTemplates() // revertir
+    } finally {
+      setUpdatingGovernance(null)
+    }
+  }
+
   const resetForm = () => {
     setName('')
     setCategory('UTILITY')
@@ -575,21 +623,42 @@ export default function WhatsAppTemplatesSettingsCard() {
     setSampleValues({})
   }
 
-  // Filtrado de lista
+  // Filtrado de lista con gobernanza y grupos
   const filteredTemplates = templates.filter(tpl => {
-    const matchesSearch = tpl.name.toLowerCase().includes(searchFilter.toLowerCase()) || 
-                          tpl.body_text.toLowerCase().includes(searchFilter.toLowerCase())
+    // Búsqueda por nombre técnico, título amigable o texto del cuerpo
+    const q = searchFilter.toLowerCase().trim()
+    const matchesSearch = !q ||
+      tpl.name.toLowerCase().includes(q) ||
+      (tpl.titulo_amigable && tpl.titulo_amigable.toLowerCase().includes(q)) ||
+      tpl.body_text.toLowerCase().includes(q)
+
+    // Filtro por categoría Meta
     const matchesCategory = categoryFilter === 'ALL' || 
       (categoryFilter === 'SEGUIMIENTO' ? tpl.name.startsWith('seguimiento_') : tpl.category === categoryFilter)
-    return matchesSearch && matchesCategory
+
+    // Filtro por Grupo CRM
+    const matchesGroup = groupFilter === 'ALL' || (tpl.grupo_crm || 'Atención General') === groupFilter
+
+    // Filtro por Estado de Uso / Visibilidad en Chat
+    let matchesStatusUsage = true
+    if (statusUsageFilter === 'ACTIVE') {
+      matchesStatusUsage = tpl.activo !== false
+    } else if (statusUsageFilter === 'INACTIVE') {
+      matchesStatusUsage = tpl.activo === false
+    } else if (statusUsageFilter === 'CHAT_ONLY') {
+      matchesStatusUsage = tpl.activo !== false && tpl.visible_en_chat !== false && tpl.status === 'APPROVED'
+    }
+
+    return matchesSearch && matchesCategory && matchesGroup && matchesStatusUsage
   })
 
   // Contadores
   const countApproved = templates.filter(t => t.status === 'APPROVED').length
   const countPending = templates.filter(t => t.status === 'PENDING').length
   const countRejected = templates.filter(t => t.status === 'REJECTED').length
-  const countSeguimiento = templates.filter(t => t.name.startsWith('seguimiento_')).length
-  const countSeguimientoApproved = templates.filter(t => t.name.startsWith('seguimiento_') && t.status === 'APPROVED').length
+  const countActivas = templates.filter(t => t.activo !== false).length
+  const countInactivas = templates.filter(t => t.activo === false).length
+  const countChatVisible = templates.filter(t => t.activo !== false && t.visible_en_chat !== false && t.status === 'APPROVED').length
 
   return (
     <div className="space-y-6">
@@ -669,87 +738,117 @@ export default function WhatsAppTemplatesSettingsCard() {
           </div>
         )}
 
-        {/* Estadísticas / KPIs */}
+        {/* Estadísticas / KPIs de Gobernanza */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6 pt-6 border-t border-[#1e2d42]">
           <div className="p-3 rounded-lg bg-[#162232] border border-[#233348]">
-            <div className="text-xs font-medium text-slate-400">Total Plantillas</div>
+            <div className="text-xs font-medium text-slate-400">Total en Meta</div>
             <div className="text-xl font-bold text-white mt-0.5">{templates.length}</div>
           </div>
           <div className="p-3 rounded-lg bg-[#0b2923]/60 border border-[#134e48]">
             <div className="text-xs font-medium text-emerald-400 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Aprobadas
+              <CheckCircle2 className="w-3.5 h-3.5" /> Aprobadas Meta
             </div>
             <div className="text-xl font-bold text-emerald-300 mt-0.5">{countApproved}</div>
           </div>
-          <div className="p-3 rounded-lg bg-[#2c2010]/60 border border-[#563c12]">
-            <div className="text-xs font-medium text-amber-400 flex items-center gap-1">
-              <Clock className="w-3.5 h-3.5" /> En Revisión
+          <div className="p-3 rounded-lg bg-[#0d2738]/60 border border-[#174e6f]">
+            <div className="text-xs font-medium text-cyan-400 flex items-center gap-1">
+              <Check className="w-3.5 h-3.5" /> Activas en CRM
             </div>
-            <div className="text-xl font-bold text-amber-300 mt-0.5">{countPending}</div>
+            <div className="text-xl font-bold text-cyan-300 mt-0.5">{countActivas}</div>
+          </div>
+          <div className="p-3 rounded-lg bg-[#162038]/60 border border-[#2b3a68]">
+            <div className="text-xs font-medium text-blue-400 flex items-center gap-1">
+              <Send className="w-3.5 h-3.5" /> Visibles en Chat
+            </div>
+            <div className="text-xl font-bold text-blue-300 mt-0.5">{countChatVisible}</div>
           </div>
           <div className="p-3 rounded-lg bg-[#2a151b]/60 border border-[#581c25]">
             <div className="text-xs font-medium text-red-400 flex items-center gap-1">
-              <AlertCircle className="w-3.5 h-3.5" /> Rechazadas
+              <AlertCircle className="w-3.5 h-3.5" /> Inactivas / Fuera de uso
             </div>
-            <div className="text-xl font-bold text-red-300 mt-0.5">{countRejected}</div>
-          </div>
-          <div className="p-3 rounded-lg bg-[#0d2238]/60 border border-[#1b3a5b]">
-            <div className="text-xs font-medium text-blue-400 flex items-center gap-1">
-              <Zap className="w-3.5 h-3.5 text-amber-400" /> Seguimiento Qx
-            </div>
-            <div className="text-xl font-bold text-blue-300 mt-0.5">
-              {countSeguimiento} <span className="text-xs font-normal text-slate-400">({countSeguimientoApproved} OK)</span>
-            </div>
+            <div className="text-xl font-bold text-red-300 mt-0.5">{countInactivas}</div>
           </div>
         </div>
       </div>
 
-      {/* Barra de Filtros y Búsqueda */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-        <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar plantilla por nombre o contenido..."
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 text-white placeholder:text-slate-500"
-          />
+      {/* Barra de Filtros: Búsqueda, Disponibilidad y Grupos */}
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="relative w-full sm:w-80">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, título o contenido..."
+              value={searchFilter}
+              onChange={(e) => setSearchFilter(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 bg-[#162232] border border-[#233348] rounded-lg text-sm focus:outline-hidden focus:ring-2 focus:ring-emerald-500 text-white placeholder:text-slate-500"
+            />
+          </div>
+
+          {/* Filtro por estado en CRM */}
+          <div className="flex items-center gap-1.5 self-start sm:self-auto bg-[#162232] p-1 rounded-lg border border-[#233348] text-xs flex-wrap">
+            <button
+              onClick={() => setStatusUsageFilter('ALL')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                statusUsageFilter === 'ALL' ? 'bg-[#23354c] text-white font-semibold' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Todas ({templates.length})
+            </button>
+            <button
+              onClick={() => setStatusUsageFilter('ACTIVE')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                statusUsageFilter === 'ACTIVE' ? 'bg-cyan-950 text-cyan-300 font-semibold border border-cyan-800/50' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Activas ({countActivas})
+            </button>
+            <button
+              onClick={() => setStatusUsageFilter('CHAT_ONLY')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                statusUsageFilter === 'CHAT_ONLY' ? 'bg-blue-950 text-blue-300 font-semibold border border-blue-800/50' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              En Chat ({countChatVisible})
+            </button>
+            <button
+              onClick={() => setStatusUsageFilter('INACTIVE')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                statusUsageFilter === 'INACTIVE' ? 'bg-red-950 text-red-300 font-semibold border border-red-800/50' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Fuera de uso ({countInactivas})
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5 self-start sm:self-auto bg-[#162232] p-1 rounded-lg border border-[#233348] text-xs flex-wrap">
+        {/* Barra de Filtro por Grupo Funcional CRM */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs text-slate-400">
+          <span className="shrink-0 text-slate-500 font-medium pl-1">Grupo CRM:</span>
           <button
-            onClick={() => setCategoryFilter('ALL')}
-            className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'ALL' ? 'bg-[#23354c] text-white font-semibold' : 'text-slate-400 hover:text-white'
+            onClick={() => setGroupFilter('ALL')}
+            className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap transition-colors ${
+              groupFilter === 'ALL' ? 'bg-[#23354c] text-white' : 'bg-[#121c29] border border-[#202e42] hover:text-white'
             }`}
           >
-            Todas ({templates.length})
+            Todos los Grupos
           </button>
-          <button
-            onClick={() => setCategoryFilter('SEGUIMIENTO')}
-            className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'SEGUIMIENTO' ? 'bg-blue-950 text-blue-300 font-semibold border border-blue-800/50' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Seguimiento Quirúrgico ({countSeguimiento})
-          </button>
-          <button
-            onClick={() => setCategoryFilter('UTILITY')}
-            className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'UTILITY' ? 'bg-emerald-950 text-emerald-300 font-semibold border border-emerald-800/50' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Utilidad (Turnos)
-          </button>
-          <button
-            onClick={() => setCategoryFilter('MARKETING')}
-            className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
-              categoryFilter === 'MARKETING' ? 'bg-indigo-950 text-indigo-300 font-semibold border border-indigo-800/50' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            Marketing
-          </button>
+          {CRM_TEMPLATE_GROUPS.map((grp) => {
+            const countInGroup = templates.filter(t => (t.grupo_crm || 'Atención General') === grp).length
+            return (
+              <button
+                key={grp}
+                onClick={() => setGroupFilter(grp)}
+                className={`px-2.5 py-1 rounded-lg font-medium whitespace-nowrap border transition-colors ${
+                  groupFilter === grp
+                    ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50 font-semibold'
+                    : 'bg-[#121c29] border-[#202e42] text-slate-400 hover:text-white'
+                }`}
+              >
+                {grp} <span className="opacity-70 text-[10px]">({countInGroup})</span>
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -764,124 +863,208 @@ export default function WhatsAppTemplatesSettingsCard() {
           <MessageSquareText className="w-12 h-12 text-slate-300 dark:text-slate-600 mx-auto mb-3" />
           <h3 className="text-base font-semibold text-slate-800 dark:text-slate-200">No se encontraron plantillas</h3>
           <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-            {searchFilter ? 'No hay plantillas que coincidan con tu búsqueda.' : 'Aún no tienes plantillas creadas. Puedes crear tu primera plantilla para recordatorios de turnos haciendo clic en el botón superior.'}
+            {searchFilter ? 'No hay plantillas que coincidan con tu búsqueda.' : 'No hay plantillas que coincidan con los filtros seleccionados.'}
           </p>
-          {!searchFilter && (
+          {(searchFilter || groupFilter !== 'ALL' || statusUsageFilter !== 'ALL') && (
             <button
               onClick={() => {
-                resetForm()
-                setIsCreateModalOpen(true)
+                setSearchFilter('')
+                setGroupFilter('ALL')
+                setStatusUsageFilter('ALL')
               }}
-              className="mt-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium inline-flex items-center gap-2"
+              className="mt-4 px-4 py-2 bg-[#1a2738] hover:bg-[#23354c] text-white rounded-lg text-sm font-medium inline-flex items-center gap-2 border border-[#2b3e58]"
             >
-              <Plus className="w-4 h-4" /> Crear Primera Plantilla
+              Restablecer Filtros
             </button>
           )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredTemplates.map((tpl) => (
-            <div 
-              key={tpl.id}
-              className="bg-[#131e2c] rounded-xl border border-[#223247] p-4.5 flex flex-col justify-between hover:border-emerald-500/40 transition-all shadow-sm group"
-            >
-              <div>
-                {/* Cabecera de la tarjeta */}
-                <div className="flex items-start justify-between gap-2 mb-2.5">
-                  <div className="min-w-0">
-                    <h3 className="font-semibold text-sm text-white truncate" title={tpl.name}>
-                      {tpl.name}
-                    </h3>
-                    <div className="flex items-center gap-1.5 mt-1">
-                      <span className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-[#1a2738] text-slate-300 border border-[#27394f]">
-                        {tpl.category}
-                      </span>
-                      <span className="text-[11px] text-slate-400 font-mono">
-                        {tpl.language}
+          {filteredTemplates.map((tpl) => {
+            const isSaving = updatingGovernance === tpl.name
+            const isInactive = tpl.activo === false
+
+            return (
+              <div 
+                key={tpl.id}
+                className={`rounded-xl border p-4.5 flex flex-col justify-between transition-all shadow-sm ${
+                  isInactive 
+                    ? 'bg-[#0f1722] border-slate-800/80 opacity-75 hover:opacity-100 hover:border-slate-700' 
+                    : 'bg-[#131e2c] border-[#223247] hover:border-emerald-500/40'
+                }`}
+              >
+                <div>
+                  {/* Cabecera de la tarjeta con Título Amigable y Badges */}
+                  <div className="flex items-start justify-between gap-2 mb-2.5">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-semibold text-sm text-white truncate" title={tpl.titulo_amigable || tpl.name}>
+                        {tpl.titulo_amigable || tpl.name}
+                      </h3>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-mono text-[11px] text-slate-400 truncate max-w-[190px]" title={tpl.name}>
+                          {tpl.name}
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[#1a2738] text-slate-300 border border-[#27394f]">
+                          {tpl.category}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Badge de Estado Meta */}
+                    <div className="shrink-0 flex flex-col items-end gap-1">
+                      {tpl.status === 'APPROVED' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-emerald-950/80 text-emerald-300 flex items-center gap-1 border border-emerald-500/40">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Aprobada
+                        </span>
+                      ) : tpl.status === 'PENDING' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-amber-950/80 text-amber-300 flex items-center gap-1 border border-amber-500/40">
+                          <Clock className="w-3 h-3 text-amber-400" /> En Revisión
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10.5px] font-semibold bg-red-950/80 text-red-300 flex items-center gap-1 border border-red-500/40" title={tpl.rejection_reason || 'Rechazada por Meta'}>
+                          <AlertCircle className="w-3 h-3 text-red-400" /> Rechazada
+                        </span>
+                      )}
+
+                      {/* Pill de Grupo CRM actual */}
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#1e2e42] text-slate-300 border border-[#2a3e59]">
+                        {tpl.grupo_crm || 'Atención General'}
                       </span>
                     </div>
                   </div>
 
-                  {/* Badge de Estado */}
-                  <div className="shrink-0">
-                    {tpl.status === 'APPROVED' ? (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-950/80 text-emerald-300 flex items-center gap-1 border border-emerald-500/40">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Aprobada
-                      </span>
-                    ) : tpl.status === 'PENDING' ? (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-950/80 text-amber-300 flex items-center gap-1 border border-amber-500/40">
-                        <Clock className="w-3 h-3 text-amber-400" /> En Revisión
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-red-950/80 text-red-300 flex items-center gap-1 border border-red-500/40" title={tpl.rejection_reason || 'Rechazada por Meta'}>
-                        <AlertCircle className="w-3 h-3 text-red-400" /> Rechazada
-                      </span>
+                  {/* Previsualización del Contenido */}
+                  <div className="bg-[#0b131d] rounded-lg p-3 border border-[#1e2d40] my-2">
+                    {tpl.header_content && (
+                      <div className="text-[11.5px] font-bold text-white mb-1 line-clamp-1">
+                        {tpl.header_content}
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-200 line-clamp-3 leading-relaxed font-sans">
+                      {tpl.body_text}
+                    </p>
+                    {tpl.footer_text && (
+                      <div className="text-[10px] text-slate-400 italic mt-1.5 truncate">
+                        {tpl.footer_text}
+                      </div>
                     )}
                   </div>
-                </div>
 
-                {/* Previsualización del Contenido */}
-                <div className="bg-[#0b131d] rounded-lg p-3 border border-[#1e2d40] my-2.5">
-                  {tpl.header_content && (
-                    <div className="text-[11.5px] font-bold text-white mb-1 line-clamp-1">
-                      {tpl.header_content}
+                  {/* Botones de acción rápida en la plantilla */}
+                  {tpl.buttons && tpl.buttons.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {tpl.buttons.map((b, idx) => (
+                        <span 
+                          key={idx} 
+                          className={`px-2 py-0.5 rounded text-[10.5px] font-medium border flex items-center gap-1 ${
+                            b.type === 'URL' 
+                              ? 'bg-sky-950/60 text-sky-300 border-sky-800/60' 
+                              : 'bg-[#1a2738] text-[#00a884] border-[#27394f]'
+                          }`}
+                          title={b.type === 'URL' ? `Enlace: ${b.url || 'URL dinámica'}` : 'Respuesta Rápida Interactiva'}
+                        >
+                          {b.type === 'URL' ? (
+                            <LinkIcon className="w-3 h-3 text-sky-400" />
+                          ) : (
+                            <Zap className="w-3 h-3 text-[#00a884]" />
+                          )}
+                          <span>{b.text}</span>
+                          {b.type === 'URL' && <span className="text-[9px] opacity-75 font-mono">(Web)</span>}
+                        </span>
+                      ))}
                     </div>
                   )}
-                  <p className="text-xs text-slate-200 line-clamp-4 leading-relaxed font-sans">
-                    {tpl.body_text}
-                  </p>
-                  {tpl.footer_text && (
-                    <div className="text-[10px] text-slate-400 italic mt-1.5 truncate">
-                      {tpl.footer_text}
-                    </div>
-                  )}
-                </div>
 
-                {/* Botones de acción rápida en la plantilla */}
-                {tpl.buttons && tpl.buttons.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {tpl.buttons.map((b, idx) => (
-                      <span 
-                        key={idx} 
-                        className={`px-2 py-0.5 rounded text-[10.5px] font-medium border flex items-center gap-1 ${
-                          b.type === 'URL' 
-                            ? 'bg-sky-950/60 text-sky-300 border-sky-800/60' 
-                            : 'bg-[#1a2738] text-[#00a884] border-[#27394f]'
-                        }`}
-                        title={b.type === 'URL' ? `Enlace: ${b.url || 'URL dinámica'}` : 'Respuesta Rápida Interactiva'}
-                      >
-                        {b.type === 'URL' ? (
-                          <LinkIcon className="w-3 h-3 text-sky-400" />
-                        ) : (
-                          <Zap className="w-3 h-3 text-[#00a884]" />
-                        )}
-                        <span>{b.text}</span>
-                        {b.type === 'URL' && <span className="text-[9px] opacity-75 font-mono">(Web)</span>}
+                  {/* Panel de Gobernanza CRM: Switches y Selector de Grupo */}
+                  <div className="mt-3 pt-2.5 border-t border-[#1e2d42] space-y-2 bg-[#0d1622]/60 p-2.5 rounded-lg border border-[#1a293c]">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-slate-300 flex items-center gap-1">
+                        Gobernanza CRM
+                        {isSaving && <RefreshCw className="w-3 h-3 animate-spin text-emerald-400 inline" />}
                       </span>
-                    ))}
+                      {isInactive && (
+                        <span className="text-[10px] text-amber-400/90 font-medium">Fuera de uso</span>
+                      )}
+                    </div>
+
+                    {/* Fila de Switches: Activo en CRM y Visible en Chat */}
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      {/* Switch: Activo */}
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={tpl.activo !== false}
+                          disabled={isSaving}
+                          onChange={(e) => handleUpdateGovernance(tpl.name, { activo: e.target.checked })}
+                          className="sr-only"
+                        />
+                        <div className={`w-7 h-4 rounded-full transition-colors relative ${tpl.activo !== false ? 'bg-emerald-600' : 'bg-slate-700'}`}>
+                          <div className={`w-3 h-3 rounded-full bg-white transition-transform absolute top-0.5 ${tpl.activo !== false ? 'left-3.5' : 'left-0.5'}`} />
+                        </div>
+                        <span className={`text-[11px] font-medium ${tpl.activo !== false ? 'text-emerald-300' : 'text-slate-400'}`}>
+                          {tpl.activo !== false ? 'En Uso' : 'Inactiva'}
+                        </span>
+                      </label>
+
+                      {/* Switch: Visible en Chat */}
+                      <label className={`flex items-center gap-2 select-none ${isInactive ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <input
+                          type="checkbox"
+                          disabled={isInactive || isSaving}
+                          checked={tpl.visible_en_chat !== false && !isInactive}
+                          onChange={(e) => handleUpdateGovernance(tpl.name, { visible_en_chat: e.target.checked })}
+                          className="sr-only"
+                        />
+                        <div className={`w-7 h-4 rounded-full transition-colors relative ${tpl.visible_en_chat !== false && !isInactive ? 'bg-blue-600' : 'bg-slate-700'}`}>
+                          <div className={`w-3 h-3 rounded-full bg-white transition-transform absolute top-0.5 ${tpl.visible_en_chat !== false && !isInactive ? 'left-3.5' : 'left-0.5'}`} />
+                        </div>
+                        <span className={`text-[11px] font-medium ${tpl.visible_en_chat !== false && !isInactive ? 'text-blue-300' : 'text-slate-400'}`}>
+                          En Chat
+                        </span>
+                      </label>
+                    </div>
+
+                    {/* Selector de Grupo CRM */}
+                    <div className="pt-1">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 mb-0.5">
+                        <span>Categoría Operativa:</span>
+                      </div>
+                      <select
+                        value={tpl.grupo_crm || 'Atención General'}
+                        disabled={isSaving}
+                        onChange={(e) => handleUpdateGovernance(tpl.name, { grupo_crm: e.target.value })}
+                        className="w-full bg-[#142030] text-slate-200 border border-[#23354c] rounded px-2 py-1 text-xs focus:outline-hidden focus:ring-1 focus:ring-emerald-500"
+                      >
+                        {CRM_TEMPLATE_GROUPS.map((grp) => (
+                          <option key={grp} value={grp}>
+                            {grp}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                )}
-              </div>
+                </div>
 
-              {/* Acciones de la Tarjeta */}
-              <div className="pt-3 border-t border-[#1e2d42] flex items-center justify-between mt-1">
-                <button
-                  onClick={() => setPreviewTemplate(tpl)}
-                  className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-colors"
-                >
-                  <Eye className="w-3.5 h-3.5" /> Ver en Simulador
-                </button>
+                {/* Acciones de la Tarjeta */}
+                <div className="pt-3 border-t border-[#1e2d42] flex items-center justify-between mt-2">
+                  <button
+                    onClick={() => setPreviewTemplate(tpl)}
+                    className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-medium transition-colors cursor-pointer"
+                  >
+                    <Eye className="w-3.5 h-3.5" /> Ver en Simulador
+                  </button>
 
-                <button
-                  onClick={() => handleDeleteTemplate(tpl.name)}
-                  className="text-slate-400 hover:text-red-400 transition-colors p-1 rounded"
-                  title="Eliminar plantilla"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                  <button
+                    onClick={() => handleDeleteTemplate(tpl.name)}
+                    className="text-slate-400 hover:text-red-400 transition-colors p-1 rounded"
+                    title="Eliminar plantilla"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

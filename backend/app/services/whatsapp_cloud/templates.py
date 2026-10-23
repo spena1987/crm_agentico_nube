@@ -60,6 +60,15 @@ class RenderPreviewRequest(BaseModel):
     footer_text: Optional[str] = None
 
 
+class TemplateGovernanceUpdate(BaseModel):
+    activo: Optional[bool] = None
+    visible_en_chat: Optional[bool] = None
+    grupo_crm: Optional[str] = Field(None, max_length=60)
+    titulo_amigable: Optional[str] = Field(None, max_length=120)
+    descripcion: Optional[str] = None
+    orden: Optional[int] = None
+
+
 # ---------------------------------------------------------------------
 # Helpers de Credenciales WABA y Meta Graph API
 # ---------------------------------------------------------------------
@@ -117,16 +126,33 @@ def clean_header_text(raw_header: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------
 
 @templates_router.get("", status_code=status.HTTP_200_OK)
-async def list_templates(category: Optional[str] = None, status_filter: Optional[str] = None):
+async def list_templates(
+    category: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    solo_activos: Optional[bool] = False,
+    solo_chat: Optional[bool] = False,
+    grupo: Optional[str] = None
+):
     """
-    Obtiene el listado de plantillas registradas en la base de datos de MedCRM.
+    Obtiene el listado de plantillas registradas en la base de datos de MedCRM con soporte de filtrado operacional.
     """
     try:
-        query = supabase.table("whatsapp_templates").select("*").order("created_at", desc=True)
+        query = supabase.table("whatsapp_templates").select("*")
+        
+        if solo_chat:
+            query = query.eq("status", "APPROVED").eq("activo", True).eq("visible_en_chat", True)
+        else:
+            if solo_activos:
+                query = query.eq("activo", True)
+            if status_filter:
+                query = query.eq("status", status_filter.upper())
+
         if category:
             query = query.eq("category", category.upper())
-        if status_filter:
-            query = query.eq("status", status_filter.upper())
+        if grupo and grupo != "todas" and grupo != "ALL":
+            query = query.eq("grupo_crm", grupo)
+
+        query = query.order("orden", desc=False).order("created_at", desc=True)
         res = query.execute()
         return {"status": "success", "data": res.data or []}
     except Exception as e:
@@ -240,15 +266,32 @@ async def sync_templates_from_meta():
         }
 
         try:
-            exist_check = supabase.table("whatsapp_templates").select("id, variable_mappings").eq("name", tpl_name).execute()
+            exist_check = supabase.table("whatsapp_templates").select("id, variable_mappings, activo, visible_en_chat, grupo_crm").eq("name", tpl_name).execute()
             if exist_check.data and len(exist_check.data) > 0:
                 cur_maps = exist_check.data[0].get("variable_mappings")
                 if not cur_maps and tpl_name in DEFAULT_MAPPINGS:
                     tpl_record["variable_mappings"] = DEFAULT_MAPPINGS[tpl_name]
+                # Se actualizan únicamente datos técnicos de Meta, preservando la gobernanza local intacta
                 supabase.table("whatsapp_templates").update(tpl_record).eq("name", tpl_name).execute()
             else:
+                grupo_inicial = "Atención General"
+                lower_name = tpl_name.lower()
+                if "seguimiento" in lower_name or "cirugia" in lower_name or "analisis" in lower_name:
+                    grupo_inicial = "Seguimiento Quirúrgico"
+                elif "estudio" in lower_name:
+                    grupo_inicial = "Entrega de Estudios"
+                elif "turno" in lower_name or "recordatorio" in lower_name:
+                    grupo_inicial = "Recordatorios de Turnos"
+                elif "presupuesto" in lower_name:
+                    grupo_inicial = "Presupuestos"
+
                 tpl_record["created_at"] = datetime.now(timezone.utc).isoformat()
                 tpl_record["variable_mappings"] = DEFAULT_MAPPINGS.get(tpl_name, {})
+                tpl_record["activo"] = True
+                tpl_record["visible_en_chat"] = True
+                tpl_record["grupo_crm"] = grupo_inicial
+                tpl_record["titulo_amigable"] = tpl_name.replace("_", " ").title()
+                tpl_record["orden"] = 0
                 supabase.table("whatsapp_templates").insert(tpl_record).execute()
             synced_count += 1
         except Exception as up_err:
@@ -524,6 +567,48 @@ async def delete_template(name: str):
         logger.error(f"[Template Delete DB Error] {db_err}")
 
     return {"status": "success", "deleted": name}
+
+
+@templates_router.patch("/{name}/config", status_code=status.HTTP_200_OK)
+async def update_template_governance(name: str, payload: TemplateGovernanceUpdate):
+    """
+    Actualiza la configuración operativa de una plantilla en el CRM (activación, visibilidad en chat, grupo clínico y título).
+    No altera el contenido técnico homologado en Meta.
+    """
+    try:
+        update_data = {}
+        if payload.activo is not None:
+            update_data["activo"] = payload.activo
+        if payload.visible_en_chat is not None:
+            update_data["visible_en_chat"] = payload.visible_en_chat
+        if payload.grupo_crm is not None:
+            update_data["grupo_crm"] = payload.grupo_crm.strip()
+        if payload.titulo_amigable is not None:
+            update_data["titulo_amigable"] = payload.titulo_amigable.strip()
+        if payload.descripcion is not None:
+            update_data["descripcion"] = payload.descripcion.strip()
+        if payload.orden is not None:
+            update_data["orden"] = payload.orden
+
+        if not update_data:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se enviaron campos para actualizar.")
+
+        update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        res = supabase.table("whatsapp_templates").update(update_data).eq("name", name).execute()
+        if not res.data:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Plantilla '{name}' no encontrada en la base de datos.")
+
+        return {
+            "status": "success",
+            "message": f"Configuración de plantilla '{name}' actualizada correctamente.",
+            "data": res.data[0]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Templates] Error al actualizar configuración de plantilla '{name}': {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @templates_router.post("/render-preview", status_code=status.HTTP_200_OK)

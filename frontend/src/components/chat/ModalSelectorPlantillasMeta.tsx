@@ -19,7 +19,8 @@ import {
   Check,
   RefreshCw,
   Zap,
-  Phone
+  Phone,
+  Search
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
@@ -35,6 +36,7 @@ export interface MetaTemplateData {
   id?: string
   name: string
   title?: string
+  titulo_amigable?: string
   category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION' | string
   language: string
   status: 'APPROVED' | 'PENDING' | 'REJECTED' | string
@@ -45,6 +47,9 @@ export interface MetaTemplateData {
   buttons?: MetaTemplateButton[]
   variable_mappings?: Record<string, string>
   description?: string
+  activo?: boolean
+  visible_en_chat?: boolean
+  grupo_crm?: string
   created_at?: string
 }
 
@@ -125,6 +130,8 @@ export default function ModalSelectorPlantillasMeta({
   const [targetPhone, setTargetPhone] = useState<string>(pacienteTelefono || '')
   const [templates, setTemplates] = useState<MetaTemplateData[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState<MetaTemplateData | null>(null)
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [selectedGroup, setSelectedGroup] = useState<string>('TODOS')
   const [paramValues, setParamValues] = useState<string[]>([])
   const [buttonParamValue, setButtonParamValue] = useState<string>('')
   const [cargandoTemplates, setCargandoTemplates] = useState<boolean>(true)
@@ -139,16 +146,16 @@ export default function ModalSelectorPlantillasMeta({
     }
   }, [pacienteTelefono])
 
-  // 1. Cargar plantillas desde Backend / Supabase
+  // 1. Cargar plantillas desde Backend / Supabase filtrando solo_chat=true
   const loadTemplates = async () => {
     setCargandoTemplates(true)
     setErrorMsg(null)
     try {
       let loaded: MetaTemplateData[] = []
 
-      // Intentar primero desde endpoint oficial de WhatsApp Cloud
+      // Intentar primero desde endpoint oficial de WhatsApp Cloud con solo_chat=true
       try {
-        const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/templates`)
+        const res = await fetch(`${BACKEND_URL}/api/whatsapp/cloud/templates?solo_chat=true`)
         if (res.ok) {
           const json = await res.json()
           if (json.status === 'success' && Array.isArray(json.data) && json.data.length > 0) {
@@ -159,10 +166,14 @@ export default function ModalSelectorPlantillasMeta({
         console.warn('Fallo fetch templates vía backend, intentando Supabase directo:', err)
       }
 
-      // Si no trajo desde el backend, consultar tabla whatsapp_templates en Supabase
+      // Si no trajo desde el backend, consultar tabla whatsapp_templates en Supabase filtrando activas y visibles en chat
       if (loaded.length === 0) {
         const { data, error } = await (supabase.from as any)('whatsapp_templates')
           .select('*')
+          .eq('status', 'APPROVED')
+          .eq('activo', true)
+          .eq('visible_en_chat', true)
+          .order('orden', { ascending: true })
           .order('created_at', { ascending: false })
 
         if (!error && data && data.length > 0) {
@@ -175,10 +186,15 @@ export default function ModalSelectorPlantillasMeta({
         loaded = FALLBACK_TEMPLATES
       }
 
-      setTemplates(loaded)
-      // Seleccionar por defecto la primera aprobada o la primera disponible
-      const defaultTpl = loaded.find((t) => t.status === 'APPROVED') || loaded[0]
-      setSelectedTemplate(defaultTpl)
+      // Filtrar siempre en cliente para máxima seguridad: aprobadas, activas y visibles en chat
+      const chatApproved = loaded.filter(
+        (t) => t.status === 'APPROVED' && t.activo !== false && t.visible_en_chat !== false
+      )
+      const finalTemplates = chatApproved.length > 0 ? chatApproved : loaded
+
+      setTemplates(finalTemplates)
+      // Seleccionar por defecto la primera disponible
+      setSelectedTemplate(finalTemplates[0] || null)
     } catch (err: any) {
       console.error('Error cargando plantillas:', err)
       setTemplates(FALLBACK_TEMPLATES)
@@ -545,7 +561,7 @@ export default function ModalSelectorPlantillasMeta({
               <div className="flex items-center justify-between mb-2">
                 <label className="font-semibold text-slate-200 text-xs flex items-center gap-1.5">
                   <FileText size={14} className="text-blue-400" />
-                  <span>Plantillas Disponibles en Meta ({templates.length})</span>
+                  <span>Plantillas Aprobadas para Chat ({templates.length})</span>
                 </label>
                 <button
                   type="button"
@@ -558,59 +574,145 @@ export default function ModalSelectorPlantillasMeta({
                 </button>
               </div>
 
-              {cargandoTemplates ? (
-                <div className="flex items-center justify-center p-8 bg-[#14203d]/40 rounded-xl border border-slate-800">
-                  <Loader2 size={20} className="animate-spin text-blue-400 mr-2" />
-                  <span className="text-xs text-slate-400">Cargando plantillas de Meta...</span>
+              {/* Barra de Búsqueda y Filtro de Categoría Operativa */}
+              <div className="space-y-2 mb-3">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar plantilla por nombre o contenido..."
+                    className="w-full pl-8.5 pr-8 py-1.5 bg-[#0b1324] border border-slate-700/80 rounded-lg text-xs text-white placeholder:text-slate-500 focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
                 </div>
-              ) : templates.length === 0 ? (
-                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center text-xs text-slate-400">
-                  No hay plantillas creadas en la cuenta.
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {templates.map((tpl) => {
-                    const isSelected = selectedTemplate?.name === tpl.name
-                    const isApproved = tpl.status === 'APPROVED'
+
+                {/* Pills horizontales de Grupos CRM */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 text-[11px]">
+                  {[
+                    { id: 'TODOS', label: 'Todas' },
+                    { id: 'Seguimiento Quirúrgico', label: 'Seguimiento Qx' },
+                    { id: 'Recordatorios de Turnos', label: 'Turnos' },
+                    { id: 'Presupuestos', label: 'Presupuestos' },
+                    { id: 'Atención General', label: 'Atención General' }
+                  ].map((grp) => {
+                    const countInGrp = grp.id === 'TODOS'
+                      ? templates.length
+                      : templates.filter((t) => (t.grupo_crm || 'Atención General') === grp.id).length
+
+                    const isSelected = selectedGroup === grp.id
                     return (
-                      <div
-                        key={tpl.name}
-                        onClick={() => setSelectedTemplate(tpl)}
-                        className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                      <button
+                        key={grp.id}
+                        type="button"
+                        onClick={() => setSelectedGroup(grp.id)}
+                        className={`px-2.5 py-1 rounded-md font-medium whitespace-nowrap transition-colors border cursor-pointer ${
                           isSelected
-                            ? 'bg-blue-600/20 border-blue-500 shadow-md ring-1 ring-blue-500/40'
-                            : 'bg-[#14203d]/60 border-slate-800/80 hover:bg-[#18274a] hover:border-slate-700'
+                            ? 'bg-blue-600/30 text-blue-300 border-blue-500/60 font-semibold shadow-xs'
+                            : 'bg-[#14203d]/40 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-[#14203d]'
                         }`}
                       >
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="font-bold text-xs text-white truncate">
-                            {tpl.title || tpl.name}
-                          </span>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span
-                              className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
-                                isApproved
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                  : tpl.status === 'PENDING'
-                                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
-                                  : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                              }`}
-                            >
-                              {tpl.status || 'APPROVED'}
-                            </span>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
-                              {tpl.category}
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-[11px] text-slate-400 line-clamp-1">
-                          {tpl.body_text}
-                        </p>
-                      </div>
+                        {grp.label} <span className="text-[10px] opacity-75">({countInGrp})</span>
+                      </button>
                     )
                   })}
                 </div>
-              )}
+              </div>
+
+              {cargandoTemplates ? (
+                <div className="flex items-center justify-center p-8 bg-[#14203d]/40 rounded-xl border border-slate-800">
+                  <Loader2 size={20} className="animate-spin text-blue-400 mr-2" />
+                  <span className="text-xs text-slate-400">Cargando plantillas autorizadas...</span>
+                </div>
+              ) : templates.length === 0 ? (
+                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl text-center text-xs text-slate-400">
+                  No hay plantillas autorizadas y activadas para chat. Puedes activarlas desde Ajustes &gt; Plantillas WhatsApp.
+                </div>
+              ) : (() => {
+                const filtered = templates.filter((tpl) => {
+                  const matchesGroup = selectedGroup === 'TODOS' || (tpl.grupo_crm || 'Atención General') === selectedGroup
+                  const q = searchQuery.toLowerCase().trim()
+                  const matchesSearch = !q ||
+                    tpl.name.toLowerCase().includes(q) ||
+                    (tpl.titulo_amigable && tpl.titulo_amigable.toLowerCase().includes(q)) ||
+                    (tpl.title && tpl.title.toLowerCase().includes(q)) ||
+                    tpl.body_text.toLowerCase().includes(q)
+                  return matchesGroup && matchesSearch
+                })
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-6 bg-[#14203d]/30 border border-slate-800 rounded-xl text-center text-xs text-slate-400 space-y-2">
+                      <p>No se encontraron plantillas para este filtro o búsqueda.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery('')
+                          setSelectedGroup('TODOS')
+                        }}
+                        className="px-3 py-1 bg-[#1a2738] hover:bg-[#23354c] text-white rounded text-xs border border-slate-700 cursor-pointer"
+                      >
+                        Restablecer Filtros
+                      </button>
+                    </div>
+                  )
+                }
+
+                return (
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {filtered.map((tpl) => {
+                      const isSelected = selectedTemplate?.name === tpl.name
+                      const isApproved = tpl.status === 'APPROVED'
+                      return (
+                        <div
+                          key={tpl.name}
+                          onClick={() => setSelectedTemplate(tpl)}
+                          className={`p-2.5 rounded-xl border cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-blue-600/20 border-blue-500 shadow-md ring-1 ring-blue-500/40'
+                              : 'bg-[#14203d]/60 border-slate-800/80 hover:bg-[#18274a] hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="font-bold text-xs text-white truncate" title={tpl.titulo_amigable || tpl.title || tpl.name}>
+                              {tpl.titulo_amigable || tpl.title || tpl.name}
+                            </span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[9.5px] px-1.5 py-0.5 rounded bg-[#1e2e42] text-slate-300 font-medium border border-slate-700/60">
+                                {tpl.grupo_crm || 'Atención General'}
+                              </span>
+                              <span
+                                className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                                  isApproved
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                }`}
+                              >
+                                {tpl.status || 'APPROVED'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono mb-1">
+                            <span>{tpl.name}</span>
+                          </div>
+                          <p className="text-[11px] text-slate-300 line-clamp-2">
+                            {tpl.body_text}
+                          </p>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })()}
             </div>
 
             {/* Parámetros Dinámicos del Cuerpo */}
