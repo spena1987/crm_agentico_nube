@@ -82,6 +82,7 @@ export default function WhatsAppConfigCard() {
   const [estudiosVerifiedName, setEstudiosVerifiedName] = useState('Centrovision - Estudios Oftalmologicos')
   const [estudiosTemplatePdf, setEstudiosTemplatePdf] = useState('entrega_estudio_oftalmologico_pdf')
   const [estudiosTemplateImg, setEstudiosTemplateImg] = useState('entrega_estudio_oftalmologico_img')
+  const [availableEstudiosTemplates, setAvailableEstudiosTemplates] = useState<Array<{ name: string; header_type: string; titulo_amigable?: string }>>([])
   const [estudiosAutoReplyEnabled, setEstudiosAutoReplyEnabled] = useState(true)
   const [estudiosDerivacionTelefono, setEstudiosDerivacionTelefono] = useState('5492616859303')
   const [estudiosAutoReplyText, setEstudiosAutoReplyText] = useState('')
@@ -149,6 +150,16 @@ export default function WhatsAppConfigCard() {
       if (resLines.ok) {
         const linesData = await resLines.json()
         setLineaQuirurgica(linesData.linea_quirurgica || null)
+        try {
+          const resTpl = await apiFetch('/api/whatsapp/estudios-templates')
+          if (resTpl.ok) {
+            const dataTpl = await resTpl.json()
+            if (dataTpl?.templates && Array.isArray(dataTpl.templates)) {
+              setAvailableEstudiosTemplates(dataTpl.templates)
+            }
+          }
+        } catch (e) {}
+
         setLineaEstudios(linesData.linea_estudios || null)
         const cfg = linesData.linea_estudios?.config
         if (cfg && populateForm) {
@@ -634,6 +645,59 @@ export default function WhatsAppConfigCard() {
                   onChange={(e) => setEstudiosDerivacionTelefono(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
                 />
+              </div>
+            </div>
+
+                        {/* Plantillas Predeterminadas para Despacho de Estudios */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--foreground)] mb-1 flex items-center justify-between">
+                  <span>★ Plantilla Predeterminada PDF</span>
+                  <span className="text-[10px] text-cyan-600 font-mono">Header: DOCUMENT</span>
+                </label>
+                <select
+                  value={estudiosTemplatePdf}
+                  onChange={(e) => setEstudiosTemplatePdf(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                >
+                  {availableEstudiosTemplates.length > 0 ? (
+                    availableEstudiosTemplates.map((t) => (
+                      <option key={t.name} value={t.name}>
+                        {t.titulo_amigable || t.name} [{t.header_type}]
+                      </option>
+                    ))
+                  ) : (
+                    <option value="entrega_estudio_oftalmologico_pdf">entrega_estudio_oftalmologico_pdf [DOCUMENT]</option>
+                  )}
+                </select>
+                <p className="text-[10px] text-[var(--secondary)] mt-1">
+                  Se envía automáticamente cuando el técnico adjunta un PDF o consolida imágenes.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--foreground)] mb-1 flex items-center justify-between">
+                  <span>★ Plantilla Predeterminada Imagen</span>
+                  <span className="text-[10px] text-cyan-600 font-mono">Header: IMAGE</span>
+                </label>
+                <select
+                  value={estudiosTemplateImg}
+                  onChange={(e) => setEstudiosTemplateImg(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                >
+                  {availableEstudiosTemplates.length > 0 ? (
+                    availableEstudiosTemplates.map((t) => (
+                      <option key={t.name} value={t.name}>
+                        {t.titulo_amigable || t.name} [{t.header_type}]
+                      </option>
+                    ))
+                  ) : (
+                    <option value="entrega_estudio_oftalmologico_img">entrega_estudio_oftalmologico_img [IMAGE]</option>
+                  )}
+                </select>
+                <p className="text-[10px] text-[var(--secondary)] mt-1">
+                  Se envía automáticamente cuando se adjunta imagen JPG/PNG sin convertir a PDF.
+                </p>
               </div>
             </div>
 

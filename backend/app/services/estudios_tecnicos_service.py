@@ -99,10 +99,12 @@ class EnviarExistenteGeclisaPayload(BaseModel):
     usuario_id: Optional[str] = None
     usuario_nombre: Optional[str] = None
     tecnico_pre_id: Optional[int] = None
+    plantilla_whatsapp: Optional[str] = None
 
 
 class ReintentarWhatsAppEstudioPayload(BaseModel):
     telefono: Optional[str] = None
+    plantilla_whatsapp: Optional[str] = None
 
 
 # =========================================================================
@@ -233,13 +235,13 @@ async def _dispatch_study_via_meta_line2(
     titulo_estudio: str,
     file_bytes: bytes,
     filename: str,
-    mime_type: str
+    mime_type: str,
+    template_override: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Sube el binario desde RAM al endpoint `/media` del `phone_number_id` de Estudios Oftalmológicos (Línea 2)
     y envía el estudio al paciente por WhatsApp:
-      1. Intenta enviar la plantilla con Header Multimedia (`entrega_estudio_oftalmologico_pdf` o `entrega_estudio_oftalmologico_img`)
-         adjuntando directamente el `media_id` en el primer mensaje.
+      1. Intenta enviar la plantilla elegida por el técnico o la predeterminada (`entrega_estudio_oftalmologico_pdf` / `img`).
       2. Si la plantilla con Header Multimedia aún está en estado `PENDING` en Meta o no existe,
          intenta usar la plantilla interactiva `entrega_estudio_oftalmologico_v1` (con botón `[Recibir estudio]`)
          o envío directo si la ventana de 24h con la Línea 2 ya está abierta.
@@ -267,52 +269,54 @@ async def _dispatch_study_via_meta_line2(
         )
 
         is_image = mime_type.startswith("image/")
-        primary_tpl = (
+        default_tpl = (
             cfg.get("estudios_template_img") or "entrega_estudio_oftalmologico_img"
             if is_image
             else cfg.get("estudios_template_pdf") or "entrega_estudio_oftalmologico_pdf"
         )
 
-        # Consultar idioma de la plantilla en whatsapp_templates (default es_AR)
+        is_override = bool(
+            template_override
+            and str(template_override).strip()
+            and str(template_override).strip().lower() != "auto"
+        )
+        primary_tpl = str(template_override).strip() if is_override else default_tpl
+
         tpl_lang = "es_AR"
+        header_type = "IMAGE" if is_image else "DOCUMENT"
         try:
             if supabase:
-                t_res = supabase.table("whatsapp_templates").select("language, status, header_type").eq("name", primary_tpl).limit(1).execute()
+                t_res = (
+                    supabase.table("whatsapp_templates")
+                    .select("language, status, header_type")
+                    .eq("name", primary_tpl)
+                    .limit(1)
+                    .execute()
+                )
                 if t_res.data and len(t_res.data) > 0:
                     tpl_lang = t_res.data[0].get("language") or "es_AR"
+                    h_val = str(t_res.data[0].get("header_type") or "").upper()
+                    if h_val:
+                        header_type = h_val
         except Exception:
             pass
 
-        header_param: Dict[str, Any]
-        if is_image:
-            header_param = {
-                "type": "image",
-                "image": {"id": media_id}
-            }
-        else:
-            header_param = {
-                "type": "document",
-                "document": {
-                    "id": media_id,
-                    "filename": filename
-                }
-            }
+        components: List[Dict[str, Any]] = []
+        if header_type in ("DOCUMENT", "IMAGE"):
+            if header_type == "IMAGE":
+                h_param: Dict[str, Any] = {"type": "image", "image": {"id": media_id}}
+            else:
+                h_param = {"type": "document", "document": {"id": media_id, "filename": filename}}
+            components.append({"type": "header", "parameters": [h_param]})
 
-        components = [
-            {
-                "type": "header",
-                "parameters": [header_param]
-            },
-            {
-                "type": "body",
-                "parameters": [
-                    {"type": "text", "text": nombre_paciente or "Paciente"},
-                    {"type": "text", "text": titulo_estudio or "Estudio Oftalmológico"}
-                ]
-            }
-        ]
+        components.append({
+            "type": "body",
+            "parameters": [
+                {"type": "text", "text": nombre_paciente or "Paciente"},
+                {"type": "text", "text": titulo_estudio or "Estudio Oftalmológico"}
+            ]
+        })
 
-        # 2. Intentar envío directo en 1 paso con plantilla de Header Multimedia
         try:
             send_res = await wa_client.send_template(
                 to_phone=normalized_to,
@@ -325,13 +329,35 @@ async def _dispatch_study_via_meta_line2(
                 "wamid": send_res.get("wamid"),
                 "media_id": media_id,
                 "template_used": primary_tpl,
-                "delivery_mode": "template_direct_media",
+                "delivery_mode": "template_direct_media" if header_type in ("DOCUMENT", "IMAGE") else "template_text",
                 "to_phone": normalized_to
             }
         except Exception as tpl_err:
-            logger.warning(f"[Estudios WhatsApp] Plantilla {primary_tpl} no disponible o pendiente ({tpl_err}). Probando fallback...")
+            logger.warning(f"[Estudios WhatsApp] Plantilla {primary_tpl} rechazó el envío ({tpl_err}). Probando fallback...")
 
-            # Fallback A: Si la plantilla interactiva `entrega_estudio_oftalmologico_v1` existe, enviarla
+            if is_override and primary_tpl != default_tpl:
+                try:
+                    def_header = {"type": "image", "image": {"id": media_id}} if is_image else {"type": "document", "document": {"id": media_id, "filename": filename}}
+                    def_res = await wa_client.send_template(
+                        to_phone=normalized_to,
+                        template_name=default_tpl,
+                        language_code="es_AR",
+                        components=[
+                            {"type": "header", "parameters": [def_header]},
+                            {"type": "body", "parameters": [{"type": "text", "text": nombre_paciente or "Paciente"}, {"type": "text", "text": titulo_estudio or "Estudio Oftalmológico"}]}
+                        ]
+                    )
+                    return {
+                        "success": True,
+                        "wamid": def_res.get("wamid"),
+                        "media_id": media_id,
+                        "template_used": default_tpl,
+                        "delivery_mode": "template_direct_media",
+                        "to_phone": normalized_to
+                    }
+                except Exception:
+                    pass
+
             try:
                 fb_res = await wa_client.send_template(
                     to_phone=normalized_to,
@@ -358,7 +384,6 @@ async def _dispatch_study_via_meta_line2(
             except Exception:
                 pass
 
-            # Fallback B: Si el paciente ya tiene ventana de 24h abierta con la Línea 2, enviar el documento/imagen directo
             caption = (
                 f"🏥 *Centrovisión - Estudios Oftalmológicos*\n\n"
                 f"Hola *{nombre_paciente}*, le adjuntamos su estudio digital: *{titulo_estudio}*."
@@ -409,6 +434,60 @@ def _persist_whatsapp_lineas_config(new_cfg: Dict[str, Any]) -> None:
             "descripcion": "Configuración multi-línea de WhatsApp Cloud API (Línea 2: Estudios Oftalmológicos)"
         }).execute()
     invalidate_whatsapp_credentials_cache()
+
+
+@estudios_router.get("/api/whatsapp/estudios-templates")
+async def get_estudios_whatsapp_templates():
+    """
+    Lista las plantillas disponibles para entrega de estudios oftalmológicos,
+    incluyendo las configuradas actualmente como predeterminadas (PDF e Imagen).
+    """
+    cfg = get_whatsapp_estudios_config()
+    default_pdf = cfg.get("estudios_template_pdf") or "entrega_estudio_oftalmologico_pdf"
+    default_img = cfg.get("estudios_template_img") or "entrega_estudio_oftalmologico_img"
+
+    templates = []
+    if supabase:
+        try:
+            res = (
+                supabase.table("whatsapp_templates")
+                .select("id, name, header_type, body_text, status, category, buttons, header_content, grupo_crm, titulo_amigable")
+                .order("name")
+                .execute()
+            )
+            raw = res.data or []
+            for t in raw:
+                if str(t.get("status") or "").upper() != "APPROVED":
+                    continue
+                n = str(t.get("name") or "").lower()
+                cat = str(t.get("category") or "").lower()
+                grupo = str(t.get("grupo_crm") or "").lower()
+                if "estudio" in n or "estudio" in grupo or cat == "entrega_estudios":
+                    templates.append(t)
+        except Exception as e:
+            logger.warning(f"Error consultando whatsapp_templates: {e}")
+
+    if not templates:
+        from app.services.whatsapp_cloud.templates import ESTUDIOS_TEMPLATES_CATALOG
+        templates = [
+            {
+                "name": item["name"],
+                "header_type": item["header_type"],
+                "body_text": item["body_text"],
+                "status": "APPROVED",
+                "category": "UTILITY",
+                "buttons": item.get("buttons", []),
+                "header_content": item.get("header_content")
+            }
+            for item in ESTUDIOS_TEMPLATES_CATALOG
+        ]
+
+    return {
+        "success": True,
+        "default_pdf": default_pdf,
+        "default_img": default_img,
+        "templates": templates
+    }
 
 
 @estudios_router.get("/api/whatsapp/lines")
@@ -1060,7 +1139,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
     enviar_whatsapp: bool = Form(True),
     usuario_id: Optional[str] = Form(None),
     usuario_nombre: Optional[str] = Form(None),
-    tecnico_pre_id: Optional[int] = Form(None)
+    tecnico_pre_id: Optional[int] = Form(None),
+    plantilla_whatsapp: Optional[str] = Form(None)
 ):
     """
     Flujo Maestro de Estudios Oftalmológicos:
@@ -1163,7 +1243,8 @@ async def enviar_y_archivar_estudio_oftalmologico(
             titulo_estudio=titulo_completo,
             file_bytes=final_bytes,
             filename=final_filename,
-            mime_type=final_mime
+            mime_type=final_mime,
+            template_override=plantilla_whatsapp
         )
 
     geclisa_res, wa_res = await asyncio.gather(
@@ -1385,7 +1466,8 @@ async def enviar_archivo_existente_geclisa_por_whatsapp(
             titulo_estudio=titulo_completo,
             file_bytes=file_bytes,
             filename=filename,
-            mime_type=mime_type
+            mime_type=mime_type,
+            template_override=payload.plantilla_whatsapp
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1511,7 +1593,8 @@ async def reintentar_envio_whatsapp_estudio(
             titulo_estudio=titulo_completo,
             file_bytes=file_content,
             filename=fname,
-            mime_type=mime
+            mime_type=mime,
+            template_override=payload.plantilla_whatsapp
         )
     except Exception as e:
         supabase.table("estudios_oftalmo").update({

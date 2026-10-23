@@ -93,6 +93,51 @@ interface PremadeTemplate {
 // Plantillas pre-diseñadas para carga rápida (con soporte de ambas opciones de botones)
 const PREMADE_TEMPLATES: PremadeTemplate[] = [
   {
+    title: 'Entrega Estudio Oftalmológico (PDF)',
+    name: 'entrega_estudio_oftalmologico_pdf',
+    category: 'UTILITY' as const,
+    header_content: 'Documento Clínico',
+    body_text: 'Hola {{1}}, le compartimos su estudio oftalmológico de {{2}} realizado en Centrovisión.\n\nEl archivo oficial se encuentra adjunto a este mensaje.',
+    footer_text: 'Centrovisión Oftalmología',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Confirmar recepción' }
+    ]
+  },
+  {
+    title: 'Entrega Estudio Oftalmológico (Imagen)',
+    name: 'entrega_estudio_oftalmologico_img',
+    category: 'UTILITY' as const,
+    header_content: 'Estudio Fotográfico',
+    body_text: 'Hola {{1}}, le compartimos su estudio oftalmológico de {{2}} realizado en Centrovisión.\n\nLa imagen oficial se encuentra adjunta a este mensaje.',
+    footer_text: 'Centrovisión Oftalmología',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Confirmar recepción' }
+    ]
+  },
+  {
+    title: 'Entrega Estudio Oftalmológico (Texto)',
+    name: 'entrega_estudio_oftalmologico_v1',
+    category: 'UTILITY' as const,
+    header_content: '',
+    body_text: 'Hola {{1}}, le informamos que su estudio oftalmológico de {{2}} ya fue procesado y archivado en su Historia Clínica de Centrovisión.\n\nAnte cualquier duda sobre el informe, estamos a su disposición.',
+    footer_text: 'Centrovisión Oftalmología',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'practica_nombre'
+    },
+    buttons: [
+      { type: 'QUICK_REPLY', text: 'Tengo una consulta' }
+    ]
+  },
+  {
     title: 'Apertura Asistencial con Mensaje Libre (UTILITY)',
     name: 'comunicacion_asistencial_paciente_v1',
     category: 'UTILITY' as const,
@@ -375,6 +420,10 @@ export default function WhatsAppTemplatesSettingsCard() {
 
   // Modal de previsualización independiente
   const [previewTemplate, setPreviewTemplate] = useState<TemplateItem | null>(null)
+  const [defaultEstudiosTemplates, setDefaultEstudiosTemplates] = useState<{ default_pdf: string; default_img: string }>({
+    default_pdf: 'entrega_estudio_oftalmologico_pdf',
+    default_img: 'entrega_estudio_oftalmologico_img'
+  })
 
   // Cargar plantillas de la base de datos
   const fetchTemplates = async () => {
@@ -385,6 +434,19 @@ export default function WhatsAppTemplatesSettingsCard() {
         const data = await res.json()
         setTemplates(data.data || [])
       }
+      try {
+        const resEst = await apiFetch('/api/whatsapp/estudios-templates')
+        if (resEst.ok) {
+          const dEst = await resEst.json()
+          if (dEst?.default_pdf || dEst?.default_img) {
+            setDefaultEstudiosTemplates({
+              default_pdf: dEst.default_pdf || 'entrega_estudio_oftalmologico_pdf',
+              default_img: dEst.default_img || 'entrega_estudio_oftalmologico_img'
+            })
+          }
+        }
+      } catch (e) {}
+
     } catch (err) {
       console.error('Error cargando plantillas:', err)
     } finally {
@@ -946,6 +1008,18 @@ export default function WhatsAppTemplatesSettingsCard() {
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#1e2e42] text-slate-300 border border-[#2a3e59]">
                         {tpl.grupo_crm || 'Atención General'}
                       </span>
+                      {/* Badge Predeterminada Línea 2 Estudios */}
+                      {tpl.name === defaultEstudiosTemplates.default_pdf && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9.5px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                          ★ Predeterminada PDF (Línea 2)
+                        </span>
+                      )}
+                      {tpl.name === defaultEstudiosTemplates.default_img && (
+                        <span className="px-1.5 py-0.5 rounded-full text-[9.5px] font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
+                          ★ Predeterminada Imagen (Línea 2)
+                        </span>
+                      )}
+
                     </div>
                   </div>
 

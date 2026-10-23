@@ -26,7 +26,8 @@ import {
   ShieldCheck,
   ClipboardPaste,
   FolderOpen,
-  RotateCcw
+  RotateCcw,
+  MessageSquare
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -98,6 +99,18 @@ interface EstudioHistorialItem {
   created_at: string
 }
 
+interface EstudioTemplateItem {
+  id?: string
+  name: string
+  header_type: 'DOCUMENT' | 'IMAGE' | 'TEXT' | string
+  header_content?: string
+  body_text: string
+  status?: string
+  category?: string
+  titulo_amigable?: string
+  buttons?: Array<{ type: string; text: string; url?: string }>
+}
+
 export default function EstudiosTecnicosPage() {
   const { user } = useAuth()
   const { profile, isAdmin, refreshPermissions } = usePermissions()
@@ -137,6 +150,15 @@ export default function EstudiosTecnicosPage() {
   const [manualPreId, setManualPreId] = useState<string>('')
   const [prestadoresGeclisa, setPrestadoresGeclisa] = useState<Array<{ id: number; nombre: string }>>([])
 
+  // Plantillas de WhatsApp para Estudios (Meta Cloud API Línea 2)
+  const [estudiosTemplates, setEstudiosTemplates] = useState<EstudioTemplateItem[]>([])
+  const [defaultTemplates, setDefaultTemplates] = useState<{ default_pdf: string; default_img: string }>({
+    default_pdf: 'entrega_estudio_oftalmologico_pdf',
+    default_img: 'entrega_estudio_oftalmologico_img'
+  })
+  const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<string>('auto')
+  const [mostrarPreviewPlantilla, setMostrarPreviewPlantilla] = useState<boolean>(false)
+
   // Estado de ejecución de envío
   const [enviandoEstudio, setEnviandoEstudio] = useState(false)
   const [enviandoExistenteId, setEnviandoExistenteId] = useState<number | null>(null)
@@ -166,6 +188,29 @@ export default function EstudiosTecnicosPage() {
     profile?.nombre_completo ||
     user?.email?.split('@')[0] ||
     'Técnico Oftalmólogo'
+
+  const isImageWorkflow =
+    selectedFiles.length > 0 &&
+    selectedFiles.every((f) => f.type.startsWith('image/') || /\.(jpg|jpeg|png)$/i.test(f.name)) &&
+    !unificarEnPdf
+
+  const activeTemplateName =
+    plantillaSeleccionada === 'auto'
+      ? (isImageWorkflow ? defaultTemplates.default_img : defaultTemplates.default_pdf)
+      : plantillaSeleccionada
+
+  const activeTemplate = estudiosTemplates.find((t) => t.name === activeTemplateName) || {
+    name: activeTemplateName,
+    header_type: isImageWorkflow ? 'IMAGE' : 'DOCUMENT',
+    body_text:
+      'Hola {{1}}, le compartimos su estudio oftalmológico de {{2}} realizado en Centrovisión.\n\nEl archivo oficial se encuentra adjunto a este mensaje.',
+    buttons: [{ type: 'QUICK_REPLY', text: 'Confirmar recepción' }]
+  }
+
+  const previewBodyText = (activeTemplate.body_text || '')
+    .replace('{{1}}', paciente?.nombre_completo || 'Paciente')
+    .replace('{{2}}', tipoEstudio || 'Estudio Oftalmológico')
+
 
   const fetchLineaStatus = useCallback(async () => {
     try {
@@ -200,6 +245,22 @@ export default function EstudiosTecnicosPage() {
   useEffect(() => {
     refreshPermissions()
     fetchLineaStatus()
+    // Cargar catálogo de plantillas oficiales para estudios oftalmológicos
+    apiFetch('/api/whatsapp/estudios-templates')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d?.templates && Array.isArray(d.templates)) {
+          setEstudiosTemplates(d.templates)
+        }
+        if (d?.default_pdf || d?.default_img) {
+          setDefaultTemplates({
+            default_pdf: d.default_pdf || 'entrega_estudio_oftalmologico_pdf',
+            default_img: d.default_img || 'entrega_estudio_oftalmologico_img'
+          })
+        }
+      })
+      .catch(() => {})
+
     fetchHistorial()
 
     // Si el usuario no tiene geclisa_pre_id en su perfil, cargar lista de prestadores para selección rápida
@@ -392,6 +453,9 @@ export default function EstudiosTecnicosPage() {
       formData.append('unificar_en_pdf', String(unificarEnPdf))
       formData.append('guardar_en_geclisa', String(guardarEnGeclisa))
       formData.append('enviar_whatsapp', String(enviarWhatsapp))
+      if (enviarWhatsapp && plantillaSeleccionada && plantillaSeleccionada !== 'auto') {
+        formData.append('plantilla_whatsapp', plantillaSeleccionada)
+      }
       if (user?.id) formData.append('usuario_id', user.id)
       formData.append('usuario_nombre', tecnicoNombre)
       if (tecnicoPreId) formData.append('tecnico_pre_id', String(tecnicoPreId))
@@ -501,7 +565,8 @@ export default function EstudiosTecnicosPage() {
           observaciones: arc.observaciones || '',
           usuario_id: user?.id,
           usuario_nombre: tecnicoNombre,
-          tecnico_pre_id: tecnicoPreId
+          tecnico_pre_id: tecnicoPreId,
+          plantilla_whatsapp: plantillaSeleccionada !== 'auto' ? plantillaSeleccionada : undefined
         })
       })
       const data = await res.json()
@@ -542,7 +607,10 @@ export default function EstudiosTecnicosPage() {
     try {
       const res = await apiFetch(`/api/estudios-tecnicos/${item.id}/reintentar-whatsapp`, {
         method: 'POST',
-        body: JSON.stringify({ telefono: nuevoTel.trim() })
+        body: JSON.stringify({
+          telefono: nuevoTel.trim(),
+          plantilla_whatsapp: plantillaSeleccionada !== 'auto' ? plantillaSeleccionada : undefined
+        })
       })
       const data = await res.json()
       if (res.ok && data.success) {
@@ -1125,6 +1193,102 @@ export default function EstudiosTecnicosPage() {
                     <span>Enviar por WhatsApp (Línea 2)</span>
                   </label>
                 </div>
+
+              {/* Selector y Vista Previa de Plantilla WhatsApp cuando enviarWhatsapp está activo */}
+              {enviarWhatsapp && (
+                <div className="p-3.5 rounded-2xl bg-cyan-500/5 border border-cyan-500/25 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles size={15} className="text-cyan-600 shrink-0" />
+                      <label className="text-xs font-bold text-[var(--foreground)]">
+                        Plantilla de WhatsApp Oficial (Meta Línea 2)
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMostrarPreviewPlantilla(!mostrarPreviewPlantilla)}
+                      className="text-[11px] font-semibold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1 self-start sm:self-auto"
+                    >
+                      <Eye size={13} />
+                      <span>{mostrarPreviewPlantilla ? 'Ocultar vista previa' : 'Ver mensaje que recibirá el paciente'}</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1">
+                    <select
+                      value={plantillaSeleccionada}
+                      onChange={(e) => setPlantillaSeleccionada(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-cyan-500/30 text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                    >
+                      <option value="auto">
+                        ✦ Automática (según archivo: PDF ➔ {defaultTemplates.default_pdf} | Imagen ➔ {defaultTemplates.default_img})
+                      </option>
+                      {estudiosTemplates.map((t) => (
+                        <option key={t.name} value={t.name}>
+                          {t.titulo_amigable || t.name} [{t.header_type}] {t.name === defaultTemplates.default_pdf ? '★ Predeterminada PDF' : t.name === defaultTemplates.default_img ? '★ Predeterminada Imagen' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      {plantillaSeleccionada === 'auto'
+                        ? `El CRM elegirá automáticamente la plantilla predeterminada (${activeTemplateName}) según si envías PDF o Imagen.`
+                        : `Plantilla personalizada seleccionada por el técnico: "${activeTemplateName}" [${activeTemplate.header_type}].`}
+                    </p>
+                  </div>
+
+                  {/* Vista previa WhatsApp en tiempo real */}
+                  {mostrarPreviewPlantilla && (
+                    <div className="p-3 rounded-xl bg-slate-900 text-slate-100 border border-slate-700/60 text-xs space-y-2 mt-2">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800 pb-1.5">
+                        <span className="flex items-center gap-1.5 font-semibold text-cyan-400">
+                          <Smartphone size={13} />
+                          Destino: {telefonoDestino ? formatPhoneDisplay(telefonoDestino) : '(Ingresa el celular en Paso 1)'}
+                        </span>
+                        <span className="font-mono text-[10px] text-slate-400">
+                          {activeTemplateName} ({activeTemplate.header_type})
+                        </span>
+                      </div>
+
+                      <div className="max-w-md mx-auto bg-[#0b141a] p-3 rounded-2xl border border-emerald-950/40 shadow-inner space-y-2">
+                        <div className="flex items-center gap-2 p-2 rounded-lg bg-[#202c33] text-emerald-400 text-[11px] font-medium">
+                          {activeTemplate.header_type === 'IMAGE' ? (
+                            <ImageIcon size={15} />
+                          ) : (
+                            <FileText size={15} />
+                          )}
+                          <span>
+                            {activeTemplate.header_type === 'IMAGE'
+                              ? '📷 [Imagen del estudio oftalmológico adjunta]'
+                              : '📄 [Documento PDF del estudio oftalmológico adjunto]'}
+                          </span>
+                        </div>
+
+                        <p className="text-[12px] text-slate-100 whitespace-pre-wrap leading-relaxed font-sans">
+                          {previewBodyText}
+                        </p>
+
+                        <div className="text-[10px] text-slate-400 text-right">
+                          <span>Hoy 10:30 • Línea 2 Oficial Centrovisión</span>
+                        </div>
+
+                        {activeTemplate.buttons && activeTemplate.buttons.length > 0 && (
+                          <div className="pt-1.5 border-t border-slate-700/40 flex flex-col gap-1">
+                            {activeTemplate.buttons.map((btn, i) => (
+                              <div
+                                key={i}
+                                className="py-1 px-3 rounded-lg bg-[#202c33] hover:bg-[#2a3942] text-center text-[11px] text-cyan-400 font-semibold"
+                              >
+                                {btn.text}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
 
                 <button
                   type="submit"
