@@ -1,6 +1,7 @@
 'use client'
 
-import React from 'react'
+import React, { useState, useEffect } from 'react'
+import { supabase } from '@/lib/supabase'
 import { X, Pill, ShieldCheck, Stethoscope } from 'lucide-react'
 import SeccionIndicacionesExpediente from './SeccionIndicacionesExpediente'
 
@@ -17,9 +18,26 @@ export default function ModalIndicacionesMedicasCaso({
   caso,
   onIndicacionEmitida
 }: ModalIndicacionesMedicasCasoProps) {
+  const [pacienteExtra, setPacienteExtra] = useState<any>(null)
+
+  useEffect(() => {
+    if (!isOpen || !caso?.paciente_id) return
+    const pacBase = caso.pacientes || {}
+    if (!pacBase.nro_afiliado || !pacBase.direccion) {
+      supabase
+        .from('pacientes')
+        .select('*')
+        .eq('id', caso.paciente_id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) setPacienteExtra(data)
+        })
+    }
+  }, [isOpen, caso?.paciente_id])
+
   if (!isOpen || !caso) return null
 
-  const paciente = caso.pacientes || {}
+  const paciente = { ...(caso.pacientes || {}), ...(pacienteExtra || {}) }
   const pacNombre = paciente.nombre || 'Paciente'
   const pacDni = paciente.dni || '-'
   const pacTelefono = paciente.telefono || ''

@@ -97,7 +97,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "sitio_web": "www.centrovision.com.ar",
         "color_primario": "#0369A1",
         "color_secundario": "#0284C7",
-        "tamano_hoja": "letter",
+        "tamano_hoja": "media_a4_horizontal",
         "pie_pagina": "Documento médico oficial emitido electrónicamente por Centro Visión.",
         "mostrar_logo": True,
         "mostrar_firma": True,

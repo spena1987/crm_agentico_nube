@@ -32,7 +32,7 @@ interface LienzoIndicacionesConfig {
   sitio_web: string
   color_primario: string
   color_secundario: string
-  tamano_hoja: 'letter' | 'a4'
+  tamano_hoja: 'media_a4_horizontal' | 'letter' | 'a4'
   pie_pagina: string
   mostrar_logo: boolean
   mostrar_firma: boolean
@@ -60,7 +60,7 @@ const DEFAULT_LIENZO: LienzoIndicacionesConfig = {
   sitio_web: 'www.centrovision.com.ar',
   color_primario: '#0369A1',
   color_secundario: '#0284C7',
-  tamano_hoja: 'letter',
+  tamano_hoja: 'media_a4_horizontal',
   pie_pagina: 'Documento médico oficial emitido electrónicamente por Centro Visión.',
   mostrar_logo: true,
   mostrar_firma: true,
@@ -74,7 +74,7 @@ export default function IndicacionesTemplateDesignerCard() {
   const [saving, setSaving] = useState(false)
   const [generandoPdf, setGenerandoPdf] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
-  const [tipoMuestra, setTipoMuestra] = useState<'oct' | 'gotas'>('oct')
+  const [tipoMuestra, setTipoMuestra] = useState<'oct' | 'gotas' | 'multipagina'>('multipagina')
 
   const [feedback, setFeedback] = useState<{ tipo: 'success' | 'error'; texto: string } | null>(null)
   const [tabPrincipal, setTabPrincipal] = useState<'disenador' | 'historial'>('disenador')
@@ -209,7 +209,7 @@ export default function IndicacionesTemplateDesignerCard() {
   }
 
   // Previsualizar PDF usando el lienzo maestro actual
-  const handleGenerarPreviewPdf = async (modo: 'oct' | 'gotas' = tipoMuestra) => {
+  const handleGenerarPreviewPdf = async (modo: 'oct' | 'gotas' | 'multipagina' = tipoMuestra) => {
     setGenerandoPdf(true)
     try {
       const datosMuestraOCT = {
@@ -243,8 +243,41 @@ export default function IndicacionesTemplateDesignerCard() {
         pautas_alarma: 'Consulte de forma INMEDIATA a la guardia ante: dolor ocular agudo o disminución brusca de visión.'
       }
 
+      const datosMuestraMultipagina = {
+        paciente_nombre: 'PEÑA, JUAN SEBASTIAN',
+        paciente_dni: '033516799',
+        paciente_obra_social: 'SWISS MEDICAL S.A.',
+        paciente_afiliado: '8000061154099011000',
+        paciente_domicilio: 'LAS CAÑAS 800 GUAYMALLEN',
+        medico_nombre: 'GRAS, HERNAN',
+        medico_matricula: '5432',
+        modulos: [
+          {
+            titulo: 'AVASTIN',
+            cuerpo_indicaciones: 'Solicito:\n\nColocación de Inyección intravítrea con Avastin ojo derecho/ojo izquierdo\n\nDiagnóstico:\nDMAE AO\nOclusión vascular\nAnestesia local asistida',
+            cuidados_generales: '- Uso de protector ocular transparente para dormir.\n- No refregar el ojo ni hacer esfuerzos físicos.',
+            pautas_alarma: 'Ante dolor agudo o disminución abrupta de la visión, acudir a la guardia 24 hs.',
+            medicamentos: []
+          },
+          {
+            titulo: 'OCT Antigeogenico',
+            cuerpo_indicaciones: 'Solicito:\n\nOCT Digital Bilateral\n\nDiagnóstico:\nDegeneración Macular',
+            cuidados_generales: '',
+            pautas_alarma: '',
+            medicamentos: []
+          }
+        ]
+      }
+
+      const datosSeleccionados =
+        modo === 'multipagina'
+          ? datosMuestraMultipagina
+          : modo === 'oct'
+          ? datosMuestraOCT
+          : datosMuestraGotas
+
       const payload = {
-        datos_emision: modo === 'oct' ? datosMuestraOCT : datosMuestraGotas,
+        datos_emision: datosSeleccionados,
         config_diseno: config
       }
 
@@ -441,6 +474,18 @@ export default function IndicacionesTemplateDesignerCard() {
                   <button
                     type="button"
                     onClick={() => {
+                      setTipoMuestra('multipagina')
+                      handleGenerarPreviewPdf('multipagina')
+                    }}
+                    className={`px-2.5 py-1 rounded-lg font-bold text-xs transition ${
+                      tipoMuestra === 'multipagina' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Muestra 1 a N (2 Hojas: Avastin + OCT)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setTipoMuestra('oct')
                       handleGenerarPreviewPdf('oct')
                     }}
@@ -448,7 +493,7 @@ export default function IndicacionesTemplateDesignerCard() {
                       tipoMuestra === 'oct' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
                     }`}
                   >
-                    Muestra OCT / Solicitud (Solo Cuerpo)
+                    OCT / Solicitud (1 Hoja)
                   </button>
                   <button
                     type="button"
@@ -460,7 +505,7 @@ export default function IndicacionesTemplateDesignerCard() {
                       tipoMuestra === 'gotas' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
                     }`}
                   >
-                    Muestra Cataratas (Con Gotas y Cuidados)
+                    Gotas & Cuidados (1 Hoja)
                   </button>
                 </div>
 
@@ -552,29 +597,51 @@ export default function IndicacionesTemplateDesignerCard() {
                     <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
                       Tamaño de Página:
                     </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
                       <button
                         type="button"
-                        onClick={() => setConfig({ ...config, tamano_hoja: 'letter' })}
-                        className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 ${
-                          config.tamano_hoja === 'letter'
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                            : 'border-[var(--border-color)] text-[var(--secondary)] hover:bg-[var(--hover-bg)]'
+                        onClick={() => setConfig({ ...config, tamano_hoja: 'media_a4_horizontal' })}
+                        className={`w-full p-3 rounded-xl border text-xs font-bold transition flex items-center justify-between gap-2 ${
+                          config.tamano_hoja === 'media_a4_horizontal'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs ring-2 ring-blue-400/50'
+                            : 'border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--hover-bg)]'
                         }`}
                       >
-                        Carta (Letter - 21.6 x 27.9 cm)
+                        <div className="text-left">
+                          <span className="block font-bold">Media Hoja A4 en Horizontal (21.0 cm x 14.85 cm)</span>
+                          <span className={`text-[10px] ${config.tamano_hoja === 'media_a4_horizontal' ? 'text-blue-100' : 'text-blue-500 font-semibold'}`}>
+                            ★ Tamaño oficial recomendado para órdenes y recetarios médicos
+                          </span>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 uppercase font-extrabold tracking-wider">
+                          Recomendado
+                        </span>
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfig({ ...config, tamano_hoja: 'a4' })}
-                        className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 ${
-                          config.tamano_hoja === 'a4'
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                            : 'border-[var(--border-color)] text-[var(--secondary)] hover:bg-[var(--hover-bg)]'
-                        }`}
-                      >
-                        A4 (21.0 x 29.7 cm)
-                      </button>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfig({ ...config, tamano_hoja: 'letter' })}
+                          className={`p-2.5 rounded-xl border text-xs font-semibold transition flex items-center justify-center gap-2 ${
+                            config.tamano_hoja === 'letter'
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'border-[var(--border-color)] text-[var(--secondary)] hover:bg-[var(--hover-bg)]'
+                          }`}
+                        >
+                          Carta (21.6 x 27.9 cm)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfig({ ...config, tamano_hoja: 'a4' })}
+                          className={`p-2.5 rounded-xl border text-xs font-semibold transition flex items-center justify-center gap-2 ${
+                            config.tamano_hoja === 'a4'
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'border-[var(--border-color)] text-[var(--secondary)] hover:bg-[var(--hover-bg)]'
+                          }`}
+                        >
+                          A4 Vertical (21 x 29.7 cm)
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

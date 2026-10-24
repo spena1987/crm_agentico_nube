@@ -56,6 +56,8 @@ export interface PacienteData {
   telefono?: string | null
   obra_social?: string | null
   email?: string | null
+  nro_afiliado?: string | null
+  direccion?: string | null
 }
 
 export interface AsesoriaCasoPipeline {
@@ -319,9 +321,9 @@ export default function PipelineQuirurgicoPage() {
 
       // Fallback transparente a Supabase directo si el backend no respondió
       if (!datosCargados) {
-        const { data: casosData, error: sbErr } = await supabase
+        const { data: casosData, error: sbErr } = await (supabase as any)
           .from('asesorias_quirurgicas')
-          .select('*, pacientes(id, nombre, dni, telefono, obra_social, email)')
+          .select('*, pacientes(id, nombre, dni, telefono, obra_social, email, nro_afiliado, direccion)')
           .order('created_at', { ascending: false })
 
         if (sbErr) throw sbErr
@@ -342,7 +344,7 @@ export default function PipelineQuirurgicoPage() {
         let casos_activos_count = 0
         let casos_en_alerta_count = 0
 
-        const listaCasos = (casosData || []) as AsesoriaCasoPipeline[]
+        const listaCasos = ((casosData as any) || []) as AsesoriaCasoPipeline[]
         listaCasos.forEach((c) => {
           const est = c.estado || 'en_asesoramiento'
           let dest_etapa = est

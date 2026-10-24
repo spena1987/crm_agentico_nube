@@ -84,6 +84,31 @@ export default function SeccionIndicacionesExpediente({
   
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
   const [mensajeError, setMensajeError] = useState<string | null>(null)
+
+  const [localAfiliado, setLocalAfiliado] = useState<string>(pacienteAfiliado || '')
+  const [localDomicilio, setLocalDomicilio] = useState<string>(pacienteDomicilio || '')
+
+  useEffect(() => {
+    if (pacienteAfiliado && pacienteAfiliado !== '-') setLocalAfiliado(pacienteAfiliado)
+    if (pacienteDomicilio && pacienteDomicilio !== '-') setLocalDomicilio(pacienteDomicilio)
+
+    if ((!pacienteAfiliado || pacienteAfiliado === '-' || !pacienteDomicilio || pacienteDomicilio === '-') && asesoriaId) {
+      import('@/lib/supabase').then(({ supabase }) => {
+        supabase
+          .from('asesorias_quirurgicas')
+          .select('*, pacientes(*)')
+          .eq('id', asesoriaId)
+          .maybeSingle()
+          .then(({ data }) => {
+            const pac = data?.pacientes as any
+            if (pac) {
+              if (pac.nro_afiliado || pac.numero_afiliado) setLocalAfiliado(pac.nro_afiliado || pac.numero_afiliado)
+              if (pac.direccion || pac.domicilio) setLocalDomicilio(pac.direccion || pac.domicilio)
+            }
+          })
+      })
+    }
+  }, [pacienteAfiliado, pacienteDomicilio, asesoriaId])
   
   // Catálogos
   const [plantillasCatalogoGeclisa, setPlantillasCatalogoGeclisa] = useState<any[]>([])
@@ -262,24 +287,37 @@ export default function SeccionIndicacionesExpediente({
   const handlePreviewPdf = async () => {
     setGenerandoPreview(true)
     try {
+      // Filtrar módulos activos para separar en hojas independientes (1 a N)
+      const modulosActivos = (plantillaSeleccionada?.modulos_asignados || []).filter((m: any) =>
+        modulosSeleccionadosIds.includes(m.id)
+      )
+
+      const datosPayload: any = {
+        paciente_nombre: pacienteNombre || 'Paciente',
+        paciente_dni: pacienteDni || '',
+        paciente_obra_social: pacienteObraSocial || '',
+        paciente_afiliado: localAfiliado || pacienteAfiliado || '',
+        paciente_domicilio: localDomicilio || pacienteDomicilio || '',
+        practica_nombre: practicaNombre || 'Cirugía Oftalmológica',
+        medico_nombre: medicoNombre || 'Médico Cirujano',
+        cuerpo_indicaciones: textoIndicaciones,
+        medicamentos: medicamentos,
+        cuidados_generales: cuidadosGenerales,
+        pautas_alarma: pautasAlarma,
+        geclisa_im_id: geclisaImId,
+        asesoria_id: asesoriaId
+      }
+
+      if (modulosActivos.length > 0) {
+        datosPayload.modulos = modulosActivos
+      }
+
       const res = await fetch(`${API_BASE_URL}/api/indicaciones/preview-pdf`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          datos_emision: {
-            paciente_nombre: pacienteNombre || 'Paciente',
-            paciente_dni: pacienteDni || '',
-            paciente_obra_social: pacienteObraSocial || '',
-            paciente_afiliado: pacienteAfiliado || '',
-            paciente_domicilio: pacienteDomicilio || '',
-            practica_nombre: practicaNombre || 'Cirugía Oftalmológica',
-            medico_nombre: medicoNombre || 'Médico Cirujano',
-            cuerpo_indicaciones: textoIndicaciones,
-            medicamentos: medicamentos,
-            cuidados_generales: cuidadosGenerales,
-            pautas_alarma: pautasAlarma,
-            geclisa_im_id: geclisaImId
-          }
+          datos_emision: datosPayload,
+          asesoria_id: asesoriaId
         })
       })
 
@@ -310,6 +348,10 @@ export default function SeccionIndicacionesExpediente({
     setMensajeError(null)
 
     try {
+      const modulosActivos = (plantillaSeleccionada?.modulos_asignados || []).filter((m: any) =>
+        modulosSeleccionadosIds.includes(m.id)
+      )
+
       const res = await fetch(`${API_BASE_URL}/api/expediente-quirurgico/${asesoriaId}/emitir-indicaciones`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -318,7 +360,8 @@ export default function SeccionIndicacionesExpediente({
           texto_indicaciones: textoIndicaciones,
           medicamentos: medicamentos,
           cuidados_generales: cuidadosGenerales,
-          pautas_alarma: pautasAlarma
+          pautas_alarma: pautasAlarma,
+          modulos: modulosActivos.length > 0 ? modulosActivos : undefined
         })
       })
 

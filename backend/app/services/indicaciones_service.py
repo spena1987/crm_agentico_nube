@@ -265,7 +265,8 @@ def emitir_indicaciones_expediente(
     medicamentos_override: Optional[List[Dict[str, Any]]] = None,
     cuidados_override: Optional[str] = None,
     pautas_alarma_override: Optional[str] = None,
-    usu_alta: str = "asesora_crm"
+    usu_alta: str = "asesora_crm",
+    modulos: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
     """
     Proceso central de Emisión de Indicaciones Médicas:
@@ -372,7 +373,8 @@ def emitir_indicaciones_expediente(
         "medicamentos": meds_final or [],
         "cuidados_generales": cuidados_final or "",
         "pautas_alarma": alarmas_final or "",
-        "geclisa_im_id": geclisa_im_id
+        "geclisa_im_id": geclisa_im_id,
+        "modulos": modulos
     }
     
     pdf_resultado = generar_pdf_indicacion_medica(datos_emision_pdf, guardar_en_disco=True)

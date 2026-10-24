@@ -3732,9 +3732,40 @@ def preview_pdf_indicacion_api(payload: Dict[str, Any] = Body(...)):
     """
     try:
         from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica
-        datos_emision = payload.get("datos_emision") or payload
+        from app.db import supabase
+        datos_emision = dict(payload.get("datos_emision") or payload)
         config_diseno = payload.get("config_diseno") or {}
-        
+
+        # Si faltan datos demográficos clave del paciente, consultar en Supabase
+        afiliado = datos_emision.get("paciente_afiliado")
+        domicilio = datos_emision.get("paciente_domicilio")
+        dni = datos_emision.get("paciente_dni")
+
+        if (not afiliado or str(afiliado).strip() == "-" or not domicilio or str(domicilio).strip() == "-") and supabase:
+            pac_id = datos_emision.get("paciente_id") or payload.get("paciente_id")
+            as_id = payload.get("asesoria_id") or datos_emision.get("asesoria_id")
+            p_rec = None
+            if pac_id:
+                r = supabase.table("pacientes").select("*").eq("id", pac_id).limit(1).execute()
+                if r.data: p_rec = r.data[0]
+            elif as_id:
+                r = supabase.table("asesorias_quirurgicas").select("*, pacientes(*)").eq("id", as_id).limit(1).execute()
+                if r.data and r.data[0].get("pacientes"): p_rec = r.data[0]["pacientes"]
+            elif dni and str(dni).strip() != "-":
+                clean_dni = str(dni).replace(".", "").strip()
+                r = supabase.table("pacientes").select("*").ilike("dni", f"%{clean_dni}%").limit(1).execute()
+                if r.data: p_rec = r.data[0]
+
+            if p_rec:
+                if not datos_emision.get("paciente_dni") or datos_emision.get("paciente_dni") == "-":
+                    datos_emision["paciente_dni"] = p_rec.get("dni")
+                if not datos_emision.get("paciente_obra_social") or datos_emision.get("paciente_obra_social") == "-":
+                    datos_emision["paciente_obra_social"] = p_rec.get("obra_social")
+                if not afiliado or str(afiliado).strip() == "-":
+                    datos_emision["paciente_afiliado"] = p_rec.get("nro_afiliado") or p_rec.get("numero_afiliado") or "-"
+                if not domicilio or str(domicilio).strip() == "-":
+                    datos_emision["paciente_domicilio"] = p_rec.get("direccion") or p_rec.get("domicilio") or "-"
+
         resultado = generar_pdf_indicacion_medica(datos_emision, config_diseno=config_diseno, guardar_en_disco=False)
         return Response(
             content=resultado["pdf_bytes"],
@@ -3760,6 +3791,7 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
         alarmas_override = payload.get("pautas_alarma")
         usu_alta = payload.get("usu_alta", "asesora_crm")
 
+        modulos = payload.get("modulos")
         resultado = emitir_indicaciones_expediente(
             asesoria_id=asesoria_id,
             enviar_whatsapp=enviar_wa,
@@ -3767,7 +3799,8 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
             medicamentos_override=meds_override,
             cuidados_override=cuidados_override,
             pautas_alarma_override=alarmas_override,
-            usu_alta=usu_alta
+            usu_alta=usu_alta,
+            modulos=modulos
         )
         if not resultado.get("success"):
             raise HTTPException(status_code=400, detail=resultado.get("error", "Error al emitir indicación."))

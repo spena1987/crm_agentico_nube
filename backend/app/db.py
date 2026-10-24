@@ -6060,7 +6060,7 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
     try:
         # 1. Obtener todas las asesorías con datos de paciente
         resp = supabase.table("asesorias_quirurgicas") \
-            .select("*, pacientes(id, nombre, dni, telefono, obra_social, email)") \
+            .select("*, pacientes(id, nombre, dni, telefono, obra_social, email, nro_afiliado, direccion)") \
             .order("created_at", desc=True) \
             .execute()
             
