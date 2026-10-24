@@ -271,6 +271,10 @@ class WhatsAppManager:
             )
         )
 
+    def send_message(self, *args, **kwargs) -> Dict[str, Any]:
+        """Alias de compatibilidad para enviar_mensaje."""
+        return self.enviar_mensaje(*args, **kwargs)
+
     async def enviar_multimedia_async(
         self,
         telefono: str,

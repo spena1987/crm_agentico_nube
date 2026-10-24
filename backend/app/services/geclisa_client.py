@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime, date, timedelta
 import logging
 import requests
 import urllib3
@@ -2128,7 +2129,8 @@ class GeclisaClient:
         plan_id: Optional[int] = None,
         os_plan: Optional[str] = None,
         esp_id: Optional[int] = 1, # Oftalmología por defecto
-        me_id: Optional[int] = None
+        me_id: Optional[int] = None,
+        nro_afiliado: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Emite una nueva Indicación Médica formal en la base de datos de Geclisa (POST /api/IndicacionesMedicas)
@@ -2156,7 +2158,7 @@ class GeclisaClient:
             "osPlan": os_plan or "",
             "planId": plan_id,
             "espId": esp_id,
-            "nroAfiliado": "",
+            "nroAfiliado": str(nro_afiliado or ""),
             "imTexto": texto_indicacion.strip(),
             "usuAlta": usu_alta,
             "esInternado": es_internado,

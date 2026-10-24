@@ -24,6 +24,7 @@ backend/app/static/branding/*
 !backend/app/static/branding/.gitkeep
 !backend/app/static/branding/*.png
 !backend/app/static/.gitkeep
+backend/static/*.pdf
 
 # Node & Next.js
 node_modules/

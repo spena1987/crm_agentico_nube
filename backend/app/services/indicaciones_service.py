@@ -3,8 +3,16 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import unicodedata
+import re
+from typing import Dict, Any, List, Optional, Tuple
 
-from app.db import supabase, is_valid_uuid
+from app.db import (
+    supabase,
+    is_valid_uuid,
+    get_or_create_conversacion,
+    guardar_mensaje,
+    check_patient_24h_window
+)
 from app.services.geclisa_client import geclisa_client
 from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica
 from app.whatsapp import whatsapp_manager
@@ -258,6 +266,131 @@ def resolver_plantilla_sugerida(
     }
 
 
+
+def despachar_indicacion_por_whatsapp(
+    paciente_id: Optional[str],
+    paciente_telefono: str,
+    paciente_nombre: str,
+    practica_nombre: str,
+    mensaje_wa: str,
+    pdf_url: str,
+    emision_uuid: str
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Despacha la indicación médica u orden médica al WhatsApp del paciente:
+    1. Si la ventana de 24 horas está abierta, envía el mensaje formateado con enlace y registra en el Chat del CRM.
+    2. Si la ventana está cerrada (Meta error 131026 / 131047), envía la plantilla oficial UTILITY homologada
+       'comunicacion_asistencial_paciente_v1' con aviso y link de descarga, y registra en el Chat del CRM.
+    """
+    tel_norm = normalize_phone_number(paciente_telefono)
+    if not tel_norm:
+        return "fallido", {"error": "Número telefónico no válido"}
+
+    conv_id = None
+    if paciente_id:
+        try:
+            conv = get_or_create_conversacion(paciente_id)
+            if conv:
+                conv_id = conv.get("id")
+        except Exception as e_c:
+            logger.warning(f"Error resolviendo conversación para paciente {paciente_id}: {e_c}")
+
+    backend_base = os.getenv("BACKEND_PUBLIC_URL") or os.getenv("BACKEND_URL", "https://crm.centrovision.com.ar").rstrip("/")
+    full_pdf_link = f"{backend_base}{pdf_url}"
+
+    win_info = check_patient_24h_window(paciente_id, tel_norm)
+    is_window_open = bool(win_info.get("is_open", False))
+
+    wa_send = None
+    if is_window_open:
+        wa_send = whatsapp_manager.enviar_mensaje(
+            telefono_o_jid=tel_norm,
+            texto=mensaje_wa,
+            conversacion_id=conv_id,
+            emisor="operador"
+        )
+        if wa_send and (wa_send.get("code") == "WINDOW_CLOSED" or not wa_send.get("enviado_real")):
+            is_window_open = False
+
+    if not is_window_open:
+        from app.services.whatsapp_cloud.client import (
+            WhatsAppCloudClient,
+            get_whatsapp_cloud_credentials
+        )
+        from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+
+        phone_id, token = get_whatsapp_cloud_credentials()
+        if phone_id and token:
+            norm_meta_phone = normalize_to_meta_e164(tel_norm)
+            wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
+
+            nombre_param = re.sub(r"[\r\n\t]+", " ", (paciente_nombre or "Estimado/a").strip().title())[:60]
+            aviso_param = re.sub(
+                r"[\r\n\t]+",
+                " ",
+                f"Tiene disponibles sus indicaciones y orden oficial de {practica_nombre}. Puede descargarlas en: {full_pdf_link}"
+            )[:400]
+
+            components = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": nombre_param},
+                        {"type": "text", "text": aviso_param}
+                    ]
+                }
+            ]
+
+            async def _run_template():
+                try:
+                    return await wa_client.send_template(
+                        to_phone=norm_meta_phone,
+                        template_name="comunicacion_asistencial_paciente_v1",
+                        language_code="es_AR",
+                        components=components
+                    )
+                finally:
+                    await wa_client.close()
+
+            try:
+                tpl_res = whatsapp_manager._safe_run_async(_run_template())
+                wamid = tpl_res.get("wamid")
+                wa_send = {
+                    "success": True,
+                    "enviado_real": True,
+                    "message_id": wamid,
+                    "wamid": wamid,
+                    "template": "comunicacion_asistencial_paciente_v1"
+                }
+
+                if conv_id and wamid:
+                    guardar_mensaje(
+                        conversacion_id=conv_id,
+                        emisor="operador",
+                        contenido=f"📋 [Plantilla Oficial Meta: comunicacion_asistencial_paciente_v1]\n{aviso_param}",
+                        whatsapp_message_id=wamid,
+                        metadata_json={
+                            "tipo": "template",
+                            "template_name": "comunicacion_asistencial_paciente_v1",
+                            "delivery_status": "enviado",
+                            "provider": "meta_cloud_api",
+                            "wamid": wamid,
+                            "emision_indicacion_id": emision_uuid,
+                            "media_url": full_pdf_link
+                        }
+                    )
+            except Exception as e_tpl:
+                logger.error(f"Error enviando plantilla asistencial a {tel_norm}: {e_tpl}")
+                wa_send = {"success": False, "error": str(e_tpl)}
+
+    if wa_send and (wa_send.get("success") or wa_send.get("status") in ["queued", "sent", "success"] or wa_send.get("enviado_real")):
+        status = "enviado"
+    else:
+        status = "fallido"
+
+    return status, (wa_send or {})
+
+
 def emitir_indicaciones_expediente(
     asesoria_id: str,
     enviar_whatsapp: bool = True,
@@ -329,12 +462,19 @@ def emitir_indicaciones_expediente(
     # 3. Emitir en la base de datos de GECLISA (POST /api/IndicacionesMedicas)
     geclisa_im_id = None
     geclisa_res = None
-    ficha_id_geclisa = paciente.get("geclisa_paciente_id") or paciente.get("ficha_id")
+    ficha_id_geclisa = (
+        paciente.get("geclisa_ficha_id")
+        or paciente.get("geclisa_paciente_id")
+        or paciente.get("ficha_id")
+    )
 
     # Si no tiene fichaId registrada en paciente, intentar buscarla por DNI en Geclisa
     if not ficha_id_geclisa and paciente_dni:
         try:
-            pac_geclisa = geclisa_client.buscar_paciente_por_dni(paciente_dni)
+            dni_limpio = str(paciente_dni).strip()
+            pac_geclisa = geclisa_client.buscar_paciente_por_dni(dni_limpio)
+            if not pac_geclisa.get("encontrado") and dni_limpio.startswith("0"):
+                pac_geclisa = geclisa_client.buscar_paciente_por_dni(dni_limpio.lstrip("0"))
             if pac_geclisa.get("encontrado"):
                 ficha_id_geclisa = pac_geclisa.get("ficha_id") or pac_geclisa.get("id")
         except Exception as e_dni:
@@ -349,7 +489,8 @@ def emitir_indicaciones_expediente(
                 texto_indicacion=texto_final,
                 es_internado=False,
                 usu_alta=usu_alta,
-                os_plan=paciente_os
+                os_plan=paciente_os,
+                nro_afiliado=paciente_afiliado
             )
             if geclisa_res.get("success"):
                 geclisa_im_id = geclisa_res.get("im_id")
@@ -459,23 +600,25 @@ def emitir_indicaciones_expediente(
                     f"_Centro Visión - Cuidamos su salud visual_"
                 )
             
-            # Enviar mensaje vía WhatsApp Manager
-            tel_norm = normalize_phone_number(paciente_telefono)
-            if tel_norm:
-                wa_send = whatsapp_manager.send_message(tel_norm, mensaje_wa)
-                if wa_send and wa_send.get("status") in ["queued", "sent", "success"]:
-                    whatsapp_status = "enviado"
-                    whatsapp_res = wa_send
-                else:
-                    whatsapp_status = "fallido"
-                    whatsapp_res = wa_send
+            # Despachar mensaje vía WhatsApp (o plantilla homologada si ventana de 24h está cerrada)
+            whatsapp_status, wa_send = despachar_indicacion_por_whatsapp(
+                paciente_id=paciente_id,
+                paciente_telefono=paciente_telefono,
+                paciente_nombre=paciente_nombre,
+                practica_nombre=practica_nombre,
+                mensaje_wa=mensaje_wa,
+                pdf_url=pdf_url,
+                emision_uuid=emision_uuid
+            )
+            whatsapp_res = wa_send
 
-                # Actualizar estado de WhatsApp en la tabla de emisiones
-                supabase.table("emisiones_indicaciones_geclisa").update({
-                    "whatsapp_status": whatsapp_status,
-                    "whatsapp_mensaje_id": wa_send.get("message_id") if isinstance(wa_send, dict) else None,
-                    "whatsapp_error": str(wa_send.get("error") or "") if isinstance(wa_send, dict) else None
-                }).eq("id", emision_uuid).execute()
+            # Actualizar estado de WhatsApp en la tabla de emisiones
+            upd_wa = {
+                "whatsapp_status": whatsapp_status,
+                "whatsapp_mensaje_id": wa_send.get("message_id") or wa_send.get("wamid") if isinstance(wa_send, dict) else None,
+                "whatsapp_error": str(wa_send.get("error") or "") if isinstance(wa_send, dict) and wa_send.get("error") else None
+            }
+            supabase.table("emisiones_indicaciones_geclisa").update(upd_wa).eq("id", emision_uuid).execute()
 
         except Exception as e_wa:
             logger.error(f"Error despachando indicación médica por WhatsApp: {e_wa}")
@@ -596,17 +739,22 @@ def reeditar_emision_indicaciones(
                 f"_Centro Visión - Cuidamos su salud visual_"
             )
             
-            tel_norm = normalize_phone_number(paciente_telefono)
-            if tel_norm:
-                wa_send = whatsapp_manager.send_message(tel_norm, mensaje_wa)
-                if wa_send and wa_send.get("status") in ["queued", "sent", "success"]:
-                    whatsapp_status = "enviado"
-                    whatsapp_res = wa_send
-                else:
-                    whatsapp_status = "fallido"
-                    whatsapp_res = wa_send
-                upd_em["whatsapp_status"] = whatsapp_status
-                upd_em["whatsapp_mensaje_id"] = wa_send.get("message_id") if isinstance(wa_send, dict) else None
+            # Despachar mensaje vía WhatsApp (o plantilla homologada si ventana de 24h está cerrada)
+            paciente_id = emision.get("paciente_id")
+            whatsapp_status, wa_send = despachar_indicacion_por_whatsapp(
+                paciente_id=paciente_id,
+                paciente_telefono=paciente_telefono,
+                paciente_nombre=paciente_nombre,
+                practica_nombre=practica_nombre,
+                mensaje_wa=mensaje_wa,
+                pdf_url=pdf_url,
+                emision_uuid=emision_id
+            )
+            whatsapp_res = wa_send
+            upd_em["whatsapp_status"] = whatsapp_status
+            upd_em["whatsapp_mensaje_id"] = wa_send.get("message_id") or wa_send.get("wamid") if isinstance(wa_send, dict) else None
+            if isinstance(wa_send, dict) and wa_send.get("error"):
+                upd_em["whatsapp_error"] = str(wa_send.get("error"))
         except Exception as e_wa:
             logger.error(f"Error reenviando WhatsApp en reedición {emision_id}: {e_wa}")
             upd_em["whatsapp_status"] = "fallido"
