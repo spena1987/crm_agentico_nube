@@ -19,6 +19,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 from app.db import (
+    is_valid_uuid,
     supabase, 
     actualizar_bot_disabled,
     archivar_conversacion,
@@ -3608,6 +3609,14 @@ def save_plantilla_indicacion_crm_api(payload: Dict[str, Any] = Body(...)):
     except Exception as e:
         logger.error(f"Error guardando plantilla de indicación: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/indicaciones/plantillas/{plantilla_id}")
+def update_plantilla_indicacion_crm_api(plantilla_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Actualiza una plantilla de indicación médica en el CRM.
+    """
+    payload["id"] = plantilla_id
+    return save_plantilla_indicacion_crm_api(payload)
 
 @app.delete("/api/indicaciones/plantillas/{plantilla_id}")
 def delete_plantilla_indicacion_crm_api(plantilla_id: str):

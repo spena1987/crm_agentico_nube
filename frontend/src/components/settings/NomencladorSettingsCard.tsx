@@ -177,6 +177,7 @@ export default function NomencladorSettingsCard() {
   const [selectedGeclisaPimId, setSelectedGeclisaPimId] = useState<number | ''>('')
   const [importandoGeclisa, setImportandoGeclisa] = useState(false)
   const [savingIndicacion, setSavingIndicacion] = useState(false)
+  const [indicacionModalError, setIndicacionModalError] = useState<string | null>(null)
   const [indicacionesAsignadasModal, setIndicacionesAsignadasModal] = useState<any[]>([])
   const [loadingIndicacionesAsignadas, setLoadingIndicacionesAsignadas] = useState(false)
   const [indicacionForm, setIndicacionForm] = useState({
@@ -963,6 +964,7 @@ export default function NomencladorSettingsCard() {
   }
 
   const handleOpenCreateIndicacion = () => {
+    setIndicacionModalError(null)
     setIndicacionForm({
       id: '',
       titulo: '',
@@ -978,6 +980,7 @@ export default function NomencladorSettingsCard() {
   }
 
   const handleOpenEditIndicacion = (item: any) => {
+    setIndicacionModalError(null)
     setIndicacionForm({
       id: item.id || '',
       titulo: item.titulo || '',
@@ -1025,8 +1028,13 @@ export default function NomencladorSettingsCard() {
 
   const handleSaveIndicacionTemplate = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIndicacionModalError(null)
     if (!indicacionForm.titulo.trim()) {
-      setFeedback({ tipo: 'error', texto: 'El título es obligatorio.' })
+      setIndicacionModalError('El título del protocolo es obligatorio.')
+      return
+    }
+    if (!indicacionForm.cuerpo_indicaciones.trim()) {
+      setIndicacionModalError('El cuerpo de indicaciones médicas es obligatorio.')
       return
     }
     try {
@@ -1042,14 +1050,18 @@ export default function NomencladorSettingsCard() {
         body: JSON.stringify(indicacionForm)
       })
       if (res.ok) {
-        setFeedback({ tipo: 'success', texto: isEdit ? 'Plantilla actualizada.' : 'Plantilla creada con éxito.' })
+        setFeedback({ tipo: 'success', texto: isEdit ? 'Plantilla de indicación actualizada con éxito.' : 'Plantilla creada con éxito.' })
         setIsIndicacionModalOpen(false)
-        loadPlantillasIndicaciones()
+        setIndicacionModalError(null)
+        await loadPlantillasIndicaciones()
       } else {
-        const err = await res.json()
-        setFeedback({ tipo: 'error', texto: err.detail || 'Error al guardar plantilla.' })
+        const err = await res.json().catch(() => ({}))
+        const errorMsg = err.detail || 'Error al guardar la plantilla.'
+        setIndicacionModalError(errorMsg)
+        setFeedback({ tipo: 'error', texto: errorMsg })
       }
     } catch (err) {
+      setIndicacionModalError('Error de conexión al servidor.')
       setFeedback({ tipo: 'error', texto: 'Error de conexión.' })
     } finally {
       setSavingIndicacion(false)
@@ -3226,6 +3238,12 @@ export default function NomencladorSettingsCard() {
             </div>
 
             <form onSubmit={handleSaveIndicacionTemplate} className="space-y-3.5 text-xs overflow-y-auto flex-1 pr-1 pt-3">
+              {indicacionModalError && (
+                <div className="p-3 rounded-xl bg-rose-50 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-xs flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0 text-rose-600" />
+                  <span className="font-medium">{indicacionModalError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-500 block mb-1">Título del Protocolo</label>
