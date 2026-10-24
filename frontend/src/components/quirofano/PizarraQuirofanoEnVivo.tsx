@@ -375,7 +375,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   // Suscripción Realtime a Supabase con Delta Updates incrementales
   useEffect(() => {
     const channel = supabase
-      .channel('realtime-pizarra-quirofano')
+      .channel('realtime-pizarra-quirofano-' + fecha)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'turnos_quirofano' },
@@ -388,6 +388,13 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           } else {
             fetchTurnosDia()
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+        () => {
+          fetchTurnosDia()
         }
       )
       .subscribe()

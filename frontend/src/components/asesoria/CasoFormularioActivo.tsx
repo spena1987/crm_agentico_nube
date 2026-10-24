@@ -712,11 +712,18 @@ export default function CasoFormularioActivo({
   // Validación asistida al hacer clic en las etapas del stepper
   const handleCambiarEstadoStepper = (nuevoEstado: AsesoriaQuirurgica['estado']) => {
     setAvisoValidacion(null)
+
+    // Si intenta marcar como operado o cancelado, abrir inmediatamente el modal formal de cierre
+    if (nuevoEstado === 'operado' || nuevoEstado === 'cancelado') {
+      onAbrirModalCierre(nuevoEstado as 'operado' | 'cancelado')
+      return
+    }
+
     const cleanPractica = (practicaNombre || busquedaPractica || '').trim()
     const cirujNombre = (medicoCirujano.nombre || busquedaCirujano || '').trim()
 
     // Validar requisitos para etapas avanzadas
-    if (['confirmado', 'programado', 'operado'].includes(nuevoEstado)) {
+    if (['confirmado', 'programado'].includes(nuevoEstado)) {
       const faltantes: string[] = []
       if (!cleanPractica || cleanPractica === 'Nueva Cirugía / Procedimiento' || cleanPractica === 'Práctica Quirúrgica a Determinar') {
         faltantes.push('Práctica Quirúrgica (Nomenclador)')
