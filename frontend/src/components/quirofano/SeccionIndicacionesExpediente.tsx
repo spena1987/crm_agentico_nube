@@ -23,14 +23,14 @@ import {
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 
 interface SeccionIndicacionesExpedienteProps {
-  asesoriaId?: string
-  practicaNombre?: string
-  practicaCodigo?: string
-  practicaId?: string
-  medicoNombre?: string
-  medicoId?: number | string
-  pacienteNombre?: string
-  pacienteTelefono?: string
+  asesoriaId?: string | null
+  practicaNombre?: string | null
+  practicaCodigo?: string | null
+  practicaId?: string | null
+  medicoNombre?: string | null
+  medicoId?: number | string | null
+  pacienteNombre?: string | null
+  pacienteTelefono?: string | null
   indicacionGeclisaImId?: number | null
   indicacionesEmitidasAt?: string | null
   indicacionesPdfUrl?: string | null

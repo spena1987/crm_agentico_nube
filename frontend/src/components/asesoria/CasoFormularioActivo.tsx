@@ -43,6 +43,7 @@ import ChecklistPrequirurgico from '@/components/ChecklistPrequirurgico'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
 import CasoPagosWidget from './CasoPagosWidget'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
+import SeccionIndicacionesExpediente from '@/components/quirofano/SeccionIndicacionesExpediente'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 
@@ -2625,6 +2626,25 @@ export default function CasoFormularioActivo({
                 )}
               </div>
             </div>
+          </div>
+
+          {/* SECCIÓN OFICIAL: INDICACIONES MÉDICAS QUIRÚRGICAS (GECLISA + WHATSAPP) */}
+          <div className="pt-2">
+            <SeccionIndicacionesExpediente
+              asesoriaId={caso.id}
+              practicaNombre={caso.practica_nombre}
+              practicaCodigo={caso.practica_codigo}
+              medicoNombre={medicoCirujano.nombre || caso.medico_cirujano_nombre}
+              medicoId={medicoCirujano.id || caso.medico_cirujano_id}
+              pacienteNombre={pacienteNombre}
+              pacienteTelefono={pacienteTelefono}
+              indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
+              indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
+              indicacionesPdfUrl={caso.indicaciones_pdf_url}
+              onIndicacionEmitida={() => {
+                onGuardar({})
+              }}
+            />
           </div>
 
           {/* Card: Control de Presupuesto, Cotización y Seña */}

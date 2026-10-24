@@ -1373,6 +1373,7 @@ export default function PipelineQuirurgicoPage() {
           onAbrirWhatsApp={handleAbrirWhatsApp}
           onAbrirRecordatorioQx={handleAbrirRecordatorioQx}
           onAbrirConsentimientoQx={handleAbrirConsentimientoQx}
+          onAbrirIndicacionesQx={handleAbrirIndicacionesQx}
           onAbrirQuickRecontacto={(caso) => {
             setCasoParaQuickRecontacto(caso)
             setModalQuickRecontactoOpen(true)

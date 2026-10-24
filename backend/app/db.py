@@ -4460,10 +4460,10 @@ def sincronizar_presupuesto_desde_caso_quirurgico(
         pres_id = asesoria.get("presupuesto_id")
         paciente_id = asesoria.get("paciente_id")
         
-        # 2. Si no hay presupuesto_id vinculado directo, buscar presupuesto del caso o del paciente
-        if not pres_id and paciente_id:
+        # 2. Si no hay presupuesto_id vinculado directo, verificar únicamente si existe un presupuesto emitido para esta asesoría
+        if not pres_id and asesoria_id:
             try:
-                # Buscar presupuesto que tenga asesoria_id
+                # Buscar presupuesto que tenga asignada explícitamente esta asesoria_id
                 r_p = supabase.table("presupuestos")\
                     .select("id, estado")\
                     .eq("asesoria_id", asesoria_id)\
@@ -4472,32 +4472,16 @@ def sincronizar_presupuesto_desde_caso_quirurgico(
                     .execute()
                 if r_p.data:
                     pres_id = r_p.data[0]["id"]
-                else:
-                    # Buscar el presupuesto más reciente del paciente no rechazado
-                    r_p2 = supabase.table("presupuestos")\
-                        .select("id, estado")\
-                        .eq("paciente_id", paciente_id)\
-                        .neq("estado", "rechazado")\
-                        .order("created_at", desc=True)\
-                        .limit(1)\
-                        .execute()
-                    if r_p2.data:
-                        pres_id = r_p2.data[0]["id"]
-                        
-                if pres_id:
                     supabase.table("asesorias_quirurgicas")\
                         .update({"presupuesto_id": pres_id, "updated_at": "now()"})\
                         .eq("id", asesoria_id)\
                         .execute()
-                    supabase.table("presupuestos")\
-                        .update({"asesoria_id": asesoria_id})\
-                        .eq("id", pres_id)\
-                        .execute()
-                    logger.info(f"Auto-vinculado presupuesto {pres_id} con asesoría {asesoria_id}")
+                    logger.info(f"Presupuesto propio {pres_id} asociado con asesoría {asesoria_id}")
             except Exception as e_vinc:
-                logger.warning(f"Aviso al auto-vincular presupuesto en sincronización: {e_vinc}")
+                logger.warning(f"Aviso al verificar presupuesto propio de la asesoría: {e_vinc}")
 
         if not pres_id:
+            # El caso no tiene cotización oficial propia: no sincronizar ni robar presupuestos ajenos del paciente
             return None
 
         # 3. Determinar transición según estado del caso quirúrgico

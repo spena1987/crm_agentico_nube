@@ -24,7 +24,8 @@ import {
   CheckCheck,
   AlertCircle,
   Phone,
-  Flame
+  Flame,
+  Pill
 } from 'lucide-react'
 
 import type { AsesoriaCasoPipeline } from '@/app/pipeline-quirurgico/page'
@@ -44,6 +45,7 @@ interface VistaVerticalPipelineProps {
   onAbrirWhatsApp: (caso: AsesoriaCasoPipeline) => void
   onAbrirRecordatorioQx?: (caso: AsesoriaCasoPipeline) => void
   onAbrirConsentimientoQx?: (caso: AsesoriaCasoPipeline) => void
+  onAbrirIndicacionesQx?: (caso: AsesoriaCasoPipeline) => void
   onAbrirQuickRecontacto?: (caso: AsesoriaCasoPipeline) => void
   onMarcarContactadoHoy: (caso: AsesoriaCasoPipeline) => Promise<void>
   actualizandoCasoId: string | null
@@ -61,6 +63,7 @@ export default function VistaVerticalPipeline({
   onAbrirWhatsApp,
   onAbrirRecordatorioQx,
   onAbrirConsentimientoQx,
+  onAbrirIndicacionesQx,
   onAbrirQuickRecontacto,
   onMarcarContactadoHoy,
   actualizandoCasoId,
@@ -607,6 +610,25 @@ export default function VistaVerticalPipeline({
                                   <span>{checklist.consentimiento_firmado || caso.consentimiento_info?.firmado ? 'C.I. Firmado' : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp' ? 'C.I. Enviado' : 'Consentimiento'}</span>
                                 </button>
                               )}
+
+                              {/* Botón Acción Rápida: Indicaciones Médicas Quirúrgicas (Geclisa + WhatsApp) */}
+                              <button
+                                type="button"
+                                onClick={() => onAbrirIndicacionesQx?.(caso)}
+                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
+                                  caso.indicacion_geclisa_im_id
+                                    ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
+                                    : 'bg-blue-950/80 hover:bg-blue-900 border-blue-500/40 text-blue-300 hover:text-white'
+                                }`}
+                                title={
+                                  caso.indicacion_geclisa_im_id
+                                    ? `Indicación médica emitida en Geclisa #${caso.indicacion_geclisa_im_id}. Clic para ver o reenviar`
+                                    : 'Emitir Indicaciones Médicas a Geclisa y enviar WhatsApp'
+                                }
+                              >
+                                <Pill size={13} className={caso.indicacion_geclisa_im_id ? 'text-emerald-400' : 'text-blue-400'} />
+                                <span>{caso.indicacion_geclisa_im_id ? `Ind. #${caso.indicacion_geclisa_im_id}` : 'Indicaciones Qx'}</span>
+                              </button>
 
                               {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado (Solo Confirmados y Programados) */}
                               {(caso.estado === 'confirmado' || caso.estado === 'programado') && (

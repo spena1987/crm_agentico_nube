@@ -108,6 +108,17 @@ export interface AsesoriaQuirurgica {
   categoria_causa?: string | null
   motivo_demora?: string | null
   canal_resolucion?: string | null
+  pacientes?: {
+    id?: string
+    nombre?: string
+    dni?: string
+    telefono?: string
+    obra_social?: string
+  } | null
+  indicacion_geclisa_im_id?: number | null
+  indicaciones_texto?: string | null
+  indicaciones_emitidas_at?: string | null
+  indicaciones_pdf_url?: string | null
   created_at: string
   updated_at: string
 }
