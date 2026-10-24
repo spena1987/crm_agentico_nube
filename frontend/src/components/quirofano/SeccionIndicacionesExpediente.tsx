@@ -71,6 +71,14 @@ export default function SeccionIndicacionesExpediente({
   
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
   const [mensajeError, setMensajeError] = useState<string | null>(null)
+  const [plantillasCatalogo, setPlantillasCatalogo] = useState<any[]>([])
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/indicaciones/plantillas-geclisa`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setPlantillasCatalogo(d.plantillas || []) })
+      .catch((e) => console.error('Error cargando catalogo de indicaciones en expediente:', e))
+  }, [])
 
   // Resolver sugerencia inteligente cuando cambia la práctica o el cirujano
   const resolverSugerencia = useCallback(async () => {
@@ -97,6 +105,8 @@ export default function SeccionIndicacionesExpediente({
           setMedicamentos(sug.medicamentos || [])
           setCuidadosGenerales(sug.cuidados_generales || '')
           setPautasAlarma(sug.pautas_alarma || '')
+        } else {
+          setPlantillaSeleccionada(null)
         }
       }
     } catch (err) {
@@ -271,6 +281,45 @@ export default function SeccionIndicacionesExpediente({
               <span className="text-[var(--secondary)] block">Destinatario WhatsApp:</span>
               <span className="font-bold text-[var(--foreground)]">{pacienteNombre || 'Paciente'} ({pacienteTelefono || 'Sin teléfono'})</span>
             </div>
+          </div>
+
+          {/* Aviso si la práctica no tiene protocolo configurado */}
+          {!plantillaSeleccionada && !textoIndicaciones && (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 space-y-0.5">
+              <span className="font-bold block">Práctica sin protocolo predeterminado en el Nomenclador</span>
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                El sistema mantiene el control estricto sin aplicar fármacos arbitrarios. Puede elegir una plantilla oficial o redactar las indicaciones puntuales si el cirujano lo solicita.
+              </p>
+            </div>
+          )}
+
+          {/* Selector de Plantilla Oficial de Geclisa */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-[var(--card-bg)] p-2 rounded-xl border border-[var(--border-color)]">
+            <span className="font-bold text-[var(--secondary)] text-[11px] whitespace-nowrap">Plantilla Oficial Geclisa:</span>
+            <select
+              value={plantillaSeleccionada?.geclisa_pim_id || ''}
+              onChange={(e) => {
+                const pimId = Number(e.target.value)
+                const match = plantillasCatalogo.find((p) => p.pimId === pimId)
+                if (match) {
+                  setPlantillaSeleccionada({
+                    geclisa_pim_id: match.pimId,
+                    titulo: match.pimNombre,
+                    texto_indicaciones: match.pimTexto,
+                    origen: 'seleccion_manual'
+                  })
+                  setTextoIndicaciones(match.pimTexto || '')
+                }
+              }}
+              className="flex-1 p-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--background)] text-[var(--foreground)] font-medium text-xs outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Sin plantilla seleccionada / Texto personalizado --</option>
+              {plantillasCatalogo.map((p) => (
+                <option key={p.pimId} value={p.pimId}>
+                  #{p.pimId} - {p.pimNombre}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Texto de las Indicaciones */}

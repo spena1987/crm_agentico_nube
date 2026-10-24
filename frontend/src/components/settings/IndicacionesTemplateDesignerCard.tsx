@@ -2,6 +2,12 @@
 
 import React, { useState, useEffect } from 'react'
 import {
+  History,
+  Edit2,
+  ExternalLink,
+  Calendar,
+  Check,
+  X,
   FileText,
   Palette,
   Save,
@@ -97,6 +103,14 @@ export default function IndicacionesTemplateDesignerCard() {
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
   const [mensajeError, setMensajeError] = useState<string | null>(null)
   const [vistaActiva, setVistaActiva] = useState<'editor' | 'preview'>('editor')
+  const [tabPrincipal, setTabPrincipal] = useState<'disenador' | 'historial'>('disenador')
+  const [emisiones, setEmisiones] = useState<any[]>([])
+  const [cargandoEmisiones, setCargandoEmisiones] = useState(false)
+  const [modalReedicionOpen, setModalReedicionOpen] = useState(false)
+  const [emisionParaReeditar, setEmisionParaReeditar] = useState<any | null>(null)
+  const [textoReedicion, setTextoReedicion] = useState('')
+  const [reenviarWaReedicion, setReenviarWaReedicion] = useState(true)
+  const [guardandoReedicion, setGuardandoReedicion] = useState(false)
 
   // Cargar plantillas del CRM y Geclisa al montar
   useEffect(() => {
@@ -130,6 +144,59 @@ export default function IndicacionesTemplateDesignerCard() {
       setMensajeError('No se pudo conectar con el servidor para cargar las plantillas.')
     } finally {
       setCargando(false)
+    }
+  }
+
+  const cargarEmisiones = async () => {
+    setCargandoEmisiones(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/emisiones?limit=100`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success) {
+          setEmisiones(data.emisiones || [])
+        }
+      }
+    } catch (e) {
+      console.error('Error cargando emisiones:', e)
+    } finally {
+      setCargandoEmisiones(false)
+    }
+  }
+
+  const handleAbrirReedicion = (emision: any) => {
+    setEmisionParaReeditar(emision)
+    setTextoReedicion(emision.texto_indicaciones || '')
+    setReenviarWaReedicion(true)
+    setModalReedicionOpen(true)
+  }
+
+  const handleGuardarReedicion = async () => {
+    if (!emisionParaReeditar) return
+    setGuardandoReedicion(true)
+    setMensajeError(null)
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/emisiones/${emisionParaReeditar.id}/reeditar`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          texto_indicaciones: textoReedicion,
+          reenviar_whatsapp: reenviarWaReedicion
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setMensajeExito('Indicación médica actualizada exitosamente y nuevo PDF generado.')
+        setModalReedicionOpen(false)
+        cargarEmisiones()
+        setTimeout(() => setMensajeExito(null), 4000)
+      } else {
+        setMensajeError(data.detail || data.error || 'No se pudo actualizar la indicación.')
+      }
+    } catch (err: any) {
+      setMensajeError('Error de conexión al reeditar la indicación.')
+    } finally {
+      setGuardandoReedicion(false)
     }
   }
 
@@ -269,7 +336,37 @@ export default function IndicacionesTemplateDesignerCard() {
           </p>
         </div>
 
+        {/* Pestañas Principales del Módulo */}
+        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setTabPrincipal('disenador')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+              tabPrincipal === 'disenador'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            <Palette size={14} /> Diseñador & Plantillas
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setTabPrincipal('historial')
+              cargarEmisiones()
+            }}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+              tabPrincipal === 'historial'
+                ? 'bg-rose-600 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            <History size={14} /> Historial & Reedición
+          </button>
+        </div>
+
         {/* Acciones principales */}
+        {tabPrincipal === 'disenador' && (
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -304,6 +401,7 @@ export default function IndicacionesTemplateDesignerCard() {
             <span>Guardar Plantilla</span>
           </button>
         </div>
+        )}
       </div>
 
       {/* Alertas */}

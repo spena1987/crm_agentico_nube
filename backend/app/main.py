@@ -3710,6 +3710,61 @@ def get_historial_indicaciones_expediente_api(asesoria_id: str):
         logger.error(f"Error consultando historial de indicaciones para expediente {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/indicaciones/emisiones")
+def get_todas_emisiones_indicaciones_api(limit: int = 50, offset: int = 0):
+    """
+    Lista el historial global de emisiones de indicaciones médicas para el panel de Ajustes y Auditoría.
+    """
+    try:
+        if not supabase:
+            return {"success": False, "emisiones": []}
+        res = (
+            supabase.table("emisiones_indicaciones_geclisa")
+            .select("*, asesorias_quirurgicas(id, codigo, estado, ojo), pacientes(id, nombre, dni, telefono)")
+            .order("created_at", desc=True)
+            .range(offset, offset + limit - 1)
+            .execute()
+        )
+        return {"success": True, "total": len(res.data or []), "emisiones": res.data or []}
+    except Exception as e:
+        logger.error(f"Error listando todas las emisiones de indicaciones: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/indicaciones/emisiones/{emision_id}/reeditar")
+def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Permite reeditar una indicación médica emitida: modifica fármacos/texto, genera nuevo PDF y opcionalmente reenvía por WhatsApp.
+    """
+    try:
+        from app.services.indicaciones_service import reeditar_emision_indicaciones
+        texto = payload.get("texto_indicaciones") or payload.get("cuerpo_indicaciones")
+        if not texto:
+            raise HTTPException(status_code=400, detail="El texto o protocolo de indicaciones es obligatorio.")
+        
+        meds = payload.get("medicamentos")
+        cuidados = payload.get("cuidados_generales")
+        alarmas = payload.get("pautas_alarma")
+        reenviar_wa = payload.get("reenviar_whatsapp", True)
+        usu = payload.get("usu_modificacion", "asesora_crm")
+
+        res = reeditar_emision_indicaciones(
+            emision_id=emision_id,
+            texto_indicaciones=texto,
+            medicamentos=meds,
+            cuidados_generales=cuidados,
+            pautas_alarma=alarmas,
+            reenviar_whatsapp=reenviar_wa,
+            usu_modificacion=usu
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error reeditando indicación."))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al reeditar indicación {emision_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ====================================================================
 # ENDPOINTS: PLANTILLAS MAESTRAS DE PREPARACIONES
 # ====================================================================

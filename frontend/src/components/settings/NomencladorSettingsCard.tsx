@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import {
+  Pill,
   Search,
   Plus,
   Edit2,
@@ -88,6 +89,10 @@ interface CrmPracticaConfigurada {
   vigencia_desde?: string | null
   vigencia_hasta?: string | null
   arancel_id?: string | null
+  habilitar_indicaciones?: boolean
+  plantilla_indicacion_id?: string | null
+  geclisa_pim_id_default?: number | null
+  indicaciones_reglas_cirujano?: Record<string, any> | null
   activo: boolean
   created_at: string
 }
@@ -160,11 +165,13 @@ export default function NomencladorSettingsCard() {
   const [loadingPlantillas, setLoadingPlantillas] = useState(false)
 
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [modalSubTab, setModalSubTab] = useState<'general' | 'aranceles' | 'preparacion' | 'consentimiento' | 'relacionadas' | 'lios'>('general')
+  const [modalSubTab, setModalSubTab] = useState<'general' | 'aranceles' | 'preparacion' | 'consentimiento' | 'relacionadas' | 'lios' | 'indicaciones'>('general')
   const [modalMode, setModalMode] = useState<'geclisa' | 'manual' | 'edit'>('geclisa')
   const [savingModal, setSavingModal] = useState(false)
   const [historialAranceles, setHistorialAranceles] = useState<ArancelHistorial[]>([])
   const [loadingHistorial, setLoadingHistorial] = useState(false)
+  const [plantillasIndicacionesGeclisa, setPlantillasIndicacionesGeclisa] = useState<any[]>([])
+  const [plantillasIndicacionesCrm, setPlantillasIndicacionesCrm] = useState<any[]>([])
 
   // Estados para Prácticas Vinculadas (Opción 1)
   const [practicasRelacionadas, setPracticasRelacionadas] = useState<PracticaRelacionadaItem[]>([])
@@ -214,6 +221,10 @@ export default function NomencladorSettingsCard() {
     modo_consentimiento: 'plantilla' as 'plantilla' | 'custom',
     consentimiento_plantilla_id: '',
     consentimiento_custom_texto: '',
+    habilitar_indicaciones: false,
+    modo_indicaciones: 'geclisa' as 'geclisa' | 'crm',
+    geclisa_pim_id_default: null as number | null,
+    plantilla_indicacion_id: '',
     modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
     ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
     duracion_estimada_minutos: 20
@@ -240,6 +251,19 @@ export default function NomencladorSettingsCard() {
   })
 
   const [feedback, setFeedback] = useState<{ tipo: 'success' | 'error'; texto: string } | null>(null)
+
+  useEffect(() => {
+    // Cargar plantillas de indicaciones Geclisa y CRM para selector
+    fetch(`${API_BASE_URL}/api/indicaciones/plantillas-geclisa`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setPlantillasIndicacionesGeclisa(d.plantillas || []) })
+      .catch((err) => console.error('Error cargando plantillas indicaciones Geclisa:', err))
+
+    fetch(`${API_BASE_URL}/api/indicaciones/plantillas`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setPlantillasIndicacionesCrm(d.plantillas || []) })
+      .catch((err) => console.error('Error cargando plantillas indicaciones CRM:', err))
+  }, [])
 
   useEffect(() => {
     loadTiposGeclisa()
@@ -545,6 +569,10 @@ export default function NomencladorSettingsCard() {
       modo_consentimiento: 'plantilla',
       consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
       consentimiento_custom_texto: '',
+      habilitar_indicaciones: false,
+      modo_indicaciones: 'geclisa' as 'geclisa' | 'crm',
+      geclisa_pim_id_default: null as number | null,
+      plantilla_indicacion_id: '',
       modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
       ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
       duracion_estimada_minutos: 20
@@ -589,6 +617,10 @@ export default function NomencladorSettingsCard() {
       modo_consentimiento: 'plantilla',
       consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
       consentimiento_custom_texto: '',
+      habilitar_indicaciones: false,
+      modo_indicaciones: 'geclisa' as 'geclisa' | 'crm',
+      geclisa_pim_id_default: null as number | null,
+      plantilla_indicacion_id: '',
       modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
       ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
       duracion_estimada_minutos: 20
@@ -629,7 +661,11 @@ export default function NomencladorSettingsCard() {
       habilitar_consentimiento: item.habilitar_consentimiento || false,
       modo_consentimiento: item.consentimiento_custom_texto ? 'custom' : 'plantilla',
       consentimiento_plantilla_id: item.consentimiento_plantilla_id || plantillasConsent[0]?.id || '',
-      consentimiento_custom_texto: item.consentimiento_custom_texto || ''
+      consentimiento_custom_texto: item.consentimiento_custom_texto || '',
+      habilitar_indicaciones: item.habilitar_indicaciones ?? false,
+      modo_indicaciones: (item.plantilla_indicacion_id ? 'crm' : 'geclisa') as 'geclisa' | 'crm',
+      geclisa_pim_id_default: item.geclisa_pim_id_default || null,
+      plantilla_indicacion_id: item.plantilla_indicacion_id || ''
     })
     loadHistorialAranceles(item.id)
     loadPracticasRelacionadas(item.id)
@@ -675,6 +711,15 @@ export default function NomencladorSettingsCard() {
         consentimiento_custom_texto:
           formData.habilitar_consentimiento && formData.modo_consentimiento === 'custom'
             ? formData.consentimiento_custom_texto
+            : null,
+        habilitar_indicaciones: formData.habilitar_indicaciones,
+        plantilla_indicacion_id:
+          formData.habilitar_indicaciones && formData.modo_indicaciones === 'crm'
+            ? formData.plantilla_indicacion_id || null
+            : null,
+        geclisa_pim_id_default:
+          formData.habilitar_indicaciones && formData.modo_indicaciones === 'geclisa'
+            ? formData.geclisa_pim_id_default ? Number(formData.geclisa_pim_id_default) : null
             : null
       }
 
@@ -1275,6 +1320,11 @@ export default function NomencladorSettingsCard() {
                                 </span>
                               ) : null}
 
+                              {p.habilitar_indicaciones ? (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                                  💊 Ind
+                                </span>
+                              ) : null}
                               {p.habilitar_consentimiento ? (
                                 <span
                                   className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300"
@@ -1587,6 +1637,21 @@ export default function NomencladorSettingsCard() {
                 )}
               </button>
 
+              <button
+                type="button"
+                onClick={() => setModalSubTab('indicaciones')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center gap-1.5 ${
+                  modalSubTab === 'indicaciones'
+                    ? 'bg-rose-600 text-white'
+                    : formData.habilitar_indicaciones
+                    ? 'text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40'
+                    : 'text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Pill size={13} /> {formData.requiere_lente ? '7. Indicaciones' : '6. Indicaciones'}
+                {formData.habilitar_indicaciones && <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>}
+              </button>
+
               {formData.requiere_lente && (
                 <button
                   type="button"
@@ -1776,7 +1841,7 @@ export default function NomencladorSettingsCard() {
                         📋 Prep ({formData.habilitar_preparacion ? 'Sí' : 'No'})
                       </div>
                       <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_consentimiento ? 'bg-purple-50 border-purple-300 text-purple-800 dark:bg-purple-950/40 dark:text-purple-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>
-                        ✍️ Consent ({formData.habilitar_consentimiento ? 'Sí' : 'No'})
+                        ✍️ Consent ({formData.habilitar_consentimiento ? 'Sí' : 'No'})\n                      </div>\n                      <div className={`p-2 rounded-lg border font-bold ${formData.habilitar_indicaciones ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/40 dark:text-rose-300' : 'bg-slate-100 border-slate-200 text-slate-400 dark:bg-slate-800'}`}>\n                        💊 Ind ({formData.habilitar_indicaciones ? 'Sí' : 'No'})
                       </div>
                       <button
                         type="button"
@@ -2099,6 +2164,122 @@ export default function NomencladorSettingsCard() {
                             placeholder="Por el presente documento, yo {paciente}, DNI {dni}, autorizo al Dr/a. {cirujano}..."
                             minHeight="280px"
                           />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SUB-PESTAÑA: INDICACIONES MÉDICAS QUIRÚRGICAS */}
+              {modalSubTab === 'indicaciones' && (
+                <div className="space-y-4">
+                  {/* Switch Principal */}
+                  <div className="flex items-center justify-between p-3.5 bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800 rounded-xl">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <Pill size={16} className="text-rose-600" />
+                        <span className="font-bold text-rose-900 dark:text-rose-200 text-xs">
+                          Protocolo de Indicaciones Médicas Automatizado
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-rose-700/80 dark:text-rose-300/70">
+                        Si se activa, el expediente precargará de forma estricta las gotas, horarios y recomendaciones de esta práctica.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.habilitar_indicaciones}
+                        onChange={(e) => setFormData({ ...formData, habilitar_indicaciones: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-rose-600"></div>
+                    </label>
+                  </div>
+
+                  {!formData.habilitar_indicaciones ? (
+                    <div className="p-4 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl text-center space-y-1.5">
+                      <p className="font-semibold text-slate-700 dark:text-slate-300">Modo Estricto Activo (Sin Fallback Arbitrario)</p>
+                      <p className="text-[11px] text-slate-500 max-w-md mx-auto leading-relaxed">
+                        Esta práctica <strong>no asignará medicamentos ni colirios de forma automática</strong> al generar expedientes.
+                        La asesora quirúrgica o el cirujano podrán seleccionar una indicación manualmente solo si lo consideran necesario.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Modo de Plantilla: Geclisa vs CRM */}
+                      <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl">
+                        <span className="font-bold text-slate-700 dark:text-slate-300 text-xs">Origen del Protocolo:</span>
+                        <label className="inline-flex items-center gap-2 cursor-pointer text-xs">
+                          <input
+                            type="radio"
+                            name="modo_indicaciones"
+                            value="geclisa"
+                            checked={formData.modo_indicaciones === 'geclisa'}
+                            onChange={() => setFormData({ ...formData, modo_indicaciones: 'geclisa' })}
+                            className="text-rose-600 focus:ring-rose-500"
+                          />
+                          <span className="font-medium text-slate-700 dark:text-slate-300">Catálogo de Geclisa (107 plantillas oficiales)</span>
+                        </label>
+                        <label className="inline-flex items-center gap-2 cursor-pointer text-xs">
+                          <input
+                            type="radio"
+                            name="modo_indicaciones"
+                            value="crm"
+                            checked={formData.modo_indicaciones === 'crm'}
+                            onChange={() => setFormData({ ...formData, modo_indicaciones: 'crm' })}
+                            className="text-rose-600 focus:ring-rose-500"
+                          />
+                          <span className="font-medium text-slate-700 dark:text-slate-300">Plantilla Institucional CRM</span>
+                        </label>
+                      </div>
+
+                      {formData.modo_indicaciones === 'geclisa' ? (
+                        <div className="space-y-2">
+                          <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                            Seleccionar Plantilla Oficial de Geclisa para esta Práctica:
+                          </label>
+                          <select
+                            value={formData.geclisa_pim_id_default || ''}
+                            onChange={(e) => setFormData({ ...formData, geclisa_pim_id_default: e.target.value ? Number(e.target.value) : null })}
+                            className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-rose-500"
+                          >
+                            <option value="">-- Sin plantilla predeterminada --</option>
+                            {plantillasIndicacionesGeclisa.map((p) => (
+                              <option key={p.pimId} value={p.pimId}>
+                                #{p.pimId} - {p.pimNombre}
+                              </option>
+                            ))}
+                          </select>
+                          {formData.geclisa_pim_id_default && (
+                            <div className="p-3 bg-rose-50/40 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 rounded-xl space-y-1">
+                              <span className="font-bold text-[11px] text-rose-800 dark:text-rose-300 block">
+                                Texto oficial precargado en Geclisa:
+                              </span>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-line max-h-32 overflow-y-auto font-mono">
+                                {plantillasIndicacionesGeclisa.find((p) => p.pimId === formData.geclisa_pim_id_default)?.pimTexto || 'Sin texto registrado.'}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                            Seleccionar Plantilla Institucional del CRM:
+                          </label>
+                          <select
+                            value={formData.plantilla_indicacion_id || ''}
+                            onChange={(e) => setFormData({ ...formData, plantilla_indicacion_id: e.target.value })}
+                            className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-rose-500"
+                          >
+                            <option value="">-- Sin plantilla predeterminada --</option>
+                            {plantillasIndicacionesCrm.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.titulo} ({p.categoria || 'Oftalmología'})
+                              </option>
+                            ))}
+                          </select>
                         </div>
                       )}
                     </div>

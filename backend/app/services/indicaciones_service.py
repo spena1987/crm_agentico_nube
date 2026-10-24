@@ -28,31 +28,115 @@ def resolver_plantilla_sugerida(
     practica_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Algoritmo inteligente de resolución de plantilla de indicaciones (Opción C):
-    1. Si existe plantilla en Geclisa que combine el apellido del cirujano + la práctica, la sugiere primero.
-    2. Si la práctica en el Nomenclador tiene una plantilla asignada o default Geclisa, la usa.
-    3. Si no, busca una plantilla genérica por patología (Catarata, Refractiva, Glaucoma, etc.).
+    Algoritmo determinístico y estricto de resolución de plantilla de indicaciones:
+    1. Si la práctica está en el Nomenclador, consulta 'habilitar_indicaciones'.
+       Si está desactivada (False), NO aplica fallback arbitrario y retorna requiere_seleccion_manual = True.
+    2. Si está activada (True), evalúa en orden:
+       a) Reglas específicas por cirujano en 'indicaciones_reglas_cirujano'
+       b) Plantilla institucional vinculada en el CRM ('plantilla_indicacion_id')
+       c) Plantilla predeterminada de Geclisa ('geclisa_pim_id_default')
+       d) Match directo en Geclisa por apellido de cirujano + tipo de práctica
+    3. Si la práctica no existe en el Nomenclador o no tiene plantilla configurada, NO inventa
+       medicamentos (cero fallback ciego a cataratas), sino que solicita selección manual limpia.
     """
     med_norm = normalizar_texto(medico_nombre or "")
-    # Extraer apellidos clave habituales (ej. bonanno, parmeggiani, labat, pagano, gras, lopez)
     cirujano_tokens = [tok for tok in med_norm.split() if len(tok) >= 4 and tok not in ["doctor", "dra.", "dr.", "medico"]]
-    
     prac_norm = normalizar_texto(practica_nombre or "")
-    
-    # Obtener plantillas en vivo de Geclisa
-    plantillas_geclisa = geclisa_client.listar_plantillas_indicaciones_geclisa()
-    
-    plantilla_seleccionada = None
-    origen = "default"
 
-    # Paso 1: Coincidencia Apellido Cirujano + Tipo de Práctica en Geclisa
-    if cirujano_tokens and prac_norm:
+    plantilla_seleccionada = None
+    origen = "sin_coincidencia"
+    p_db = None
+
+    # 1. Consultar Nomenclador en Supabase
+    if supabase and (practica_id or practica_codigo or practica_nombre):
+        try:
+            q = supabase.table("nomenclador_practicas").select("*, plantillas_indicaciones_crm(*)")
+            if practica_id and is_valid_uuid(practica_id):
+                q = q.eq("id", practica_id)
+            elif practica_codigo:
+                q = q.eq("codigo", practica_codigo)
+            elif practica_nombre:
+                q = q.ilike("nombre", f"%{practica_nombre.strip()}%")
+            
+            res = q.limit(1).execute()
+            if res.data and len(res.data) > 0:
+                p_db = res.data[0]
+        except Exception as e_nom:
+            logger.warning(f"Error consultando nomenclador para indicaciones: {e_nom}")
+
+    # Si la práctica existe en el Nomenclador y tiene las indicaciones DESHABILITADAS:
+    if p_db is not None:
+        habilitada = bool(p_db.get("habilitar_indicaciones", False))
+        if not habilitada:
+            return {
+                "success": True,
+                "sugerencia": None,
+                "habilitada": False,
+                "requiere_seleccion_manual": True,
+                "origen_resolucion": "practica_deshabilitada",
+                "mensaje": f"La práctica '{p_db.get('nombre')}' tiene desactivado el protocolo de indicaciones médicas en el Nomenclador."
+            }
+
+    # Obtener catálogo de Geclisa si se requiere buscar plantilla
+    plantillas_geclisa = geclisa_client.listar_plantillas_indicaciones_geclisa()
+
+    # Si la práctica tiene indicaciones HABILITADAS en el Nomenclador:
+    if p_db is not None and bool(p_db.get("habilitar_indicaciones", False)):
+        # a) Verificar reglas específicas por cirujano en JSONB
+        reglas_cirujano = p_db.get("indicaciones_reglas_cirujano") or {}
+        if isinstance(reglas_cirujano, dict) and cirujano_tokens:
+            for tok in cirujano_tokens:
+                if tok in reglas_cirujano:
+                    target = reglas_cirujano[tok]
+                    # Puede ser un pimId de Geclisa o un UUID de plantilla CRM
+                    if isinstance(target, int):
+                        for p in plantillas_geclisa:
+                            if p.get("pimId") == target:
+                                plantilla_seleccionada = {
+                                    "geclisa_pim_id": p.get("pimId"),
+                                    "titulo": p.get("pimNombre"),
+                                    "texto_indicaciones": p.get("pimTexto"),
+                                    "origen": "nomenclador_regla_cirujano"
+                                }
+                                origen = "nomenclador_regla_cirujano"
+                                break
+                    break
+
+        # b) Plantilla CRM asociada a la práctica
+        if not plantilla_seleccionada and p_db.get("plantillas_indicaciones_crm"):
+            crm_p = p_db["plantillas_indicaciones_crm"]
+            plantilla_seleccionada = {
+                "crm_plantilla_id": crm_p.get("id"),
+                "titulo": crm_p.get("titulo"),
+                "texto_indicaciones": crm_p.get("cuerpo_indicaciones"),
+                "medicamentos": crm_p.get("medicamentos") or [],
+                "cuidados_generales": crm_p.get("cuidados_generales"),
+                "pautas_alarma": crm_p.get("pautas_alarma"),
+                "config_diseno": crm_p.get("config_diseno"),
+                "origen": "nomenclador_crm"
+            }
+            origen = "nomenclador_crm"
+
+        # c) Plantilla Geclisa por defecto asociada a la práctica
+        if not plantilla_seleccionada and p_db.get("geclisa_pim_id_default"):
+            pim_target = p_db.get("geclisa_pim_id_default")
+            for p in plantillas_geclisa:
+                if p.get("pimId") == pim_target:
+                    plantilla_seleccionada = {
+                        "geclisa_pim_id": p.get("pimId"),
+                        "titulo": p.get("pimNombre"),
+                        "texto_indicaciones": p.get("pimTexto"),
+                        "origen": "nomenclador_geclisa_default"
+                    }
+                    origen = "nomenclador_geclisa_default"
+                    break
+
+    # Si aún no hay plantilla o la práctica no estaba en BD, verificar si Geclisa tiene una para este cirujano y técnica
+    if not plantilla_seleccionada and cirujano_tokens and prac_norm:
         for p in plantillas_geclisa:
             nom_p_norm = normalizar_texto(p.get("pimNombre") or "")
-            # Verificar si algún token del apellido está en el nombre de la plantilla
             tiene_medico = any(t in nom_p_norm for t in cirujano_tokens)
             if tiene_medico:
-                # Comprobar si coincide la técnica o práctica
                 es_catarata = ("catar" in prac_norm or "faco" in prac_norm) and "catar" in nom_p_norm
                 es_lasik = "lasik" in prac_norm and "lasik" in nom_p_norm
                 es_prk = "prk" in prac_norm and "prk" in nom_p_norm
@@ -69,91 +153,24 @@ def resolver_plantilla_sugerida(
                     origen = "geclisa_especifica_cirujano"
                     break
 
-    # Paso 2: Si no hubo match por cirujano, buscar configuración del Nomenclador en Supabase
-    if not plantilla_seleccionada and supabase and (practica_id or practica_codigo):
-        try:
-            q = supabase.table("nomenclador_practicas").select("*, plantillas_indicaciones_crm(*)")
-            if practica_id and is_valid_uuid(practica_id):
-                q = q.eq("id", practica_id)
-            elif practica_codigo:
-                q = q.eq("codigo", practica_codigo)
-            res = q.limit(1).execute()
-            
-            if res.data and len(res.data) > 0:
-                p_db = res.data[0]
-                if p_db.get("plantillas_indicaciones_crm"):
-                    crm_p = p_db["plantillas_indicaciones_crm"]
-                    plantilla_seleccionada = {
-                        "crm_plantilla_id": crm_p.get("id"),
-                        "titulo": crm_p.get("titulo"),
-                        "texto_indicaciones": crm_p.get("cuerpo_indicaciones"),
-                        "medicamentos": crm_p.get("medicamentos") or [],
-                        "cuidados_generales": crm_p.get("cuidados_generales"),
-                        "pautas_alarma": crm_p.get("pautas_alarma"),
-                        "config_diseno": crm_p.get("config_diseno"),
-                        "origen": "nomenclador_crm"
-                    }
-                    origen = "nomenclador_crm"
-                elif p_db.get("geclisa_pim_id_default"):
-                    pim_id_target = p_db.get("geclisa_pim_id_default")
-                    for p in plantillas_geclisa:
-                        if p.get("pimId") == pim_id_target:
-                            plantilla_seleccionada = {
-                                "geclisa_pim_id": p.get("pimId"),
-                                "titulo": p.get("pimNombre"),
-                                "texto_indicaciones": p.get("pimTexto"),
-                                "origen": "nomenclador_geclisa_default"
-                            }
-                            origen = "nomenclador_geclisa_default"
-                            break
-        except Exception as e:
-            logger.warning(f"Aviso al consultar configuración de indicación en nomenclador: {e}")
-
-    # Paso 3: Plantilla Genérica en Geclisa o CRM según palabras clave de la práctica
+    # RETORNO DETERMINÍSTICO: Si no se configuró ni encontró plantilla adecuada,
+    # NUNCA aplicar un fallback arbitrario (ej. gotas de cataratas a una inyección o pterigión).
     if not plantilla_seleccionada:
-        target_id = None
-        if "catar" in prac_norm or "faco" in prac_norm:
-            target_id = 43 # CATARATAS POSTQUIRURGICO
-        elif "lasik" in prac_norm:
-            target_id = 42 # REFRACTIVA LASIK POSTQUIRURGICO
-        elif "prk" in prac_norm:
-            target_id = 46 # REFRACTIVA PRK POSTQUIRURGICO
-        elif "cross" in prac_norm:
-            target_id = 50 # CROSS LINKING POSTQUIRURGICO
-
-        if target_id:
-            for p in plantillas_geclisa:
-                if p.get("pimId") == target_id:
-                    plantilla_seleccionada = {
-                        "geclisa_pim_id": p.get("pimId"),
-                        "titulo": p.get("pimNombre"),
-                        "texto_indicaciones": p.get("pimTexto"),
-                        "origen": "geclisa_generica"
-                    }
-                    origen = "geclisa_generica"
-                    break
-
-    # Si todo falla, plantilla base por defecto
-    if not plantilla_seleccionada:
-        plantilla_seleccionada = {
-            "titulo": "Indicaciones Médicas Quirúrgicas Estándar",
-            "texto_indicaciones": (
-                "Instilar 1 gota en el ojo operado cada 4 horas según protocolo médico postquirúrgico.\n"
-                "Dejar espacio de 10 minutos entre gota y gota.\n"
-                "Uso de protector ocular para dormir durante la primera semana."
-            ),
-            "medicamentos": [
-                {"droga": "Gatimicin D (Antibiótico + Corticoide)", "dosis": "1 gota", "frecuencia": "Cada 4 horas", "duracion": "7 días", "instrucciones": "Agitar antes de colocar"},
-                {"droga": "Berlofen (Antiinflamatorio)", "dosis": "1 gota", "frecuencia": "Cada 4 horas", "duracion": "7 días", "instrucciones": "Separar 10 min de la anterior"}
-            ],
-            "cuidados_generales": "- No refregar el ojo.\n- Evitar esfuerzos físicos y levantar peso.\n- No sumergirse en piscinas por 30 días.",
-            "pautas_alarma": "Ante dolor intenso persistente, disminución abrupta de la visión o secreción purulenta, acudir a la guardia 24 hs.",
-            "origen": "fallback_estandar"
+        return {
+            "success": True,
+            "sugerencia": None,
+            "habilitada": True if p_db and p_db.get("habilitar_indicaciones") else False,
+            "requiere_seleccion_manual": True,
+            "origen_resolucion": "sin_plantilla_configurada",
+            "mensaje": "Esta práctica no cuenta con un protocolo de indicaciones médicas preconfigurado. Seleccione una plantilla del catálogo si el cirujano lo solicita.",
+            "total_plantillas_geclisa": len(plantillas_geclisa)
         }
 
     return {
         "success": True,
         "sugerencia": plantilla_seleccionada,
+        "habilitada": True,
+        "requiere_seleccion_manual": False,
         "origen_resolucion": origen,
         "total_plantillas_geclisa": len(plantillas_geclisa)
     }
@@ -262,7 +279,7 @@ def emitir_indicaciones_expediente(
         "paciente_dni": paciente_dni,
         "paciente_obra_social": paciente_os,
         "practica_nombre": practica_nombre,
-        "ojo": "OD", # Por defecto o resolver si existe en expediente/turno
+        "ojo": asesoria.get("ojo") or "OD",
         "medico_nombre": medico_nombre,
         "medico_matricula": medico_matricula,
         "cuerpo_indicaciones": texto_final,
@@ -314,12 +331,17 @@ def emitir_indicaciones_expediente(
             backend_base = os.getenv("BACKEND_URL", "https://crm.centrovision.com.ar").rstrip("/")
             full_pdf_link = f"{backend_base}{pdf_url}"
             
+            ojo_actual = asesoria.get("ojo") or "OD"
+            ojo_str = "👁️ *OJO DERECHO*" if "OD" in str(ojo_actual).upper() else "👁️ *OJO IZQUIERDO*" if "OI" in str(ojo_actual).upper() else f"👁️ *{ojo_actual}*"
+
             mensaje_wa = (
                 f"📋 *INDICACIONES MÉDICAS QUIRÚRGICAS - CENTRO VISIÓN*\n\n"
                 f"Estimado/a *{paciente_nombre}*,\n"
                 f"Le acercamos las indicaciones médicas y el esquema de medicación correspondiente a su procedimiento de *{practica_nombre}*, "
                 f"bajo indicación del *{medico_nombre}*.\n\n"
+                f"• *Procedimiento en:* {ojo_str}\n\n"
                 f"📄 *Descargue su receta e indicaciones oficiales aquí:*\n{full_pdf_link}\n\n"
+                f"⏳ *Regla de Oro:* Si le coincide colocar dos gotas diferentes al mismo horario, aplique la primera y espere *10 minutos* antes de la siguiente.\n\n"
                 f"⚠️ *Pautas de Cuidado:*\n"
                 f"• Aplique las gotas en los horarios indicados.\n"
                 f"• No se frote los ojos ni realice esfuerzos físicos.\n"
@@ -366,4 +388,132 @@ def emitir_indicaciones_expediente(
         "whatsapp_resultado": whatsapp_res,
         "medico_emisor": medico_nombre,
         "paciente": paciente_nombre
+    }
+
+
+
+def reeditar_emision_indicaciones(
+    emision_id: str,
+    texto_indicaciones: str,
+    medicamentos: Optional[List[Dict[str, Any]]] = None,
+    cuidados_generales: Optional[str] = None,
+    pautas_alarma: Optional[str] = None,
+    reenviar_whatsapp: bool = True,
+    usu_modificacion: str = "asesora_crm"
+) -> Dict[str, Any]:
+    """
+    Reedita una indicación médica ya emitida:
+    1. Carga la emisión original de 'emisiones_indicaciones_geclisa'.
+    2. Regenera el PDF con las modificaciones clínicas y versión actualizada.
+    3. Actualiza el registro de auditoría en 'emisiones_indicaciones_geclisa' y en 'asesorias_quirurgicas'.
+    4. Si se solicita reenviar por WhatsApp, despacha el PDF actualizado al paciente.
+    """
+    if not supabase or not is_valid_uuid(emision_id):
+        return {"success": False, "error": "ID de emisión inválido."}
+
+    res_em = supabase.table("emisiones_indicaciones_geclisa").select("*, asesorias_quirurgicas(*), pacientes(*)").eq("id", emision_id).limit(1).execute()
+    if not res_em.data:
+        return {"success": False, "error": "Emisión no encontrada en el sistema."}
+    
+    emision = res_em.data[0]
+    asesoria = emision.get("asesorias_quirurgicas") or {}
+    paciente = emision.get("pacientes") or {}
+
+    paciente_nombre = paciente.get("nombre") or emision.get("medico_nombre") or "Paciente"
+    paciente_dni = paciente.get("dni") or "-"
+    paciente_os = paciente.get("obra_social") or "-"
+    paciente_telefono = paciente.get("telefono")
+    
+    medico_nombre = emision.get("medico_nombre") or "Médico Cirujano"
+    medico_matricula = emision.get("medico_matricula") or ""
+    practica_nombre = emision.get("practica_nombre") or "Procedimiento Quirúrgico"
+    ojo_intervenido = asesoria.get("ojo") or "OD"
+
+    # Generar nuevo PDF
+    datos_pdf = {
+        "paciente_nombre": paciente_nombre,
+        "paciente_dni": paciente_dni,
+        "paciente_obra_social": paciente_os,
+        "practica_nombre": practica_nombre,
+        "ojo": ojo_intervenido,
+        "medico_nombre": medico_nombre,
+        "medico_matricula": medico_matricula,
+        "cuerpo_indicaciones": texto_indicaciones,
+        "medicamentos": medicamentos or [],
+        "cuidados_generales": cuidados_generales or "",
+        "pautas_alarma": pautas_alarma or "",
+        "geclisa_im_id": emision.get("geclisa_im_id")
+    }
+
+    config_diseno = {
+        "titulo_documento": "INDICACIONES MÉDICAS QUIRÚRGICAS (ACTUALIZADAS)",
+        "pie_pagina": "Documento corregido y reemitido electrónicamente por Centro Visión."
+    }
+
+    pdf_res = generar_pdf_indicacion_medica(datos_pdf, config_diseno=config_diseno, guardar_en_disco=True)
+    pdf_url = pdf_res.get("url")
+    pdf_path = pdf_res.get("file_path")
+
+    # Actualizar emisión en BD
+    upd_em = {
+        "texto_indicaciones": texto_indicaciones,
+        "pdf_path": pdf_path,
+        "pdf_url": pdf_url
+    }
+    
+    # Despachar WhatsApp si corresponde
+    whatsapp_status = emision.get("whatsapp_status")
+    whatsapp_res = None
+    if reenviar_whatsapp and paciente_telefono:
+        try:
+            backend_base = os.getenv("BACKEND_URL", "https://crm.centrovision.com.ar").rstrip("/")
+            full_pdf_link = f"{backend_base}{pdf_url}"
+            
+            ojo_str = "👁️ *OJO DERECHO*" if "OD" in str(ojo_intervenido).upper() else "👁️ *OJO IZQUIERDO*" if "OI" in str(ojo_intervenido).upper() else f"👁️ *{ojo_intervenido}*"
+
+            mensaje_wa = (
+                f"📋 *INDICACIONES MÉDICAS ACTUALIZADAS - CENTRO VISIÓN*\n\n"
+                f"Estimado/a *{paciente_nombre}*,\n"
+                f"Le enviamos la versión *actualizada* de sus indicaciones médicas para su cirugía de *{practica_nombre}*, "
+                f"según lo dispuesto por el *{medico_nombre}*.\n\n"
+                f"• *Procedimiento en:* {ojo_str}\n\n"
+                f"📄 *Descargue su receta y protocolo actualizado aquí:*\n{full_pdf_link}\n\n"
+                f"⏳ *Recordatorio clave:* Si debe colocarse dos gotas diferentes en el mismo horario, recuerde esperar *10 minutos* entre gota y gota.\n\n"
+                f"_Centro Visión - Cuidamos su salud visual_"
+            )
+            
+            tel_norm = normalize_phone_number(paciente_telefono)
+            if tel_norm:
+                wa_send = whatsapp_manager.send_message(tel_norm, mensaje_wa)
+                if wa_send and wa_send.get("status") in ["queued", "sent", "success"]:
+                    whatsapp_status = "enviado"
+                    whatsapp_res = wa_send
+                else:
+                    whatsapp_status = "fallido"
+                    whatsapp_res = wa_send
+                upd_em["whatsapp_status"] = whatsapp_status
+                upd_em["whatsapp_mensaje_id"] = wa_send.get("message_id") if isinstance(wa_send, dict) else None
+        except Exception as e_wa:
+            logger.error(f"Error reenviando WhatsApp en reedición {emision_id}: {e_wa}")
+            upd_em["whatsapp_status"] = "fallido"
+            upd_em["whatsapp_error"] = str(e_wa)
+
+    supabase.table("emisiones_indicaciones_geclisa").update(upd_em).eq("id", emision_id).execute()
+
+    # Si hay asesoria_id, actualizar en la tabla principal
+    asesoria_id = emision.get("asesoria_id")
+    if asesoria_id:
+        supabase.table("asesorias_quirurgicas").update({
+            "indicaciones_texto": texto_indicaciones,
+            "indicaciones_pdf_url": pdf_url,
+            "indicaciones_emitidas_at": datetime.now().isoformat()
+        }).eq("id", asesoria_id).execute()
+
+    return {
+        "success": True,
+        "emision_id": emision_id,
+        "pdf_url": pdf_url,
+        "whatsapp_status": whatsapp_status,
+        "whatsapp_resultado": whatsapp_res,
+        "mensaje": "Indicación médica actualizada exitosamente."
     }

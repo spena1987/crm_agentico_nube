@@ -2329,6 +2329,15 @@ def guardar_practica_crm_integral(payload: Dict[str, Any]) -> Dict[str, Any]:
         
         if "lios_habilitados" in payload:
             p_data["lios_habilitados"] = payload.get("lios_habilitados")
+            
+        if "habilitar_indicaciones" in payload:
+            p_data["habilitar_indicaciones"] = bool(payload.get("habilitar_indicaciones", False))
+        if "plantilla_indicacion_id" in payload:
+            p_data["plantilla_indicacion_id"] = payload.get("plantilla_indicacion_id") or None
+        if "geclisa_pim_id_default" in payload:
+            p_data["geclisa_pim_id_default"] = payload.get("geclisa_pim_id_default") or None
+        if "indicaciones_reglas_cirujano" in payload:
+            p_data["indicaciones_reglas_cirujano"] = payload.get("indicaciones_reglas_cirujano") or {}
         
         if practica_id:
             # Actualizar existente

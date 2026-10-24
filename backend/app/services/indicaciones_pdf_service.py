@@ -209,6 +209,44 @@ def generar_pdf_indicacion_medica(
     story.append(header_table)
     story.append(HRFlowable(width="100%", thickness=1.5, color=c_primario, spaceBefore=4, spaceAfter=8))
 
+    # 1.1 INSIGNIA DESTACADA DEL OJO A INTERVENIR (OPCIÓN B)
+    ojo_upper = (ojo_intervenido or "OD").upper().strip()
+    if "OD" in ojo_upper or "DERECHO" in ojo_upper:
+        ojo_title = "OJO DERECHO (Tu ojo del lado DERECHO)"
+        c_ojo_bg = colors.HexColor("#EFF6FF")
+        c_ojo_border = colors.HexColor("#2563EB")
+        c_ojo_text = colors.HexColor("#1E40AF")
+    elif "OI" in ojo_upper or "IZQUIERDO" in ojo_upper:
+        ojo_title = "OJO IZQUIERDO (Tu ojo del lado IZQUIERDO)"
+        c_ojo_bg = colors.HexColor("#FAF5FF")
+        c_ojo_border = colors.HexColor("#7C3AED")
+        c_ojo_text = colors.HexColor("#5B21B6")
+    else:
+        ojo_title = f"{ojo_label} (Tratamiento en Ambos Ojos)"
+        c_ojo_bg = colors.HexColor("#F0FDF4")
+        c_ojo_border = colors.HexColor("#059669")
+        c_ojo_text = colors.HexColor("#065F46")
+
+    ojo_banner_style = ParagraphStyle(
+        'OjoBanner',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=11,
+        leading=14,
+        textColor=c_ojo_text,
+        alignment=1
+    )
+    ojo_table = Table([[Paragraph(f"👁️ <b>PROCEDIMIENTO EN: {ojo_title}</b> 👁️", ojo_banner_style)]], colWidths=[540])
+    ojo_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), c_ojo_bg),
+        ('BOX', (0,0), (-1,-1), 1.5, c_ojo_border),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(ojo_table)
+    story.append(Spacer(1, 6))
+
     # 2. TARJETA RESUMEN DEL PACIENTE Y PROCEDIMIENTO
     card_data = [
         [
@@ -293,6 +331,44 @@ def generar_pdf_indicacion_medica(
             ('RIGHTPADDING', (0,0), (-1,-1), 5),
         ]))
         story.append(tabla_med)
+        story.append(Spacer(1, 6))
+
+        # REGLA DE ORO DE 10 MINUTOS & GUÍA HORARIA (OPCIÓN A)
+        golden_rule_style = ParagraphStyle(
+            'GoldenRule',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=8.5,
+            leading=12,
+            textColor=colors.HexColor("#92400E")
+        )
+        golden_content = [
+            Paragraph("<b>⏳ REGLA DE ORO ENTRE GOTAS DISTINTAS:</b>", ParagraphStyle('GRBold', parent=golden_rule_style, fontName='Helvetica-Bold')),
+            Paragraph(
+                "Si le coincide colocarse 2 colirios al mismo horario, aplique el primero, <b>espere 10 minutos completos</b> "
+                "con el ojo cerrado suavemente para que la gota se absorba, y luego instile el segundo colirio. <i>Nunca los aplique juntos.</i>",
+                golden_rule_style
+            ),
+            Spacer(1, 3),
+            Paragraph(
+                "<b>⏰ Guía de horarios recomendados (respetando descanso nocturno):</b><br/>"
+                "• <b>Cada 4 horas:</b> 08:00 hs &nbsp;•&nbsp; 12:00 hs &nbsp;•&nbsp; 16:00 hs &nbsp;•&nbsp; 20:00 hs<br/>"
+                "• <b>Cada 6 horas:</b> 08:00 hs &nbsp;•&nbsp; 14:00 hs &nbsp;•&nbsp; 20:00 hs<br/>"
+                "• <b>Cada 8 horas:</b> 08:00 hs &nbsp;•&nbsp; 16:00 hs &nbsp;•&nbsp; 24:00 hs<br/>"
+                "• <b>Cada 12 horas:</b> 08:00 hs &nbsp;•&nbsp; 20:00 hs",
+                golden_rule_style
+            )
+        ]
+        golden_table = Table([[golden_content]], colWidths=[540])
+        golden_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#FFFBEB")),
+            ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#F59E0B")),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('LEFTPADDING', (0,0), (-1,-1), 8),
+            ('RIGHTPADDING', (0,0), (-1,-1), 8),
+        ]))
+        story.append(golden_table)
         story.append(Spacer(1, 10))
 
     # 5. CUIDADOS GENERALES Y REPOSO

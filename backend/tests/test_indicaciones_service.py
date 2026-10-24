@@ -52,3 +52,17 @@ def test_generar_pdf_indicacion_medica_buffer():
     assert pdf_res["pdf_bytes"] is not None
     assert len(pdf_res["pdf_bytes"]) > 1000
     assert pdf_res["pdf_bytes"].startswith(b"%PDF")
+
+
+def test_resolver_sugerencia_sin_fallback_arbitrario():
+    """
+    Verifica que una práctica sin coincidencia ni protocolo
+    NO asigne un fallback arbitrario de cataratas, sino que devuelva sugerencia=None y requiere_seleccion_manual=True.
+    """
+    res = resolver_plantilla_sugerida(
+        practica_nombre="Inyeccion Intravitrea Desconocida Procedimiento Raro 999",
+        medico_nombre="Dr. Medico Inventado 999"
+    )
+    assert res["success"] is True
+    assert res["sugerencia"] is None
+    assert res["requiere_seleccion_manual"] is True
