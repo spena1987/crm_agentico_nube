@@ -416,20 +416,42 @@ def emitir_indicaciones_expediente(
             ojo_actual = asesoria.get("ojo") or "OD"
             ojo_str = "👁️ *OJO DERECHO*" if "OD" in str(ojo_actual).upper() else "👁️ *OJO IZQUIERDO*" if "OI" in str(ojo_actual).upper() else f"👁️ *{ojo_actual}*"
 
-            mensaje_wa = (
-                f"📋 *INDICACIONES MÉDICAS QUIRÚRGICAS - CENTRO VISIÓN*\n\n"
-                f"Estimado/a *{paciente_nombre}*,\n"
-                f"Le acercamos las indicaciones médicas y el esquema de medicación correspondiente a su procedimiento de *{practica_nombre}*, "
-                f"bajo indicación del *{medico_nombre}*.\n\n"
-                f"• *Procedimiento en:* {ojo_str}\n\n"
-                f"📄 *Descargue su receta e indicaciones oficiales aquí:*\n{full_pdf_link}\n\n"
-                f"⏳ *Regla de Oro:* Si le coincide colocar dos gotas diferentes al mismo horario, aplique la primera y espere *10 minutos* antes de la siguiente.\n\n"
-                f"⚠️ *Pautas de Cuidado:*\n"
-                f"• Aplique las gotas en los horarios indicados.\n"
-                f"• No se frote los ojos ni realice esfuerzos físicos.\n"
-                f"• Ante cualquier duda o urgencia, comuníquese de inmediato a nuestra línea de guardia.\n\n"
-                f"_Centro Visión - Cuidamos su salud visual_"
+            txt_low = str(texto_final or "").lower()
+            es_orden_detectada = (
+                "solicito:" in txt_low
+                or "solicito " in txt_low
+                or "orden medica" in txt_low
+                or "orden médica" in txt_low
+                or "pedido" in txt_low
             )
+
+            if es_orden_detectada:
+                mensaje_wa = (
+                    f"📋 *ORDEN MÉDICA OFICIAL - CENTRO VISIÓN*\n\n"
+                    f"Estimado/a *{paciente_nombre}*,\n"
+                    f"Le acercamos la orden médica oficial y solicitud de práctica correspondiente a *{practica_nombre}*, "
+                    f"emitida bajo indicación del *{medico_nombre}*.\n\n"
+                    f"• *Procedimiento:* {practica_nombre}\n"
+                    f"• *Intervención:* {ojo_str}\n\n"
+                    f"📄 *Descargue su orden médica oficial aquí:*\n{full_pdf_link}\n\n"
+                    f"📌 *Información Importante:* Presente esta orden oficial ante su cobertura de salud u obra social para su autorización previa.\n\n"
+                    f"_Centro Visión - Cuidamos su salud visual_"
+                )
+            else:
+                mensaje_wa = (
+                    f"📋 *INDICACIONES MÉDICAS QUIRÚRGICAS - CENTRO VISIÓN*\n\n"
+                    f"Estimado/a *{paciente_nombre}*,\n"
+                    f"Le acercamos las indicaciones médicas y el esquema de medicación correspondiente a su procedimiento de *{practica_nombre}*, "
+                    f"bajo indicación del *{medico_nombre}*.\n\n"
+                    f"• *Procedimiento en:* {ojo_str}\n\n"
+                    f"📄 *Descargue su receta e indicaciones oficiales aquí:*\n{full_pdf_link}\n\n"
+                    f"⏳ *Regla de Oro:* Si le coincide colocar dos gotas diferentes al mismo horario, aplique la primera y espere *10 minutos* antes de la siguiente.\n\n"
+                    f"⚠️ *Pautas de Cuidado:*\n"
+                    f"• Aplique las gotas en los horarios indicados.\n"
+                    f"• No se frote los ojos ni realice esfuerzos físicos.\n"
+                    f"• Ante cualquier duda o urgencia, comuníquese de inmediato a nuestra línea de guardia.\n\n"
+                    f"_Centro Visión - Cuidamos su salud visual_"
+                )
             
             # Enviar mensaje vía WhatsApp Manager
             tel_norm = normalize_phone_number(paciente_telefono)

@@ -2632,8 +2632,9 @@ export default function CasoFormularioActivo({
           <div className="pt-2">
             <SeccionIndicacionesExpediente
               asesoriaId={caso.id}
-              practicaNombre={caso.practica_nombre}
-              practicaCodigo={caso.practica_codigo}
+              practicaId={(caso as any).practica_id}
+              practicaNombre={practicaNombre || caso.practica_nombre}
+              practicaCodigo={practicaCodigo || caso.practica_codigo}
               medicoNombre={medicoCirujano.nombre || caso.medico_cirujano_nombre}
               medicoId={medicoCirujano.id || caso.medico_cirujano_id}
               pacienteNombre={pacienteNombre}

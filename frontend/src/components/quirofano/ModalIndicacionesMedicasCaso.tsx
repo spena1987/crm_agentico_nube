@@ -56,6 +56,7 @@ export default function ModalIndicacionesMedicasCaso({
         <div className="p-5 max-h-[75vh] overflow-y-auto space-y-4">
           <SeccionIndicacionesExpediente
             asesoriaId={caso.id}
+            practicaId={caso.practica_id || caso.nomenclador_practica_id}
             practicaNombre={caso.practica_nombre}
             practicaCodigo={caso.practica_codigo}
             medicoNombre={caso.medico_cirujano_nombre}

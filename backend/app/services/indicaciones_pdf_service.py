@@ -66,7 +66,17 @@ def generar_pdf_indicacion_medica(
     mostrar_logo = cfg.get("mostrar_logo", True)
     mostrar_firma = cfg.get("mostrar_firma", True)
     mostrar_qr = cfg.get("mostrar_qr", True)
-    titulo_doc = cfg.get("titulo_documento") or "INDICACIONES MÉDICAS QUIRÚRGICAS"
+
+    raw_texto = datos_emision.get("cuerpo_indicaciones") or datos_emision.get("texto_indicaciones") or ""
+    raw_lower = str(raw_texto).lower()
+    es_orden_detectada = (
+        "solicito:" in raw_lower
+        or "solicito " in raw_lower
+        or "orden medica" in raw_lower
+        or "orden médica" in raw_lower
+        or "pedido de estudio" in raw_lower
+    )
+    titulo_doc = cfg.get("titulo_documento") or ("ORDEN MÉDICA DE PROCEDIMIENTO" if es_orden_detectada else "INDICACIONES MÉDICAS QUIRÚRGICAS")
     pie_pagina_custom = cfg.get("pie_pagina") or "Documento médico oficial emitido electrónicamente por Centro Visión."
 
     # Datos clínicos de la emisión

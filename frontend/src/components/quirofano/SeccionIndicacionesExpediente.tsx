@@ -18,7 +18,9 @@ import {
   Clock,
   ShieldCheck,
   Plus,
-  Trash2
+  Trash2,
+  Layers,
+  FileCheck2
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 
@@ -61,6 +63,9 @@ export default function SeccionIndicacionesExpediente({
   const [cuidadosGenerales, setCuidadosGenerales] = useState<string>('')
   const [pautasAlarma, setPautasAlarma] = useState<string>('')
   
+  // Módulos activos para asignaciones 1 a N del Nomenclador
+  const [modulosSeleccionadosIds, setModulosSeleccionadosIds] = useState<string[]>([])
+  
   const [geclisaImId, setGeclisaImId] = useState<number | null>(indicacionGeclisaImId || null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(indicacionesPdfUrl || null)
   const [whatsappStatus, setWhatsappStatus] = useState<string | null>(null)
@@ -71,18 +76,27 @@ export default function SeccionIndicacionesExpediente({
   
   const [mensajeExito, setMensajeExito] = useState<string | null>(null)
   const [mensajeError, setMensajeError] = useState<string | null>(null)
-  const [plantillasCatalogo, setPlantillasCatalogo] = useState<any[]>([])
+  
+  // Catálogos
+  const [plantillasCatalogoGeclisa, setPlantillasCatalogoGeclisa] = useState<any[]>([])
+  const [plantillasCrm, setPlantillasCrm] = useState<any[]>([])
 
+  // Cargar catálogos Geclisa y CRM
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/indicaciones/plantillas-geclisa`)
       .then((r) => r.json())
-      .then((d) => { if (d.success) setPlantillasCatalogo(d.plantillas || []) })
-      .catch((e) => console.error('Error cargando catalogo de indicaciones en expediente:', e))
+      .then((d) => { if (d.success) setPlantillasCatalogoGeclisa(d.plantillas || []) })
+      .catch((e) => console.error('Error cargando catalogo Geclisa:', e))
+
+    fetch(`${API_BASE_URL}/api/indicaciones/plantillas`)
+      .then((r) => r.json())
+      .then((d) => { if (d.success) setPlantillasCrm(d.plantillas || []) })
+      .catch((e) => console.error('Error cargando biblioteca CRM:', e))
   }, [])
 
   // Resolver sugerencia inteligente cuando cambia la práctica o el cirujano
   const resolverSugerencia = useCallback(async () => {
-    if (!practicaNombre && !medicoNombre) return
+    if (!practicaNombre && !medicoNombre && !practicaCodigo && !practicaId) return
     setResolviendo(true)
     try {
       const res = await fetch(`${API_BASE_URL}/api/indicaciones/resolver-sugerencia`, {
@@ -105,8 +119,15 @@ export default function SeccionIndicacionesExpediente({
           setMedicamentos(sug.medicamentos || [])
           setCuidadosGenerales(sug.cuidados_generales || '')
           setPautasAlarma(sug.pautas_alarma || '')
+
+          if (Array.isArray(sug.modulos_asignados) && sug.modulos_asignados.length > 0) {
+            setModulosSeleccionadosIds(sug.modulos_asignados.map((m: any) => m.id))
+          } else {
+            setModulosSeleccionadosIds([])
+          }
         } else {
           setPlantillaSeleccionada(null)
+          setModulosSeleccionadosIds([])
         }
       }
     } catch (err) {
@@ -119,6 +140,115 @@ export default function SeccionIndicacionesExpediente({
   useEffect(() => {
     resolverSugerencia()
   }, [resolverSugerencia])
+
+  // Alternar selección de un módulo individual en caso de 1 a N
+  const handleToggleModulo = (moduloId: string) => {
+    if (!plantillaSeleccionada || !Array.isArray(plantillaSeleccionada.modulos_asignados)) return
+    
+    let nuevosIds: string[]
+    if (modulosSeleccionadosIds.includes(moduloId)) {
+      nuevosIds = modulosSeleccionadosIds.filter((id) => id !== moduloId)
+    } else {
+      nuevosIds = [...modulosSeleccionadosIds, moduloId]
+    }
+    setModulosSeleccionadosIds(nuevosIds)
+
+    const modulosFiltrados = plantillaSeleccionada.modulos_asignados.filter((m: any) =>
+      nuevosIds.includes(m.id)
+    )
+
+    // Reconstruir texto combinado
+    const textos = modulosFiltrados.map((m: any) => m.cuerpo_indicaciones).filter(Boolean)
+    setTextoIndicaciones(textos.join('\n\n---\n\n'))
+
+    // Reconstruir medicamentos combinados
+    const todosMeds: any[] = []
+    modulosFiltrados.forEach((m: any) => {
+      ;(m.medicamentos || []).forEach((med: any) => {
+        if (!todosMeds.some((x) => x.droga === med.droga)) {
+          todosMeds.push(med)
+        }
+      })
+    })
+    setMedicamentos(todosMeds)
+
+    // Reconstruir cuidados y alarmas
+    const todosCuidados = modulosFiltrados.map((m: any) => m.cuidados_generales).filter(Boolean)
+    setCuidadosGenerales(todosCuidados.join('\n'))
+
+    const todasAlarmas = modulosFiltrados.map((m: any) => m.pautas_alarma).filter(Boolean)
+    setPautasAlarma(todasAlarmas.join('\n'))
+  }
+
+  // Manejo de cambio en el selector unificado (Nomenclador, CRM, Geclisa, Manual)
+  const handleSelectPlantilla = (valor: string) => {
+    if (valor === 'nomenclador') {
+      resolverSugerencia()
+      return
+    }
+
+    if (valor.startsWith('crm_')) {
+      const crmId = valor.replace('crm_', '')
+      const match = plantillasCrm.find((p) => p.id === crmId)
+      if (match) {
+        setPlantillaSeleccionada({
+          crm_plantilla_id: match.id,
+          titulo: match.titulo,
+          texto_indicaciones: match.cuerpo_indicaciones,
+          medicamentos: match.medicamentos || [],
+          cuidados_generales: match.cuidados_generales || '',
+          pautas_alarma: match.pautas_alarma || '',
+          origen: 'biblioteca_crm',
+          geclisa_pim_id: match.geclisa_pim_id || null
+        })
+        setTextoIndicaciones(match.cuerpo_indicaciones || '')
+        setMedicamentos(match.medicamentos || [])
+        setCuidadosGenerales(match.cuidados_generales || '')
+        setPautasAlarma(match.pautas_alarma || '')
+        setModulosSeleccionadosIds([])
+      }
+      return
+    }
+
+    if (valor.startsWith('geclisa_')) {
+      const pimId = Number(valor.replace('geclisa_', ''))
+      const match = plantillasCatalogoGeclisa.find((p) => p.pimId === pimId)
+      if (match) {
+        setPlantillaSeleccionada({
+          geclisa_pim_id: match.pimId,
+          titulo: match.pimNombre,
+          texto_indicaciones: match.pimTexto,
+          medicamentos: [],
+          cuidados_generales: '',
+          pautas_alarma: '',
+          origen: 'geclisa_manual'
+        })
+        setTextoIndicaciones(match.pimTexto || '')
+        setMedicamentos([])
+        setCuidadosGenerales('')
+        setPautasAlarma('')
+        setModulosSeleccionadosIds([])
+      }
+      return
+    }
+
+    if (valor === 'custom') {
+      setPlantillaSeleccionada({
+        titulo: 'Texto Personalizado Libre',
+        origen: 'personalizado'
+      })
+      setModulosSeleccionadosIds([])
+    }
+  }
+
+  // Detectar si el contenido es una Orden Médica / Solicitud vs Indicación de Gotas
+  const textoLower = (textoIndicaciones || '').toLowerCase()
+  const esOrdenMedica =
+    textoLower.includes('solicito:') ||
+    textoLower.includes('solicito ') ||
+    textoLower.includes('orden medica') ||
+    textoLower.includes('orden médica') ||
+    textoLower.includes('pedido')
 
   // Previsualizar PDF con ReportLab
   const handlePreviewPdf = async () => {
@@ -159,7 +289,7 @@ export default function SeccionIndicacionesExpediente({
   // Disparo de emisión formal a Geclisa y envío por WhatsApp
   const handleEmitirIndicaciones = async () => {
     if (!asesoriaId) {
-      setMensajeError('Debe guardar primero el expediente para poder emitir las indicaciones formalmente en Geclisa.')
+      setMensajeError('Debe guardar primero el expediente para poder emitir las órdenes/indicaciones formalmente en Geclisa.')
       return
     }
 
@@ -186,12 +316,15 @@ export default function SeccionIndicacionesExpediente({
         setPdfUrl(data.pdf_url)
         setWhatsappStatus(data.whatsapp_status)
         
-        let msg = '¡Indicaciones médicas emitidas con éxito!'
+        let msg = esOrdenMedica
+          ? '¡Orden médica emitida con éxito!'
+          : '¡Indicaciones médicas emitidas con éxito!'
+        
         if (data.geclisa_im_id) {
           msg += ` Registrada en Geclisa (ID #${data.geclisa_im_id}).`
         }
         if (data.whatsapp_status === 'enviado') {
-          msg += ' Mensaje y PDF enviados por WhatsApp al paciente.'
+          msg += ' Mensaje y PDF oficial enviados por WhatsApp al paciente.'
         }
         setMensajeExito(msg)
 
@@ -199,7 +332,7 @@ export default function SeccionIndicacionesExpediente({
           onIndicacionEmitida(data)
         }
       } else {
-        setMensajeError(data.detail || data.error || 'Error al emitir la indicación médica.')
+        setMensajeError(data.detail || data.error || 'Error al emitir el documento.')
       }
     } catch (err: any) {
       setMensajeError('Error de red al conectar con el servidor.')
@@ -207,6 +340,15 @@ export default function SeccionIndicacionesExpediente({
       setEmitiendo(false)
     }
   }
+
+  // Valor calculado para el selector unificado
+  const currentSelectValue = (() => {
+    if (plantillaSeleccionada?.origen === 'nomenclador_modular_1_a_n') return 'nomenclador'
+    if (plantillaSeleccionada?.crm_plantilla_id) return `crm_${plantillaSeleccionada.crm_plantilla_id}`
+    if (plantillaSeleccionada?.geclisa_pim_id) return `geclisa_${plantillaSeleccionada.geclisa_pim_id}`
+    if (plantillaSeleccionada?.origen === 'personalizado') return 'custom'
+    return 'custom'
+  })()
 
   return (
     <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 overflow-hidden transition-all text-xs">
@@ -220,13 +362,33 @@ export default function SeccionIndicacionesExpediente({
             <Pill size={16} />
           </span>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h4 className="font-bold text-[var(--foreground)] text-sm">
-                Indicaciones Médicas Quirúrgicas
+                Indicaciones & Órdenes Médicas
               </h4>
+
+              {/* Badge de tipo de documento */}
+              {esOrdenMedica ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
+                  <FileCheck2 size={11} />
+                  <span>Orden Médica / Solicitud</span>
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                  <Pill size={11} />
+                  <span>Protocolo Gotas & Reposo</span>
+                </span>
+              )}
+
+              {/* Badge de Nomenclador */}
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-600/10 text-blue-600 border border-blue-600/20">
-                {plantillaSeleccionada?.total_modulos > 1 ? `Modular (${plantillaSeleccionada.total_modulos} protocolos)` : 'Protocolo Activo'}
+                {plantillaSeleccionada?.total_modulos > 1
+                  ? `Modular Nomenclador (${plantillaSeleccionada.total_modulos} protocolos)`
+                  : plantillaSeleccionada?.titulo
+                  ? 'Protocolo Nomenclador Activo'
+                  : 'Sin Asignar en Nomenclador'}
               </span>
+
               {geclisaImId && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600/10 text-emerald-600 border border-emerald-600/20 flex items-center gap-1">
                   <CheckCircle size={11} />
@@ -234,22 +396,12 @@ export default function SeccionIndicacionesExpediente({
                 </span>
               )}
             </div>
-            <div className="text-[11px] text-[var(--secondary)]">
+
+            <div className="text-[11px] text-[var(--secondary)] mt-0.5">
               {plantillaSeleccionada?.titulo ? (
-                <>
-                  <span>Protocolo: <b>{plantillaSeleccionada.titulo}</b></span>
-                  {plantillaSeleccionada.modulos_asignados && plantillaSeleccionada.modulos_asignados.length > 1 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {plantillaSeleccionada.modulos_asignados.map((m: any, mIdx: number) => (
-                        <span key={mIdx} className="px-1.5 py-0.2 rounded text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold border border-rose-200 dark:border-rose-800">
-                          #{mIdx + 1} {m.titulo}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </>
+                <span>Protocolo configurado: <b>{plantillaSeleccionada.titulo}</b></span>
               ) : (
-                'Protocolo de indicaciones y colirios configurado en el Nomenclador.'
+                'Protocolos, órdenes y colirios configurados por práctica en el Nomenclador.'
               )}
             </div>
           </div>
@@ -299,45 +451,96 @@ export default function SeccionIndicacionesExpediente({
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 space-y-0.5">
               <span className="font-bold block">Práctica sin protocolo predeterminado en el Nomenclador</span>
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                El sistema mantiene el control estricto sin aplicar fármacos arbitrarios. Puede elegir una plantilla oficial o redactar las indicaciones puntuales si el cirujano lo solicita.
+                Puede seleccionar un protocolo de la Biblioteca CRM, una plantilla oficial de Geclisa o redactar las instrucciones personalizadas.
               </p>
             </div>
           )}
 
-          {/* Selector de Plantilla Oficial de Geclisa */}
+          {/* Selector Unificado de Plantilla (Nomenclador + CRM + Geclisa) */}
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-[var(--card-bg)] p-2 rounded-xl border border-[var(--border-color)]">
-            <span className="font-bold text-[var(--secondary)] text-[11px] whitespace-nowrap">Plantilla Oficial Geclisa:</span>
+            <span className="font-bold text-[var(--secondary)] text-[11px] whitespace-nowrap">
+              Plantilla Seleccionada:
+            </span>
             <select
-              value={plantillaSeleccionada?.geclisa_pim_id || ''}
-              onChange={(e) => {
-                const pimId = Number(e.target.value)
-                const match = plantillasCatalogo.find((p) => p.pimId === pimId)
-                if (match) {
-                  setPlantillaSeleccionada({
-                    geclisa_pim_id: match.pimId,
-                    titulo: match.pimNombre,
-                    texto_indicaciones: match.pimTexto,
-                    origen: 'seleccion_manual'
-                  })
-                  setTextoIndicaciones(match.pimTexto || '')
-                }
-              }}
+              value={currentSelectValue}
+              onChange={(e) => handleSelectPlantilla(e.target.value)}
               className="flex-1 p-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--background)] text-[var(--foreground)] font-medium text-xs outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="">-- Sin plantilla seleccionada / Texto personalizado --</option>
-              {plantillasCatalogo.map((p) => (
-                <option key={p.pimId} value={p.pimId}>
-                  #{p.pimId} - {p.pimNombre}
-                </option>
-              ))}
+              {plantillaSeleccionada?.origen === 'nomenclador_modular_1_a_n' && (
+                <optgroup label="⚡ Nomenclador (Protocolo Asignado a esta Práctica)">
+                  <option value="nomenclador">
+                    ✓ {plantillaSeleccionada.titulo} ({plantillaSeleccionada.total_modulos || 1} protocolos activos)
+                  </option>
+                </optgroup>
+              )}
+
+              <optgroup label="📋 Biblioteca CRM (Protocolos Propios)">
+                {plantillasCrm.filter((p) => p.activo !== false).map((p) => (
+                  <option key={p.id} value={`crm_${p.id}`}>
+                    {p.titulo} • {p.categoria || 'General'}
+                  </option>
+                ))}
+              </optgroup>
+
+              <optgroup label="🌐 Catálogo Oficial Geclisa (107 Plantillas)">
+                {plantillasCatalogoGeclisa.map((p) => (
+                  <option key={p.pimId} value={`geclisa_${p.pimId}`}>
+                    #{p.pimId} - {p.pimNombre}
+                  </option>
+                ))}
+              </optgroup>
+
+              <optgroup label="✏️ Personalizado">
+                <option value="custom">-- Texto Personalizado Libre --</option>
+              </optgroup>
             </select>
           </div>
 
-          {/* Texto de las Indicaciones */}
+          {/* Panel Interactivo de Módulos 1 a N del Nomenclador */}
+          {plantillaSeleccionada?.modulos_asignados && plantillaSeleccionada.modulos_asignados.length > 1 && (
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[11px] text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                  <Sparkles size={13} className="text-blue-500" />
+                  Módulos Asignados a la Práctica ({plantillaSeleccionada.modulos_asignados.length}):
+                </span>
+                <span className="text-[10px] text-slate-500">
+                  Marque o desmarque los protocolos u órdenes para este paciente
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {plantillaSeleccionada.modulos_asignados.map((m: any, mIdx: number) => {
+                  const isActivo = modulosSeleccionadosIds.includes(m.id)
+                  return (
+                    <button
+                      key={m.id || mIdx}
+                      type="button"
+                      onClick={() => handleToggleModulo(m.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-2 border shadow-sm ${
+                        isActivo
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-[var(--border-color)] line-through opacity-60'
+                      }`}
+                    >
+                      <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">
+                        {isActivo ? '✓' : '✗'}
+                      </span>
+                      <span>#{mIdx + 1} {m.titulo}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Texto de las Indicaciones / Órdenes */}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="font-bold text-[var(--foreground)]">
-                Texto de las Indicaciones Médicas (Se asentará en Geclisa):
+              <label className="font-bold text-[var(--foreground)] flex items-center gap-2">
+                <span>{esOrdenMedica ? 'Texto de la Orden Médica (Se asentará en Geclisa):' : 'Texto de las Indicaciones Médicas (Se asentará en Geclisa):'}</span>
+                <span className="text-[10px] font-normal text-slate-400">
+                  (Editable libremente antes de emitir)
+                </span>
               </label>
               <button
                 type="button"
@@ -350,11 +553,11 @@ export default function SeccionIndicacionesExpediente({
               </button>
             </div>
             <textarea
-              rows={3}
+              rows={6}
               value={textoIndicaciones}
               onChange={(e) => setTextoIndicaciones(e.target.value)}
-              className="w-full p-2.5 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] font-mono text-[11px] leading-relaxed"
-              placeholder="Instrucciones postquirúrgicas para el paciente..."
+              className="w-full p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] font-mono text-[11px] leading-relaxed outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Instrucciones postquirúrgicas u orden médica para el paciente..."
             />
           </div>
 
@@ -389,10 +592,10 @@ export default function SeccionIndicacionesExpediente({
                 type="button"
                 onClick={handlePreviewPdf}
                 disabled={generandoPreview}
-                className="px-3 py-1.5 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--hover-bg)] font-semibold text-[var(--foreground)] flex items-center gap-1.5 transition"
+                className="px-3.5 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] hover:bg-[var(--hover-bg)] font-semibold text-[var(--foreground)] flex items-center gap-1.5 transition"
               >
                 {generandoPreview ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />}
-                <span>Ver PDF</span>
+                <span>Ver PDF ({esOrdenMedica ? 'Orden Médica' : 'Indicaciones'})</span>
               </button>
 
               {pdfUrl && (
@@ -400,7 +603,7 @@ export default function SeccionIndicacionesExpediente({
                   href={`${API_BASE_URL}${pdfUrl}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 text-white font-semibold flex items-center gap-1.5 hover:bg-slate-900 transition"
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 text-white font-semibold flex items-center gap-1.5 hover:bg-slate-900 transition"
                 >
                   <ExternalLink size={13} />
                   <span>Abrir Documento Emitido</span>
@@ -416,7 +619,7 @@ export default function SeccionIndicacionesExpediente({
                 className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
               >
                 {emitiendo ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                <span>Emitir a Geclisa y Enviar WhatsApp</span>
+                <span>{esOrdenMedica ? 'Emitir Orden a Geclisa y Enviar WhatsApp' : 'Emitir Indicaciones a Geclisa y Enviar WhatsApp'}</span>
               </button>
             </div>
           </div>
@@ -431,7 +634,7 @@ export default function SeccionIndicacionesExpediente({
               <div className="flex items-center gap-2">
                 <FileText size={18} className="text-blue-600" />
                 <h3 className="font-bold text-sm text-[var(--foreground)]">
-                  Vista Previa Oficial: Indicación Médica Centro Visión
+                  Vista Previa Oficial: {esOrdenMedica ? 'Orden Médica Centro Visión' : 'Indicaciones Médicas Centro Visión'}
                 </h3>
               </div>
               <button
