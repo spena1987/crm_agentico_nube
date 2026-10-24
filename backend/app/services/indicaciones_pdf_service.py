@@ -120,21 +120,21 @@ def generar_pdf_indicacion_medica(
         margin_left = 26
         margin_right = 26
         margin_top = 18
-        margin_bottom = 16
+        margin_bottom = 36  # Espacio reservado para pie de página fijo
         is_compact = True
     elif "a4" in tamano_hoja:
         page_size = A4
         margin_left = 34
         margin_right = 34
         margin_top = 30
-        margin_bottom = 28
+        margin_bottom = 44  # Espacio reservado para pie de página fijo
         is_compact = False
     else:  # letter
         page_size = letter
         margin_left = 34
         margin_right = 34
         margin_top = 30
-        margin_bottom = 28
+        margin_bottom = 44  # Espacio reservado para pie de página fijo
         is_compact = False
 
     content_width = page_size[0] - (margin_left + margin_right)
@@ -188,6 +188,25 @@ def generar_pdf_indicacion_medica(
         fontSize=8.5 if is_compact else 9,
         leading=11.5 if is_compact else 13,
         textColor=colors.HexColor("#1E293B")
+    )
+
+    # Estilo dedicado para el cuerpo clínico incrustado con interlineado más amplio y cómodo
+    cuerpo_style = ParagraphStyle(
+        'DocCuerpoClinico',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=9.5 if is_compact else 10.5,
+        leading=15.0 if is_compact else 16.5,
+        textColor=colors.HexColor("#1E293B")
+    )
+
+    cuerpo_bold = ParagraphStyle(
+        'DocCuerpoClinicoBold',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9.5 if is_compact else 10.5,
+        leading=15.0 if is_compact else 16.5,
+        textColor=colors.HexColor("#0F172A")
     )
 
     alerta_style = ParagraphStyle(
@@ -360,11 +379,11 @@ def generar_pdf_indicacion_medica(
                 if p_limpio:
                     p_lower = p_limpio.lower()
                     if p_lower.startswith("solicito:") or p_lower.startswith("diagnóstico:") or p_lower.startswith("diagnostico:"):
-                        story.append(Paragraph(f"<b>{p_limpio}</b>", body_bold))
+                        story.append(Paragraph(f"<b>{p_limpio}</b>", cuerpo_bold))
                     else:
-                        story.append(Paragraph(p_limpio, body_style))
-                    story.append(Spacer(1, 1.5 if is_compact else 2))
-            story.append(Spacer(1, 4 if is_compact else 6))
+                        story.append(Paragraph(p_limpio, cuerpo_style))
+                    story.append(Spacer(1, 4 if is_compact else 6))
+            story.append(Spacer(1, 6 if is_compact else 10))
 
         # 4. ESQUEMA DE MEDICACIÓN Y COLIRIOS (SOLO SI TIENE FÁRMACOS)
         if isinstance(meds_list, list) and len(meds_list) > 0:
@@ -460,29 +479,23 @@ def generar_pdf_indicacion_medica(
             story.append(alerta_table)
             story.append(Spacer(1, 6 if is_compact else 10))
 
-        # 7. PIE DE PÁGINA: FIRMA Y SELLO + VALIDACIÓN LEGAL
-        info_legal = [
-            Paragraph(pie_pagina_custom, subtitle_style),
-            Paragraph(f"ID Emisión: {emision_id[:8]} • Emitido en Geclisa ID: {geclisa_im_id or 'Pendiente'} • Validado clínicamente", subtitle_style)
-        ]
-
-        firma_content = []
+        # 7. FIRMA Y SELLO DEL CIRUJANO (DESPLAZADA HACIA ABAJO Y A LA DERECHA)
         if mostrar_firma:
+            story.append(Spacer(1, 18 if is_compact else 28))
             firma_content = [
-                HRFlowable(width="80%", thickness=0.8, color=colors.HexColor("#94A3B8"), spaceBefore=4, spaceAfter=2),
-                Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle('FirmaMed', parent=subtitle_style, alignment=1)),
-                Paragraph(f"Especialista en Oftalmología • MP {medico_matricula or '-'}", ParagraphStyle('FirmaMP', parent=subtitle_style, alignment=1))
+                HRFlowable(width="85%", thickness=0.8, color=colors.HexColor("#94A3B8"), spaceBefore=2, spaceAfter=2),
+                Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle('FirmaMed', parent=subtitle_style, fontSize=8.2 if is_compact else 9, leading=10.5 if is_compact else 12, alignment=1)),
+                Paragraph(f"Especialista en Oftalmología • MP {medico_matricula or '-'}", ParagraphStyle('FirmaMP', parent=subtitle_style, fontSize=7.2 if is_compact else 8, leading=9.5 if is_compact else 11, alignment=1))
             ]
-
-        w_legal = content_width * 0.65
-        w_firma = content_width * 0.35
-        pie_table = Table([[info_legal, firma_content]], colWidths=[w_legal, w_firma])
-        pie_table.setStyle(TableStyle([
-            ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
-            ('LEFTPADDING', (0,0), (-1,-1), 0),
-            ('RIGHTPADDING', (0,0), (-1,-1), 0),
-        ]))
-        story.append(KeepTogether([pie_table]))
+            firma_table = Table([[Paragraph("", body_style), firma_content]], colWidths=[content_width * 0.58, content_width * 0.42])
+            firma_table.setStyle(TableStyle([
+                ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+                ('LEFTPADDING', (0,0), (-1,-1), 0),
+                ('RIGHTPADDING', (0,0), (-1,-1), 0),
+                ('TOPPADDING', (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ]))
+            story.append(KeepTogether([firma_table]))
 
         if not es_ultima:
             story.append(PageBreak())
@@ -492,8 +505,45 @@ def generar_pdf_indicacion_medica(
     for i, item_ind in enumerate(lista_indicaciones):
         render_pagina_indicacion(item_ind, es_ultima=(i == total_ind - 1))
 
-    # Compilar PDF
-    doc.build(story)
+    # Pie de página fijo al final de cada hoja (Pinned Footer)
+    def draw_page_footer(canvas, doc_obj):
+        canvas.saveState()
+        p_num = canvas._pageNumber
+        cur_geclisa_id = geclisa_im_id
+        if 1 <= p_num <= len(lista_indicaciones):
+            cur_geclisa_id = lista_indicaciones[p_num - 1].get("geclisa_im_id") or geclisa_im_id
+
+        # Línea divisoria horizontal
+        y_line = 26 if is_compact else 32
+        canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
+        canvas.setLineWidth(0.6)
+        canvas.line(margin_left, y_line, page_size[0] - margin_right, y_line)
+
+        # Texto legal institucional configurable
+        canvas.setFont('Helvetica', 6.8 if is_compact else 7.5)
+        canvas.setFillColor(colors.HexColor("#64748B"))
+        y_legal = 16 if is_compact else 21
+        txt_legal = pie_pagina_custom or "Documento médico oficial emitido electrónicamente por Centro Visión."
+        canvas.drawString(margin_left, y_legal, txt_legal[:140])
+
+        # Trazabilidad clínica y Geclisa
+        y_sub = 8 if is_compact else 11
+        canvas.setFont('Helvetica-Bold' if cur_geclisa_id else 'Helvetica', 6.5 if is_compact else 7.2)
+        canvas.setFillColor(colors.HexColor("#475569"))
+        geclisa_txt = f" • Ref Geclisa: #{cur_geclisa_id}" if cur_geclisa_id else ""
+        trazabilidad = f"ID Emisión: {emision_id[:8]}{geclisa_txt} • Validado clínicamente • Centro Visión"
+        canvas.drawString(margin_left, y_sub, trazabilidad)
+
+        # Número de página a la derecha si es multi-página
+        if len(lista_indicaciones) > 1:
+            canvas.setFont('Helvetica', 6.8 if is_compact else 7.5)
+            canvas.setFillColor(colors.HexColor("#64748B"))
+            canvas.drawRightString(page_size[0] - margin_right, y_sub, f"Hoja {p_num} de {len(lista_indicaciones)}")
+
+        canvas.restoreState()
+
+    # Compilar PDF con pie de página fijo
+    doc.build(story, onFirstPage=draw_page_footer, onLaterPages=draw_page_footer)
     pdf_bytes = buffer.getvalue()
     buffer.close()
 

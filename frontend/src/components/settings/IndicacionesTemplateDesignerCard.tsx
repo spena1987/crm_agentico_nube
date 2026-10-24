@@ -541,7 +541,7 @@ export default function IndicacionesTemplateDesignerCard() {
                       value={config.titulo_documento}
                       onChange={(e) => setConfig({ ...config, titulo_documento: e.target.value })}
                       placeholder="ORDEN MÉDICA DE PROCEDIMIENTO"
-                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] font-semibold focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <p className="text-[10px] text-[var(--secondary)] mt-1">
                       Aparece en la cabecera superior derecha del PDF.
@@ -557,7 +557,7 @@ export default function IndicacionesTemplateDesignerCard() {
                       value={config.nombre_institucion}
                       onChange={(e) => setConfig({ ...config, nombre_institucion: e.target.value })}
                       placeholder="CENTRO VISIÓN"
-                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
@@ -570,7 +570,7 @@ export default function IndicacionesTemplateDesignerCard() {
                       value={config.subtitulo_institucion}
                       onChange={(e) => setConfig({ ...config, subtitulo_institucion: e.target.value })}
                       placeholder="Especialidades Oftalmológicas y Cirugía de Alta Complejidad"
-                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
@@ -693,7 +693,7 @@ export default function IndicacionesTemplateDesignerCard() {
                       value={config.pie_pagina}
                       onChange={(e) => setConfig({ ...config, pie_pagina: e.target.value })}
                       placeholder="Documento médico oficial emitido electrónicamente por Centro Visión."
-                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   </div>
 
@@ -845,7 +845,7 @@ export default function IndicacionesTemplateDesignerCard() {
                 rows={6}
                 value={textoReedicion}
                 onChange={(e) => setTextoReedicion(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)] font-mono focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
