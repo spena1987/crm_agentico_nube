@@ -8270,3 +8270,50 @@ def delete_pedidos_estudios_endpoint(lote_o_id: str):
         logger.error(f"Error eliminando pedidos de estudios {lote_o_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# =========================================================================
+# ENDPOINTS ANALÍTICOS Y SISTEMA DE INFORMACIÓN GERENCIAL (SIG)
+# =========================================================================
+
+@app.get("/api/analytics/resumen-gerencial")
+def get_resumen_gerencial_endpoint(
+    dias: int = Query(30, ge=1, le=365),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None)
+):
+    """
+    Retorna el resumen macro ejecutivo: facturación aprobada ARS/USD,
+    conversión de presupuestos, cartera del pipeline, cirugías realizadas y lectura de estudios.
+    """
+    from app.services.analytics_service import obtener_resumen_gerencial
+    return obtener_resumen_gerencial(dias=dias, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
+
+
+@app.get("/api/analytics/productividad-staff")
+def get_productividad_staff_endpoint(
+    dias: int = Query(30, ge=1, le=365),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None)
+):
+    """
+    Retorna la productividad consolidada de usuarias/os del staff:
+    contactos por canal (llamada, whatsapp, presencial, interno), estudios procesados y última actividad.
+    """
+    from app.services.analytics_service import obtener_productividad_usuarios
+    return obtener_productividad_usuarios(dias=dias, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
+
+
+@app.get("/api/analytics/modulos/{modulo_nombre}")
+def get_modulo_analytics_endpoint(
+    modulo_nombre: str,
+    dias: int = Query(30, ge=1, le=365),
+    fecha_inicio: Optional[str] = Query(None),
+    fecha_fin: Optional[str] = Query(None)
+):
+    """
+    Retorna métricas específicas por módulo operativo:
+    'asesoramiento', 'quirofano', 'estudios'.
+    """
+    from app.services.analytics_service import obtener_metricas_modulo
+    return obtener_metricas_modulo(modulo=modulo_nombre, dias=dias, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin)
+

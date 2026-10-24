@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { apiFetch } from '@/lib/api'
 import { 
   Users, 
   FileText, 
@@ -20,9 +21,18 @@ import {
   Filter,
   Building2,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  Award,
+  Eye,
+  FileDown
 } from 'lucide-react'
 import Link from 'next/link'
+
+import DashboardHeaderControls, { RangoFiltro } from '@/components/dashboard/DashboardHeaderControls'
+import TabResumenEjecutivo from '@/components/dashboard/TabResumenEjecutivo'
+import TabProductividadUsuarios from '@/components/dashboard/TabProductividadUsuarios'
+import TabRendimientoModulos from '@/components/dashboard/TabRendimientoModulos'
+import ReportePdfExportModal from '@/components/dashboard/ReportePdfExportModal'
 
 interface CasoFinanciero {
   id: string
@@ -46,9 +56,17 @@ const ETAPAS_ORDENADAS = [
 ]
 
 export default function Dashboard() {
-  const [tabActiva, setTabActiva] = useState<'operativa' | 'ejecutiva'>('operativa')
+  // Pestañas del Sistema Gerencial & Operativo
+  const [tabActiva, setTabActiva] = useState<'operativa' | 'ejecutiva' | 'productividad' | 'modulos'>('ejecutiva')
 
-  // Estado pestaña operativa
+  // Filtros Globales (Default: Últimos 30 días, según requerimiento de Dirección)
+  const [rango, setRango] = useState<RangoFiltro>({ tipo: '30d', dias: 30 })
+  const [moneda, setMoneda] = useState<'ARS' | 'USD' | 'TODAS'>('TODAS')
+
+  // Modal de Exportación PDF
+  const [modalExportarOpen, setModalExportarOpen] = useState(false)
+
+  // Estado de Datos Operativos (Vista Operativa Clásica)
   const [stats, setStats] = useState({
     pacientesCount: 0,
     presupuestosCount: 0,
@@ -56,59 +74,80 @@ export default function Dashboard() {
     totalFacturado: 0
   })
 
-  // Estado pestaña ejecutiva / pipeline financiero
+  // Estado de Datos Analíticos (SIG / BI)
+  const [resumenData, setResumenData] = useState<any>(null)
+  const [productividadData, setProductividadData] = useState<any>(null)
+  const [asesoriaData, setAsesoriaData] = useState<any>(null)
+  const [quirofanoData, setQuirofanoData] = useState<any>(null)
+  const [estudiosData, setEstudiosData] = useState<any>(null)
+
+  // Estado pestaña financiera / pipeline clásico
   const [casosFinancieros, setCasosFinancieros] = useState<CasoFinanciero[]>([])
   const [filtroCirujano, setFiltroCirujano] = useState<string>('todos')
   const [filtroPractica, setFiltroPractica] = useState<string>('todas')
-  const [filtroMoneda, setFiltroMoneda] = useState<'todas' | 'ARS' | 'USD'>('todas')
-  
+
   const [loading, setLoading] = useState(true)
 
-  // Cargar datos consolidados
-  const loadDashboardData = async () => {
+  // Carga centralizada de datos
+  const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true)
-      
-      // 1. Contar pacientes
-      const { count: pacsCount } = await supabase.from('pacientes').select('*', { count: 'exact', head: true })
-      
-      // 2. Contar presupuestos
-      const { count: presCount } = await supabase.from('presupuestos').select('*', { count: 'exact', head: true })
-      
-      // 3. Contar conversaciones con bot activo (bot_disabled = false)
-      const { count: activeBotsCount } = await supabase.from('conversaciones').select('*', { count: 'exact', head: true }).eq('bot_disabled', false)
-      
-      // 4. Calcular suma de presupuestos aprobados
-      const { data: presSum } = await supabase.from('presupuestos').select('total').eq('estado', 'aprobado')
-      const totalFact = presSum ? presSum.reduce((acc, curr) => acc + Number(curr.total || 0), 0) : 0
+
+      // 1. Cargar contadores operativos directos de Supabase
+      const [pacsRes, presRes, botsRes, presSumRes, casosRes] = await Promise.all([
+        supabase.from('pacientes').select('*', { count: 'exact', head: true }),
+        supabase.from('presupuestos').select('*', { count: 'exact', head: true }),
+        supabase.from('conversaciones').select('*', { count: 'exact', head: true }).eq('bot_disabled', false),
+        supabase.from('presupuestos').select('total').eq('estado', 'aprobado'),
+        supabase.from('asesorias_quirurgicas').select('id, estado, monto_extra, moneda_extra, medico_cirujano_nombre, practica_nombre, ultimo_contacto_at, created_at')
+      ])
+
+      const totalFact = presSumRes.data ? presSumRes.data.reduce((acc, curr) => acc + Number(curr.total || 0), 0) : 0
 
       setStats({
-        pacientesCount: pacsCount || 0,
-        presupuestosCount: presCount || 0,
-        activeBots: activeBotsCount || 0,
+        pacientesCount: pacsRes.count || 0,
+        presupuestosCount: presRes.count || 0,
+        activeBots: botsRes.count || 0,
         totalFacturado: totalFact
       })
 
-      // 5. Cargar casos de asesorías quirúrgicas para la Vista Ejecutiva
-      const { data: casosData, error: casosError } = await supabase
-        .from('asesorias_quirurgicas')
-        .select('id, estado, monto_extra, moneda_extra, medico_cirujano_nombre, practica_nombre, ultimo_contacto_at, created_at')
-
-      if (!casosError && casosData) {
-        setCasosFinancieros(casosData as CasoFinanciero[])
+      if (casosRes.data) {
+        setCasosFinancieros(casosRes.data as CasoFinanciero[])
       }
+
+      // 2. Cargar endpoints del servicio analítico (/api/analytics/...)
+      const queryParams = new URLSearchParams()
+      queryParams.set('dias', String(rango.dias || 30))
+      if (rango.fechaInicio) queryParams.set('fecha_inicio', rango.fechaInicio)
+      if (rango.fechaFin) queryParams.set('fecha_fin', rango.fechaFin)
+      const qStr = queryParams.toString()
+
+      const [resResumen, resProd, resAsesoria, resQx, resEstudios] = await Promise.all([
+        apiFetch(`/api/analytics/resumen-gerencial?${qStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        apiFetch(`/api/analytics/productividad-staff?${qStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        apiFetch(`/api/analytics/modulos/asesoramiento?${qStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        apiFetch(`/api/analytics/modulos/quirofano?${qStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+        apiFetch(`/api/analytics/modulos/estudios?${qStr}`).then(r => r.ok ? r.json() : null).catch(() => null),
+      ])
+
+      if (resResumen) setResumenData(resResumen)
+      if (resProd) setProductividadData(resProd)
+      if (resAsesoria) setAsesoriaData(resAsesoria)
+      if (resQx) setQuirofanoData(resQx)
+      if (resEstudios) setEstudiosData(resEstudios)
+
     } catch (error) {
       console.error('Error al cargar datos del dashboard:', error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [rango])
 
   useEffect(() => {
     loadDashboardData()
-  }, [])
+  }, [loadDashboardData])
 
-  // Listas únicas para filtros
+  // Listas únicas para filtros clásicos
   const listaCirujanos = useMemo(() => {
     const setCir = new Set<string>()
     casosFinancieros.forEach((c) => {
@@ -125,38 +164,26 @@ export default function Dashboard() {
     return Array.from(setPrac).sort()
   }, [casosFinancieros])
 
-  // Casos filtrados para la Vista Ejecutiva
+  // Casos filtrados para matriz clásica
   const casosFiltrados = useMemo(() => {
     return casosFinancieros.filter((c) => {
       if (filtroCirujano !== 'todos' && c.medico_cirujano_nombre !== filtroCirujano) return false
       if (filtroPractica !== 'todas' && c.practica_nombre !== filtroPractica) return false
-      if (filtroMoneda !== 'todas') {
+      if (moneda !== 'TODAS') {
         const mon = (c.moneda_extra || 'ARS').toUpperCase()
-        if (mon !== filtroMoneda) return false
+        if (mon !== moneda) return false
       }
       return true
     })
-  }, [casosFinancieros, filtroCirujano, filtroPractica, filtroMoneda])
+  }, [casosFinancieros, filtroCirujano, filtroPractica, moneda])
 
-  // Métricas financieras calculadas para Vista Ejecutiva
+  // Métricas financieras calculadas para Matriz
   const metricasEjecutivas = useMemo(() => {
     const ESTADOS_ACTIVOS = ['derivado', 'en_asesoramiento', 'en_analisis', 'confirmado', 'programado']
 
     let carteraActivaARS = 0
     let carteraActivaUSD = 0
     let carteraActivaCount = 0
-
-    let enAnalisisARS = 0
-    let enAnalisisUSD = 0
-    let enAnalisisCount = 0
-
-    let aseguradoARS = 0
-    let aseguradoUSD = 0
-    let aseguradoCount = 0
-
-    let riesgoARS = 0
-    let riesgoUSD = 0
-    let riesgoCount = 0
 
     const desglosePorEtapa: Record<string, { casos: number; montoARS: number; montoUSD: number }> = {}
     ETAPAS_ORDENADAS.forEach((e) => {
@@ -167,56 +194,30 @@ export default function Dashboard() {
 
     casosFiltrados.forEach((c) => {
       const monto = Number(c.monto_extra || 0)
-      const moneda = (c.moneda_extra || 'ARS').toUpperCase()
+      const monedaStr = (c.moneda_extra || 'ARS').toUpperCase()
       const estado = c.estado || 'derivado'
 
-      // Acumular por etapa
       if (!desglosePorEtapa[estado]) {
         desglosePorEtapa[estado] = { casos: 0, montoARS: 0, montoUSD: 0 }
       }
       desglosePorEtapa[estado].casos += 1
-      if (moneda === 'USD') {
+      if (monedaStr === 'USD') {
         desglosePorEtapa[estado].montoUSD += monto
       } else {
         desglosePorEtapa[estado].montoARS += monto
       }
 
-      // Cartera Activa
       if (ESTADOS_ACTIVOS.includes(estado)) {
         carteraActivaCount += 1
-        if (moneda === 'USD') carteraActivaUSD += monto
+        if (monedaStr === 'USD') carteraActivaUSD += monto
         else carteraActivaARS += monto
 
-        // En Análisis
-        if (estado === 'en_analisis') {
-          enAnalisisCount += 1
-          if (moneda === 'USD') enAnalisisUSD += monto
-          else enAnalisisARS += monto
-        }
-
-        // Asegurado (Confirmados y Programados)
-        if (estado === 'confirmado' || estado === 'programado') {
-          aseguradoCount += 1
-          if (moneda === 'USD') aseguradoUSD += monto
-          else aseguradoARS += monto
-        }
-
-        // Riesgo por retraso en seguimiento SLA (+3 días sin contacto)
-        const fechaRef = c.ultimo_contacto_at || c.created_at
-        const diasSinContacto = fechaRef ? Math.floor((Date.now() - new Date(fechaRef).getTime()) / (1000 * 60 * 60 * 24)) : 0
-        if (diasSinContacto >= 3) {
-          riesgoCount += 1
-          if (moneda === 'USD') riesgoUSD += monto
-          else riesgoARS += monto
-        }
-
-        // Desglose por cirujano en activos
         const cirName = c.medico_cirujano_nombre || 'Sin Asignar'
         if (!desglosePorCirujano[cirName]) {
           desglosePorCirujano[cirName] = { casos: 0, montoARS: 0, montoUSD: 0 }
         }
         desglosePorCirujano[cirName].casos += 1
-        if (moneda === 'USD') desglosePorCirujano[cirName].montoUSD += monto
+        if (monedaStr === 'USD') desglosePorCirujano[cirName].montoUSD += monto
         else desglosePorCirujano[cirName].montoARS += monto
       }
     })
@@ -229,15 +230,6 @@ export default function Dashboard() {
       carteraActivaARS,
       carteraActivaUSD,
       carteraActivaCount,
-      enAnalisisARS,
-      enAnalisisUSD,
-      enAnalisisCount,
-      aseguradoARS,
-      aseguradoUSD,
-      aseguradoCount,
-      riesgoARS,
-      riesgoUSD,
-      riesgoCount,
       desglosePorEtapa,
       rankingCirujanos
     }
@@ -279,62 +271,244 @@ export default function Dashboard() {
     }
   ]
 
+  // Texto amigable de rango para encabezado y reporte PDF
+  const rangoTexto = useMemo(() => {
+    if (rango.tipo === '30d') return 'Últimos 30 días'
+    if (rango.tipo === '7d') return 'Últimos 7 días'
+    if (rango.tipo === 'mes') return 'Mes en Curso'
+    if (rango.tipo === 'hoy') return 'Actividad de Hoy'
+    if (rango.tipo === 'custom' && rango.fechaInicio && rango.fechaFin) {
+      return `${rango.fechaInicio} al ${rango.fechaFin}`
+    }
+    return 'Periodo Seleccionado'
+  }, [rango])
+
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 md:p-8 space-y-6 min-w-0 pb-12">
-      {/* Saludo, Fecha y Selector de Pestañas */}
+    <div className="w-full max-w-7xl mx-auto p-4 sm:p-6 md:p-8 space-y-6 min-w-0 pb-16">
+      
+      {/* Encabezado Principal y Selector de Vistas Estratégicas */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 shrink-0">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight">Panel de Control</h1>
-          <p className="text-xs text-[var(--secondary)] font-medium">
-            Gestor integral y visión ejecutiva de la clínica médica.
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-black tracking-tight text-white">Panel de Control Gerencial</h1>
+            <span className="px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-500/30 text-[10.5px] font-mono font-bold">
+              SIG v2.0
+            </span>
+          </div>
+          <p className="text-xs text-[var(--secondary)] font-medium mt-0.5">
+            Sistema de información estratégica, productividad de staff y rendimiento de módulos.
           </p>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Selector de Pestañas: Operativa vs Ejecutiva */}
-          <div className="flex items-center p-1 rounded-xl bg-neutral-900 border border-[var(--border)] text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => setTabActiva('operativa')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                tabActiva === 'operativa'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Activity size={14} />
-              <span>Vista Asistencial</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setTabActiva('ejecutiva')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                tabActiva === 'ejecutiva'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <TrendingUp size={14} />
-              <span>Vista Ejecutiva / Dirección</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-emerald-200 font-mono">
-                Pipeline $
-              </span>
-            </button>
-          </div>
+        {/* Barra de 4 Pestañas Principales */}
+        <div className="flex items-center p-1 rounded-xl bg-neutral-900 border border-[var(--border)] text-xs font-semibold overflow-x-auto">
+          {/* Pestaña 1: Dirección & Macro KPIs */}
+          <button
+            type="button"
+            onClick={() => setTabActiva('ejecutiva')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              tabActiva === 'ejecutiva'
+                ? 'bg-emerald-600 text-white shadow-xs'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <TrendingUp size={14} />
+            <span>Dirección & Finanzas</span>
+          </button>
 
-          <div className="flex items-center gap-2 text-xs font-semibold px-4 py-2.5 bg-[var(--card)] border border-[var(--border)] rounded-xl shadow-xs">
-            <Calendar size={15} className="text-blue-600" />
-            <span>{new Date().toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
-          </div>
+          {/* Pestaña 2: Productividad Staff */}
+          <button
+            type="button"
+            onClick={() => setTabActiva('productividad')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              tabActiva === 'productividad'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Award size={14} />
+            <span>Productividad Staff</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-blue-200 font-mono">
+              Usuarias
+            </span>
+          </button>
+
+          {/* Pestaña 3: Módulos Operativos */}
+          <button
+            type="button"
+            onClick={() => setTabActiva('modulos')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              tabActiva === 'modulos'
+                ? 'bg-purple-600 text-white shadow-xs'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Layers size={14} />
+            <span>Módulos Operativos</span>
+          </button>
+
+          {/* Pestaña 4: Vista Asistencial / Operativa (Clásica) */}
+          <button
+            type="button"
+            onClick={() => setTabActiva('operativa')}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+              tabActiva === 'operativa'
+                ? 'bg-neutral-800 text-white shadow-xs'
+                : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Activity size={14} />
+            <span>Operativa</span>
+          </button>
         </div>
       </div>
 
+      {/* Barra de Filtros Globales (Rango Temporal, Monedas y Exportación) */}
+      <DashboardHeaderControls
+        rango={rango}
+        onRangoChange={setRango}
+        moneda={moneda}
+        onMonedaChange={setMoneda}
+        loading={loading}
+        onRefresh={loadDashboardData}
+        onExportPdf={() => setModalExportarOpen(true)}
+      />
+
       {/* ========================================================================= */}
-      {/* PESTAÑA 1: VISTA ASISTENCIAL / OPERATIVA */}
+      {/* 1. PESTAÑA: DIRECCIÓN & FINANZAS (RESUMEN EJECUTIVO & GRÁFICOS) */}
+      {/* ========================================================================= */}
+      {tabActiva === 'ejecutiva' && (
+        <div className="space-y-6">
+          <TabResumenEjecutivo
+            resumenData={resumenData}
+            moneda={moneda}
+            loading={loading}
+          />
+
+          {/* Matriz Financiera por Estadio del Pipeline (Preservada y Mejorada) */}
+          <div className="rounded-2xl bg-neutral-900 border border-[var(--border)] overflow-hidden shadow-sm">
+            <div className="p-4 sm:px-6 border-b border-[var(--border)] flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Layers size={16} className="text-emerald-400" />
+                <h3 className="text-sm font-bold text-white">Matriz Financiera por Estadio Quirúrgico</h3>
+              </div>
+              <Link 
+                href="/pipeline-quirurgico" 
+                className="text-xs font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors"
+              >
+                Abrir Pipeline Operativo <ChevronRight size={14} />
+              </Link>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-neutral-950/80 text-gray-400 font-bold border-b border-[var(--border)] uppercase text-[10.5px]">
+                  <tr>
+                    <th className="py-3 px-4">Estadio Quirúrgico</th>
+                    <th className="py-3 px-4 text-center">Cirugías</th>
+                    <th className="py-3 px-4 text-right">Total $ ARS</th>
+                    <th className="py-3 px-4 text-right">Total USD</th>
+                    <th className="py-3 px-4 text-right">Ticket Promedio (ARS)</th>
+                    <th className="py-3 px-4 text-center">% de Cartera</th>
+                    <th className="py-3 px-4 text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]/60">
+                  {ETAPAS_ORDENADAS.map((etapa) => {
+                    const dataEtapa = metricasEjecutivas.desglosePorEtapa[etapa.id] || { casos: 0, montoARS: 0, montoUSD: 0 }
+                    const porcentajeARS = metricasEjecutivas.carteraActivaARS > 0 
+                      ? Math.round((dataEtapa.montoARS / metricasEjecutivas.carteraActivaARS) * 100) 
+                      : 0
+                    const ticketPromedioARS = dataEtapa.casos > 0 ? Math.round(dataEtapa.montoARS / dataEtapa.casos) : 0
+
+                    return (
+                      <tr key={etapa.id} className="hover:bg-neutral-800/40 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${etapa.color}`} />
+                            <span className="font-bold text-white text-xs">{etapa.titulo}</span>
+                          </div>
+                          <span className="text-[10px] text-gray-400 block pl-4">{etapa.subtitulo}</span>
+                        </td>
+
+                        <td className="py-3 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] border ${etapa.textBadge}`}>
+                            {dataEtapa.casos}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-400">
+                          {dataEtapa.montoARS > 0 ? `$ ${dataEtapa.montoARS.toLocaleString('es-AR')}` : '-'}
+                        </td>
+
+                        <td className="py-3 px-4 text-right font-mono font-bold text-amber-400">
+                          {dataEtapa.montoUSD > 0 ? `USD ${dataEtapa.montoUSD.toLocaleString('es-AR')}` : '-'}
+                        </td>
+
+                        <td className="py-3 px-4 text-right font-mono text-gray-300">
+                          {ticketPromedioARS > 0 ? `$ ${ticketPromedioARS.toLocaleString('es-AR')}` : '-'}
+                        </td>
+
+                        <td className="py-3 px-4 text-center min-w-[120px]">
+                          <div className="flex items-center gap-2 justify-center">
+                            <div className="w-16 h-2 rounded-full bg-neutral-800 overflow-hidden">
+                              <div 
+                                className={`h-full ${etapa.color}`} 
+                                style={{ width: `${Math.min(porcentajeARS, 100)}%` }} 
+                              />
+                            </div>
+                            <span className="font-mono text-[10.5px] text-gray-400 w-8 text-right">
+                              {etapa.id === 'operado' || etapa.id === 'cancelado' ? '-' : `${porcentajeARS}%`}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-3 px-4 text-center">
+                          <Link 
+                            href={`/pipeline-quirurgico`}
+                            className="text-[11px] font-bold text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                          >
+                            Ver →
+                          </Link>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. PESTAÑA: PRODUCTIVIDAD DEL PERSONAL (USUARIAS/OS Y STAFF) */}
+      {/* ========================================================================= */}
+      {tabActiva === 'productividad' && (
+        <TabProductividadUsuarios
+          productividadData={productividadData}
+          loading={loading}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. PESTAÑA: RENDIMIENTO DE MÓDULOS (ASESORAMIENTO, QUIRÓFANO, ESTUDIOS) */}
+      {/* ========================================================================= */}
+      {tabActiva === 'modulos' && (
+        <TabRendimientoModulos
+          asesoriaData={asesoriaData}
+          quirofanoData={quirofanoData}
+          estudiosData={estudiosData}
+          loading={loading}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. PESTAÑA: VISTA OPERATIVA (ACCESOS CLÁSICOS) */}
       {/* ========================================================================= */}
       {tabActiva === 'operativa' && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Grid de Estadísticas */}
+          {/* Grid de 4 Estadísticas */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
             {statCards.map((card, idx) => {
               const Icon = card.icon
@@ -368,9 +542,8 @@ export default function Dashboard() {
             })}
           </div>
 
-          {/* Vista de Actividades Médicas / Agenda */}
+          {/* Accesos rápidos */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Accesos rápidos */}
             <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-xs lg:col-span-2 space-y-4">
               <h2 className="text-sm font-bold flex items-center gap-2">
                 <Activity size={18} className="text-blue-600" />
@@ -451,342 +624,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* PESTAÑA 2: VISTA EJECUTIVA / DIRECCIÓN (PIPELINE FINANCIERO) */}
-      {/* ========================================================================= */}
-      {tabActiva === 'ejecutiva' && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          
-          {/* Barra de Filtros Ejecutivos */}
-          <div className="p-3.5 rounded-2xl bg-neutral-900 border border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-gray-300">
-              <Filter size={14} className="text-emerald-400" />
-              <span>Filtros Gerenciales:</span>
-            </div>
-
-            <div className="flex items-center gap-2.5 flex-wrap flex-1 justify-end">
-              {/* Filtro por Cirujano */}
-              <div className="flex items-center gap-1.5 min-w-[180px]">
-                <Stethoscope size={13} className="text-emerald-400 shrink-0" />
-                <select
-                  value={filtroCirujano}
-                  onChange={(e) => setFiltroCirujano(e.target.value)}
-                  className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-hidden focus:border-emerald-500 cursor-pointer"
-                >
-                  <option value="todos">Todos los Cirujanos ({listaCirujanos.length})</option>
-                  {listaCirujanos.map((cir) => (
-                    <option key={cir} value={cir}>
-                      Dr/a. {cir}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Filtro por Práctica */}
-              <div className="flex items-center gap-1.5 min-w-[180px]">
-                <Building2 size={13} className="text-blue-400 shrink-0" />
-                <select
-                  value={filtroPractica}
-                  onChange={(e) => setFiltroPractica(e.target.value)}
-                  className="w-full text-xs bg-neutral-950 border border-[var(--border)] text-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-hidden focus:border-emerald-500 cursor-pointer"
-                >
-                  <option value="todas">Todas las Prácticas ({listaPracticas.length})</option>
-                  {listaPracticas.map((p) => (
-                    <option key={p} value={p}>
-                      {p}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Filtro por Moneda */}
-              <div className="flex items-center gap-1 bg-neutral-950 p-0.5 rounded-xl border border-[var(--border)] text-xs">
-                <button
-                  type="button"
-                  onClick={() => setFiltroMoneda('todas')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                    filtroMoneda === 'todas' ? 'bg-neutral-800 text-white' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  ARS & USD
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltroMoneda('ARS')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                    filtroMoneda === 'ARS' ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  Solo ARS
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFiltroMoneda('USD')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                    filtroMoneda === 'USD' ? 'bg-amber-950 text-amber-300 border border-amber-500/40' : 'text-gray-400 hover:text-white'
-                  }`}
-                >
-                  Solo USD
-                </button>
-              </div>
-
-              {/* Botón Refrescar */}
-              <button
-                type="button"
-                onClick={loadDashboardData}
-                disabled={loading}
-                className="p-1.5 rounded-xl border border-[var(--border)] hover:bg-neutral-800 text-gray-300 hover:text-white transition-all cursor-pointer"
-                title="Recargar datos financieros"
-              >
-                <RefreshCw size={13} className={loading ? 'animate-spin text-emerald-400' : ''} />
-              </button>
-            </div>
-          </div>
-
-          {/* 4 KPIs Financieros Ejecutivos */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* 1. Cartera Activa Total */}
-            <div className="p-5 rounded-2xl bg-neutral-900 border border-[var(--border)] space-y-3 relative overflow-hidden shadow-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Cartera Activa Total</span>
-                <div className="p-2 rounded-xl bg-blue-950/40 border border-blue-500/30 text-blue-400">
-                  <TrendingUp size={18} />
-                </div>
-              </div>
-              <div>
-                <div className="text-lg font-black font-mono text-emerald-400 tracking-tight">
-                  ${metricasEjecutivas.carteraActivaARS.toLocaleString('es-AR')} <span className="text-xs font-semibold text-emerald-500">ARS</span>
-                </div>
-                {metricasEjecutivas.carteraActivaUSD > 0 && (
-                  <div className="text-sm font-bold font-mono text-amber-400 mt-0.5">
-                    USD {metricasEjecutivas.carteraActivaUSD.toLocaleString('es-AR')}
-                  </div>
-                )}
-              </div>
-              <div className="pt-2 border-t border-[var(--border)]/60 flex items-center justify-between text-xs text-gray-400">
-                <span>Cirugías en gestión activa:</span>
-                <span className="font-bold font-mono text-white">{metricasEjecutivas.carteraActivaCount}</span>
-              </div>
-            </div>
-
-            {/* 2. Fondos en Evaluación (En Análisis) */}
-            <div className="p-5 rounded-2xl bg-neutral-900 border border-[var(--border)] space-y-3 relative overflow-hidden shadow-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">En Evaluación (Presupuestos)</span>
-                <div className="p-2 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-400">
-                  <FileText size={18} />
-                </div>
-              </div>
-              <div>
-                <div className="text-lg font-black font-mono text-purple-300 tracking-tight">
-                  ${metricasEjecutivas.enAnalisisARS.toLocaleString('es-AR')} <span className="text-xs font-semibold text-purple-400">ARS</span>
-                </div>
-                {metricasEjecutivas.enAnalisisUSD > 0 && (
-                  <div className="text-sm font-bold font-mono text-amber-400 mt-0.5">
-                    USD {metricasEjecutivas.enAnalisisUSD.toLocaleString('es-AR')}
-                  </div>
-                )}
-              </div>
-              <div className="pt-2 border-t border-[var(--border)]/60 flex items-center justify-between text-xs text-gray-400">
-                <span>Pacientes decidiendo:</span>
-                <span className="font-bold font-mono text-white">{metricasEjecutivas.enAnalisisCount}</span>
-              </div>
-            </div>
-
-            {/* 3. Fondos Asegurados (Confirmados y Qx) */}
-            <div className="p-5 rounded-2xl bg-neutral-900 border border-[var(--border)] space-y-3 relative overflow-hidden shadow-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Asegurado (Confirmado / Qx)</span>
-                <div className="p-2 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-emerald-400">
-                  <CheckCircle2 size={18} />
-                </div>
-              </div>
-              <div>
-                <div className="text-lg font-black font-mono text-cyan-300 tracking-tight">
-                  ${metricasEjecutivas.aseguradoARS.toLocaleString('es-AR')} <span className="text-xs font-semibold text-cyan-400">ARS</span>
-                </div>
-                {metricasEjecutivas.aseguradoUSD > 0 && (
-                  <div className="text-sm font-bold font-mono text-amber-400 mt-0.5">
-                    USD {metricasEjecutivas.aseguradoUSD.toLocaleString('es-AR')}
-                  </div>
-                )}
-              </div>
-              <div className="pt-2 border-t border-[var(--border)]/60 flex items-center justify-between text-xs text-gray-400">
-                <span>Cirugías con fecha/sala:</span>
-                <span className="font-bold font-mono text-white">{metricasEjecutivas.aseguradoCount}</span>
-              </div>
-            </div>
-
-            {/* 4. Capital en Riesgo (Alertas SLA) */}
-            <div className="p-5 rounded-2xl bg-neutral-900 border border-[var(--border)] space-y-3 relative overflow-hidden shadow-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Capital en Riesgo (SLA)</span>
-                <div className="p-2 rounded-xl bg-red-950/40 border border-red-500/30 text-red-400">
-                  <AlertTriangle size={18} />
-                </div>
-              </div>
-              <div>
-                <div className="text-lg font-black font-mono text-red-400 tracking-tight">
-                  ${metricasEjecutivas.riesgoARS.toLocaleString('es-AR')} <span className="text-xs font-semibold text-red-500">ARS</span>
-                </div>
-                {metricasEjecutivas.riesgoUSD > 0 && (
-                  <div className="text-sm font-bold font-mono text-amber-400 mt-0.5">
-                    USD {metricasEjecutivas.riesgoUSD.toLocaleString('es-AR')}
-                  </div>
-                )}
-              </div>
-              <div className="pt-2 border-t border-[var(--border)]/60 flex items-center justify-between text-xs text-gray-400">
-                <span>Casos retrasados (+3/+6d):</span>
-                <span className="font-bold font-mono text-red-300">{metricasEjecutivas.riesgoCount}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Tabla Matriz Financiera por Estadio Quirúrgico */}
-          <div className="rounded-2xl bg-neutral-900 border border-[var(--border)] overflow-hidden shadow-sm">
-            <div className="p-4 sm:px-6 border-b border-[var(--border)] flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Layers size={16} className="text-emerald-400" />
-                <h3 className="text-sm font-bold text-white">Matriz Financiera por Estadio del Pipeline</h3>
-              </div>
-              <Link 
-                href="/pipeline-quirurgico" 
-                className="text-xs font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors"
-              >
-                Abrir Pipeline Operativo <ChevronRight size={14} />
-              </Link>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-neutral-950/80 text-gray-400 font-bold border-b border-[var(--border)] uppercase text-[10.5px]">
-                  <tr>
-                    <th className="py-3 px-4">Estadio Quirúrgico</th>
-                    <th className="py-3 px-4 text-center">Cirugías</th>
-                    <th className="py-3 px-4 text-right">Total $ ARS</th>
-                    <th className="py-3 px-4 text-right">Total USD</th>
-                    <th className="py-3 px-4 text-right">Ticket Promedio (ARS)</th>
-                    <th className="py-3 px-4 text-center">% de Cartera</th>
-                    <th className="py-3 px-4 text-center">Acción</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]/60">
-                  {ETAPAS_ORDENADAS.map((etapa) => {
-                    const dataEtapa = metricasEjecutivas.desglosePorEtapa[etapa.id] || { casos: 0, montoARS: 0, montoUSD: 0 }
-                    const porcentajeARS = metricasEjecutivas.carteraActivaARS > 0 
-                      ? Math.round((dataEtapa.montoARS / metricasEjecutivas.carteraActivaARS) * 100) 
-                      : 0
-                    const ticketPromedioARS = dataEtapa.casos > 0 ? Math.round(dataEtapa.montoARS / dataEtapa.casos) : 0
-
-                    return (
-                      <tr key={etapa.id} className="hover:bg-neutral-800/40 transition-colors">
-                        {/* Nombre de la etapa */}
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${etapa.color}`} />
-                            <span className="font-bold text-white text-xs">{etapa.titulo}</span>
-                          </div>
-                          <span className="text-[10px] text-gray-400 block pl-4">{etapa.subtitulo}</span>
-                        </td>
-
-                        {/* Cirugías */}
-                        <td className="py-3 px-4 text-center">
-                          <span className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] border ${etapa.textBadge}`}>
-                            {dataEtapa.casos}
-                          </span>
-                        </td>
-
-                        {/* Total ARS */}
-                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-400">
-                          {dataEtapa.montoARS > 0 ? `$ ${dataEtapa.montoARS.toLocaleString('es-AR')}` : '-'}
-                        </td>
-
-                        {/* Total USD */}
-                        <td className="py-3 px-4 text-right font-mono font-bold text-amber-400">
-                          {dataEtapa.montoUSD > 0 ? `USD ${dataEtapa.montoUSD.toLocaleString('es-AR')}` : '-'}
-                        </td>
-
-                        {/* Ticket Promedio */}
-                        <td className="py-3 px-4 text-right font-mono text-gray-300">
-                          {ticketPromedioARS > 0 ? `$ ${ticketPromedioARS.toLocaleString('es-AR')}` : '-'}
-                        </td>
-
-                        {/* Barra de Porcentaje */}
-                        <td className="py-3 px-4 text-center min-w-[120px]">
-                          <div className="flex items-center gap-2 justify-center">
-                            <div className="w-16 h-2 rounded-full bg-neutral-800 overflow-hidden">
-                              <div 
-                                className={`h-full ${etapa.color}`} 
-                                style={{ width: `${Math.min(porcentajeARS, 100)}%` }} 
-                              />
-                            </div>
-                            <span className="font-mono text-[10.5px] text-gray-400 w-8 text-right">
-                              {etapa.id === 'operado' || etapa.id === 'cancelado' ? '-' : `${porcentajeARS}%`}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* Enlace directo */}
-                        <td className="py-3 px-4 text-center">
-                          <Link 
-                            href={`/pipeline-quirurgico`}
-                            className="text-[11px] font-bold text-blue-400 hover:text-blue-300 hover:underline transition-colors"
-                          >
-                            Ver →
-                          </Link>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Ranking de Cirujanos por Volumen Económico Activo */}
-          <div className="rounded-2xl bg-neutral-900 border border-[var(--border)] p-5 space-y-4 shadow-sm">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Stethoscope size={16} className="text-blue-400" />
-                Distribución de Cartera Activa por Médico Cirujano
-              </h3>
-              <span className="text-[11px] text-gray-400">Casos activos en cotización y prequirúrgico</span>
-            </div>
-
-            {metricasEjecutivas.rankingCirujanos.length === 0 ? (
-              <div className="p-6 text-center text-xs text-gray-500 border border-dashed border-[var(--border)] rounded-xl">
-                No hay cirugías activas registradas con los filtros seleccionados.
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {metricasEjecutivas.rankingCirujanos.slice(0, 6).map((cir, idx) => (
-                  <div key={idx} className="p-3.5 rounded-xl bg-neutral-950/80 border border-[var(--border)] space-y-1.5 hover:border-emerald-500/30 transition-all">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-white truncate max-w-[170px]" title={cir.nombre}>
-                        Dr/a. {cir.nombre}
-                      </span>
-                      <span className="text-[10.5px] px-2 py-0.5 rounded-full bg-blue-950/80 text-blue-300 font-mono font-bold border border-blue-500/20">
-                        {cir.casos} {cir.casos === 1 ? 'caso' : 'casos'}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs pt-1 border-t border-[var(--border)]/40 font-mono">
-                      <span className="text-emerald-400 font-bold">
-                        ${cir.montoARS > 0 ? cir.montoARS.toLocaleString('es-AR') : '0'} ARS
-                      </span>
-                      {cir.montoUSD > 0 && (
-                        <span className="text-amber-400 font-bold">
-                          USD {cir.montoUSD.toLocaleString('es-AR')}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-        </div>
-      )}
+      {/* Modal de Exportación PDF */}
+      <ReportePdfExportModal
+        isOpen={modalExportarOpen}
+        onClose={() => setModalExportarOpen(false)}
+        resumenData={resumenData}
+        productividadData={productividadData}
+        moduloAsesoriaData={asesoriaData}
+        moduloQuirofanoData={quirofanoData}
+        rangoTexto={rangoTexto}
+      />
 
     </div>
   )
