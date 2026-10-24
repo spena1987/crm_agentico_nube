@@ -1643,7 +1643,7 @@ def listar_catalogo_completo_crm(
         
     try:
         query = supabase.table("nomenclador_practicas")\
-            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
+            .select("id, codigo, nombre, categoria, descripcion, activo, created_at, requiere_lente, lios_habilitados, habilitar_arancel, habilitar_preparacion, preparacion_plantilla_id, preparacion_custom_texto, habilitar_consentimiento, consentimiento_plantilla_id, consentimiento_custom_texto, habilitar_indicaciones, plantilla_indicacion_id, geclisa_pim_id_default, indicaciones_reglas_cirujano, nomencladores(id, nombre, codigo, moneda_default), plantillas_preparaciones(id, titulo), plantillas_consentimientos(id, titulo)")\
             .eq("activo", True)
 
         term = (q or "").strip().upper()
@@ -1713,6 +1713,10 @@ def listar_catalogo_completo_crm(
                 "consentimiento_plantilla_id": p.get("consentimiento_plantilla_id"),
                 "consentimiento_plantilla_titulo": cons_master.get("titulo") if isinstance(cons_master, dict) else None,
                 "consentimiento_custom_texto": p.get("consentimiento_custom_texto"),
+                "habilitar_indicaciones": bool(p.get("habilitar_indicaciones", False)),
+                "plantilla_indicacion_id": p.get("plantilla_indicacion_id"),
+                "geclisa_pim_id_default": p.get("geclisa_pim_id_default"),
+                "indicaciones_reglas_cirujano": p.get("indicaciones_reglas_cirujano"),
                 "precio": precio,
                 "moneda": moneda,
                 "vigencia_desde": ar.get("vigencia_desde") if ar else None,

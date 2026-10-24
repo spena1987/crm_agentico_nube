@@ -374,6 +374,9 @@ export default function NomencladorSettingsCard() {
         const data = await res.json()
         if (data.success && data.indicaciones) {
           setIndicacionesAsignadasModal(data.indicaciones)
+          if (data.indicaciones.length > 0) {
+            setFormData((f) => ({ ...f, habilitar_indicaciones: true }))
+          }
         } else {
           setIndicacionesAsignadasModal([])
         }
@@ -588,36 +591,37 @@ export default function NomencladorSettingsCard() {
 
   const handleOpenConfigureGeclisa = (item: GeclisaPracticaItem) => {
     const today = new Date().toISOString().split('T')[0]
+    const crmMatch = item.crm_practica_id ? crmPracticas.find((p) => p.id === item.crm_practica_id) : null
     setModalMode('geclisa')
     setModalSubTab('general')
     setFormData({
       id: item.crm_practica_id || '',
       codigo: item.nomCod,
-      nombre: item.nombre || item.practica || `Práctica ${item.nomCod}`,
-      categoria: item.tipo || 'Oftalmología',
-      descripcion: '',
+      nombre: crmMatch?.nombre || item.nombre || item.practica || `Práctica ${item.nomCod}`,
+      categoria: crmMatch?.categoria || item.tipo || 'Oftalmología',
+      descripcion: crmMatch?.descripcion || '',
       origen: 'GECLISA',
       nom_id: typeof selectedNomId === 'number' ? selectedNomId : 1,
-      habilitar_arancel: true,
-      precio: item.precio_crm || 0,
-      moneda: item.moneda_crm || 'ARS',
-      vigencia_desde: item.vigencia_desde || today,
-      vigencia_hasta: item.vigencia_hasta || '',
-      arancel_id: '',
-      habilitar_preparacion: false,
-      requiere_lente: false,
-      lios_habilitados: [],
-      modo_preparacion: 'plantilla',
-      preparacion_plantilla_id: plantillasPrep[0]?.id || '',
-      preparacion_custom_texto: '',
-      habilitar_consentimiento: false,
-      modo_consentimiento: 'plantilla',
-      consentimiento_plantilla_id: plantillasConsent[0]?.id || '',
-      consentimiento_custom_texto: '',
-      habilitar_indicaciones: false,
-      modo_indicaciones: 'geclisa' as 'geclisa' | 'crm',
-      geclisa_pim_id_default: null as number | null,
-      plantilla_indicacion_id: '',
+      habilitar_arancel: crmMatch ? crmMatch.habilitar_arancel : true,
+      precio: crmMatch ? crmMatch.precio : (item.precio_crm || 0),
+      moneda: crmMatch ? crmMatch.moneda : (item.moneda_crm || 'ARS'),
+      vigencia_desde: crmMatch?.vigencia_desde || item.vigencia_desde || today,
+      vigencia_hasta: crmMatch?.vigencia_hasta || item.vigencia_hasta || '',
+      arancel_id: crmMatch?.arancel_id || '',
+      habilitar_preparacion: crmMatch?.habilitar_preparacion || false,
+      requiere_lente: crmMatch?.requiere_lente || false,
+      lios_habilitados: crmMatch?.lios_habilitados || [],
+      modo_preparacion: crmMatch?.preparacion_custom_texto ? 'custom' : 'plantilla',
+      preparacion_plantilla_id: crmMatch?.preparacion_plantilla_id || plantillasPrep[0]?.id || '',
+      preparacion_custom_texto: crmMatch?.preparacion_custom_texto || '',
+      habilitar_consentimiento: crmMatch?.habilitar_consentimiento || false,
+      modo_consentimiento: crmMatch?.consentimiento_custom_texto ? 'custom' : 'plantilla',
+      consentimiento_plantilla_id: crmMatch?.consentimiento_plantilla_id || plantillasConsent[0]?.id || '',
+      consentimiento_custom_texto: crmMatch?.consentimiento_custom_texto || '',
+      habilitar_indicaciones: crmMatch?.habilitar_indicaciones ?? false,
+      modo_indicaciones: (crmMatch?.plantilla_indicacion_id ? 'crm' : 'geclisa') as 'geclisa' | 'crm',
+      geclisa_pim_id_default: crmMatch?.geclisa_pim_id_default || null,
+      plantilla_indicacion_id: crmMatch?.plantilla_indicacion_id || '',
       modalidad_lateralidad_defecto: 'unilateral' as 'unilateral' | 'bilateral_escalonada' | 'bilateral_simultanea',
       ojo_defecto: 'OD' as 'OD' | 'OI' | 'AO',
       duracion_estimada_minutos: 20
