@@ -103,6 +103,11 @@ def generar_pdf_indicacion_medica(
     paciente_nombre = str(datos_emision.get("paciente_nombre") or "Paciente").strip()
     paciente_dni = formatear_dni(datos_emision.get("paciente_dni"))
     paciente_os = str(datos_emision.get("paciente_obra_social") or datos_emision.get("paciente_cobertura") or "-").strip()
+    paciente_plan = str(datos_emision.get("paciente_plan") or datos_emision.get("paciente_plan_cobertura") or "").strip()
+    if paciente_plan and paciente_plan != "-" and paciente_plan.lower() not in paciente_os.lower():
+        paciente_cobertura_display = f"{paciente_os} (Plan: {paciente_plan})"
+    else:
+        paciente_cobertura_display = paciente_os
     paciente_afiliado = str(datos_emision.get("paciente_afiliado") or datos_emision.get("paciente_nro_afiliado") or "-").strip()
     paciente_domicilio = str(datos_emision.get("paciente_domicilio") or datos_emision.get("paciente_direccion") or "-").strip()
 
@@ -271,8 +276,10 @@ def generar_pdf_indicacion_medica(
         "paciente": paciente_nombre,
         "paciente_nombre": paciente_nombre,
         "dni": paciente_dni,
-        "cobertura": paciente_os,
+        "cobertura": paciente_cobertura_display,
         "obra_social": paciente_os,
+        "plan": paciente_plan,
+        "plan_cobertura": paciente_plan,
         "afiliado": paciente_afiliado,
         "domicilio": paciente_domicilio,
         "cirujano": medico_nombre,
@@ -346,7 +353,7 @@ def generar_pdf_indicacion_medica(
             ],
             [
                 Paragraph("<b>Cobertura:</b>", body_style),
-                Paragraph(paciente_os, body_style),
+                Paragraph(paciente_cobertura_display, body_style),
                 Paragraph("<b>N° Afiliado:</b>", body_style),
                 Paragraph(paciente_afiliado, body_style),
             ],

@@ -3789,6 +3789,8 @@ def preview_pdf_indicacion_api(payload: Dict[str, Any] = Body(...)):
                     datos_emision["paciente_dni"] = p_rec.get("dni")
                 if not datos_emision.get("paciente_obra_social") or datos_emision.get("paciente_obra_social") == "-":
                     datos_emision["paciente_obra_social"] = p_rec.get("obra_social")
+                if not datos_emision.get("paciente_plan"):
+                    datos_emision["paciente_plan"] = p_rec.get("plan_cobertura") or ""
                 if not afiliado or str(afiliado).strip() == "-":
                     datos_emision["paciente_afiliado"] = p_rec.get("nro_afiliado") or p_rec.get("numero_afiliado") or "-"
                 if not domicilio or str(domicilio).strip() == "-":
