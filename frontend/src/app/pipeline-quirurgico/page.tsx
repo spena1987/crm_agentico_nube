@@ -40,13 +40,14 @@ import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhat
 import ModalRecordatorioCirugiaWhatsApp from '@/components/ModalRecordatorioCirugiaWhatsApp'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalCerrarCasoQuirurgico from '@/components/ModalCerrarCasoQuirurgico'
+import ModalIndicacionesMedicasCaso from '@/components/quirofano/ModalIndicacionesMedicasCaso'
 import { ModalAnaliticaCausasQuirurgicas } from '@/components/pipeline/ModalAnaliticaCausasQuirurgicas'
 import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
 import ModalQuickRecontacto from '@/components/asesoria/ModalQuickRecontacto'
 import { usePipelineSessionState } from '@/hooks/usePipelineSessionState'
 import { Columns3, AlignJustify } from 'lucide-react'
-import { Radio, Users, BellRing, FileCheck2, BarChart2, PauseCircle, Flame } from 'lucide-react'
+import { Radio, Users, BellRing, FileCheck2, BarChart2, PauseCircle, Flame, Pill } from 'lucide-react'
 
 export interface PacienteData {
   id: string
@@ -107,6 +108,10 @@ export interface AsesoriaCasoPipeline {
     pdf_url?: string | null
     token?: string | null
   }
+  indicacion_geclisa_im_id?: number | null
+  indicaciones_texto?: string | null
+  indicaciones_emitidas_at?: string | null
+  indicaciones_pdf_url?: string | null
   seguimiento_auto_activo?: boolean
   seguimiento_etapa?: number
   seguimiento_ultimo_toque_at?: string | null
@@ -251,6 +256,8 @@ export default function PipelineQuirurgicoPage() {
   const [casoParaRecordatorio, setCasoParaRecordatorio] = useState<AsesoriaCasoPipeline | null>(null)
   const [modalConsentimientoOpen, setModalConsentimientoOpen] = useState(false)
   const [casoParaConsentimiento, setCasoParaConsentimiento] = useState<AsesoriaCasoPipeline | null>(null)
+  const [modalIndicacionesOpen, setModalIndicacionesOpen] = useState(false)
+  const [casoParaIndicaciones, setCasoParaIndicaciones] = useState<AsesoriaCasoPipeline | null>(null)
 
   const [modalCierreOpen, setModalCierreOpen] = useState(false)
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
@@ -633,6 +640,12 @@ export default function PipelineQuirurgicoPage() {
   const handleAbrirConsentimientoQx = (caso: AsesoriaCasoPipeline) => {
     setCasoParaConsentimiento(caso)
     setModalConsentimientoOpen(true)
+  }
+
+  // Acción rápida oficial: Indicaciones Médicas Quirúrgicas (Geclisa + WhatsApp)
+  const handleAbrirIndicacionesQx = (caso: AsesoriaCasoPipeline) => {
+    setCasoParaIndicaciones(caso)
+    setModalIndicacionesOpen(true)
   }
 
   // Filtrado de casos por etapa
@@ -1737,6 +1750,24 @@ export default function PipelineQuirurgicoPage() {
                                   </button>
                                 )}
 
+                                {/* Botón Indicaciones Médicas Quirúrgicas (Geclisa + WhatsApp) */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleAbrirIndicacionesQx(caso)}
+                                  className={`p-1 rounded-lg border transition-colors cursor-pointer ${
+                                    caso.indicacion_geclisa_im_id
+                                      ? 'bg-emerald-950/70 hover:bg-emerald-900 border-emerald-500/50 text-emerald-300 hover:text-white'
+                                      : 'bg-blue-950/70 hover:bg-blue-900 border-blue-500/40 text-blue-300 hover:text-white'
+                                  }`}
+                                  title={
+                                    caso.indicacion_geclisa_im_id
+                                      ? `Indicación médica emitida en Geclisa #${caso.indicacion_geclisa_im_id}. Clic para ver o reenviar.`
+                                      : 'Emitir Indicaciones Médicas Quirúrgicas a Geclisa y enviar WhatsApp'
+                                  }
+                                >
+                                  <Pill size={12} />
+                                </button>
+
                                 {/* Botón WhatsApp Recordatorio Qx (Solo Confirmados y Programados) */}
                                 {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
                                   <button
@@ -2017,6 +2048,21 @@ export default function PipelineQuirurgicoPage() {
           pacienteTelefonoDefault={casoParaConsentimiento.pacientes?.telefono || undefined}
           onConsentimientoEnviado={() => {
             mostrarToast('Consentimiento Informado enviado por WhatsApp con éxito.')
+            fetchPipeline()
+          }}
+        />
+      )}
+
+      {modalIndicacionesOpen && casoParaIndicaciones && (
+        <ModalIndicacionesMedicasCaso
+          isOpen={modalIndicacionesOpen}
+          onClose={() => {
+            setModalIndicacionesOpen(false)
+            setCasoParaIndicaciones(null)
+          }}
+          caso={casoParaIndicaciones}
+          onIndicacionEmitida={() => {
+            mostrarToast('Indicaciones Médicas emitidas en Geclisa y enviadas con éxito.')
             fetchPipeline()
           }}
         />

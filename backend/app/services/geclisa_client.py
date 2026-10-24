@@ -2091,6 +2091,141 @@ class GeclisaClient:
             print(f"[ERROR] Fallo el chequeo de configuracion inicial de Geclisa: {e}")
             return False
 
+    def listar_plantillas_indicaciones_geclisa(self, me_id: Optional[int] = None, es_internado: Optional[bool] = None) -> List[Dict[str, Any]]:
+        """
+        Obtiene el catálogo en vivo de plantillas de indicaciones médicas configuradas en Geclisa
+        (GET /api/IndicacionesMedicas/plantillas-indicaciones-medicas).
+        """
+        try:
+            headers = self._get_headers()
+            url = f"{self.base_url}/api/IndicacionesMedicas/plantillas-indicaciones-medicas"
+            params = {}
+            if me_id is not None:
+                params["MeId"] = me_id
+            if es_internado is not None:
+                params["EsInternado"] = str(es_internado).lower()
+
+            resp = self._do_request("GET", url, headers=headers, params=params, timeout=12)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data if isinstance(data, list) else []
+            else:
+                logger.warning(f"Error listando plantillas de indicaciones en Geclisa: HTTP {resp.status_code} {resp.text[:200]}")
+                return []
+        except Exception as e:
+            logger.error(f"Excepción al consultar plantillas de indicaciones en Geclisa: {e}")
+            return []
+
+    def emitir_indicacion_medica_geclisa(
+        self,
+        ficha_id: int,
+        pre_id: int,
+        texto_indicacion: str,
+        es_internado: bool = False,
+        fecha_str: Optional[str] = None,
+        hora_val: Optional[int] = None,
+        usu_alta: str = "asesoria_crm",
+        plan_id: Optional[int] = None,
+        os_plan: Optional[str] = None,
+        esp_id: Optional[int] = 1, # Oftalmología por defecto
+        me_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Emite una nueva Indicación Médica formal en la base de datos de Geclisa (POST /api/IndicacionesMedicas)
+        asociando legalmente el prestador/médico cirujano (preId) y la historia clínica/ficha (fichaId).
+        """
+        if not ficha_id or not pre_id or not texto_indicacion:
+            return {
+                "success": False,
+                "error": "Parámetros incompletos: se requiere ficha_id, pre_id y texto_indicacion."
+            }
+
+        now_dt = datetime.now()
+        fecha_final = fecha_str or now_dt.strftime("%Y-%m-%d")
+        if "T" not in fecha_final:
+            fecha_final = f"{fecha_final}T{now_dt.strftime('%H:%M:%S')}"
+
+        if hora_val is None:
+            hora_val = int(now_dt.strftime("%H%M"))
+
+        payload = {
+            "imId": None,
+            "preId": int(pre_id),
+            "fichaId": int(ficha_id),
+            "meId": me_id,
+            "osPlan": os_plan or "",
+            "planId": plan_id,
+            "espId": esp_id,
+            "nroAfiliado": "",
+            "imTexto": texto_indicacion.strip(),
+            "usuAlta": usu_alta,
+            "esInternado": es_internado,
+            "fecha": fecha_final,
+            "hora": hora_val,
+            "fechaHasta": None,
+            "horaHasta": None
+        }
+
+        try:
+            headers = self._get_headers()
+            url = f"{self.base_url}/api/IndicacionesMedicas"
+            resp = self._do_request("POST", url, headers=headers, json=payload, timeout=15)
+            
+            if resp.status_code in [200, 201]:
+                # Geclisa puede retornar directamente el número imId o un objeto JSON
+                res_body = None
+                try:
+                    res_body = resp.json()
+                except Exception:
+                    res_body = resp.text
+
+                im_id = None
+                if isinstance(res_body, int):
+                    im_id = res_body
+                elif isinstance(res_body, dict):
+                    im_id = res_body.get("imId") or res_body.get("id") or res_body.get("im_id")
+                elif isinstance(res_body, str) and res_body.strip().isdigit():
+                    im_id = int(res_body.strip())
+
+                logger.info(f"Indicación médica emitida con éxito en Geclisa: imId={im_id} (preId={pre_id}, fichaId={ficha_id})")
+                return {
+                    "success": True,
+                    "im_id": im_id,
+                    "mensaje": "Indicación médica registrada exitosamente en Geclisa.",
+                    "data": res_body
+                }
+            else:
+                err_msg = f"Geclisa rechazó la emisión: HTTP {resp.status_code} - {resp.text[:300]}"
+                logger.error(err_msg)
+                return {
+                    "success": False,
+                    "status_code": resp.status_code,
+                    "error": err_msg
+                }
+        except Exception as e:
+            logger.error(f"Error al emitir indicación médica en Geclisa: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+    def obtener_pdf_indicacion_geclisa(self, im_id: int) -> Optional[bytes]:
+        """
+        Descarga el stream del PDF generado nativamente por Geclisa (GET /api/IndicacionesMedicas/reporte-pdf/{imId}).
+        """
+        if not im_id:
+            return None
+        try:
+            headers = self._get_headers()
+            url = f"{self.base_url}/api/IndicacionesMedicas/reporte-pdf/{im_id}"
+            resp = self._do_request("GET", url, headers=headers, timeout=20)
+            if resp.status_code == 200:
+                return resp.content
+            return None
+        except Exception as e:
+            logger.error(f"Error al obtener PDF nativo de Geclisa para indicación {im_id}: {e}")
+            return None
+
 # Instancia global reutilizable
 geclisa_client = GeclisaClient()
 

@@ -3536,6 +3536,181 @@ def eliminar_relacion_practica_api(relacion_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================
+# ENDPOINTS REST: INDICACIONES MÉDICAS GECLISA + CRM + DISEÑADOR PDF
+# ====================================================================
+
+@app.get("/api/indicaciones/plantillas-geclisa")
+def get_plantillas_indicaciones_geclisa_api(es_internado: Optional[bool] = None):
+    """
+    Lista en vivo las plantillas de indicaciones médicas configuradas en Geclisa
+    (GET /api/IndicacionesMedicas/plantillas-indicaciones-medicas).
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        plantillas = geclisa_client.listar_plantillas_indicaciones_geclisa(es_internado=es_internado)
+        return {"success": True, "total": len(plantillas), "plantillas": plantillas}
+    except Exception as e:
+        logger.error(f"Error al consultar plantillas de indicaciones de Geclisa: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/indicaciones/plantillas")
+def get_plantillas_indicaciones_crm_api():
+    """
+    Lista todas las plantillas de indicaciones médicas y configuraciones de diseño en el CRM.
+    """
+    try:
+        if not supabase:
+            return {"success": False, "plantillas": []}
+        res = supabase.table("plantillas_indicaciones_crm").select("*").order("titulo").execute()
+        return {"success": True, "total": len(res.data or []), "plantillas": res.data or []}
+    except Exception as e:
+        logger.error(f"Error al listar plantillas de indicaciones CRM: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/indicaciones/plantillas")
+def save_plantilla_indicacion_crm_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Crea o actualiza una plantilla de indicación médica en el CRM.
+    """
+    try:
+        if not supabase:
+            raise HTTPException(status_code=500, detail="Base de datos no disponible.")
+        
+        titulo = payload.get("titulo")
+        cuerpo = payload.get("cuerpo_indicaciones") or payload.get("texto_indicaciones")
+        if not titulo or not cuerpo:
+            raise HTTPException(status_code=400, detail="El título y el cuerpo de indicaciones son obligatorios.")
+
+        plantilla_id = payload.get("id")
+        datos = {
+            "titulo": titulo,
+            "categoria": payload.get("categoria", "Oftalmología"),
+            "geclisa_pim_id": payload.get("geclisa_pim_id"),
+            "tipo_fase": payload.get("tipo_fase", "postquirurgico"),
+            "cuerpo_indicaciones": cuerpo,
+            "medicamentos": payload.get("medicamentos") or [],
+            "cuidados_generales": payload.get("cuidados_generales") or "",
+            "pautas_alarma": payload.get("pautas_alarma") or "",
+            "config_diseno": payload.get("config_diseno") or {},
+            "activo": payload.get("activo", True),
+            "updated_at": datetime.now().isoformat()
+        }
+
+        if plantilla_id and is_valid_uuid(plantilla_id):
+            res = supabase.table("plantillas_indicaciones_crm").update(datos).eq("id", plantilla_id).execute()
+        else:
+            res = supabase.table("plantillas_indicaciones_crm").insert(datos).execute()
+
+        item = res.data[0] if res.data else datos
+        return {"success": True, "mensaje": "Plantilla guardada exitosamente.", "plantilla": item}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error guardando plantilla de indicación: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/indicaciones/plantillas/{plantilla_id}")
+def delete_plantilla_indicacion_crm_api(plantilla_id: str):
+    """
+    Elimina una plantilla de indicación médica en el CRM.
+    """
+    try:
+        if not supabase or not is_valid_uuid(plantilla_id):
+            raise HTTPException(status_code=400, detail="ID de plantilla inválido.")
+        supabase.table("plantillas_indicaciones_crm").delete().eq("id", plantilla_id).execute()
+        return {"success": True, "mensaje": "Plantilla eliminada exitosamente."}
+    except Exception as e:
+        logger.error(f"Error al eliminar plantilla {plantilla_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/indicaciones/resolver-sugerencia")
+def resolver_sugerencia_indicacion_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Resuelve inteligentemente la plantilla sugerida (Opción C) según médico cirujano y práctica del nomenclador.
+    """
+    try:
+        from app.services.indicaciones_service import resolver_plantilla_sugerida
+        res = resolver_plantilla_sugerida(
+            practica_nombre=payload.get("practica_nombre"),
+            practica_codigo=payload.get("practica_codigo"),
+            medico_nombre=payload.get("medico_nombre"),
+            practica_id=payload.get("practica_id")
+        )
+        return res
+    except Exception as e:
+        logger.error(f"Error al resolver sugerencia de indicación médica: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/indicaciones/preview-pdf")
+def preview_pdf_indicacion_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Genera en memoria el PDF de indicación médica con ReportLab y retorna los bytes para previsualización inmediata.
+    """
+    try:
+        from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica
+        datos_emision = payload.get("datos_emision") or payload
+        config_diseno = payload.get("config_diseno") or {}
+        
+        resultado = generar_pdf_indicacion_medica(datos_emision, config_diseno=config_diseno, guardar_en_disco=False)
+        return Response(
+            content=resultado["pdf_bytes"],
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline; filename=preview_indicacion.pdf"}
+        )
+    except Exception as e:
+        logger.error(f"Error generando preview de PDF de indicación: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/expediente-quirurgico/{asesoria_id}/emitir-indicaciones")
+def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any] = Body(default={})):
+    """
+    Emite la indicación médica oficial en Geclisa (POST /api/IndicacionesMedicas) bajo el médico seleccionado
+    por la asesora, genera el PDF institucional y opcionalmente envía el mensaje por WhatsApp al paciente.
+    """
+    try:
+        from app.services.indicaciones_service import emitir_indicaciones_expediente
+        enviar_wa = payload.get("enviar_whatsapp", True)
+        texto_override = payload.get("texto_indicaciones")
+        meds_override = payload.get("medicamentos")
+        cuidados_override = payload.get("cuidados_generales")
+        alarmas_override = payload.get("pautas_alarma")
+        usu_alta = payload.get("usu_alta", "asesora_crm")
+
+        resultado = emitir_indicaciones_expediente(
+            asesoria_id=asesoria_id,
+            enviar_whatsapp=enviar_wa,
+            texto_override=texto_override,
+            medicamentos_override=meds_override,
+            cuidados_override=cuidados_override,
+            pautas_alarma_override=alarmas_override,
+            usu_alta=usu_alta
+        )
+        if not resultado.get("success"):
+            raise HTTPException(status_code=400, detail=resultado.get("error", "Error al emitir indicación."))
+
+        return resultado
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al emitir indicación médica para expediente {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/expediente-quirurgico/{asesoria_id}/historial-indicaciones")
+def get_historial_indicaciones_expediente_api(asesoria_id: str):
+    """
+    Consulta el historial de emisiones de indicaciones médicas para un expediente quirúrgico específico.
+    """
+    try:
+        if not supabase or not is_valid_uuid(asesoria_id):
+            return {"success": False, "emisiones": []}
+        
+        res = supabase.table("emisiones_indicaciones_geclisa").select("*").eq("asesoria_id", asesoria_id).order("created_at", desc=True).execute()
+        return {"success": True, "total": len(res.data or []), "emisiones": res.data or []}
+    except Exception as e:
+        logger.error(f"Error consultando historial de indicaciones para expediente {asesoria_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
 # ENDPOINTS: PLANTILLAS MAESTRAS DE PREPARACIONES
 # ====================================================================
 

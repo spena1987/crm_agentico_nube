@@ -25,7 +25,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Menu,
-  Cpu
+  Cpu,
+  Pill
 } from 'lucide-react'
 import WhatsAppConfigCard from '@/components/settings/WhatsAppConfigCard'
 import WhatsAppTemplatesSettingsCard from '@/components/settings/WhatsAppTemplatesSettingsCard'
@@ -35,6 +36,7 @@ import ClinicProfileCard from '@/components/settings/ClinicProfileCard'
 import SystemLogsCard from '@/components/settings/SystemLogsCard'
 import NomencladorSettingsCard from '@/components/settings/NomencladorSettingsCard'
 import BudgetTemplateDesignerCard from '@/components/settings/BudgetTemplateDesignerCard'
+import IndicacionesTemplateDesignerCard from '@/components/settings/IndicacionesTemplateDesignerCard'
 import SecuritySettingsCard from '@/components/settings/SecuritySettingsCard'
 import SurgicalSettingsCard from '@/components/settings/SurgicalSettingsCard'
 import QuirofanoSettingsCard from '@/components/settings/QuirofanoSettingsCard'
@@ -55,6 +57,7 @@ type TabType =
   | 'clinica' 
   | 'nomenclador' 
   | 'plantilla_presupuesto' 
+  | 'plantilla_indicaciones'
   | 'caratula_estudios'
   | 'seguridad' 
   | 'logs'
@@ -71,6 +74,7 @@ const TAB_PERMISSION_MAP: Record<TabType, string> = {
   clinica: 'ver_clinica',
   nomenclador: 'ver_nomencladores',
   plantilla_presupuesto: 'ver_plantilla_presupuesto',
+  plantilla_indicaciones: 'ver_plantilla_presupuesto',
   caratula_estudios: 'ver_clinica',
   seguridad: 'ver_seguridad',
   logs: 'ver_logs',
@@ -122,6 +126,7 @@ const tabCategories: TabCategory[] = [
       { id: 'clinica', label: 'Perfil del Centro Médico', icon: Building2, description: 'Datos y membrete institucional' },
       { id: 'nomenclador', label: 'Nomencladores & Aranceles', icon: BookOpen, description: 'Catálogo de prácticas y valores' },
       { id: 'plantilla_presupuesto', label: 'Diseñador de Presupuestos', icon: FileCheck, description: 'Plantillas y estilo PDF' },
+      { id: 'plantilla_indicaciones', label: 'Diseñador de Indicaciones', icon: Pill, description: 'Órdenes médicas, recetas y PDF quirúrgico', badge: 'Geclisa' },
       { id: 'caratula_estudios', label: 'Carátula de Estudios', icon: FileText, description: 'Diseñador de membretes y portadas para estudios diagnósticos', badge: 'Híbrido' },
     ]
   },
@@ -485,6 +490,7 @@ function AjustesContent() {
             {activeTab === 'clinica' && isTabAllowed('clinica') && <ClinicProfileCard />}
             {activeTab === 'nomenclador' && isTabAllowed('nomenclador') && <NomencladorSettingsCard />}
             {activeTab === 'plantilla_presupuesto' && isTabAllowed('plantilla_presupuesto') && <BudgetTemplateDesignerCard />}
+            {activeTab === 'plantilla_indicaciones' && isTabAllowed('plantilla_indicaciones') && <IndicacionesTemplateDesignerCard />}
             {activeTab === 'caratula_estudios' && isTabAllowed('caratula_estudios') && <CaratulaEstudiosSettingsCard />}
             {activeTab === 'seguridad' && isTabAllowed('seguridad') && <SecuritySettingsCard />}
             {activeTab === 'logs' && isTabAllowed('logs') && <SystemLogsCard />}
