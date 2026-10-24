@@ -2128,7 +2128,7 @@ class GeclisaClient:
         usu_alta: str = "asesoria_crm",
         plan_id: Optional[int] = None,
         os_plan: Optional[str] = None,
-        esp_id: Optional[int] = 1, # Oftalmología por defecto
+        esp_id: Optional[int] = 37, # Oftalmología en Geclisa (espId=37)
         me_id: Optional[int] = None,
         nro_afiliado: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -2157,7 +2157,7 @@ class GeclisaClient:
             "meId": me_id,
             "osPlan": os_plan or "",
             "planId": plan_id,
-            "espId": esp_id,
+            "espId": int(esp_id) if esp_id else 37,
             "nroAfiliado": str(nro_afiliado or ""),
             "imTexto": texto_indicacion.strip(),
             "usuAlta": usu_alta,

@@ -295,7 +295,11 @@ def despachar_indicacion_por_whatsapp(
         except Exception as e_c:
             logger.warning(f"Error resolviendo conversación para paciente {paciente_id}: {e_c}")
 
-    backend_base = os.getenv("BACKEND_PUBLIC_URL") or os.getenv("BACKEND_URL", "https://crm.centrovision.com.ar").rstrip("/")
+    backend_base = (
+        os.getenv("BACKEND_PUBLIC_URL")
+        or os.getenv("BACKEND_URL")
+        or "https://crmagenticonube-production.up.railway.app"
+    ).rstrip("/")
     full_pdf_link = f"{backend_base}{pdf_url}"
 
     win_info = check_patient_24h_window(paciente_id, tel_norm)
@@ -490,7 +494,8 @@ def emitir_indicaciones_expediente(
                 es_internado=False,
                 usu_alta=usu_alta,
                 os_plan=paciente_os,
-                nro_afiliado=paciente_afiliado
+                nro_afiliado=paciente_afiliado,
+                esp_id=37 # Oftalmología en Geclisa
             )
             if geclisa_res.get("success"):
                 geclisa_im_id = geclisa_res.get("im_id")
@@ -557,7 +562,11 @@ def emitir_indicaciones_expediente(
     if enviar_whatsapp and paciente_telefono:
         try:
             # Obtener URL base pública configurada en el CRM
-            backend_base = os.getenv("BACKEND_URL", "https://crm.centrovision.com.ar").rstrip("/")
+            backend_base = (
+                os.getenv("BACKEND_PUBLIC_URL")
+                or os.getenv("BACKEND_URL")
+                or "https://crmagenticonube-production.up.railway.app"
+            ).rstrip("/")
             full_pdf_link = f"{backend_base}{pdf_url}"
             
             ojo_actual = asesoria.get("ojo") or "OD"
@@ -723,7 +732,11 @@ def reeditar_emision_indicaciones(
     whatsapp_res = None
     if reenviar_whatsapp and paciente_telefono:
         try:
-            backend_base = os.getenv("BACKEND_URL", "https://crm.centrovision.com.ar").rstrip("/")
+            backend_base = (
+                os.getenv("BACKEND_PUBLIC_URL")
+                or os.getenv("BACKEND_URL")
+                or "https://crmagenticonube-production.up.railway.app"
+            ).rstrip("/")
             full_pdf_link = f"{backend_base}{pdf_url}"
             
             ojo_str = "👁️ *OJO DERECHO*" if "OD" in str(ojo_intervenido).upper() else "👁️ *OJO IZQUIERDO*" if "OI" in str(ojo_intervenido).upper() else f"👁️ *{ojo_intervenido}*"

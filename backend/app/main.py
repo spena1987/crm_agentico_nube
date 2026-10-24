@@ -569,6 +569,34 @@ def servir_archivo_estatico(filename: str, regenerar: Optional[bool] = False):
                         generar_pdf_parte_quirurgico(turno_item, paciente_data)
             except Exception as e:
                 logger.error(f"Error regenerando PDF de parte quirurgico on-demand ({safe_filename}): {e}")
+        elif safe_filename.startswith("indicacion_") and safe_filename.endswith(".pdf"):
+            emision_id = safe_filename.replace("indicacion_", "").replace(".pdf", "")
+            try:
+                if supabase:
+                    e_resp = supabase.table("emisiones_indicaciones_geclisa").select("*, asesorias_quirurgicas(*, pacientes(*))").eq("id", emision_id).limit(1).execute()
+                    if e_resp.data:
+                        emision_item = e_resp.data[0]
+                        asesoria_item = emision_item.get("asesorias_quirurgicas") or {}
+                        paciente_item = asesoria_item.get("pacientes") or {}
+                        
+                        from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica
+                        datos_rec = {
+                            "id": emision_id,
+                            "paciente_nombre": paciente_item.get("nombre") or emision_item.get("paciente_nombre") or "Paciente",
+                            "paciente_dni": paciente_item.get("dni") or "",
+                            "paciente_obra_social": asesoria_item.get("cobertura_obra_social") or paciente_item.get("obra_social") or "-",
+                            "paciente_afiliado": paciente_item.get("nro_afiliado") or "-",
+                            "paciente_domicilio": paciente_item.get("direccion") or "-",
+                            "practica_nombre": emision_item.get("practica_nombre") or asesoria_item.get("practica_nombre") or "Práctica Oftalmológica",
+                            "ojo": asesoria_item.get("ojo") or "OD",
+                            "medico_nombre": emision_item.get("medico_nombre") or "Médico Cirujano",
+                            "medico_matricula": emision_item.get("medico_matricula") or "",
+                            "cuerpo_indicaciones": emision_item.get("texto_indicaciones") or "",
+                            "geclisa_im_id": emision_item.get("geclisa_im_id")
+                        }
+                        generar_pdf_indicacion_medica(datos_rec, guardar_en_disco=True)
+            except Exception as e:
+                logger.error(f"Error regenerando PDF de indicación on-demand ({safe_filename}): {e}")
 
     # 3. Si aún no existe, devolver 404
     if not os.path.exists(file_path):

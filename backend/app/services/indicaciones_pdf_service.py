@@ -18,7 +18,7 @@ from app.services.config_service import load_settings, obtener_o_cachear_logo_lo
 
 logger = logging.getLogger("indicaciones_pdf_service")
 
-STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "static")
+STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 
