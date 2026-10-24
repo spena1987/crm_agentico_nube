@@ -33,6 +33,10 @@ interface SeccionIndicacionesExpedienteProps {
   medicoId?: number | string | null
   pacienteNombre?: string | null
   pacienteTelefono?: string | null
+  pacienteDni?: string | null
+  pacienteObraSocial?: string | null
+  pacienteAfiliado?: string | null
+  pacienteDomicilio?: string | null
   indicacionGeclisaImId?: number | null
   indicacionesEmitidasAt?: string | null
   indicacionesPdfUrl?: string | null
@@ -48,6 +52,10 @@ export default function SeccionIndicacionesExpediente({
   medicoId,
   pacienteNombre,
   pacienteTelefono,
+  pacienteDni,
+  pacienteObraSocial,
+  pacienteAfiliado,
+  pacienteDomicilio,
   indicacionGeclisaImId,
   indicacionesEmitidasAt,
   indicacionesPdfUrl,
@@ -260,6 +268,10 @@ export default function SeccionIndicacionesExpediente({
         body: JSON.stringify({
           datos_emision: {
             paciente_nombre: pacienteNombre || 'Paciente',
+            paciente_dni: pacienteDni || '',
+            paciente_obra_social: pacienteObraSocial || '',
+            paciente_afiliado: pacienteAfiliado || '',
+            paciente_domicilio: pacienteDomicilio || '',
             practica_nombre: practicaNombre || 'Cirugía Oftalmológica',
             medico_nombre: medicoNombre || 'Médico Cirujano',
             cuerpo_indicaciones: textoIndicaciones,

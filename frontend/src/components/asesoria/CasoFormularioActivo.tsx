@@ -2639,6 +2639,10 @@ export default function CasoFormularioActivo({
               medicoId={medicoCirujano.id || caso.medico_cirujano_id}
               pacienteNombre={pacienteNombre}
               pacienteTelefono={pacienteTelefono}
+              pacienteDni={pacienteDni || (caso.pacientes as any)?.dni}
+              pacienteObraSocial={caso.cobertura_obra_social || (caso.pacientes as any)?.obra_social}
+              pacienteAfiliado={(caso.pacientes as any)?.nro_afiliado || (caso.pacientes as any)?.numero_afiliado}
+              pacienteDomicilio={(caso.pacientes as any)?.direccion || (caso.pacientes as any)?.domicilio}
               indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
               indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
               indicacionesPdfUrl={caso.indicaciones_pdf_url}

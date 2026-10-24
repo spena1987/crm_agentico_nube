@@ -6,8 +6,11 @@ import logging
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, KeepTogether, Image as RLImage, HRFlowable
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    KeepTogether, Image as RLImage, HRFlowable
+)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -20,7 +23,7 @@ STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.pat
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 
-def parse_color_hex(hex_str: str, default: str = "#1E3A8A") -> colors.HexColor:
+def parse_color_hex(hex_str: str, default: str = "#0369A1") -> colors.HexColor:
     try:
         if hex_str and hex_str.startswith("#") and len(hex_str) in [4, 7]:
             return colors.HexColor(hex_str)
@@ -29,9 +32,29 @@ def parse_color_hex(hex_str: str, default: str = "#1E3A8A") -> colors.HexColor:
         return colors.HexColor(default)
 
 
+def formatear_dni(dni_raw: Any) -> str:
+    """
+    Formatea el DNI limpiando ceros residuales a la izquierda o separando por miles.
+    Ej: '033516799' -> '33.516.799'
+    """
+    if not dni_raw:
+        return "-"
+    dni_str = str(dni_raw).strip()
+    if not dni_str or dni_str == "-":
+        return "-"
+    if "." in dni_str:
+        return dni_str
+    if dni_str.isdigit():
+        dni_num = int(dni_str)
+        if dni_num > 1000000:
+            return f"{dni_num:,}".replace(",", ".")
+        return str(dni_num)
+    return dni_str
+
+
 def render_texto_variables(texto: str, variables: Dict[str, Any]) -> str:
     """
-    Reemplaza variables dinámicas en el texto como {{paciente}}, {{ojo}}, {{cirujano}}, etc.
+    Reemplaza variables dinámicas en el texto como {{paciente}}, {{dni}}, {{cirujano}}, etc.
     """
     if not texto:
         return ""
@@ -48,15 +71,23 @@ def generar_pdf_indicacion_medica(
     guardar_en_disco: bool = True
 ) -> Dict[str, Any]:
     """
-    Genera el PDF oficial de Indicaciones Médicas Quirúrgicas con estética médica premium.
-    Retorna un diccionario con {'pdf_bytes': bytes, 'file_path': str, 'filename': str, 'url': str}.
+    Genera el PDF oficial de Indicaciones Médicas Quirúrgicas u Órdenes Médicas
+    incrustando el contenido sobre el Lienzo Maestro Global institucional.
     """
-    cfg = config_diseno or {}
-    color_primario_hex = cfg.get("color_primario", "#1E3A8A")
-    color_secundario_hex = cfg.get("color_secundario", "#2563EB")
+    # 1. Cargar configuración del Lienzo Maestro
+    cfg = dict(config_diseno or {})
+    if not cfg:
+        try:
+            cfg = load_settings().get("lienzo_indicaciones") or {}
+        except Exception as e:
+            logger.warning(f"No se pudo cargar lienzo_indicaciones de settings: {e}")
+            cfg = {}
+
+    color_primario_hex = cfg.get("color_primario", "#0369A1")
+    color_secundario_hex = cfg.get("color_secundario", "#0284C7")
     
-    c_primario = parse_color_hex(color_primario_hex, "#1E3A8A")
-    c_secundario = parse_color_hex(color_secundario_hex, "#2563EB")
+    c_primario = parse_color_hex(color_primario_hex, "#0369A1")
+    c_secundario = parse_color_hex(color_secundario_hex, "#0284C7")
     c_fondo_card = colors.HexColor("#F8FAFC")
     c_borde_card = colors.HexColor("#E2E8F0")
     c_alerta_fondo = colors.HexColor("#FEF2F2")
@@ -65,7 +96,6 @@ def generar_pdf_indicacion_medica(
 
     mostrar_logo = cfg.get("mostrar_logo", True)
     mostrar_firma = cfg.get("mostrar_firma", True)
-    mostrar_qr = cfg.get("mostrar_qr", True)
 
     raw_texto = datos_emision.get("cuerpo_indicaciones") or datos_emision.get("texto_indicaciones") or ""
     raw_lower = str(raw_texto).lower()
@@ -76,53 +106,59 @@ def generar_pdf_indicacion_medica(
         or "orden médica" in raw_lower
         or "pedido de estudio" in raw_lower
     )
-    titulo_doc = cfg.get("titulo_documento") or ("ORDEN MÉDICA DE PROCEDIMIENTO" if es_orden_detectada else "INDICACIONES MÉDICAS QUIRÚRGICAS")
-    pie_pagina_custom = cfg.get("pie_pagina") or "Documento médico oficial emitido electrónicamente por Centro Visión."
+    titulo_doc = cfg.get("titulo_documento") or ("ORDEN MÉDICA DE PROCEDIMIENTO" if es_orden_detectada else "INDICACIONES MÉDICAS")
+    nombre_institucion = cfg.get("nombre_institucion") or "CENTRO VISIÓN"
+    subtitulo_institucion = cfg.get("subtitulo_institucion") or "Especialidades Oftalmológicas y Cirugía de Alta Complejidad"
+    pie_pagina_custom = cfg.get("pie_pagina") or f"Documento médico oficial emitido electrónicamente por {nombre_institucion}."
 
-    # Datos clínicos de la emisión
+    # Datos clínicos y de la ficha del paciente
     emision_id = str(datos_emision.get("id") or uuid.uuid4())
-    paciente_nombre = datos_emision.get("paciente_nombre") or "Paciente"
-    paciente_dni = datos_emision.get("paciente_dni") or "-"
-    paciente_os = datos_emision.get("paciente_obra_social") or "-"
-    practica_nombre = datos_emision.get("practica_nombre") or "Procedimiento Quirúrgico Oftalmológico"
-    ojo_intervenido = datos_emision.get("ojo") or "OD"
-    ojo_label = "Ojo Derecho (OD)" if ojo_intervenido == "OD" else "Ojo Izquierdo (OI)" if ojo_intervenido == "OI" else "Ambos Ojos (AO)" if ojo_intervenido == "AO" else ojo_intervenido
-    
-    medico_nombre = datos_emision.get("medico_nombre") or "Médico Cirujano"
+    paciente_nombre = str(datos_emision.get("paciente_nombre") or "Paciente").strip()
+    paciente_dni = formatear_dni(datos_emision.get("paciente_dni"))
+    paciente_os = str(datos_emision.get("paciente_obra_social") or datos_emision.get("paciente_cobertura") or "-").strip()
+    paciente_afiliado = str(datos_emision.get("paciente_afiliado") or datos_emision.get("paciente_nro_afiliado") or "-").strip()
+    paciente_domicilio = str(datos_emision.get("paciente_domicilio") or datos_emision.get("paciente_direccion") or "-").strip()
+
+    medico_nombre = datos_emision.get("medico_nombre") or "Médico Especialista"
     medico_matricula = datos_emision.get("medico_matricula") or ""
     fecha_emision = datos_emision.get("fecha") or datetime.now().strftime("%d/%m/%Y")
     hora_emision = datos_emision.get("hora") or datetime.now().strftime("%H:%M")
     geclisa_im_id = datos_emision.get("geclisa_im_id")
 
-    texto_cuerpo = datos_emision.get("cuerpo_indicaciones") or datos_emision.get("texto_indicaciones") or ""
+    texto_cuerpo = raw_texto
     medicamentos = datos_emision.get("medicamentos") or []
     cuidados_generales = datos_emision.get("cuidados_generales") or ""
     pautas_alarma = datos_emision.get("pautas_alarma") or ""
 
-    # Reemplazo de variables dinámicas en el texto libre
+    # Reemplazo dinámico de variables
     vars_dict = {
         "paciente": paciente_nombre,
         "paciente_nombre": paciente_nombre,
         "dni": paciente_dni,
-        "ojo": ojo_label,
-        "ojo_operado": ojo_label,
-        "practica": practica_nombre,
+        "cobertura": paciente_os,
+        "obra_social": paciente_os,
+        "afiliado": paciente_afiliado,
+        "domicilio": paciente_domicilio,
         "cirujano": medico_nombre,
         "medico": medico_nombre,
         "matricula": medico_matricula,
         "fecha": fecha_emision,
         "hora": hora_emision,
-        "obra_social": paciente_os
     }
     texto_cuerpo = render_texto_variables(texto_cuerpo, vars_dict)
     cuidados_generales = render_texto_variables(cuidados_generales, vars_dict)
     pautas_alarma = render_texto_variables(pautas_alarma, vars_dict)
 
-    # Configurar buffer y documento ReportLab
+    # Configuración de página y dimensiones según el lienzo
+    tamano_hoja = str(cfg.get("tamano_hoja", "letter")).lower()
+    page_size = A4 if "a4" in tamano_hoja else letter
+    page_width = 595.27 if "a4" in tamano_hoja else 612.0
+    content_width = page_width - 72.0  # Márgenes izq/der 36 pt
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
-        pagesize=letter,
+        pagesize=page_size,
         leftMargin=36,
         rightMargin=36,
         topMargin=32,
@@ -135,19 +171,19 @@ def generar_pdf_indicacion_medica(
         'DocTitle',
         parent=styles['Heading1'],
         fontName='Helvetica-Bold',
-        fontSize=15,
-        leading=18,
+        fontSize=14,
+        leading=17,
         textColor=c_primario,
-        alignment=0, # Left
-        spaceAfter=3
+        alignment=0,
+        spaceAfter=2
     )
 
     subtitle_style = ParagraphStyle(
         'DocSubtitle',
         parent=styles['Normal'],
         fontName='Helvetica',
-        fontSize=9,
-        leading=12,
+        fontSize=8.5,
+        leading=11,
         textColor=colors.HexColor("#64748B")
     )
 
@@ -155,10 +191,10 @@ def generar_pdf_indicacion_medica(
         'SectionHeading',
         parent=styles['Heading2'],
         fontName='Helvetica-Bold',
-        fontSize=11,
-        leading=14,
+        fontSize=10,
+        leading=13,
         textColor=c_primario,
-        spaceBefore=8,
+        spaceBefore=10,
         spaceAfter=4
     )
 
@@ -191,95 +227,60 @@ def generar_pdf_indicacion_medica(
 
     story = []
 
-    # 1. ENCABEZADO INSTITUCIONAL CON LOGO
-    logo_path = obtener_o_cachear_logo_local() if mostrar_logo else None
-    col_widths = [140, 400]
+    # 1. ENCABEZADO INSTITUCIONAL CON LOGO Y TÍTULO
+    logo_path = obtener_o_cachear_logo_local(cfg.get("logo_url")) if mostrar_logo else None
+    col_widths_header = [130, content_width - 130]
     
     header_right = [
         Paragraph(titulo_doc, title_style),
-        Paragraph(f"<b>CENTRO VISIÓN</b> • Especialidades Oftalmológicas y Cirugía de Alta Complejidad", subtitle_style),
+        Paragraph(f"<b>{nombre_institucion}</b> • {subtitulo_institucion}", subtitle_style),
         Paragraph(f"Fecha de emisión: {fecha_emision} • Hora: {hora_emision} hs" + (f" • Ref Geclisa: #{geclisa_im_id}" if geclisa_im_id else ""), subtitle_style)
     ]
 
     header_left = []
     if logo_path and os.path.exists(logo_path):
         try:
-            img = RLImage(logo_path, width=120, height=42)
+            img = RLImage(logo_path, width=115, height=40)
             header_left.append(img)
         except Exception:
-            header_left.append(Paragraph("<b>CENTRO VISIÓN</b>", title_style))
+            header_left.append(Paragraph(f"<b>{nombre_institucion}</b>", title_style))
     else:
-        header_left.append(Paragraph("<b>CENTRO VISIÓN</b>", title_style))
+        header_left.append(Paragraph(f"<b>{nombre_institucion}</b>", title_style))
 
-    header_table = Table([[header_left, header_right]], colWidths=col_widths)
+    header_table = Table([[header_left, header_right]], colWidths=col_widths_header)
     header_table.setStyle(TableStyle([
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
     ]))
     story.append(header_table)
     story.append(HRFlowable(width="100%", thickness=1.5, color=c_primario, spaceBefore=4, spaceAfter=8))
 
-    # 1.1 INSIGNIA DESTACADA DEL OJO A INTERVENIR (OPCIÓN B)
-    ojo_upper = (ojo_intervenido or "OD").upper().strip()
-    if "OD" in ojo_upper or "DERECHO" in ojo_upper:
-        ojo_title = "OJO DERECHO (Tu ojo del lado DERECHO)"
-        c_ojo_bg = colors.HexColor("#EFF6FF")
-        c_ojo_border = colors.HexColor("#2563EB")
-        c_ojo_text = colors.HexColor("#1E40AF")
-    elif "OI" in ojo_upper or "IZQUIERDO" in ojo_upper:
-        ojo_title = "OJO IZQUIERDO (Tu ojo del lado IZQUIERDO)"
-        c_ojo_bg = colors.HexColor("#FAF5FF")
-        c_ojo_border = colors.HexColor("#7C3AED")
-        c_ojo_text = colors.HexColor("#5B21B6")
-    else:
-        ojo_title = f"{ojo_label} (Tratamiento en Ambos Ojos)"
-        c_ojo_bg = colors.HexColor("#F0FDF4")
-        c_ojo_border = colors.HexColor("#059669")
-        c_ojo_text = colors.HexColor("#065F46")
-
-    ojo_banner_style = ParagraphStyle(
-        'OjoBanner',
-        parent=styles['Normal'],
-        fontName='Helvetica-Bold',
-        fontSize=11,
-        leading=14,
-        textColor=c_ojo_text,
-        alignment=1
-    )
-    ojo_table = Table([[Paragraph(f"👁️ <b>PROCEDIMIENTO EN: {ojo_title}</b> 👁️", ojo_banner_style)]], colWidths=[540])
-    ojo_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), c_ojo_bg),
-        ('BOX', (0,0), (-1,-1), 1.5, c_ojo_border),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-    ]))
-    story.append(ojo_table)
-    story.append(Spacer(1, 6))
-
-    # 2. TARJETA RESUMEN DEL PACIENTE Y PROCEDIMIENTO
+    # 2. TARJETA OFICIAL DEL PACIENTE (Ficha clínica estricta: Nombre, DNI, Cobertura, Afiliado y Domicilio)
+    # Se omiten deliberadamente Práctica, Ojo y Cirujano de esta tarjeta según requerimiento clínico.
+    col_w_card = [70, (content_width - 150) / 2, 80, (content_width - 150) / 2]
     card_data = [
         [
             Paragraph("<b>Paciente:</b>", body_style),
             Paragraph(paciente_nombre, body_bold),
             Paragraph("<b>DNI:</b>", body_style),
-            Paragraph(paciente_dni, body_style),
+            Paragraph(paciente_dni, body_bold),
         ],
         [
             Paragraph("<b>Cobertura:</b>", body_style),
             Paragraph(paciente_os, body_style),
-            Paragraph("<b>Ojo a Operar:</b>", body_style),
-            Paragraph(f"<b>{ojo_label}</b>", body_bold),
+            Paragraph("<b>N° Afiliado:</b>", body_style),
+            Paragraph(paciente_afiliado, body_style),
         ],
         [
-            Paragraph("<b>Práctica:</b>", body_style),
-            Paragraph(practica_nombre, body_style),
-            Paragraph("<b>Cirujano:</b>", body_style),
-            Paragraph(f"<b>{medico_nombre}</b>" + (f" (MP: {medico_matricula})" if medico_matricula else ""), body_style),
+            Paragraph("<b>Domicilio:</b>", body_style),
+            Paragraph(paciente_domicilio, body_style),
+            Paragraph("", body_style),
+            Paragraph("", body_style),
         ]
     ]
-    card_table = Table(card_data, colWidths=[65, 230, 85, 160])
+    card_table = Table(card_data, colWidths=col_w_card)
     card_table.setStyle(TableStyle([
+        ('SPAN', (1, 2), (3, 2)),
         ('BACKGROUND', (0,0), (-1,-1), c_fondo_card),
         ('BOX', (0,0), (-1,-1), 1, c_borde_card),
         ('INNERGRID', (0,0), (-1,-1), 0.5, c_borde_card),
@@ -292,19 +293,25 @@ def generar_pdf_indicacion_medica(
     story.append(card_table)
     story.append(Spacer(1, 10))
 
-    # 3. TEXTO DESCRIPTIVO DE LA INDICACIÓN / PROTOCOLO
+    # 3. TEXTO DEL CUERPO DE LA INDICACIÓN / SOLICITUD
     if texto_cuerpo.strip():
-        story.append(Paragraph("1. PROTOCOLO DE TRATAMIENTO & INDICACIONES", section_heading))
         for parrafo in texto_cuerpo.split('\n'):
             p_limpio = parrafo.strip()
             if p_limpio:
-                story.append(Paragraph(p_limpio, body_style))
+                if p_limpio == "---":
+                    story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#CBD5E1"), spaceBefore=4, spaceAfter=6))
+                else:
+                    p_lower = p_limpio.lower()
+                    if p_lower.startswith("solicito:") or p_lower.startswith("diagnóstico:") or p_lower.startswith("diagnostico:"):
+                        story.append(Paragraph(f"<b>{p_limpio}</b>", body_bold))
+                    else:
+                        story.append(Paragraph(p_limpio, body_style))
                 story.append(Spacer(1, 2))
         story.append(Spacer(1, 6))
 
-    # 4. TABLA ESTRUCTURADA DE MEDICAMENTOS Y GOTAS (SI EXISTEN)
+    # 4. ESQUEMA DE MEDICACIÓN Y COLIRIOS (SOLO SI TIENE ELEMENTOS CARGADOS)
     if isinstance(medicamentos, list) and len(medicamentos) > 0:
-        story.append(Paragraph("2. ESQUEMA DE MEDICACIÓN Y COLIRIOS OFTALMOLÓGICOS", section_heading))
+        story.append(Paragraph("ESQUEMA DE MEDICACIÓN Y COLIRIOS OFTALMOLÓGICOS", section_heading))
         
         headers_med = [
             Paragraph("<b>Medicamento / Principio Activo</b>", ParagraphStyle('HM1', parent=body_bold, textColor=colors.white)),
@@ -328,7 +335,8 @@ def generar_pdf_indicacion_medica(
                 Paragraph(instrucciones, body_style)
             ])
 
-        tabla_med = Table(tabla_med_data, colWidths=[140, 60, 105, 75, 160])
+        col_w_med = [140, 55, 105, 70, content_width - 370]
+        tabla_med = Table(tabla_med_data, colWidths=col_w_med)
         tabla_med.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), c_primario),
             ('TEXTCOLOR', (0,0), (-1,0), colors.white),
@@ -343,13 +351,12 @@ def generar_pdf_indicacion_medica(
         story.append(tabla_med)
         story.append(Spacer(1, 6))
 
-        # REGLA DE ORO DE 10 MINUTOS & GUÍA HORARIA (OPCIÓN A)
         golden_rule_style = ParagraphStyle(
             'GoldenRule',
             parent=styles['Normal'],
             fontName='Helvetica',
-            fontSize=8.5,
-            leading=12,
+            fontSize=8,
+            leading=11,
             textColor=colors.HexColor("#92400E")
         )
         golden_content = [
@@ -358,78 +365,67 @@ def generar_pdf_indicacion_medica(
                 "Si le coincide colocarse 2 colirios al mismo horario, aplique el primero, <b>espere 10 minutos completos</b> "
                 "con el ojo cerrado suavemente para que la gota se absorba, y luego instile el segundo colirio. <i>Nunca los aplique juntos.</i>",
                 golden_rule_style
-            ),
-            Spacer(1, 3),
-            Paragraph(
-                "<b>⏰ Guía de horarios recomendados (respetando descanso nocturno):</b><br/>"
-                "• <b>Cada 4 horas:</b> 08:00 hs &nbsp;•&nbsp; 12:00 hs &nbsp;•&nbsp; 16:00 hs &nbsp;•&nbsp; 20:00 hs<br/>"
-                "• <b>Cada 6 horas:</b> 08:00 hs &nbsp;•&nbsp; 14:00 hs &nbsp;•&nbsp; 20:00 hs<br/>"
-                "• <b>Cada 8 horas:</b> 08:00 hs &nbsp;•&nbsp; 16:00 hs &nbsp;•&nbsp; 24:00 hs<br/>"
-                "• <b>Cada 12 horas:</b> 08:00 hs &nbsp;•&nbsp; 20:00 hs",
-                golden_rule_style
             )
         ]
-        golden_table = Table([[golden_content]], colWidths=[540])
+        golden_table = Table([[golden_content]], colWidths=[content_width])
         golden_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#FFFBEB")),
             ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#F59E0B")),
-            ('TOPPADDING', (0,0), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
             ('LEFTPADDING', (0,0), (-1,-1), 8),
             ('RIGHTPADDING', (0,0), (-1,-1), 8),
         ]))
         story.append(golden_table)
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 8))
 
-    # 5. CUIDADOS GENERALES Y REPOSO
+    # 5. PAUTAS DE REPOSO Y CUIDADOS (SOLO SI TIENE TEXTO CARGADO)
     if cuidados_generales.strip():
-        story.append(Paragraph("3. CUIDADOS POSTOPERATORIOS & REPOSO", section_heading))
+        story.append(Paragraph("PAUTAS DE REPOSO Y CUIDADOS", section_heading))
         for linea in cuidados_generales.split('\n'):
             linea_limpia = linea.strip()
             if linea_limpia:
                 story.append(Paragraph(f"• {linea_limpia.lstrip('•-* ')}", body_style))
                 story.append(Spacer(1, 2))
-        story.append(Spacer(1, 8))
+        story.append(Spacer(1, 6))
 
-    # 6. RECUADRO DE PAUTAS DE ALARMA (URGENCIAS)
+    # 6. PAUTAS DE ALARMA (GUARDIA 24 HS) (SOLO SI TIENE TEXTO CARGADO)
     if pautas_alarma.strip():
-        story.append(Paragraph("4. PAUTAS DE ALARMA & CUÁNDO CONSULTAR DE URGENCIA", section_heading))
+        story.append(Paragraph("PAUTAS DE ALARMA (GUARDIA 24 HS)", section_heading))
         alerta_content = [
             Paragraph("<b>¡ATENCIÓN! SIGNOS DE ALERTA MÉDICA:</b>", ParagraphStyle('ABold', parent=alerta_style, fontName='Helvetica-Bold')),
             Paragraph(pautas_alarma, alerta_style),
-            Paragraph("<b>Guardia Oftalmológica Centro Visión:</b> Tel / Urgencias disponible las 24 horas.", alerta_style)
+            Paragraph(f"<b>Guardia Oftalmológica {nombre_institucion}:</b> Urgencias disponible las 24 horas.", alerta_style)
         ]
-        alerta_table = Table([[alerta_content]], colWidths=[540])
+        alerta_table = Table([[alerta_content]], colWidths=[content_width])
         alerta_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), c_alerta_fondo),
             ('BOX', (0,0), (-1,-1), 1, c_alerta_borde),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('TOPPADDING', (0,0), (-1,-1), 5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
             ('LEFTPADDING', (0,0), (-1,-1), 8),
             ('RIGHTPADDING', (0,0), (-1,-1), 8),
         ]))
         story.append(alerta_table)
-        story.append(Spacer(1, 12))
+        story.append(Spacer(1, 10))
 
-    # 7. PIE DE PÁGINA: FIRMA Y SELLO PROFESIONAL + QR
-    pie_elements = []
-    
-    # Bloque de validación / QR (simulado con texto o QR si reportlab-qrcode disponible)
+    # 7. PIE DE PÁGINA: FIRMA Y SELLO PROFESIONAL + VALIDACIÓN LEGAL
     info_legal = [
         Paragraph(pie_pagina_custom, subtitle_style),
         Paragraph(f"ID Emisión: {emision_id[:8]} • Emitido en Geclisa ID: {geclisa_im_id or 'Pendiente'} • Validado clínicamente", subtitle_style)
     ]
 
-    # Bloque de firma
     firma_content = []
     if mostrar_firma:
         firma_content = [
-            HRFlowable(width="80%", thickness=1, color=colors.HexColor("#94A3B8"), spaceBefore=10, spaceAfter=2),
+            HRFlowable(width="80%", thickness=1, color=colors.HexColor("#94A3B8"), spaceBefore=8, spaceAfter=2),
             Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle('FirmaMed', parent=subtitle_style, alignment=1)),
             Paragraph(f"Especialista en Oftalmología • MP {medico_matricula or '-'}", ParagraphStyle('FirmaMP', parent=subtitle_style, alignment=1))
         ]
 
-    pie_table = Table([[info_legal, firma_content]], colWidths=[360, 180])
+    w_legal = content_width * 0.65
+    w_firma = content_width * 0.35
+    pie_table = Table([[info_legal, firma_content]], colWidths=[w_legal, w_firma])
     pie_table.setStyle(TableStyle([
         ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
         ('LEFTPADDING', (0,0), (-1,-1), 0),
@@ -442,7 +438,7 @@ def generar_pdf_indicacion_medica(
     pdf_bytes = buffer.getvalue()
     buffer.close()
 
-    # Guardar en static para acceso público / WhatsApp
+    # Guardar en disco para distribución pública / WhatsApp si corresponde
     filename = f"indicacion_{emision_id}.pdf"
     filepath = os.path.join(STATIC_DIR, filename)
     url_publica = f"/static/{filename}"

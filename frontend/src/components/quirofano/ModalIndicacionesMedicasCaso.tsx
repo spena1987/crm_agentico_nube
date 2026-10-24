@@ -23,6 +23,9 @@ export default function ModalIndicacionesMedicasCaso({
   const pacNombre = paciente.nombre || 'Paciente'
   const pacDni = paciente.dni || '-'
   const pacTelefono = paciente.telefono || ''
+  const pacObraSocial = caso.cobertura_obra_social || paciente.obra_social || '-'
+  const pacAfiliado = paciente.nro_afiliado || paciente.numero_afiliado || '-'
+  const pacDomicilio = paciente.direccion || paciente.domicilio || '-'
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
@@ -63,6 +66,10 @@ export default function ModalIndicacionesMedicasCaso({
             medicoId={caso.medico_cirujano_id}
             pacienteNombre={pacNombre}
             pacienteTelefono={pacTelefono}
+            pacienteDni={pacDni}
+            pacienteObraSocial={pacObraSocial}
+            pacienteAfiliado={pacAfiliado}
+            pacienteDomicilio={pacDomicilio}
             indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
             indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
             indicacionesPdfUrl={caso.indicaciones_pdf_url}

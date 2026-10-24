@@ -295,6 +295,8 @@ def emitir_indicaciones_expediente(
     paciente_dni = paciente.get("dni") or ""
     paciente_telefono = paciente.get("telefono") or ""
     paciente_os = asesoria.get("cobertura_obra_social") or paciente.get("obra_social") or "-"
+    paciente_afiliado = paciente.get("nro_afiliado") or paciente.get("numero_afiliado") or "-"
+    paciente_domicilio = paciente.get("direccion") or paciente.get("domicilio") or "-"
     
     medico_id = asesoria.get("medico_cirujano_id")
     medico_nombre = asesoria.get("medico_cirujano_nombre") or "Médico Cirujano"
@@ -360,6 +362,8 @@ def emitir_indicaciones_expediente(
         "paciente_nombre": paciente_nombre,
         "paciente_dni": paciente_dni,
         "paciente_obra_social": paciente_os,
+        "paciente_afiliado": paciente_afiliado,
+        "paciente_domicilio": paciente_domicilio,
         "practica_nombre": practica_nombre,
         "ojo": asesoria.get("ojo") or "OD",
         "medico_nombre": medico_nombre,
@@ -526,6 +530,8 @@ def reeditar_emision_indicaciones(
     paciente_nombre = paciente.get("nombre") or emision.get("medico_nombre") or "Paciente"
     paciente_dni = paciente.get("dni") or "-"
     paciente_os = paciente.get("obra_social") or "-"
+    paciente_afiliado = paciente.get("nro_afiliado") or paciente.get("numero_afiliado") or "-"
+    paciente_domicilio = paciente.get("direccion") or paciente.get("domicilio") or "-"
     paciente_telefono = paciente.get("telefono")
     
     medico_nombre = emision.get("medico_nombre") or "Médico Cirujano"
@@ -538,6 +544,8 @@ def reeditar_emision_indicaciones(
         "paciente_nombre": paciente_nombre,
         "paciente_dni": paciente_dni,
         "paciente_obra_social": paciente_os,
+        "paciente_afiliado": paciente_afiliado,
+        "paciente_domicilio": paciente_domicilio,
         "practica_nombre": practica_nombre,
         "ojo": ojo_intervenido,
         "medico_nombre": medico_nombre,

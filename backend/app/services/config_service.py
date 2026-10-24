@@ -86,6 +86,22 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "whatsapp_contacto": "261 553-0888",
         "texto_indicaciones": "Presente este informe a su médico oftalmólogo en su próxima consulta de control.",
         "pie_legal": "Documento e informe técnico generado electrónicamente por Centrovisión Oftalmología Integral."
+    },
+    "lienzo_indicaciones": {
+        "titulo_documento": "ORDEN MÉDICA DE PROCEDIMIENTO",
+        "nombre_institucion": "CENTRO VISIÓN",
+        "subtitulo_institucion": "Especialidades Oftalmológicas y Cirugía de Alta Complejidad",
+        "direccion": "Mitre 540, Ciudad de Mendoza, Mendoza",
+        "telefono": "0800-222-4040",
+        "email": "info@centrovision.com.ar",
+        "sitio_web": "www.centrovision.com.ar",
+        "color_primario": "#0369A1",
+        "color_secundario": "#0284C7",
+        "tamano_hoja": "letter",
+        "pie_pagina": "Documento médico oficial emitido electrónicamente por Centro Visión.",
+        "mostrar_logo": True,
+        "mostrar_firma": True,
+        "mostrar_qr": True
     }
 }
 
@@ -141,8 +157,16 @@ def apply_inheritance(settings: Dict[str, Any]) -> Dict[str, Any]:
     elif logo_p and not logo_c:
         clinica["logo_url"] = logo_p
 
+    # Herencia para Lienzo de Indicaciones
+    lienzo = settings.get("lienzo_indicaciones") or {}
+    if logo_c and not lienzo.get("logo_url"):
+        lienzo["logo_url"] = logo_c
+    if nombre_c and (not lienzo.get("nombre_institucion") or lienzo.get("nombre_institucion") == "CLÍNICA MÉDICA NUBE"):
+        lienzo["nombre_institucion"] = nombre_c
+
     settings["clinica"] = clinica
     settings["plantilla_presupuesto"] = plantilla
+    settings["lienzo_indicaciones"] = lienzo
     return settings
 
 

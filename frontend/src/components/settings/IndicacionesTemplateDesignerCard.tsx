@@ -2,108 +2,85 @@
 
 import React, { useState, useEffect } from 'react'
 import {
-  History,
-  Edit2,
-  ExternalLink,
-  Calendar,
-  Check,
-  X,
   FileText,
   Palette,
   Save,
   Download,
-  Plus,
-  Trash2,
   CheckCircle,
   AlertCircle,
   Loader2,
   Eye,
-  RefreshCw,
-  Pill,
-  ShieldAlert,
+  History,
   Sparkles,
-  Stethoscope,
+  Building2,
+  Layers,
+  Edit2,
   Send,
-  HelpCircle,
-  Layers
+  X,
+  Stethoscope
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 
-interface MedicamentoItem {
-  droga: string
-  dosis: string
-  frecuencia: string
-  duracion: string
-  instrucciones: string
-}
-
-interface PlantillaIndicacionConfig {
-  id?: string
-  titulo: string
-  categoria: string
-  tipo_fase: 'prequirurgico' | 'postquirurgico' | 'ambos'
-  geclisa_pim_id?: number | null
-  cuerpo_indicaciones: string
-  medicamentos: MedicamentoItem[]
-  cuidados_generales: string
-  pautas_alarma: string
-  config_diseno: {
-    color_primario: string
-    color_secundario: string
-    titulo_documento: string
-    pie_pagina: string
-    mostrar_logo: boolean
-    mostrar_firma: boolean
-    mostrar_qr: boolean
-  }
+interface LienzoIndicacionesConfig {
+  titulo_documento: string
+  nombre_institucion: string
+  subtitulo_institucion: string
+  direccion: string
+  telefono: string
+  email: string
+  sitio_web: string
+  color_primario: string
+  color_secundario: string
+  tamano_hoja: 'letter' | 'a4'
+  pie_pagina: string
+  mostrar_logo: boolean
+  mostrar_firma: boolean
+  mostrar_qr: boolean
+  logo_url?: string
 }
 
 const PALETA_COLORES = [
-  { nombre: 'Azul Quirúrgico', hex: '#1E3A8A' },
+  { nombre: 'Azul Quirúrgico', hex: '#0369A1' },
+  { nombre: 'Azul Nube', hex: '#1E3A8A' },
   { nombre: 'Azul Real', hex: '#2563EB' },
   { nombre: 'Turquesa Oftalmo', hex: '#0D9488' },
-  { nombre: 'Verde Médico', hex: '#15803D' },
-  { nombre: 'Índigo Clínico', hex: '#4338CA' },
+  { nombre: 'Verde Clínico', hex: '#15803D' },
+  { nombre: 'Índigo Médico', hex: '#4338CA' },
   { nombre: 'Gris Grafito', hex: '#334155' }
 ]
 
-const DEFAULT_PLANTILLA: PlantillaIndicacionConfig = {
-  titulo: 'Protocolo de Gotas y Colirios - Cataratas',
-  categoria: 'Cataratas',
-  tipo_fase: 'postquirurgico',
-  geclisa_pim_id: 43,
-  cuerpo_indicaciones: 'Indicaciones médicas postoperatorias de Cirugía de Catarata (Facoemulsificación con Implante de LIO). Aplicar las gotas oftálmicas según el esquema indicado a partir de la fecha de cirugía.',
-  medicamentos: [
-    { droga: 'Gatimicin D (Antibiótico + Corticoide)', dosis: '1 gota', frecuencia: 'Cada 4 horas', duracion: '7 días', instrucciones: 'Agitar bien antes de colocar' },
-    { droga: 'Berlofen (Ketorolac)', dosis: '1 gota', frecuencia: 'Cada 4 horas', duracion: '7 días', instrucciones: 'Esperar 10 min respecto a la gota anterior' }
-  ],
-  cuidados_generales: '- No refregar ni frotar el ojo operado.\n- Usar protector ocular transparente para dormir durante 7 noches.\n- No sumergirse en piscinas ni hacer esfuerzos físicos pesados por 20 días.\n- Limpieza facial con toalla suave sin frotar.',
-  pautas_alarma: 'Consulte de forma INMEDIATA a la guardia ante: dolor ocular agudo que no calma con analgésicos, visión borrosa súbita o secreción espesa.',
-  config_diseno: {
-    color_primario: '#1E3A8A',
-    color_secundario: '#2563EB',
-    titulo_documento: 'INDICACIONES MÉDICAS QUIRÚRGICAS',
-    pie_pagina: 'Centro Visión - Documento oficial de indicaciones médicas postoperatorias.',
-    mostrar_logo: true,
-    mostrar_firma: true,
-    mostrar_qr: true
-  }
+const DEFAULT_LIENZO: LienzoIndicacionesConfig = {
+  titulo_documento: 'ORDEN MÉDICA DE PROCEDIMIENTO',
+  nombre_institucion: 'CENTRO VISIÓN',
+  subtitulo_institucion: 'Especialidades Oftalmológicas y Cirugía de Alta Complejidad',
+  direccion: 'Mitre 540, Ciudad de Mendoza, Mendoza',
+  telefono: '0800-222-4040',
+  email: 'info@centrovision.com.ar',
+  sitio_web: 'www.centrovision.com.ar',
+  color_primario: '#0369A1',
+  color_secundario: '#0284C7',
+  tamano_hoja: 'letter',
+  pie_pagina: 'Documento médico oficial emitido electrónicamente por Centro Visión.',
+  mostrar_logo: true,
+  mostrar_firma: true,
+  mostrar_qr: true,
+  logo_url: ''
 }
 
 export default function IndicacionesTemplateDesignerCard() {
-  const [plantillasCRM, setPlantillasCRM] = useState<PlantillaIndicacionConfig[]>([])
-  const [plantillasGeclisa, setPlantillasGeclisa] = useState<any[]>([])
-  const [plantillaActual, setPlantillaActual] = useState<PlantillaIndicacionConfig>(DEFAULT_PLANTILLA)
-  
-  const [cargando, setCargando] = useState(false)
-  const [guardando, setGuardando] = useState(false)
+  const [config, setConfig] = useState<LienzoIndicacionesConfig>(DEFAULT_LIENZO)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
   const [generandoPdf, setGenerandoPdf] = useState(false)
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null)
-  
-  const [mensajeExito, setMensajeExito] = useState<string | null>(null)
-  const [mensajeError, setMensajeError] = useState<string | null>(null)
-  const [vistaActiva, setVistaActiva] = useState<'editor' | 'preview'>('editor')
+  const [tipoMuestra, setTipoMuestra] = useState<'oct' | 'gotas'>('oct')
+
+  const [feedback, setFeedback] = useState<{ tipo: 'success' | 'error'; texto: string } | null>(null)
   const [tabPrincipal, setTabPrincipal] = useState<'disenador' | 'historial'>('disenador')
+  const [vistaActiva, setVistaActiva] = useState<'editor' | 'preview'>('editor')
+
+  // Historial de emisiones
   const [emisiones, setEmisiones] = useState<any[]>([])
   const [cargandoEmisiones, setCargandoEmisiones] = useState(false)
   const [modalReedicionOpen, setModalReedicionOpen] = useState(false)
@@ -112,38 +89,48 @@ export default function IndicacionesTemplateDesignerCard() {
   const [reenviarWaReedicion, setReenviarWaReedicion] = useState(true)
   const [guardandoReedicion, setGuardandoReedicion] = useState(false)
 
-  // Cargar plantillas del CRM y Geclisa al montar
   useEffect(() => {
-    cargarDatos()
+    cargarConfiguracion()
   }, [])
 
-  const cargarDatos = async () => {
-    setCargando(true)
-    setMensajeError(null)
+  const cargarConfiguracion = async () => {
     try {
-      // 1. Plantillas CRM
-      const resCRM = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas`)
-      if (resCRM.ok) {
-        const dataCRM = await resCRM.json()
-        if (dataCRM.plantillas && dataCRM.plantillas.length > 0) {
-          setPlantillasCRM(dataCRM.plantillas)
-          setPlantillaActual(dataCRM.plantillas[0])
+      setLoading(true)
+      let data: any = null
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/settings`)
+        if (res.ok) {
+          data = await res.json()
+        }
+      } catch (e) {
+        console.warn('Error consultando /api/settings, fallback a Supabase:', e)
+      }
+
+      if (!data) {
+        const { data: dbData } = await (supabase as any)
+          .from('configuracion_sistema')
+          .select('valor')
+          .eq('clave', 'ajustes_crm')
+          .maybeSingle()
+        if (dbData && dbData.valor) {
+          data = dbData.valor
         }
       }
 
-      // 2. Plantillas Geclisa en vivo
-      const resGec = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas-geclisa`)
-      if (resGec.ok) {
-        const dataGec = await resGec.json()
-        if (dataGec.plantillas) {
-          setPlantillasGeclisa(dataGec.plantillas)
-        }
+      if (data) {
+        const lienzo = data.lienzo_indicaciones || {}
+        const clinica = data.clinica || {}
+        setConfig({
+          ...DEFAULT_LIENZO,
+          ...lienzo,
+          nombre_institucion: lienzo.nombre_institucion || clinica.nombre || DEFAULT_LIENZO.nombre_institucion,
+          logo_url: lienzo.logo_url || clinica.logo_url || ''
+        })
       }
-    } catch (err: any) {
-      console.error('Error cargando plantillas de indicaciones:', err)
-      setMensajeError('No se pudo conectar con el servidor para cargar las plantillas.')
+    } catch (err) {
+      console.error('Error al cargar configuración del lienzo de indicaciones:', err)
     } finally {
-      setCargando(false)
+      setLoading(false)
     }
   }
 
@@ -164,62 +151,101 @@ export default function IndicacionesTemplateDesignerCard() {
     }
   }
 
-  const handleAbrirReedicion = (emision: any) => {
-    setEmisionParaReeditar(emision)
-    setTextoReedicion(emision.texto_indicaciones || '')
-    setReenviarWaReedicion(true)
-    setModalReedicionOpen(true)
-  }
-
-  const handleGuardarReedicion = async () => {
-    if (!emisionParaReeditar) return
-    setGuardandoReedicion(true)
-    setMensajeError(null)
+  const handleSave = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
     try {
-      const res = await fetch(`${API_BASE_URL}/api/indicaciones/emisiones/${emisionParaReeditar.id}/reeditar`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          texto_indicaciones: textoReedicion,
-          reenviar_whatsapp: reenviarWaReedicion
+      setSaving(true)
+      setFeedback(null)
+
+      let apiSaved = false
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lienzo_indicaciones: config
+          })
         })
-      })
-      const data = await res.json()
-      if (res.ok && data.success) {
-        setMensajeExito('Indicación médica actualizada exitosamente y nuevo PDF generado.')
-        setModalReedicionOpen(false)
-        cargarEmisiones()
-        setTimeout(() => setMensajeExito(null), 4000)
-      } else {
-        setMensajeError(data.detail || data.error || 'No se pudo actualizar la indicación.')
+        if (res.ok) apiSaved = true
+      } catch (apiErr) {
+        console.warn('API /api/settings no respondió, guardando en Supabase:', apiErr)
       }
-    } catch (err: any) {
-      setMensajeError('Error de conexión al reeditar la indicación.')
+
+      const { data: currentDb } = await (supabase as any)
+        .from('configuracion_sistema')
+        .select('valor')
+        .eq('clave', 'ajustes_crm')
+        .maybeSingle()
+
+      const currentVal = currentDb && currentDb.valor ? (currentDb.valor as any) : {}
+      const newVal = {
+        ...currentVal,
+        lienzo_indicaciones: {
+          ...(currentVal.lienzo_indicaciones || {}),
+          ...config
+        }
+      }
+
+      const { error: dbError } = await (supabase as any)
+        .from('configuracion_sistema')
+        .upsert({
+          clave: 'ajustes_crm',
+          valor: newVal,
+          updated_at: new Date().toISOString(),
+          actualizado_por: 'admin_crm'
+        })
+
+      if (apiSaved || !dbError) {
+        setFeedback({ tipo: 'success', texto: '¡Lienzo maestro de indicaciones guardado exitosamente!' })
+      } else {
+        setFeedback({ tipo: 'error', texto: 'Error al guardar la configuración del lienzo.' })
+      }
+    } catch (err) {
+      console.error('Error guardando lienzo:', err)
+      setFeedback({ tipo: 'error', texto: 'Error al conectar con el servidor.' })
     } finally {
-      setGuardandoReedicion(false)
+      setSaving(false)
     }
   }
 
-  // Previsualizar PDF con ReportLab
-  const handleGenerarPreviewPdf = async () => {
+  // Previsualizar PDF usando el lienzo maestro actual
+  const handleGenerarPreviewPdf = async (modo: 'oct' | 'gotas' = tipoMuestra) => {
     setGenerandoPdf(true)
     try {
+      const datosMuestraOCT = {
+        paciente_nombre: 'PEÑA, JUAN SEBASTIAN',
+        paciente_dni: '033516799',
+        paciente_obra_social: 'SWISS MEDICAL S.A.',
+        paciente_afiliado: '8000061154099011000',
+        paciente_domicilio: 'LAS CAÑAS 800 GUAYMALLEN',
+        medico_nombre: 'GRAS, HERNAN',
+        medico_matricula: '5432',
+        cuerpo_indicaciones: 'Solicito:\n\nOCT Digital Bilateral\n\nDiagnóstico:\nDegeneración Macular',
+        medicamentos: [],
+        cuidados_generales: '',
+        pautas_alarma: ''
+      }
+
+      const datosMuestraGotas = {
+        paciente_nombre: 'PEÑA, JUAN SEBASTIAN',
+        paciente_dni: '033516799',
+        paciente_obra_social: 'SWISS MEDICAL S.A.',
+        paciente_afiliado: '8000061154099011000',
+        paciente_domicilio: 'LAS CAÑAS 800 GUAYMALLEN',
+        medico_nombre: 'GRAS, HERNAN',
+        medico_matricula: '5432',
+        cuerpo_indicaciones: 'Indicaciones médicas postoperatorias de Facoemulsificación con Implante de LIO Premium.',
+        medicamentos: [
+          { droga: 'Gatimicin D (Antibiótico + Corticoide)', dosis: '1 gota', frecuencia: 'Cada 4 horas', duracion: '7 días', instrucciones: 'Agitar antes de colocar' },
+          { droga: 'Berlofen (Ketorolac)', dosis: '1 gota', frecuencia: 'Cada 4 horas', duracion: '7 días', instrucciones: 'Esperar 10 min respecto a la gota anterior' }
+        ],
+        cuidados_generales: '- No refregar ni frotar el ojo operado.\n- Usar protector ocular transparente para dormir por 7 noches.\n- Evitar esfuerzos físicos pesados por 15 días.',
+        pautas_alarma: 'Consulte de forma INMEDIATA a la guardia ante: dolor ocular agudo o disminución brusca de visión.'
+      }
+
       const payload = {
-        datos_emision: {
-          paciente_nombre: 'María González',
-          paciente_dni: '28.450.912',
-          paciente_obra_social: 'OSDE 210',
-          practica_nombre: 'Facoemulsificación con Implante de LIO Premium',
-          ojo: 'OD',
-          medico_nombre: 'Dr. Leonardo Bonanno',
-          medico_matricula: '8421',
-          cuerpo_indicaciones: plantillaActual.cuerpo_indicaciones,
-          medicamentos: plantillaActual.medicamentos,
-          cuidados_generales: plantillaActual.cuidados_generales,
-          pautas_alarma: plantillaActual.pautas_alarma,
-          geclisa_im_id: plantillaActual.geclisa_pim_id || 9510
-        },
-        config_diseno: plantillaActual.config_diseno
+        datos_emision: modo === 'oct' ? datosMuestraOCT : datosMuestraGotas,
+        config_diseno: config
       }
 
       const res = await fetch(`${API_BASE_URL}/api/indicaciones/preview-pdf`, {
@@ -234,88 +260,57 @@ export default function IndicacionesTemplateDesignerCard() {
         setPdfPreviewUrl(url)
         setVistaActiva('preview')
       } else {
-        setMensajeError('Error generando la vista previa del PDF.')
+        setFeedback({ tipo: 'error', texto: 'Error generando la vista previa del PDF.' })
       }
     } catch (e: any) {
       console.error(e)
-      setMensajeError('Fallo al conectar con el motor de generación PDF.')
+      setFeedback({ tipo: 'error', texto: 'Fallo al conectar con el motor de generación PDF.' })
     } finally {
       setGenerandoPdf(false)
     }
   }
 
-  // Guardar plantilla en el CRM
-  const handleGuardarPlantilla = async () => {
-    setGuardando(true)
-    setMensajeExito(null)
-    setMensajeError(null)
+  const handleAbrirReedicion = (emision: any) => {
+    setEmisionParaReeditar(emision)
+    setTextoReedicion(emision.texto_indicaciones || '')
+    setReenviarWaReedicion(true)
+    setModalReedicionOpen(true)
+  }
+
+  const handleGuardarReedicion = async () => {
+    if (!emisionParaReeditar) return
+    setGuardandoReedicion(true)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas`, {
-        method: 'POST',
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/emisiones/${emisionParaReeditar.id}/reeditar`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(plantillaActual)
+        body: JSON.stringify({
+          texto_indicaciones: textoReedicion,
+          reenviar_whatsapp: reenviarWaReedicion
+        })
       })
-
-      if (res.ok) {
-        const data = await res.json()
-        setMensajeExito('Plantilla de Indicaciones Médicas guardada con éxito.')
-        // Refrescar lista
-        const resCRM = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas`)
-        if (resCRM.ok) {
-          const d = await resCRM.json()
-          setPlantillasCRM(d.plantillas || [])
-        }
-        setTimeout(() => setMensajeExito(null), 4000)
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setFeedback({ tipo: 'success', texto: 'Indicación médica actualizada exitosamente y nuevo PDF generado.' })
+        setModalReedicionOpen(false)
+        cargarEmisiones()
       } else {
-        const err = await res.json()
-        setMensajeError(err.detail || 'Error al guardar la plantilla.')
+        setFeedback({ tipo: 'error', texto: data.detail || data.error || 'No se pudo actualizar la indicación.' })
       }
-    } catch (e: any) {
-      setMensajeError('No se pudo conectar con el servidor.')
+    } catch (err: any) {
+      setFeedback({ tipo: 'error', texto: 'Error de conexión al reeditar la indicación.' })
     } finally {
-      setGuardando(false)
+      setGuardandoReedicion(false)
     }
   }
 
-  // Agregar medicamento a la tabla
-  const handleAgregarMedicamento = () => {
-    setPlantillaActual({
-      ...plantillaActual,
-      medicamentos: [
-        ...plantillaActual.medicamentos,
-        { droga: '', dosis: '1 gota', frecuencia: 'Cada 4 horas', duracion: '7 días', instrucciones: '' }
-      ]
-    })
-  }
-
-  // Quitar medicamento
-  const handleQuitarMedicamento = (index: number) => {
-    const copia = [...plantillaActual.medicamentos]
-    copia.splice(index, 1)
-    setPlantillaActual({ ...plantillaActual, medicamentos: copia })
-  }
-
-  // Actualizar campo de medicamento
-  const handleUpdateMed = (index: number, campo: keyof MedicamentoItem, valor: string) => {
-    const copia = [...plantillaActual.medicamentos]
-    copia[index] = { ...copia[index], [campo]: valor }
-    setPlantillaActual({ ...plantillaActual, medicamentos: copia })
-  }
-
-  // Importar texto desde plantilla Geclisa
-  const handleImportarDeGeclisa = (pimIdStr: string) => {
-    const pimId = parseInt(pimIdStr)
-    const match = plantillasGeclisa.find(p => p.pimId === pimId)
-    if (match) {
-      setPlantillaActual({
-        ...plantillaActual,
-        titulo: match.pimNombre,
-        geclisa_pim_id: match.pimId,
-        cuerpo_indicaciones: match.pimTexto || ''
-      })
-      setMensajeExito(`Texto cargado desde la plantilla de Geclisa #${pimId} (${match.pimNombre})`)
-      setTimeout(() => setMensajeExito(null), 3000)
-    }
+  if (loading) {
+    return (
+      <div className="p-12 text-center text-xs text-[var(--secondary)] flex items-center justify-center gap-2">
+        <Loader2 size={18} className="animate-spin text-blue-600" />
+        <span>Cargando configuración del lienzo de indicaciones...</span>
+      </div>
+    )
   }
 
   return (
@@ -327,16 +322,18 @@ export default function IndicacionesTemplateDesignerCard() {
             <span className="p-2 rounded-xl bg-blue-600/10 text-blue-600">
               <FileText size={22} />
             </span>
-            <h2 className="text-lg font-bold text-[var(--foreground)]">
-              Diseñador de Indicaciones Médicas & PDF
-            </h2>
+            <div>
+              <h2 className="text-lg font-bold text-[var(--foreground)]">
+                Lienzo Maestro de Indicaciones Médicas (Canva Único)
+              </h2>
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Define el membrete, logo, tamaño de hoja y pie de página general donde se incrustan las indicaciones de cada práctica.
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-[var(--secondary)] mt-1">
-            Personaliza el formato visual de las órdenes médicas quirúrgicas que se emiten en Geclisa y se envían por WhatsApp.
-          </p>
         </div>
 
-        {/* Pestañas Principales del Módulo */}
+        {/* Selector de Pestañas */}
         <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl">
           <button
             type="button"
@@ -347,7 +344,7 @@ export default function IndicacionesTemplateDesignerCard() {
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            <Palette size={14} /> Diseñador & Plantillas
+            <Palette size={14} /> Lienzo & Canva PDF
           </button>
           <button
             type="button"
@@ -361,412 +358,459 @@ export default function IndicacionesTemplateDesignerCard() {
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            <History size={14} /> Historial & Reedición
+            <History size={14} /> Historial & Auditoría
           </button>
         </div>
 
-        {/* Acciones principales */}
+        {/* Acciones principales en modo diseñador */}
         {tabPrincipal === 'disenador' && (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setVistaActiva(vistaActiva === 'editor' ? 'preview' : 'editor')}
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition border ${
-              vistaActiva === 'preview'
-                ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
-                : 'bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--hover-bg)]'
-            }`}
-          >
-            <Eye size={15} />
-            <span>{vistaActiva === 'preview' ? 'Modo Editor' : 'Vista Previa PDF'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setVistaActiva(vistaActiva === 'editor' ? 'preview' : 'editor')}
+              className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition border ${
+                vistaActiva === 'preview'
+                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                  : 'bg-[var(--card-bg)] border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--hover-bg)]'
+              }`}
+            >
+              <Eye size={15} />
+              <span>{vistaActiva === 'preview' ? 'Modo Editor' : 'Vista Previa PDF'}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={handleGenerarPreviewPdf}
-            disabled={generandoPdf}
-            className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
-          >
-            {generandoPdf ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-            <span>Actualizar PDF</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => handleGenerarPreviewPdf(tipoMuestra)}
+              disabled={generandoPdf}
+              className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
+            >
+              {generandoPdf ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+              <span>Generar Muestra</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={handleGuardarPlantilla}
-            disabled={guardando}
-            className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
-          >
-            {guardando ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-            <span>Guardar Plantilla</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
+            >
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+              <span>Guardar Lienzo</span>
+            </button>
+          </div>
         )}
       </div>
 
       {/* Alertas */}
-      {mensajeExito && (
-        <div className="mx-6 mt-4 p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2">
-          <CheckCircle size={16} />
-          <span>{mensajeExito}</span>
+      {feedback && (
+        <div
+          className={`mx-6 mt-4 p-3.5 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+            feedback.tipo === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+          }`}
+        >
+          {feedback.tipo === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+          <span>{feedback.texto}</span>
         </div>
       )}
-      {mensajeError && (
-        <div className="mx-6 mt-4 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
-          <AlertCircle size={16} />
-          <span>{mensajeError}</span>
-        </div>
-      )}
 
-      {/* Selector de Plantilla y Sincronización con Geclisa */}
-      <div className="p-6 border-b border-[var(--border-color)] bg-[var(--hover-bg)]/40 grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-        <div>
-          <label className="font-bold text-[var(--foreground)] block mb-1">
-            Plantilla Guardada en CRM:
-          </label>
-          <select
-            value={plantillaActual.id || ''}
-            onChange={(e) => {
-              const p = plantillasCRM.find(item => item.id === e.target.value)
-              if (p) setPlantillaActual(p)
-            }}
-            className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
-          >
-            {plantillasCRM.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.titulo} ({p.categoria})
-              </option>
-            ))}
-            <option value="">-- Nueva Plantilla / Personalizada --</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="font-bold text-[var(--foreground)] block mb-1">
-            Vincular con Plantilla Nativa Geclisa:
-          </label>
-          <select
-            value={plantillaActual.geclisa_pim_id || ''}
-            onChange={(e) => handleImportarDeGeclisa(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">-- Seleccionar de Geclisa (107 disponibles) --</option>
-            {plantillasGeclisa.map((pg) => (
-              <option key={pg.pimId} value={pg.pimId}>
-                #{pg.pimId} - {pg.pimNombre}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="font-bold text-[var(--foreground)] block mb-1">
-            Fase Quirúrgica:
-          </label>
-          <select
-            value={plantillaActual.tipo_fase}
-            onChange={(e) => setPlantillaActual({ ...plantillaActual, tipo_fase: e.target.value as any })}
-            className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="postquirurgico">Postquirúrgico (Gotas, Reposo y Cuidados)</option>
-            <option value="prequirurgico">Prequirúrgico (Ayuno y Preparación)</option>
-            <option value="ambos">Integral (Pre + Post)</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Cuerpo principal: Editor o Preview */}
-      {vistaActiva === 'preview' && pdfPreviewUrl ? (
-        <div className="p-6 space-y-4">
-          <div className="flex items-center justify-between text-xs text-[var(--secondary)]">
-            <span className="font-medium">
-              Previsualización en tiempo real generada con el motor PDF de Centro Visión.
+      {/* Contenido Principal */}
+      {tabPrincipal === 'disenador' ? (
+        <div className="p-6">
+          {/* Banner explicativo del Lienzo */}
+          <div className="mb-6 p-4 rounded-xl bg-blue-500/10 border border-blue-500/25 flex items-start gap-3">
+            <span className="p-1.5 rounded-lg bg-blue-600 text-white mt-0.5">
+              <Layers size={16} />
             </span>
-            <a
-              href={pdfPreviewUrl}
-              download="indicaciones_medicas_preview.pdf"
-              className="inline-flex items-center gap-1.5 text-blue-600 hover:underline font-bold"
-            >
-              <Download size={14} />
-              <span>Descargar PDF</span>
-            </a>
-          </div>
-          <div className="w-full h-[650px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-slate-900/5">
-            <iframe src={pdfPreviewUrl} className="w-full h-full border-0" title="Vista Previa de Indicaciones Médicas" />
-          </div>
-        </div>
-      ) : (
-        <div className="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Panel Izquierdo: Configuración Visual y Branding (4 cols) */}
-          <div className="lg:col-span-4 space-y-5">
-            <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] space-y-4">
-              <h3 className="text-xs font-bold text-[var(--foreground)] uppercase tracking-wider flex items-center gap-2">
-                <Palette size={16} className="text-blue-600" />
-                <span>Estilo Visual & Identidad</span>
-              </h3>
-
-              {/* Selector de Color Primario */}
-              <div>
-                <label className="text-[11px] font-bold text-[var(--secondary)] block mb-1.5">
-                  Color Primario del Documento:
-                </label>
-                <div className="grid grid-cols-6 gap-2">
-                  {PALETA_COLORES.map((c) => (
-                    <button
-                      key={c.hex}
-                      type="button"
-                      title={c.nombre}
-                      onClick={() =>
-                        setPlantillaActual({
-                          ...plantillaActual,
-                          config_diseno: { ...plantillaActual.config_diseno, color_primario: c.hex }
-                        })
-                      }
-                      style={{ backgroundColor: c.hex }}
-                      className={`h-7 rounded-lg transition-transform ${
-                        plantillaActual.config_diseno.color_primario === c.hex
-                          ? 'scale-110 ring-2 ring-offset-2 ring-blue-500'
-                          : 'hover:scale-105 opacity-80'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Título del documento */}
-              <div>
-                <label className="text-[11px] font-bold text-[var(--secondary)] block mb-1">
-                  Título en Cabecera:
-                </label>
-                <input
-                  type="text"
-                  value={plantillaActual.config_diseno.titulo_documento}
-                  onChange={(e) =>
-                    setPlantillaActual({
-                      ...plantillaActual,
-                      config_diseno: { ...plantillaActual.config_diseno, titulo_documento: e.target.value }
-                    })
-                  }
-                  className="w-full px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)]"
-                />
-              </div>
-
-              {/* Toggles */}
-              <div className="space-y-2 pt-2 border-t border-[var(--border-color)] text-xs">
-                <label className="flex items-center gap-2 cursor-pointer text-[var(--foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={plantillaActual.config_diseno.mostrar_logo}
-                    onChange={(e) =>
-                      setPlantillaActual({
-                        ...plantillaActual,
-                        config_diseno: { ...plantillaActual.config_diseno, mostrar_logo: e.target.checked }
-                      })
-                    }
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Mostrar Logo Institucional Centro Visión</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer text-[var(--foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={plantillaActual.config_diseno.mostrar_firma}
-                    onChange={(e) =>
-                      setPlantillaActual({
-                        ...plantillaActual,
-                        config_diseno: { ...plantillaActual.config_diseno, mostrar_firma: e.target.checked }
-                      })
-                    }
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Firma y Sello Digital del Cirujano</span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer text-[var(--foreground)]">
-                  <input
-                    type="checkbox"
-                    checked={plantillaActual.config_diseno.mostrar_qr}
-                    onChange={(e) =>
-                      setPlantillaActual({
-                        ...plantillaActual,
-                        config_diseno: { ...plantillaActual.config_diseno, mostrar_qr: e.target.checked }
-                      })
-                    }
-                    className="rounded text-blue-600 focus:ring-blue-500"
-                  />
-                  <span>Código de Autenticidad / Trazabilidad</span>
-                </label>
-              </div>
-
-              {/* Pie de página */}
-              <div>
-                <label className="text-[11px] font-bold text-[var(--secondary)] block mb-1">
-                  Leyenda al Pie:
-                </label>
-                <input
-                  type="text"
-                  value={plantillaActual.config_diseno.pie_pagina}
-                  onChange={(e) =>
-                    setPlantillaActual({
-                      ...plantillaActual,
-                      config_diseno: { ...plantillaActual.config_diseno, pie_pagina: e.target.value }
-                    })
-                  }
-                  className="w-full px-3 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)]"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Panel Derecho: Contenidos Clínicos y Tabla de Medicación (8 cols) */}
-          <div className="lg:col-span-8 space-y-5">
-            {/* Título de Plantilla y Categoría */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
-                  Nombre de la Plantilla:
-                </label>
-                <input
-                  type="text"
-                  value={plantillaActual.titulo}
-                  onChange={(e) => setPlantillaActual({ ...plantillaActual, titulo: e.target.value })}
-                  placeholder="Ej: Facoemulsificación Cataratas - Protocolo Dr. Bonanno"
-                  className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)] font-semibold"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
-                  Categoría Clínica:
-                </label>
-                <input
-                  type="text"
-                  value={plantillaActual.categoria}
-                  onChange={(e) => setPlantillaActual({ ...plantillaActual, categoria: e.target.value })}
-                  placeholder="Ej: Cataratas, Refractiva, Glaucoma"
-                  className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)]"
-                />
-              </div>
-            </div>
-
-            {/* Texto de la Indicación Médica */}
-            <div>
-              <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
-                Cuerpo de Indicaciones (Texto que se asienta en Geclisa):
-              </label>
-              <textarea
-                rows={4}
-                value={plantillaActual.cuerpo_indicaciones}
-                onChange={(e) => setPlantillaActual({ ...plantillaActual, cuerpo_indicaciones: e.target.value })}
-                placeholder="Instrucciones postoperatorias, frecuencia de gotas..."
-                className="w-full p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)] font-mono leading-relaxed"
-              />
-              <p className="text-[10px] text-[var(--secondary)] mt-1">
-                Soporta tags dinámicas: <code className="bg-[var(--hover-bg)] px-1 rounded">&#123;&#123;paciente&#125;&#125;</code>, <code className="bg-[var(--hover-bg)] px-1 rounded">&#123;&#123;ojo&#125;&#125;</code>, <code className="bg-[var(--hover-bg)] px-1 rounded">&#123;&#123;cirujano&#125;&#125;</code>, <code className="bg-[var(--hover-bg)] px-1 rounded">&#123;&#123;fecha&#125;&#125;</code>.
+            <div className="text-xs">
+              <h4 className="font-bold text-blue-900 dark:text-blue-300">
+                Arquitectura de Canvas Institucional (1 Lienzo para Muchas Indicaciones)
+              </h4>
+              <p className="text-slate-600 dark:text-slate-300 mt-1">
+                Este lienzo define la identidad visual común de las órdenes médicas y recetas. La redacción clínica específica (textos, fármacos, pautas de alarma) se administra de forma modular en <b>Ajustes &gt; Nomencladores &gt; Indicaciones Médicas</b>.
               </p>
             </div>
+          </div>
 
-            {/* Tabla Estructurada de Medicación / Gotas */}
-            <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <Pill size={16} className="text-emerald-600" />
-                  <h4 className="text-xs font-bold text-[var(--foreground)]">
-                    Esquema de Medicación y Gotas Oftálmicas
-                  </h4>
+          {vistaActiva === 'preview' && pdfPreviewUrl ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between bg-slate-900/40 p-3 rounded-xl border border-slate-700/50">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-bold text-slate-300">Tipo de Muestra:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTipoMuestra('oct')
+                      handleGenerarPreviewPdf('oct')
+                    }}
+                    className={`px-2.5 py-1 rounded-lg font-bold text-xs transition ${
+                      tipoMuestra === 'oct' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Muestra OCT / Solicitud (Solo Cuerpo)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTipoMuestra('gotas')
+                      handleGenerarPreviewPdf('gotas')
+                    }}
+                    className={`px-2.5 py-1 rounded-lg font-bold text-xs transition ${
+                      tipoMuestra === 'gotas' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Muestra Cataratas (Con Gotas y Cuidados)
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleAgregarMedicamento}
-                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold flex items-center gap-1 transition"
+
+                <a
+                  href={pdfPreviewUrl}
+                  download="muestra_indicaciones.pdf"
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition"
                 >
-                  <Plus size={13} />
-                  <span>Añadir Fármaco / Gota</span>
-                </button>
+                  <Download size={13} />
+                  <span>Descargar PDF</span>
+                </a>
               </div>
 
-              {plantillaActual.medicamentos.length === 0 ? (
-                <p className="text-xs text-[var(--secondary)] py-3 text-center italic">
-                  No hay fármacos estructurados. Haz clic en "Añadir Fármaco" para agregar colirios con sus intervalos.
-                </p>
-              ) : (
-                <div className="space-y-2 overflow-x-auto">
-                  {plantillaActual.medicamentos.map((m, idx) => (
-                    <div
-                      key={idx}
-                      className="grid grid-cols-12 gap-2 items-center bg-[var(--card-bg)] p-2 rounded-lg border border-[var(--border-color)] text-xs"
-                    >
-                      <input
-                        type="text"
-                        value={m.droga}
-                        onChange={(e) => handleUpdateMed(idx, 'droga', e.target.value)}
-                        placeholder="Droga / Gotas (ej: Gatimicin D)"
-                        className="col-span-4 px-2 py-1 rounded border border-[var(--border-color)] bg-transparent text-[var(--foreground)] font-semibold"
-                      />
-                      <input
-                        type="text"
-                        value={m.dosis}
-                        onChange={(e) => handleUpdateMed(idx, 'dosis', e.target.value)}
-                        placeholder="Dosis (1 gota)"
-                        className="col-span-2 px-2 py-1 rounded border border-[var(--border-color)] bg-transparent text-[var(--foreground)]"
-                      />
-                      <input
-                        type="text"
-                        value={m.frecuencia}
-                        onChange={(e) => handleUpdateMed(idx, 'frecuencia', e.target.value)}
-                        placeholder="Frecuencia (c/ 4 hs)"
-                        className="col-span-2 px-2 py-1 rounded border border-[var(--border-color)] bg-transparent text-[var(--foreground)]"
-                      />
-                      <input
-                        type="text"
-                        value={m.duracion}
-                        onChange={(e) => handleUpdateMed(idx, 'duracion', e.target.value)}
-                        placeholder="Duración (7 días)"
-                        className="col-span-2 px-2 py-1 rounded border border-[var(--border-color)] bg-transparent text-[var(--foreground)]"
-                      />
+              <div className="w-full h-[750px] rounded-xl overflow-hidden border border-[var(--border-color)] bg-slate-900">
+                <iframe src={pdfPreviewUrl} className="w-full h-full" title="Vista Previa PDF" />
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleSave} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Columna Izquierda: Encabezado y Marca */}
+              <div className="space-y-5">
+                <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-2">
+                    <Building2 size={16} /> Encabezado Institucional
+                  </h3>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
+                      Título General del Documento:
+                    </label>
+                    <input
+                      type="text"
+                      value={config.titulo_documento}
+                      onChange={(e) => setConfig({ ...config, titulo_documento: e.target.value })}
+                      placeholder="ORDEN MÉDICA DE PROCEDIMIENTO"
+                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] font-semibold focus:ring-2 focus:ring-blue-500"
+                    />
+                    <p className="text-[10px] text-[var(--secondary)] mt-1">
+                      Aparece en la cabecera superior derecha del PDF.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
+                      Nombre de la Institución:
+                    </label>
+                    <input
+                      type="text"
+                      value={config.nombre_institucion}
+                      onChange={(e) => setConfig({ ...config, nombre_institucion: e.target.value })}
+                      placeholder="CENTRO VISIÓN"
+                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
+                      Subtítulo o Especialidades:
+                    </label>
+                    <input
+                      type="text"
+                      value={config.subtitulo_institucion}
+                      onChange={(e) => setConfig({ ...config, subtitulo_institucion: e.target.value })}
+                      placeholder="Especialidades Oftalmológicas y Cirugía de Alta Complejidad"
+                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-between border-t border-[var(--border-color)]">
+                    <span className="text-xs font-medium text-[var(--foreground)]">
+                      Mostrar Logo Institucional en Cabecera
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={config.mostrar_logo}
+                      onChange={(e) => setConfig({ ...config, mostrar_logo: e.target.checked })}
+                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+                </div>
+
+                {/* Formato de Hoja y Tamaño */}
+                <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-2">
+                    <FileText size={16} /> Formato y Tamaño de Hoja
+                  </h3>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
+                      Tamaño de Página:
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => handleQuitarMedicamento(idx)}
-                        className="col-span-2 p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-500/10 rounded flex items-center justify-center transition"
+                        onClick={() => setConfig({ ...config, tamano_hoja: 'letter' })}
+                        className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 ${
+                          config.tamano_hoja === 'letter'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'border-[var(--border-color)] text-[var(--secondary)] hover:bg-[var(--hover-bg)]'
+                        }`}
                       >
-                        <Trash2 size={15} />
+                        Carta (Letter - 21.6 x 27.9 cm)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfig({ ...config, tamano_hoja: 'a4' })}
+                        className={`p-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-2 ${
+                          config.tamano_hoja === 'a4'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                            : 'border-[var(--border-color)] text-[var(--secondary)] hover:bg-[var(--hover-bg)]'
+                        }`}
+                      >
+                        A4 (21.0 x 29.7 cm)
                       </button>
                     </div>
-                  ))}
+                  </div>
                 </div>
-              )}
+              </div>
+
+              {/* Columna Derecha: Paleta de Colores y Pie de Página */}
+              <div className="space-y-5">
+                <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-2">
+                    <Palette size={16} /> Paleta de Identidad Médica
+                  </h3>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--foreground)] block mb-2">
+                      Color Primario (Títulos, Tablas y Líneas Divisorias):
+                    </label>
+                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                      {PALETA_COLORES.map((c) => (
+                        <button
+                          key={c.hex}
+                          type="button"
+                          onClick={() => setConfig({ ...config, color_primario: c.hex })}
+                          className={`p-2 rounded-xl border flex items-center gap-2 text-[11px] font-semibold transition ${
+                            config.color_primario === c.hex
+                              ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 font-bold'
+                              : 'border-[var(--border-color)] hover:bg-[var(--hover-bg)]'
+                          }`}
+                        >
+                          <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: c.hex }} />
+                          <span className="truncate">{c.nombre}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Pie de Página y Firma */}
+                <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] space-y-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-blue-600 flex items-center gap-2">
+                    <Stethoscope size={16} /> Pie de Página y Validación Legal
+                  </h3>
+
+                  <div>
+                    <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
+                      Texto Legal al Pie:
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={config.pie_pagina}
+                      onChange={(e) => setConfig({ ...config, pie_pagina: e.target.value })}
+                      placeholder="Documento médico oficial emitido electrónicamente por Centro Visión."
+                      className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--hover-bg)]/30 text-xs text-[var(--foreground)] focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+
+                  <div className="pt-2 flex items-center justify-between border-t border-[var(--border-color)]">
+                    <div>
+                      <span className="text-xs font-medium text-[var(--foreground)] block">
+                        Mostrar Firma y Sello del Cirujano al Pie
+                      </span>
+                      <span className="text-[10px] text-[var(--secondary)]">
+                        Imprime el nombre y matrícula profesional del médico al pie del documento.
+                      </span>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={config.mostrar_firma}
+                      onChange={(e) => setConfig({ ...config, mostrar_firma: e.target.checked })}
+                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                  </div>
+                </div>
+              </div>
+            </form>
+          )}
+        </div>
+      ) : (
+        /* Pestaña: Historial de Emisiones & Reedición */
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-bold text-sm text-[var(--foreground)]">
+                Registro de Emisiones de Indicaciones Médicas
+              </h3>
+              <p className="text-xs text-[var(--secondary)]">
+                Historial de documentos generados, estados de entrega por WhatsApp y reedición clínica.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={cargarEmisiones}
+              disabled={cargandoEmisiones}
+              className="px-3 py-1.5 rounded-xl border border-[var(--border-color)] text-xs font-semibold hover:bg-[var(--hover-bg)] transition flex items-center gap-1.5"
+            >
+              {cargandoEmisiones ? <Loader2 size={13} className="animate-spin" /> : <History size={13} />}
+              <span>Actualizar Historial</span>
+            </button>
+          </div>
+
+          {cargandoEmisiones ? (
+            <div className="p-8 text-center text-xs text-[var(--secondary)] flex items-center justify-center gap-2">
+              <Loader2 size={16} className="animate-spin text-blue-600" />
+              <span>Cargando auditoría de emisiones...</span>
+            </div>
+          ) : emisiones.length === 0 ? (
+            <div className="p-8 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border-color)] rounded-xl">
+              No hay emisiones registradas en el sistema.
+            </div>
+          ) : (
+            <div className="overflow-x-auto border border-[var(--border-color)] rounded-xl">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-[var(--hover-bg)] text-[var(--secondary)] uppercase font-semibold text-[10px]">
+                  <tr>
+                    <th className="p-3">Fecha</th>
+                    <th className="p-3">Paciente</th>
+                    <th className="p-3">Médico</th>
+                    <th className="p-3">Práctica</th>
+                    <th className="p-3">WhatsApp</th>
+                    <th className="p-3 text-right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border-color)]">
+                  {emisiones.map((em) => (
+                    <tr key={em.id} className="hover:bg-[var(--hover-bg)]/40 transition">
+                      <td className="p-3 text-[var(--secondary)] whitespace-nowrap">
+                        {em.created_at ? new Date(em.created_at).toLocaleDateString() : '-'}
+                      </td>
+                      <td className="p-3 font-semibold text-[var(--foreground)]">
+                        {em.pacientes?.nombre || 'Paciente'}
+                      </td>
+                      <td className="p-3 text-[var(--secondary)]">{em.medico_nombre || '-'}</td>
+                      <td className="p-3 text-[var(--foreground)] max-w-xs truncate">{em.practica_nombre || '-'}</td>
+                      <td className="p-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            em.whatsapp_status === 'enviado'
+                              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
+                              : em.whatsapp_status === 'fallido'
+                              ? 'bg-rose-500/10 text-rose-600 border border-rose-500/30'
+                              : 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+                          }`}
+                        >
+                          {em.whatsapp_status || 'pendiente'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right space-x-2 whitespace-nowrap">
+                        {em.pdf_url && (
+                          <a
+                            href={em.pdf_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-blue-600 hover:underline font-semibold"
+                          >
+                            <Download size={12} /> PDF
+                          </a>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleAbrirReedicion(em)}
+                          className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300 hover:text-blue-600 font-semibold"
+                        >
+                          <Edit2 size={12} /> Reeditar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modal de Reedición de Emisión */}
+      {modalReedicionOpen && emisionParaReeditar && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="bg-[var(--card-bg)] border border-[var(--border-color)] w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--border-color)] pb-3">
+              <div>
+                <h3 className="font-bold text-sm text-[var(--foreground)]">
+                  Reeditar Indicación Médica Emitida
+                </h3>
+                <p className="text-[11px] text-[var(--secondary)]">
+                  {emisionParaReeditar.pacientes?.nombre} • {emisionParaReeditar.practica_nombre}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModalReedicionOpen(false)}
+                className="p-1 rounded-lg hover:bg-[var(--hover-bg)] text-[var(--secondary)]"
+              >
+                <X size={16} />
+              </button>
             </div>
 
-            {/* Cuidados Generales y Reposo */}
             <div>
               <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
-                Cuidados Generales y Reposo Postoperatorio:
+                Texto de Indicaciones Médicas:
               </label>
               <textarea
-                rows={3}
-                value={plantillaActual.cuidados_generales}
-                onChange={(e) => setPlantillaActual({ ...plantillaActual, cuidados_generales: e.target.value })}
-                placeholder="Pautas de higiene, protector ocular, actividades restringidas..."
-                className="w-full p-3 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)]"
+                rows={6}
+                value={textoReedicion}
+                onChange={(e) => setTextoReedicion(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-[var(--border-color)] bg-[var(--card-bg)] text-xs text-[var(--foreground)] font-mono focus:ring-2 focus:ring-blue-500"
               />
             </div>
 
-            {/* Pautas de Alarma */}
-            <div className="p-4 rounded-xl border border-rose-500/30 bg-rose-500/5 space-y-2">
-              <div className="flex items-center gap-1.5 text-rose-600 dark:text-rose-400">
-                <ShieldAlert size={16} />
-                <label className="text-xs font-bold">
-                  Pautas de Alarma & Urgencias (Recuadro Destacado en PDF):
-                </label>
-              </div>
-              <textarea
-                rows={2}
-                value={plantillaActual.pautas_alarma}
-                onChange={(e) => setPlantillaActual({ ...plantillaActual, pautas_alarma: e.target.value })}
-                placeholder="Síntomas que exigen consulta inmediata de guardia..."
-                className="w-full p-2.5 rounded-lg border border-rose-500/30 bg-[var(--card-bg)] text-xs text-rose-700 dark:text-rose-300 font-medium"
+            <div className="flex items-center justify-between p-3 rounded-xl bg-[var(--hover-bg)]/50 border border-[var(--border-color)]">
+              <span className="text-xs font-semibold text-[var(--foreground)]">
+                Reenviar PDF actualizado por WhatsApp al paciente
+              </span>
+              <input
+                type="checkbox"
+                checked={reenviarWaReedicion}
+                onChange={(e) => setReenviarWaReedicion(e.target.checked)}
+                className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
               />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border-color)]">
+              <button
+                type="button"
+                onClick={() => setModalReedicionOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold hover:bg-[var(--hover-bg)] text-[var(--secondary)] transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleGuardarReedicion}
+                disabled={guardandoReedicion}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50"
+              >
+                {guardandoReedicion ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>Guardar y Reemitir</span>
+              </button>
             </div>
           </div>
         </div>
