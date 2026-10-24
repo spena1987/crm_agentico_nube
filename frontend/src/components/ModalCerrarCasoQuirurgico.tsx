@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   X,
   Lock,
@@ -24,6 +24,7 @@ interface ModalCerrarCasoQuirurgicoProps {
   pacienteNombre: string
   practicaNombre: string
   numeroCirugia: number
+  tipoInicial?: 'cancelado' | 'operado'
   onCasoCerrado: (casoActualizado: any) => void
 }
 
@@ -51,14 +52,30 @@ export default function ModalCerrarCasoQuirurgico({
   pacienteNombre,
   practicaNombre,
   numeroCirugia,
+  tipoInicial = 'cancelado',
   onCasoCerrado
 }: ModalCerrarCasoQuirurgicoProps) {
   const { user } = useAuth()
-  const [tipoCierre, setTipoCierre] = useState<'cancelado' | 'operado'>('cancelado')
-  const [motivoPrincipal, setMotivoPrincipal] = useState(MOTIVOS_FRECUENTES_CANCELADO[0])
+  const [tipoCierre, setTipoCierre] = useState<'cancelado' | 'operado'>(tipoInicial)
+  const [motivoPrincipal, setMotivoPrincipal] = useState(
+    tipoInicial === 'operado' ? MOTIVOS_FRECUENTES_OPERADO[0] : MOTIVOS_FRECUENTES_CANCELADO[0]
+  )
   const [detalle, setDetalle] = useState('')
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Sincronizar dinámicamente cuando el modal se abre o cambia el tipo inicial solicitado
+  useEffect(() => {
+    if (isOpen) {
+      const inicial = tipoInicial || 'cancelado'
+      setTipoCierre(inicial)
+      setMotivoPrincipal(
+        inicial === 'operado' ? MOTIVOS_FRECUENTES_OPERADO[0] : MOTIVOS_FRECUENTES_CANCELADO[0]
+      )
+      setDetalle('')
+      setError(null)
+    }
+  }, [isOpen, tipoInicial])
 
   const nombreUsuario =
     user?.user_metadata?.full_name ||

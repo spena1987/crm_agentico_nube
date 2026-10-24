@@ -86,7 +86,7 @@ interface CasoFormularioActivoProps {
   onAbrirModalPresupuesto: (datosPractica?: { codigo: string; nombre: string; precio: number; moneda: string }) => void
   onAbrirModalWhatsApp: () => void
   onAbrirRecordatorioQx?: (ojo?: string) => void
-  onAbrirModalCierre: () => void
+  onAbrirModalCierre: (tipo?: 'cancelado' | 'operado') => void
   onEliminar: () => void
   onAprobarRechazarPresupuesto: (presupuestoId: string, nuevoEstado: 'aprobado' | 'rechazado') => Promise<void> | void
   onDesvincularPresupuesto: () => void
@@ -3994,7 +3994,7 @@ export default function CasoFormularioActivo({
         <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
           <button
             type="button"
-            onClick={onAbrirModalCierre}
+            onClick={() => onAbrirModalCierre('cancelado')}
             disabled={guardando}
             className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-red-400 border border-red-500/20 rounded-xl text-xs font-bold transition-all"
           >

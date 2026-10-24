@@ -214,6 +214,7 @@ export default function ItemCasoQuirurgicoAcordeon({
   const [mostrarModalRecordatorioQx, setMostrarModalRecordatorioQx] = useState(false)
   const [ojoParaRecordatorio, setOjoParaRecordatorio] = useState<string | undefined>(undefined)
   const [mostrarModalCierre, setMostrarModalCierre] = useState(false)
+  const [tipoCierreParaModal, setTipoCierreParaModal] = useState<'cancelado' | 'operado'>('cancelado')
   const [presupuestoParaEnviarWA, setPresupuestoParaEnviarWA] = useState<PresupuestoPaciente | null>(null)
   const [practicaParaModalPresupuesto, setPracticaParaModalPresupuesto] = useState<{
     codigo: string
@@ -634,7 +635,10 @@ export default function ItemCasoQuirurgicoAcordeon({
                 setOjoParaRecordatorio(ojo)
                 setMostrarModalRecordatorioQx(true)
               }}
-              onAbrirModalCierre={() => setMostrarModalCierre(true)}
+              onAbrirModalCierre={(tipo = 'cancelado') => {
+                setTipoCierreParaModal(tipo)
+                setMostrarModalCierre(true)
+              }}
               onEliminar={handleEliminarCaso}
               onAprobarRechazarPresupuesto={handleAprobarRechazarPresupuesto}
               onDesvincularPresupuesto={() => handleGuardarCambios({ presupuesto_id: null })}
@@ -747,6 +751,7 @@ export default function ItemCasoQuirurgicoAcordeon({
           pacienteNombre={pacienteNombre}
           practicaNombre={caso.practica_nombre}
           numeroCirugia={index + 1}
+          tipoInicial={tipoCierreParaModal}
           onCasoCerrado={(casoCerrado) => {
             onCasoActualizado(casoCerrado)
             setMostrarModalCierre(false)

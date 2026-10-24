@@ -254,6 +254,7 @@ export default function PipelineQuirurgicoPage() {
 
   const [modalCierreOpen, setModalCierreOpen] = useState(false)
   const [casoParaCierre, setCasoParaCierre] = useState<AsesoriaCasoPipeline | null>(null)
+  const [tipoCierreParaModal, setTipoCierreParaModal] = useState<'cancelado' | 'operado'>('operado')
 
   const [modalAnaliticaOpen, setModalAnaliticaOpen] = useState<boolean>(false)
   const [seguimientoAutoGlobal, setSeguimientoAutoGlobal] = useState<boolean>(true)
@@ -547,6 +548,7 @@ export default function PipelineQuirurgicoPage() {
   const handleSeleccionarEtapa = async (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => {
     if (nuevaEtapa === 'operado' || nuevaEtapa === 'cancelado') {
       setCasoParaCierre(caso)
+      setTipoCierreParaModal(nuevaEtapa)
       setModalCierreOpen(true)
       return
     }
@@ -2032,8 +2034,9 @@ export default function PipelineQuirurgicoPage() {
           pacienteNombre={casoParaCierre.pacientes?.nombre || 'Paciente'}
           practicaNombre={casoParaCierre.practica_nombre}
           numeroCirugia={1}
+          tipoInicial={tipoCierreParaModal}
           onCasoCerrado={(casoAct) => {
-            mostrarToast(`El caso fue cerrado como ${casoAct.estado}.`)
+            mostrarToast(`El caso fue cerrado como ${casoAct.estado === 'operado' ? 'Operado con Éxito' : 'Cancelado'}.`)
             fetchPipeline()
           }}
         />
