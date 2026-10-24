@@ -3,11 +3,22 @@ from app.services.indicaciones_service import resolver_plantilla_sugerida
 from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica, render_texto_variables
 
 
-def test_resolver_sugerencia_bonanno_cataratas():
+def test_resolver_sugerencia_bonanno_cataratas(monkeypatch):
     """
     Verifica que la Opción C resuelva prioritariamente la plantilla del cirujano
     cuando coincide el apellido con una técnica quirúrgica.
     """
+    mock_plantillas = [
+        {
+            "pimId": 105,
+            "pimNombre": "Indicaciones Dr. Bonanno - Cirugía de Cataratas",
+            "pimTexto": "Instilar gotas cada 4 horas..."
+        }
+    ]
+    monkeypatch.setattr(
+        "app.services.indicaciones_service.geclisa_client.listar_plantillas_indicaciones_geclisa",
+        lambda: mock_plantillas
+    )
     res = resolver_plantilla_sugerida(
         practica_nombre="Facoemulsificación de Cataratas con LIO",
         medico_nombre="Dr. Leonardo Bonanno"
@@ -54,11 +65,22 @@ def test_generar_pdf_indicacion_medica_buffer():
     assert pdf_res["pdf_bytes"].startswith(b"%PDF")
 
 
-def test_resolver_sugerencia_sin_fallback_arbitrario():
+def test_resolver_sugerencia_sin_fallback_arbitrario(monkeypatch):
     """
     Verifica que una práctica sin coincidencia ni protocolo
     NO asigne un fallback arbitrario de cataratas, sino que devuelva sugerencia=None y requiere_seleccion_manual=True.
     """
+    mock_plantillas = [
+        {
+            "pimId": 105,
+            "pimNombre": "Indicaciones Dr. Bonanno - Cirugía de Cataratas",
+            "pimTexto": "Instilar gotas cada 4 horas..."
+        }
+    ]
+    monkeypatch.setattr(
+        "app.services.indicaciones_service.geclisa_client.listar_plantillas_indicaciones_geclisa",
+        lambda: mock_plantillas
+    )
     res = resolver_plantilla_sugerida(
         practica_nombre="Inyeccion Intravitrea Desconocida Procedimiento Raro 999",
         medico_nombre="Dr. Medico Inventado 999"
