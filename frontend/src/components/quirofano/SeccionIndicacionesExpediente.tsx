@@ -225,7 +225,7 @@ export default function SeccionIndicacionesExpediente({
                 Indicaciones Médicas Quirúrgicas
               </h4>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-600/10 text-blue-600 border border-blue-600/20">
-                Opción C • Automático
+                {plantillaSeleccionada?.total_modulos > 1 ? `Modular (${plantillaSeleccionada.total_modulos} protocolos)` : 'Protocolo Activo'}
               </span>
               {geclisaImId && (
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600/10 text-emerald-600 border border-emerald-600/20 flex items-center gap-1">
@@ -234,13 +234,24 @@ export default function SeccionIndicacionesExpediente({
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-[var(--secondary)]">
+            <div className="text-[11px] text-[var(--secondary)]">
               {plantillaSeleccionada?.titulo ? (
-                <>Sugerida: <b>{plantillaSeleccionada.titulo}</b> ({plantillaSeleccionada.origen || 'Geclisa'})</>
+                <>
+                  <span>Protocolo: <b>{plantillaSeleccionada.titulo}</b></span>
+                  {plantillaSeleccionada.modulos_asignados && plantillaSeleccionada.modulos_asignados.length > 1 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {plantillaSeleccionada.modulos_asignados.map((m: any, mIdx: number) => (
+                        <span key={mIdx} className="px-1.5 py-0.2 rounded text-[10px] bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 font-bold border border-rose-200 dark:border-rose-800">
+                          #{mIdx + 1} {m.titulo}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </>
               ) : (
-                'Resuelve automáticamente protocolo de gotas y reposo por práctica y cirujano.'
+                'Protocolo de indicaciones y colirios configurado en el Nomenclador.'
               )}
-            </p>
+            </div>
           </div>
         </div>
 

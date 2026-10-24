@@ -21,6 +21,55 @@ def normalizar_texto(texto: str) -> str:
     return ''.join([c for c in nfkd if not unicodedata.combining(c)]).lower().strip()
 
 
+def importar_plantilla_geclisa_a_crm(pim_id: int) -> Dict[str, Any]:
+    """
+    Importa una plantilla de Geclisa al catálogo institucional del CRM (plantillas_indicaciones_crm).
+    Permite su posterior edición de texto, fármacos y activación/desactivación.
+    """
+    if not supabase:
+        return {"success": False, "error": "Base de datos no disponible"}
+    
+    plantillas_geclisa = geclisa_client.listar_plantillas_indicaciones_geclisa()
+    match = next((p for p in plantillas_geclisa if p.get("pimId") == pim_id), None)
+    if not match:
+        return {"success": False, "error": f"Plantilla Geclisa #{pim_id} no encontrada"}
+    
+    titulo = match.get("pimNombre") or f"Plantilla Geclisa #{pim_id}"
+    cuerpo = match.get("pimTexto") or ""
+    
+    cat = "Oftalmología"
+    norm = normalizar_texto(titulo)
+    if "catar" in norm or "faco" in norm:
+        cat = "Cataratas"
+    elif "retin" in norm or "avastin" in norm or "eylea" in norm or "inyecc" in norm:
+        cat = "Retina"
+    elif "lasik" in norm or "prk" in norm or "refractiv" in norm:
+        cat = "Refractiva"
+    elif "glaucom" in norm:
+        cat = "Glaucoma"
+    
+    tipo_fase = "prequirurgico" if "pre" in norm else "postquirurgico"
+
+    nueva_plantilla = {
+        "titulo": titulo,
+        "categoria": cat,
+        "geclisa_pim_id": pim_id,
+        "tipo_fase": tipo_fase,
+        "cuerpo_indicaciones": cuerpo,
+        "medicamentos": [],
+        "cuidados_generales": "- Uso de protector ocular transparente para dormir.\n- No refregar el ojo ni hacer esfuerzos físicos.",
+        "pautas_alarma": "Ante dolor agudo o disminución abrupta de la visión, acudir a la guardia 24 hs.",
+        "activo": True
+    }
+    
+    res = supabase.table("plantillas_indicaciones_crm").insert(nueva_plantilla).execute()
+    item = res.data[0] if res.data else nueva_plantilla
+    return {"success": True, "plantilla": item}
+
+
+
+
+
 def resolver_plantilla_sugerida(
     practica_nombre: Optional[str] = None,
     practica_codigo: Optional[str] = None,
@@ -82,6 +131,39 @@ def resolver_plantilla_sugerida(
 
     # Si la práctica tiene indicaciones HABILITADAS en el Nomenclador:
     if p_db is not None and bool(p_db.get("habilitar_indicaciones", False)):
+        from app.db import get_indicaciones_de_practica
+        indicaciones_rel = get_indicaciones_de_practica(p_db.get("id"))
+        activas_rel = [r for r in indicaciones_rel if r.get("activo") and r.get("plantillas_indicaciones_crm")]
+
+        if activas_rel:
+            plantillas_crm_lista = [r["plantillas_indicaciones_crm"] for r in activas_rel if r["plantillas_indicaciones_crm"].get("activo")]
+            if plantillas_crm_lista:
+                # Si hay una o más indicaciones modulares asignadas (1 a N):
+                todos_meds = []
+                for p in plantillas_crm_lista:
+                    for m in (p.get("medicamentos") or []):
+                        if m not in todos_meds:
+                            todos_meds.append(m)
+
+                titulos = [p.get("titulo", "") for p in plantillas_crm_lista]
+                textos = [p.get("cuerpo_indicaciones", "") for p in plantillas_crm_lista if p.get("cuerpo_indicaciones")]
+                cuidados = [p.get("cuidados_generales", "") for p in plantillas_crm_lista if p.get("cuidados_generales")]
+                alarmas = [p.get("pautas_alarma", "") for p in plantillas_crm_lista if p.get("pautas_alarma")]
+
+                plantilla_seleccionada = {
+                    "crm_plantilla_id": plantillas_crm_lista[0].get("id"),
+                    "titulo": " + ".join(titulos),
+                    "texto_indicaciones": "\n\n---\n\n".join(textos),
+                    "medicamentos": todos_meds,
+                    "cuidados_generales": "\n".join(cuidados),
+                    "pautas_alarma": "\n".join(alarmas),
+                    "config_diseno": plantillas_crm_lista[0].get("config_diseno") or {},
+                    "modulos_asignados": plantillas_crm_lista,
+                    "total_modulos": len(plantillas_crm_lista),
+                    "origen": "nomenclador_modular_1_a_n"
+                }
+                origen = "nomenclador_modular_1_a_n"
+
         # a) Verificar reglas específicas por cirujano en JSONB
         reglas_cirujano = p_db.get("indicaciones_reglas_cirujano") or {}
         if isinstance(reglas_cirujano, dict) and cirujano_tokens:

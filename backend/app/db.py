@@ -1961,6 +1961,56 @@ def get_practicas_relacionadas(
         return []
 
 
+def get_indicaciones_de_practica(practica_id: str) -> List[Dict[str, Any]]:
+    """
+    Retorna la lista ordenada de indicaciones asignadas (1 a N) a una práctica.
+    """
+    if not supabase or not practica_id:
+        return []
+    try:
+        res = (
+            supabase.table("nomenclador_practicas_indicaciones")
+            .select("id, practica_id, plantilla_indicacion_id, orden, es_obligatoria, activo, created_at, plantillas_indicaciones_crm(*)")
+            .eq("practica_id", practica_id)
+            .order("orden")
+            .execute()
+        )
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Error consultando indicaciones de práctica {practica_id}: {e}")
+        return []
+
+
+def guardar_indicaciones_de_practica(practica_id: str, asignaciones: List[Dict[str, Any]]) -> bool:
+    """
+    Reemplaza o sincroniza en bloque las indicaciones vinculadas (1 a N) para una práctica.
+    """
+    if not supabase or not practica_id:
+        return False
+    try:
+        supabase.table("nomenclador_practicas_indicaciones").delete().eq("practica_id", practica_id).execute()
+        if not asignaciones:
+            return True
+        filas = []
+        for idx, a in enumerate(asignaciones):
+            pid = a.get("plantilla_indicacion_id") or a.get("id")
+            if not pid:
+                continue
+            filas.append({
+                "practica_id": practica_id,
+                "plantilla_indicacion_id": pid,
+                "orden": a.get("orden", idx + 1),
+                "es_obligatoria": bool(a.get("es_obligatoria", True)),
+                "activo": bool(a.get("activo", True))
+            })
+        if filas:
+            supabase.table("nomenclador_practicas_indicaciones").insert(filas).execute()
+        return True
+    except Exception as e:
+        logger.error(f"Error guardando indicaciones para práctica {practica_id}: {e}")
+        return False
+
+
 def guardar_practicas_relacionadas(
     practica_origen_id: str,
     relaciones: List[Dict[str, Any]]

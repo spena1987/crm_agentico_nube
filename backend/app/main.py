@@ -3623,6 +3623,81 @@ def delete_plantilla_indicacion_crm_api(plantilla_id: str):
         logger.error(f"Error al eliminar plantilla {plantilla_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/api/indicaciones/plantillas/{plantilla_id}/toggle-activo")
+def toggle_activo_plantilla_indicacion_api(plantilla_id: str):
+    """
+    Alterna el estado activo/inactivo de una plantilla de indicación médica.
+    """
+    try:
+        if not supabase or not is_valid_uuid(plantilla_id):
+            raise HTTPException(status_code=400, detail="ID de plantilla inválido.")
+        curr = supabase.table("plantillas_indicaciones_crm").select("activo").eq("id", plantilla_id).limit(1).execute()
+        if not curr.data:
+            raise HTTPException(status_code=404, detail="Plantilla no encontrada.")
+        nuevo_estado = not curr.data[0]["activo"]
+        res = supabase.table("plantillas_indicaciones_crm").update({"activo": nuevo_estado, "updated_at": datetime.now().isoformat()}).eq("id", plantilla_id).execute()
+        return {"success": True, "activo": nuevo_estado, "plantilla": res.data[0] if res.data else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al cambiar estado de plantilla {plantilla_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/indicaciones/importar-geclisa/{pim_id}")
+def importar_plantilla_geclisa_api(pim_id: int):
+    """
+    Importa una plantilla de Geclisa (1 de las 107) a la biblioteca de plantillas del CRM.
+    """
+    try:
+        from app.services.indicaciones_service import importar_plantilla_geclisa_a_crm
+        res = importar_plantilla_geclisa_a_crm(pim_id)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Error al importar plantilla."))
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error importando plantilla Geclisa #{pim_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/nomenclador/practicas/{practica_id}/indicaciones")
+def get_practicas_indicaciones_api(practica_id: str):
+    """
+    Lista las indicaciones vinculadas (1 a N) a una práctica quirúrgica.
+    """
+    try:
+        from app.db import get_indicaciones_de_practica
+        indicaciones = get_indicaciones_de_practica(practica_id)
+        return {
+            "success": True,
+            "total": len(indicaciones),
+            "indicaciones": indicaciones
+        }
+    except Exception as e:
+        logger.error(f"Error al obtener indicaciones de práctica {practica_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/nomenclador/practicas/{practica_id}/indicaciones")
+def guardar_practicas_indicaciones_api(practica_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Guarda o actualiza en bloque las indicaciones vinculadas (1 a N) para una práctica quirúrgica.
+    """
+    try:
+        from app.db import guardar_indicaciones_de_practica
+        asignaciones = payload.get("indicaciones", [])
+        ok = guardar_indicaciones_de_practica(practica_id, asignaciones)
+        if not ok:
+            raise HTTPException(status_code=500, detail="No se pudieron guardar las indicaciones para la práctica.")
+        return {
+            "success": True,
+            "mensaje": f"Se configuraron {len(asignaciones)} indicaciones correctamente para la práctica."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al guardar asignaciones de indicaciones: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/indicaciones/resolver-sugerencia")
 def resolver_sugerencia_indicacion_api(payload: Dict[str, Any] = Body(...)):
     """

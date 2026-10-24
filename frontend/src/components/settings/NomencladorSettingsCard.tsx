@@ -147,7 +147,7 @@ interface PracticaRelacionadaItem {
 }
 
 export default function NomencladorSettingsCard() {
-  const [activeMainTab, setActiveMainTab] = useState<'catalogo' | 'preparaciones' | 'consentimientos'>('catalogo')
+  const [activeMainTab, setActiveMainTab] = useState<'catalogo' | 'preparaciones' | 'consentimientos' | 'indicaciones'>('catalogo')
 
   const [tiposGeclisa, setTiposGeclisa] = useState<GeclisaTipoNomenclador[]>([])
   const [selectedNomId, setSelectedNomId] = useState<number | ''>('')
@@ -172,6 +172,24 @@ export default function NomencladorSettingsCard() {
   const [loadingHistorial, setLoadingHistorial] = useState(false)
   const [plantillasIndicacionesGeclisa, setPlantillasIndicacionesGeclisa] = useState<any[]>([])
   const [plantillasIndicacionesCrm, setPlantillasIndicacionesCrm] = useState<any[]>([])
+  const [isIndicacionModalOpen, setIsIndicacionModalOpen] = useState(false)
+  const [isImportarGeclisaModalOpen, setIsImportarGeclisaModalOpen] = useState(false)
+  const [selectedGeclisaPimId, setSelectedGeclisaPimId] = useState<number | ''>('')
+  const [importandoGeclisa, setImportandoGeclisa] = useState(false)
+  const [savingIndicacion, setSavingIndicacion] = useState(false)
+  const [indicacionesAsignadasModal, setIndicacionesAsignadasModal] = useState<any[]>([])
+  const [loadingIndicacionesAsignadas, setLoadingIndicacionesAsignadas] = useState(false)
+  const [indicacionForm, setIndicacionForm] = useState({
+    id: '',
+    titulo: '',
+    categoria: 'Cataratas',
+    tipo_fase: 'postquirurgico' as 'prequirurgico' | 'postquirurgico' | 'ambos',
+    activo: true,
+    cuerpo_indicaciones: '',
+    medicamentos: [] as { droga: string; dosis: string; frecuencia: string; duracion: string; instrucciones: string }[],
+    cuidados_generales: '',
+    pautas_alarma: ''
+  })
 
   // Estados para Prácticas Vinculadas (Opción 1)
   const [practicasRelacionadas, setPracticasRelacionadas] = useState<PracticaRelacionadaItem[]>([])
@@ -340,6 +358,32 @@ export default function NomencladorSettingsCard() {
       console.error('Error al cargar historial de aranceles:', err)
     } finally {
       setLoadingHistorial(false)
+    }
+  }
+
+  const loadIndicacionesPractica = async (practicaId?: string) => {
+    if (!practicaId) {
+      setIndicacionesAsignadasModal([])
+      return
+    }
+    try {
+      setLoadingIndicacionesAsignadas(true)
+      const res = await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${practicaId}/indicaciones`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.indicaciones) {
+          setIndicacionesAsignadasModal(data.indicaciones)
+        } else {
+          setIndicacionesAsignadasModal([])
+        }
+      } else {
+        setIndicacionesAsignadasModal([])
+      }
+    } catch (err) {
+      console.error('Error cargando indicaciones de práctica:', err)
+      setIndicacionesAsignadasModal([])
+    } finally {
+      setLoadingIndicacionesAsignadas(false)
     }
   }
 
@@ -581,10 +625,12 @@ export default function NomencladorSettingsCard() {
       loadHistorialAranceles(item.crm_practica_id)
       loadPracticasRelacionadas(item.crm_practica_id)
       loadLiosPractica(item.crm_practica_id)
+      loadIndicacionesPractica(item.crm_practica_id)
     } else {
       setHistorialAranceles([])
       setPracticasRelacionadas([])
       loadLiosPractica()
+      setIndicacionesAsignadasModal([])
     }
     setIsModalOpen(true)
   }
@@ -628,6 +674,7 @@ export default function NomencladorSettingsCard() {
     setHistorialAranceles([])
     setPracticasRelacionadas([])
     loadLiosPractica()
+    setIndicacionesAsignadasModal([])
     setIsModalOpen(true)
   }
 
@@ -670,6 +717,7 @@ export default function NomencladorSettingsCard() {
     loadHistorialAranceles(item.id)
     loadPracticasRelacionadas(item.id)
     loadLiosPractica(item.id)
+    loadIndicacionesPractica(item.id)
     setIsModalOpen(true)
   }
 
@@ -739,8 +787,14 @@ export default function NomencladorSettingsCard() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ relaciones: practicasRelacionadas })
             })
+            // Guardar asignaciones 1 a N de Indicaciones Médicas
+            await fetch(`${API_BASE_URL}/api/nomenclador/practicas/${savedPracticaId}/indicaciones`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ indicaciones: indicacionesAsignadasModal })
+            })
           } catch (relErr) {
-            console.error('Error guardando relaciones asociadas:', relErr)
+            console.error('Error guardando relaciones asociadas o indicaciones:', relErr)
           }
         }
         setFeedback({ tipo: 'success', texto: `Práctica ${formData.codigo} configurada exitosamente con sus relaciones.` })
@@ -894,6 +948,138 @@ export default function NomencladorSettingsCard() {
     }
   }
 
+  const loadPlantillasIndicaciones = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.plantillas) {
+          setPlantillasIndicacionesCrm(data.plantillas)
+        }
+      }
+    } catch (err) {
+      console.error('Error al recargar plantillas CRM:', err)
+    }
+  }
+
+  const handleOpenCreateIndicacion = () => {
+    setIndicacionForm({
+      id: '',
+      titulo: '',
+      categoria: 'Cataratas',
+      tipo_fase: 'postquirurgico',
+      activo: true,
+      cuerpo_indicaciones: '',
+      medicamentos: [],
+      cuidados_generales: '',
+      pautas_alarma: ''
+    })
+    setIsIndicacionModalOpen(true)
+  }
+
+  const handleOpenEditIndicacion = (item: any) => {
+    setIndicacionForm({
+      id: item.id || '',
+      titulo: item.titulo || '',
+      categoria: item.categoria || 'Cataratas',
+      tipo_fase: item.tipo_fase || 'postquirurgico',
+      activo: item.activo !== false,
+      cuerpo_indicaciones: item.cuerpo_indicaciones || '',
+      medicamentos: Array.isArray(item.medicamentos) ? item.medicamentos : [],
+      cuidados_generales: item.cuidados_generales || '',
+      pautas_alarma: item.pautas_alarma || ''
+    })
+    setIsIndicacionModalOpen(true)
+  }
+
+  const handleToggleActivoIndicacion = async (plantillaId: string) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas/${plantillaId}/toggle-activo`, {
+        method: 'PATCH'
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setPlantillasIndicacionesCrm((prev) =>
+          prev.map((p) => (p.id === plantillaId ? { ...p, activo: data.activo } : p))
+        )
+        setFeedback({ tipo: 'success', texto: data.mensaje || 'Estado actualizado.' })
+      }
+    } catch (err) {
+      console.error('Error al cambiar estado activo:', err)
+      setFeedback({ tipo: 'error', texto: 'Error al cambiar estado.' })
+    }
+  }
+
+  const handleDeleteIndicacion = async (id: string, titulo?: string) => {
+    if (!confirm(`¿Eliminar la plantilla de indicación "${titulo}"?`)) return
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/plantillas/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setFeedback({ tipo: 'success', texto: 'Plantilla de indicación eliminada.' })
+        loadPlantillasIndicaciones()
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'error', texto: 'Error al eliminar plantilla.' })
+    }
+  }
+
+  const handleSaveIndicacionTemplate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!indicacionForm.titulo.trim()) {
+      setFeedback({ tipo: 'error', texto: 'El título es obligatorio.' })
+      return
+    }
+    try {
+      setSavingIndicacion(true)
+      const isEdit = !!indicacionForm.id
+      const url = isEdit
+        ? `${API_BASE_URL}/api/indicaciones/plantillas/${indicacionForm.id}`
+        : `${API_BASE_URL}/api/indicaciones/plantillas`
+      const method = isEdit ? 'PUT' : 'POST'
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(indicacionForm)
+      })
+      if (res.ok) {
+        setFeedback({ tipo: 'success', texto: isEdit ? 'Plantilla actualizada.' : 'Plantilla creada con éxito.' })
+        setIsIndicacionModalOpen(false)
+        loadPlantillasIndicaciones()
+      } else {
+        const err = await res.json()
+        setFeedback({ tipo: 'error', texto: err.detail || 'Error al guardar plantilla.' })
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'error', texto: 'Error de conexión.' })
+    } finally {
+      setSavingIndicacion(false)
+    }
+  }
+
+  const handleImportarGeclisaConfirm = async () => {
+    if (!selectedGeclisaPimId) return
+    try {
+      setImportandoGeclisa(true)
+      const res = await fetch(`${API_BASE_URL}/api/indicaciones/importar-geclisa/${selectedGeclisaPimId}`, {
+        method: 'POST'
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setFeedback({ tipo: 'success', texto: data.mensaje || 'Plantilla importada con éxito.' })
+        setIsImportarGeclisaModalOpen(false)
+        setSelectedGeclisaPimId('')
+        loadPlantillasIndicaciones()
+      } else {
+        const err = await res.json()
+        setFeedback({ tipo: 'error', texto: err.detail || 'Error al importar desde Geclisa.' })
+      }
+    } catch (err) {
+      setFeedback({ tipo: 'error', texto: 'Error de conexión al importar.' })
+    } finally {
+      setImportandoGeclisa(false)
+    }
+  }
+
   const filteredCrmPracticas = crmPracticas.filter((p) => {
     if (filtroTab === 'ARS' && p.moneda !== 'ARS') return false
     if (filtroTab === 'USD' && p.moneda !== 'USD') return false
@@ -966,6 +1152,18 @@ export default function NomencladorSettingsCard() {
           >
             <ClipboardList size={16} />
             Biblioteca de Preparaciones ({plantillasPrep.length})
+          </button>
+
+          <button
+            onClick={() => setActiveMainTab('indicaciones')}
+            className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition ${
+              activeMainTab === 'indicaciones'
+                ? 'bg-rose-600 text-white shadow-sm'
+                : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Pill size={16} />
+            Biblioteca de Indicaciones ({plantillasIndicacionesCrm.length})
           </button>
 
           <button
@@ -1457,6 +1655,105 @@ export default function NomencladorSettingsCard() {
 
                 <div className="p-3 bg-white dark:bg-slate-950 rounded-lg border border-[var(--border)] text-xs text-slate-700 dark:text-slate-300 whitespace-pre-line font-mono text-[11px]">
                   {prep.texto_indicaciones}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* VISTA 4: BIBLIOTECA DE INDICACIONES MÉDICAS & PROTOCOLOS */}
+      {/* ==================================================================== */}
+      {activeMainTab === 'indicaciones' && (
+        <div className="p-6 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <Pill className="text-rose-600" size={18} />
+                Biblioteca de Indicaciones Médicas & Protocolos ({plantillasIndicacionesCrm.length})
+              </h3>
+              <p className="text-[11px] text-slate-400">
+                Protocolos clínicos modulares, esquemas de colirios, reposo y cuidados postoperatorios para asignar dinámicamente a las prácticas.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsImportarGeclisaModalOpen(true)}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-[var(--border)]"
+              >
+                <Sparkles size={14} className="text-blue-500" /> Importar de Geclisa
+              </button>
+              <button
+                onClick={handleOpenCreateIndicacion}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+              >
+                <Plus size={14} /> Nueva Plantilla de Indicación
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {plantillasIndicacionesCrm.map((p) => (
+              <div
+                key={p.id}
+                className="p-4 bg-slate-50/60 dark:bg-slate-900/40 border border-[var(--border)] rounded-xl space-y-3 hover:border-rose-300 transition flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                          {p.categoria || 'General'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono uppercase">{p.tipo_fase || 'postquirurgico'}</span>
+                      </div>
+                      <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 mt-1">{p.titulo}</h4>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleActivoIndicacion(p.id)}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition ${
+                          p.activo !== false
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
+                        }`}
+                      >
+                        {p.activo !== false ? '✓ Habilitada' : 'Inactiva'}
+                      </button>
+                      <button
+                        onClick={() => handleOpenEditIndicacion(p)}
+                        className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                        title="Editar"
+                      >
+                        <Edit2 size={13} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteIndicacion(p.id, p.titulo)}
+                        className="p-1 text-slate-400 hover:text-red-600 rounded"
+                        title="Eliminar"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {p.medicamentos && p.medicamentos.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {p.medicamentos.map((m: any, mIdx: number) => (
+                        <span key={mIdx} className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
+                          💊 {m.droga} ({m.frecuencia})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="p-3 bg-white dark:bg-slate-950 rounded-lg border border-[var(--border)] text-xs text-slate-700 dark:text-slate-300 whitespace-pre-line font-mono text-[11px] max-h-40 overflow-y-auto">
+                    {p.cuerpo_indicaciones}
+                  </div>
                 </div>
               </div>
             ))}
@@ -2208,78 +2505,109 @@ export default function NomencladorSettingsCard() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {/* Modo de Plantilla: Geclisa vs CRM */}
-                      <div className="flex flex-wrap items-center gap-4 p-3 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl">
-                        <span className="font-bold text-slate-700 dark:text-slate-300 text-xs">Origen del Protocolo:</span>
-                        <label className="inline-flex items-center gap-2 cursor-pointer text-xs">
-                          <input
-                            type="radio"
-                            name="modo_indicaciones"
-                            value="geclisa"
-                            checked={formData.modo_indicaciones === 'geclisa'}
-                            onChange={() => setFormData({ ...formData, modo_indicaciones: 'geclisa' })}
-                            className="text-rose-600 focus:ring-rose-500"
-                          />
-                          <span className="font-medium text-slate-700 dark:text-slate-300">Catálogo de Geclisa (107 plantillas oficiales)</span>
-                        </label>
-                        <label className="inline-flex items-center gap-2 cursor-pointer text-xs">
-                          <input
-                            type="radio"
-                            name="modo_indicaciones"
-                            value="crm"
-                            checked={formData.modo_indicaciones === 'crm'}
-                            onChange={() => setFormData({ ...formData, modo_indicaciones: 'crm' })}
-                            className="text-rose-600 focus:ring-rose-500"
-                          />
-                          <span className="font-medium text-slate-700 dark:text-slate-300">Plantilla Institucional CRM</span>
-                        </label>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-bold text-slate-900 dark:text-slate-100 block text-xs">
+                            Protocolos Asignados a esta Práctica ({indicacionesAsignadasModal.filter((i) => i.activo).length})
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            Tilda una o más indicaciones médicas de la Biblioteca. Se aplicarán de forma secuencial y modular al generar el expediente.
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleOpenCreateIndicacion}
+                          className="px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-800 flex items-center gap-1"
+                        >
+                          <Plus size={12} /> Nueva Plantilla
+                        </button>
                       </div>
 
-                      {formData.modo_indicaciones === 'geclisa' ? (
-                        <div className="space-y-2">
-                          <label className="font-bold text-slate-600 dark:text-slate-300 block">
-                            Seleccionar Plantilla Oficial de Geclisa para esta Práctica:
-                          </label>
-                          <select
-                            value={formData.geclisa_pim_id_default || ''}
-                            onChange={(e) => setFormData({ ...formData, geclisa_pim_id_default: e.target.value ? Number(e.target.value) : null })}
-                            className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-rose-500"
-                          >
-                            <option value="">-- Sin plantilla predeterminada --</option>
-                            {plantillasIndicacionesGeclisa.map((p) => (
-                              <option key={p.pimId} value={p.pimId}>
-                                #{p.pimId} - {p.pimNombre}
-                              </option>
-                            ))}
-                          </select>
-                          {formData.geclisa_pim_id_default && (
-                            <div className="p-3 bg-rose-50/40 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900 rounded-xl space-y-1">
-                              <span className="font-bold text-[11px] text-rose-800 dark:text-rose-300 block">
-                                Texto oficial precargado en Geclisa:
-                              </span>
-                              <p className="text-[11px] text-slate-600 dark:text-slate-400 whitespace-pre-line max-h-32 overflow-y-auto font-mono">
-                                {plantillasIndicacionesGeclisa.find((p) => p.pimId === formData.geclisa_pim_id_default)?.pimTexto || 'Sin texto registrado.'}
-                              </p>
-                            </div>
-                          )}
+                      {plantillasIndicacionesCrm.length === 0 ? (
+                        <div className="p-4 text-center border border-dashed rounded-xl bg-slate-50 dark:bg-slate-900/30 text-xs text-slate-500">
+                          No hay plantillas creadas en la Biblioteca. Ve a la pestaña &quot;Biblioteca de Indicaciones&quot; o crea una nueva.
                         </div>
                       ) : (
-                        <div className="space-y-2">
-                          <label className="font-bold text-slate-600 dark:text-slate-300 block">
-                            Seleccionar Plantilla Institucional del CRM:
-                          </label>
-                          <select
-                            value={formData.plantilla_indicacion_id || ''}
-                            onChange={(e) => setFormData({ ...formData, plantilla_indicacion_id: e.target.value })}
-                            className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-rose-500"
-                          >
-                            <option value="">-- Sin plantilla predeterminada --</option>
-                            {plantillasIndicacionesCrm.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.titulo} ({p.categoria || 'Oftalmología'})
-                              </option>
-                            ))}
-                          </select>
+                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                          {plantillasIndicacionesCrm.map((p) => {
+                            const asignacion = indicacionesAsignadasModal.find(
+                              (i) => i.plantilla_indicacion_id === p.id
+                            )
+                            const isSelected = !!asignacion && asignacion.activo !== false
+
+                            return (
+                              <div
+                                key={p.id}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setIndicacionesAsignadasModal((prev) =>
+                                      prev.filter((i) => i.plantilla_indicacion_id !== p.id)
+                                    )
+                                  } else {
+                                    setIndicacionesAsignadasModal((prev) => [
+                                      ...prev,
+                                      {
+                                        plantilla_indicacion_id: p.id,
+                                        orden: prev.length + 1,
+                                        es_obligatoria: true,
+                                        activo: true,
+                                        plantillas_indicaciones_crm: p
+                                      }
+                                    ])
+                                  }
+                                }}
+                                className={`p-3 rounded-xl border cursor-pointer transition flex items-start gap-3 ${
+                                  isSelected
+                                    ? 'bg-rose-50/70 border-rose-400 dark:bg-rose-950/30 dark:border-rose-700 shadow-xs'
+                                    : 'bg-[var(--background)] border-[var(--border)] hover:border-slate-400 opacity-80 hover:opacity-100'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {}}
+                                  className="mt-0.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                                />
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                                        {p.titulo}
+                                      </span>
+                                      <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200">
+                                        {p.categoria || 'General'}
+                                      </span>
+                                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 uppercase">
+                                        {p.tipo_fase || 'post-qx'}
+                                      </span>
+                                    </div>
+                                    {isSelected && (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white">
+                                        Asignada #{indicacionesAsignadasModal.findIndex((i) => i.plantilla_indicacion_id === p.id) + 1}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {p.medicamentos && p.medicamentos.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {p.medicamentos.map((m: any, mIdx: number) => (
+                                        <span
+                                          key={mIdx}
+                                          className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
+                                        >
+                                          💊 {m.droga} ({m.frecuencia})
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <p className="text-[10.5px] text-slate-500 line-clamp-2 font-mono">
+                                    {p.cuerpo_indicaciones}
+                                  </p>
+                                </div>
+                              </div>
+                            )
+                          })}
                         </div>
                       )}
                     </div>
@@ -2883,6 +3211,279 @@ export default function NomencladorSettingsCard() {
       {/* ==================================================================== */}
       {/* MODAL CREAR/EDITAR PLANTILLA DE CONSENTIMIENTO */}
       {/* ==================================================================== */}
+      {/* MODAL CREAR / EDITAR PLANTILLA DE INDICACIÓN MÉDICA */}
+      {isIndicacionModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-2xl p-5 shadow-2xl max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3 shrink-0">
+              <h3 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                <Pill className="text-rose-600" size={18} />
+                {indicacionForm.id ? 'Editar Plantilla de Indicación' : 'Nueva Plantilla de Indicación'}
+              </h3>
+              <button onClick={() => setIsIndicacionModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded">
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveIndicacionTemplate} className="space-y-3.5 text-xs overflow-y-auto flex-1 pr-1 pt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-500 block mb-1">Título del Protocolo</label>
+                  <input
+                    type="text"
+                    required
+                    value={indicacionForm.titulo}
+                    onChange={(e) => setIndicacionForm({ ...indicacionForm, titulo: e.target.value })}
+                    placeholder="ej: Protocolo Cataratas - Bonanno"
+                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-rose-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-500 block mb-1">Categoría</label>
+                  <select
+                    value={indicacionForm.categoria}
+                    onChange={(e) => setIndicacionForm({ ...indicacionForm, categoria: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-rose-500"
+                  >
+                    <option value="Cataratas">Cataratas</option>
+                    <option value="Retina">Retina / Inyecciones</option>
+                    <option value="Refractiva">Refractiva (LASIK / PRK)</option>
+                    <option value="Glaucoma">Glaucoma</option>
+                    <option value="Córnea">Córnea / Crosslinking</option>
+                    <option value="General">Cuidados Generales / Reposo</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-[var(--border)]">
+                <div className="flex items-center gap-3">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">Fase Quirúrgica:</span>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="tipo_fase"
+                      value="postquirurgico"
+                      checked={indicacionForm.tipo_fase === 'postquirurgico'}
+                      onChange={() => setIndicacionForm({ ...indicacionForm, tipo_fase: 'postquirurgico' })}
+                    />
+                    <span>Postquirúrgico</span>
+                  </label>
+                  <label className="inline-flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="tipo_fase"
+                      value="prequirurgico"
+                      checked={indicacionForm.tipo_fase === 'prequirurgico'}
+                      onChange={() => setIndicacionForm({ ...indicacionForm, tipo_fase: 'prequirurgico' })}
+                    />
+                    <span>Prequirúrgico</span>
+                  </label>
+                </div>
+
+                <label className="inline-flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={indicacionForm.activo}
+                    onChange={(e) => setIndicacionForm({ ...indicacionForm, activo: e.target.checked })}
+                    className="rounded text-rose-600 focus:ring-rose-500"
+                  />
+                  <span>Habilitada</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-500 block mb-1">Cuerpo de Indicaciones Médicas (Texto Oficial)</label>
+                <textarea
+                  rows={4}
+                  required
+                  value={indicacionForm.cuerpo_indicaciones}
+                  onChange={(e) => setIndicacionForm({ ...indicacionForm, cuerpo_indicaciones: e.target.value })}
+                  placeholder="Instilar colirios según esquema. Uso de protector ocular..."
+                  className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-[11px] outline-none focus:ring-2 focus:ring-rose-500 leading-relaxed"
+                />
+              </div>
+
+              {/* Fármacos y Colirios */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-700 dark:text-slate-300">
+                    Esquema de Medicación & Colirios ({indicacionForm.medicamentos.length}):
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIndicacionForm({
+                        ...indicacionForm,
+                        medicamentos: [
+                          ...indicacionForm.medicamentos,
+                          { droga: '', dosis: '1 gota', frecuencia: 'Cada 4 horas', duracion: '7 días', instrucciones: '' }
+                        ]
+                      })
+                    }
+                    className="text-blue-600 font-bold hover:underline flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Agregar Medicamento
+                  </button>
+                </div>
+
+                {indicacionForm.medicamentos.map((m, idx) => (
+                  <div key={idx} className="p-2.5 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-[var(--border)] grid grid-cols-1 sm:grid-cols-5 gap-2 items-center">
+                    <input
+                      type="text"
+                      placeholder="Fármaco (ej: Gatimicin D)"
+                      value={m.droga}
+                      onChange={(e) => {
+                        const copy = [...indicacionForm.medicamentos]
+                        copy[idx].droga = e.target.value
+                        setIndicacionForm({ ...indicacionForm, medicamentos: copy })
+                      }}
+                      className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] font-medium text-xs sm:col-span-2"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Dosis (ej: 1 gota)"
+                      value={m.dosis}
+                      onChange={(e) => {
+                        const copy = [...indicacionForm.medicamentos]
+                        copy[idx].dosis = e.target.value
+                        setIndicacionForm({ ...indicacionForm, medicamentos: copy })
+                      }}
+                      className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] font-medium text-xs"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Frecuencia (ej: c/ 4 hs)"
+                      value={m.frecuencia}
+                      onChange={(e) => {
+                        const copy = [...indicacionForm.medicamentos]
+                        copy[idx].frecuencia = e.target.value
+                        setIndicacionForm({ ...indicacionForm, medicamentos: copy })
+                      }}
+                      className="p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] font-medium text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const copy = [...indicacionForm.medicamentos]
+                        copy.splice(idx, 1)
+                        setIndicacionForm({ ...indicacionForm, medicamentos: copy })
+                      }}
+                      className="text-red-500 hover:text-red-700 text-right p-1"
+                    >
+                      <Trash2 size={14} className="ml-auto" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-500 block mb-1">Pautas de Reposo y Cuidados</label>
+                  <textarea
+                    rows={2}
+                    value={indicacionForm.cuidados_generales}
+                    onChange={(e) => setIndicacionForm({ ...indicacionForm, cuidados_generales: e.target.value })}
+                    className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-[11px]"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-500 block mb-1">Pautas de Alarma (Guardia 24 hs)</label>
+                  <textarea
+                    rows={2}
+                    value={indicacionForm.pautas_alarma}
+                    onChange={(e) => setIndicacionForm({ ...indicacionForm, pautas_alarma: e.target.value })}
+                    className="w-full p-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => setIsIndicacionModalOpen(false)}
+                  className="px-3.5 py-2 border border-[var(--border)] rounded-xl font-bold text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingIndicacion}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+                >
+                  {savingIndicacion ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  <span>Guardar Plantilla</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL IMPORTAR DESDE GECLISA */}
+      {isImportarGeclisaModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl w-full max-w-lg p-5 shadow-2xl flex flex-col space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <h3 className="text-sm font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                <Sparkles className="text-blue-500" size={18} />
+                Importar Plantilla de Geclisa al CRM
+              </h3>
+              <button onClick={() => setIsImportarGeclisaModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 rounded">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <label className="font-bold text-slate-600 dark:text-slate-300 block">
+                Seleccionar Plantilla Oficial de Geclisa (107 disponibles):
+              </label>
+              <select
+                value={selectedGeclisaPimId}
+                onChange={(e) => setSelectedGeclisaPimId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full p-2.5 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">-- Seleccionar plantilla a importar --</option>
+                {plantillasIndicacionesGeclisa.map((p) => (
+                  <option key={p.pimId} value={p.pimId}>
+                    #{p.pimId} - {p.pimNombre}
+                  </option>
+                ))}
+              </select>
+
+              {selectedGeclisaPimId && (
+                <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl space-y-1">
+                  <span className="font-bold text-[11px] text-blue-900 dark:text-blue-200 block">
+                    Texto oficial que se importará:
+                  </span>
+                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-mono whitespace-pre-line max-h-36 overflow-y-auto">
+                    {plantillasIndicacionesGeclisa.find((p) => p.pimId === selectedGeclisaPimId)?.pimTexto || 'Sin texto.'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)] text-xs">
+              <button
+                type="button"
+                onClick={() => setIsImportarGeclisaModalOpen(false)}
+                className="px-3.5 py-2 border border-[var(--border)] rounded-xl font-bold text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleImportarGeclisaConfirm}
+                disabled={!selectedGeclisaPimId || importandoGeclisa}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold flex items-center gap-1.5 disabled:opacity-50 shadow-sm"
+              >
+                {importandoGeclisa ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                <span>Importar y Agregar a Biblioteca</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isConsentModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
           <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-5xl w-full p-5 sm:p-6 shadow-2xl space-y-4 animate-scale-in max-h-[92vh] flex flex-col">
