@@ -464,8 +464,9 @@ def emitir_indicaciones_expediente(
             alarmas_final = sug_data.get("pautas_alarma") or ""
 
     # 3. Emitir en la base de datos de GECLISA (POST /api/IndicacionesMedicas)
+    # Si la práctica tiene múltiples indicaciones configuradas (1 a N), se emite cada una por separado
     geclisa_im_id = None
-    geclisa_res = None
+    geclisa_im_ids: List[int] = []
     ficha_id_geclisa = (
         paciente.get("geclisa_ficha_id")
         or paciente.get("geclisa_paciente_id")
@@ -484,23 +485,40 @@ def emitir_indicaciones_expediente(
         except Exception as e_dni:
             logger.warning(f"No se pudo consultar ficha por DNI en Geclisa: {e_dni}")
 
-    # Si tenemos ficha y médico cirujano preId, asentamos en Geclisa
-    if ficha_id_geclisa and medico_id:
-        try:
-            geclisa_res = geclisa_client.emitir_indicacion_medica_geclisa(
-                ficha_id=int(ficha_id_geclisa),
-                pre_id=int(medico_id),
-                texto_indicacion=texto_final,
-                es_internado=False,
-                usu_alta=usu_alta,
-                os_plan=paciente_os,
-                nro_afiliado=paciente_afiliado,
-                esp_id=37 # Oftalmología en Geclisa
-            )
-            if geclisa_res.get("success"):
-                geclisa_im_id = geclisa_res.get("im_id")
-        except Exception as e_geclisa:
-            logger.error(f"Error al emitir indicación en Geclisa para expediente {asesoria_id}: {e_geclisa}")
+    items_a_emitir = list(modulos or sug_data.get("modulos_asignados") or [])
+    if not items_a_emitir:
+        partes_txt = [p.strip() for p in (texto_final or "").split("---") if p.strip()]
+        if len(partes_txt) > 1:
+            items_a_emitir = [{"cuerpo_indicaciones": p, "titulo": f"Indicación #{i+1}"} for i, p in enumerate(partes_txt)]
+        elif texto_final:
+            items_a_emitir = [{"cuerpo_indicaciones": texto_final, "titulo": practica_nombre}]
+
+    # Si tenemos ficha y médico cirujano preId, asentamos en Geclisa cada indicación por separado
+    if ficha_id_geclisa and medico_id and items_a_emitir:
+        for item in items_a_emitir:
+            mod_texto = item.get("cuerpo_indicaciones") or item.get("texto_indicaciones") or item.get("texto") or texto_final or ""
+            if not mod_texto.strip():
+                continue
+            try:
+                g_res = geclisa_client.emitir_indicacion_medica_geclisa(
+                    ficha_id=int(ficha_id_geclisa),
+                    pre_id=int(medico_id),
+                    texto_indicacion=mod_texto.strip(),
+                    es_internado=False,
+                    usu_alta=usu_alta,
+                    os_plan=paciente_os,
+                    nro_afiliado=paciente_afiliado,
+                    esp_id=37 # Oftalmología en Geclisa
+                )
+                if g_res.get("success"):
+                    single_id = g_res.get("im_id")
+                    item["geclisa_im_id"] = single_id
+                    geclisa_im_ids.append(single_id)
+            except Exception as e_geclisa:
+                logger.error(f"Error al emitir indicación individual en Geclisa para expediente {asesoria_id}: {e_geclisa}")
+
+        if geclisa_im_ids:
+            geclisa_im_id = geclisa_im_ids[0]
     else:
         logger.info(f"Emisión local en CRM (ficha Geclisa: {ficha_id_geclisa}, preId: {medico_id})")
 
@@ -520,7 +538,9 @@ def emitir_indicaciones_expediente(
         "cuidados_generales": cuidados_final or "",
         "pautas_alarma": alarmas_final or "",
         "geclisa_im_id": geclisa_im_id,
-        "modulos": modulos
+        "geclisa_im_ids": geclisa_im_ids,
+        "modulos": items_a_emitir,
+        "items": items_a_emitir
     }
     
     pdf_resultado = generar_pdf_indicacion_medica(datos_emision_pdf, guardar_en_disco=True)
@@ -644,6 +664,7 @@ def emitir_indicaciones_expediente(
         "success": True,
         "emision_id": emision_uuid,
         "geclisa_im_id": geclisa_im_id,
+        "geclisa_im_ids": geclisa_im_ids,
         "geclisa_registrado": bool(geclisa_im_id),
         "pdf_url": pdf_url,
         "whatsapp_status": whatsapp_status,

@@ -215,23 +215,27 @@ def generar_pdf_indicacion_medica(
                     "cuerpo": txt,
                     "medicamentos": meds,
                     "cuidados": cuid,
-                    "alarmas": alar
+                    "alarmas": alar,
+                    "geclisa_im_id": m.get("geclisa_im_id")
                 })
     
     # Si no se pasó lista de módulos estructurados, armar con datos_emision
     if not lista_indicaciones:
         raw_cuerpo = datos_emision.get("cuerpo_indicaciones") or datos_emision.get("texto_indicaciones") or ""
+        im_ids_list = datos_emision.get("geclisa_im_ids") or []
         # Si contiene separadores "---", dividir en hojas separadas automáticamente
         partes_texto = [p.strip() for p in raw_cuerpo.split("---") if p.strip()]
         if len(partes_texto) > 1:
             for idx, p_txt in enumerate(partes_texto):
+                m_im_id = im_ids_list[idx] if idx < len(im_ids_list) else geclisa_im_id
                 lista_indicaciones.append({
                     "titulo": f"INDICACIÓN #{idx + 1}",
                     "cuerpo": p_txt,
                     # Solo la primera lleva medicamentos/cuidados si estaban globales
                     "medicamentos": datos_emision.get("medicamentos") if idx == 0 else [],
                     "cuidados": datos_emision.get("cuidados_generales") if idx == 0 else "",
-                    "alarmas": datos_emision.get("pautas_alarma") if idx == 0 else ""
+                    "alarmas": datos_emision.get("pautas_alarma") if idx == 0 else "",
+                    "geclisa_im_id": m_im_id
                 })
         else:
             lista_indicaciones.append({
@@ -239,7 +243,8 @@ def generar_pdf_indicacion_medica(
                 "cuerpo": raw_cuerpo,
                 "medicamentos": datos_emision.get("medicamentos") or [],
                 "cuidados": datos_emision.get("cuidados_generales") or "",
-                "alarmas": datos_emision.get("pautas_alarma") or ""
+                "alarmas": datos_emision.get("pautas_alarma") or "",
+                "geclisa_im_id": geclisa_im_id
             })
 
     # Diccionario de reemplazo de variables
@@ -285,10 +290,11 @@ def generar_pdf_indicacion_medica(
 
         # 1. ENCABEZADO INSTITUCIONAL
         col_w_header = [115 if is_compact else 130, content_width - (115 if is_compact else 130)]
+        item_geclisa_id = item_ind.get("geclisa_im_id") or geclisa_im_id
         header_right = [
             Paragraph(titulo_doc, title_style),
             Paragraph(f"<b>{nombre_institucion}</b> • {subtitulo_institucion}", subtitle_style),
-            Paragraph(f"Fecha: {fecha_emision} • Hora: {hora_emision} hs" + (f" • Ref Geclisa: #{geclisa_im_id}" if geclisa_im_id else ""), subtitle_style)
+            Paragraph(f"Fecha: {fecha_emision} • Hora: {hora_emision} hs" + (f" • Ref Geclisa: #{item_geclisa_id}" if item_geclisa_id else ""), subtitle_style)
         ]
 
         header_left = []

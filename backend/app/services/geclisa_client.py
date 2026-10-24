@@ -1,6 +1,6 @@
 import os
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 import logging
 import requests
 import urllib3
@@ -2142,13 +2142,21 @@ class GeclisaClient:
                 "error": "Parámetros incompletos: se requiere ficha_id, pre_id y texto_indicacion."
             }
 
-        now_dt = datetime.now()
-        fecha_final = fecha_str or now_dt.strftime("%Y-%m-%d")
-        if "T" not in fecha_final:
-            fecha_final = f"{fecha_final}T{now_dt.strftime('%H:%M:%S')}"
+        # Zona horaria oficial de Argentina (UTC-3)
+        tz_ar = timezone(timedelta(hours=-3))
+        now_ar = datetime.now(tz_ar)
+
+        # Geclisa requiere fecha en formato 'YYYY-MM-DDT00:00:00' (a medianoche)
+        # porque el procedimiento almacenado en SQL Server toma 'hora' (ej: 1655) y se lo suma a 'fecha'.
+        # Si se envía 'fecha' con hora ya incluida, Geclisa la sumará dos veces desbordando al día siguiente.
+        if fecha_str:
+            fecha_solo_dia = str(fecha_str).split("T")[0].strip()
+            fecha_final = f"{fecha_solo_dia}T00:00:00"
+        else:
+            fecha_final = now_ar.strftime("%Y-%m-%dT00:00:00")
 
         if hora_val is None:
-            hora_val = int(now_dt.strftime("%H%M"))
+            hora_val = now_ar.hour * 100 + now_ar.minute
 
         payload = {
             "imId": None,
