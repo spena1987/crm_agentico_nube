@@ -995,13 +995,6 @@ export default function PipelineQuirurgicoPage() {
                   <span>Cancelados:</span>
                   <strong className="font-mono font-black text-white">{metricas.casos_cancelados ?? 0}</strong>
                 </div>
-                {(metricas.total_operado_ars || 0) > 0 && (
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-neutral-950 border border-amber-500/30 text-amber-300 text-[11px]">
-                    <DollarSign size={13} className="text-amber-400" />
-                    <span>Facturado:</span>
-                    <strong className="font-mono font-black">$ {(metricas.total_operado_ars ?? 0).toLocaleString('es-AR')}</strong>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -1384,12 +1377,6 @@ export default function PipelineQuirurgicoPage() {
           <div className="grid grid-cols-5 gap-3.5 min-w-[1300px] 2xl:min-w-0 items-start">
             {ETAPAS_COLUMNAS_ACTIVAS.map((col) => {
               const casosColumna = etapasActivasFiltradas[col.id] || []
-              const montoARSColumna = casosColumna
-                .filter((c) => c.moneda_extra !== 'USD')
-                .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
-              const montoUSDColumna = casosColumna
-                .filter((c) => c.moneda_extra === 'USD')
-                .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
 
               return (
                 <div
@@ -1434,18 +1421,6 @@ export default function PipelineQuirurgicoPage() {
                     </div>
                     <div className="flex items-center justify-between text-[10px] opacity-80 pt-0.5">
                       <span className="truncate">{col.subtitulo}</span>
-                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                        {montoARSColumna > 0 && (
-                          <span className="font-mono font-bold text-emerald-400">
-                            ${montoARSColumna.toLocaleString('es-AR')}
-                          </span>
-                        )}
-                        {montoUSDColumna > 0 && (
-                          <span className="font-mono font-bold text-amber-400">
-                            USD {montoUSDColumna.toLocaleString('es-AR')}
-                          </span>
-                        )}
-                      </div>
                     </div>
                   </div>
 

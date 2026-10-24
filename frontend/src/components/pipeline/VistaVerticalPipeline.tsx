@@ -166,14 +166,6 @@ export default function VistaVerticalPipeline({
         const casos = etapasActivasFiltradas[col.id] || []
         const isColapsada = !!colapsadasActivas[col.id]
 
-        const montoARS = casos
-          .filter((c) => c.moneda_extra !== 'USD')
-          .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
-
-        const montoUSD = casos
-          .filter((c) => c.moneda_extra === 'USD')
-          .reduce((acc, c) => acc + Number(c.monto_extra || 0), 0)
-
         return (
           <div
             key={col.id}
@@ -199,20 +191,6 @@ export default function VistaVerticalPipeline({
                 <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-blue-950/80 text-blue-300 border border-blue-500/30">
                   {casos.length} {casos.length === 1 ? 'cirugía' : 'cirugías'}
                 </span>
-              </div>
-
-              {/* Acumuladores de Montos por Etapa */}
-              <div className="flex items-center gap-3 font-mono text-xs">
-                {montoARS > 0 && (
-                  <span className="font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/20">
-                    ${montoARS.toLocaleString('es-AR')} ARS
-                  </span>
-                )}
-                {montoUSD > 0 && (
-                  <span className="font-bold text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/20">
-                    USD {montoUSD.toLocaleString('es-AR')}
-                  </span>
-                )}
               </div>
             </button>
 
