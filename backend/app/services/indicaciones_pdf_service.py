@@ -122,24 +122,24 @@ def generar_pdf_indicacion_medica(
     if "media" in tamano_hoja or "a5" in tamano_hoja or "horizontal" in tamano_hoja:
         # Media hoja A4 Horizontal: 21.0 cm x 14.85 cm
         page_size = (595.2756, 420.9449)
-        margin_left = 26
-        margin_right = 26
-        margin_top = 18
-        margin_bottom = 36  # Espacio reservado para pie de página fijo
+        margin_left = 24
+        margin_right = 24
+        margin_top = 12
+        margin_bottom = 26  # Espacio reservado para pie de página fijo
         is_compact = True
     elif "a4" in tamano_hoja:
         page_size = A4
         margin_left = 34
         margin_right = 34
-        margin_top = 30
-        margin_bottom = 44  # Espacio reservado para pie de página fijo
+        margin_top = 24
+        margin_bottom = 36  # Espacio reservado para pie de página fijo
         is_compact = False
     else:  # letter
         page_size = letter
         margin_left = 34
         margin_right = 34
-        margin_top = 30
-        margin_bottom = 44  # Espacio reservado para pie de página fijo
+        margin_top = 24
+        margin_bottom = 36  # Espacio reservado para pie de página fijo
         is_compact = False
 
     content_width = page_size[0] - (margin_left + margin_right)
@@ -304,18 +304,61 @@ def generar_pdf_indicacion_medica(
     logo_path = obtener_o_cachear_logo_local(cfg.get("logo_url")) if mostrar_logo else None
 
     # Función auxiliar para renderizar una página completa de indicación médica
-    def render_pagina_indicacion(item_ind: Dict[str, Any], es_ultima: bool):
+    def render_pagina_indicacion(item_ind: Dict[str, Any], es_ultima: bool, page_idx: int = 1):
         cuerpo_txt = render_texto_variables(item_ind["cuerpo"], vars_dict)
         cuid_txt = render_texto_variables(item_ind["cuidados"], vars_dict)
         alar_txt = render_texto_variables(item_ind["alarmas"], vars_dict)
         meds_list = item_ind["medicamentos"]
+
+        tiene_meds = isinstance(meds_list, list) and len(meds_list) > 0
+        tiene_cuidados = bool(cuid_txt.strip())
+        tiene_alarmas = bool(alar_txt.strip())
+        lineas_cuerpo = len([l for l in cuerpo_txt.split('\n') if l.strip()])
+
+        # Detección de alta densidad en media hoja para garantizar 1 sola hoja sin desborde
+        es_alta_densidad = is_compact and (tiene_alarmas or tiene_cuidados or tiene_meds or lineas_cuerpo > 4)
+
+        p_cuerpo_style = ParagraphStyle(
+            f'DocCuerpo_{page_idx}',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=8.5 if es_alta_densidad else (9.5 if is_compact else 10.5),
+            leading=12.2 if es_alta_densidad else (14.5 if is_compact else 16.5),
+            textColor=colors.HexColor("#1E293B")
+        )
+        p_cuerpo_bold = ParagraphStyle(
+            f'DocCuerpoBold_{page_idx}',
+            parent=styles['Normal'],
+            fontName='Helvetica-Bold',
+            fontSize=8.5 if es_alta_densidad else (9.5 if is_compact else 10.5),
+            leading=12.2 if es_alta_densidad else (14.5 if is_compact else 16.5),
+            textColor=colors.HexColor("#0F172A")
+        )
+        p_section_heading = ParagraphStyle(
+            f'SectionHeading_{page_idx}',
+            parent=styles['Heading2'],
+            fontName='Helvetica-Bold',
+            fontSize=8.0 if es_alta_densidad else (9.0 if is_compact else 10.0),
+            leading=10.5 if es_alta_densidad else (12.0 if is_compact else 13.0),
+            textColor=c_primario,
+            spaceBefore=3 if es_alta_densidad else (5 if is_compact else 8),
+            spaceAfter=2 if es_alta_densidad else (3 if is_compact else 4)
+        )
+        p_alerta_style = ParagraphStyle(
+            f'AlertaText_{page_idx}',
+            parent=styles['Normal'],
+            fontName='Helvetica',
+            fontSize=7.2 if es_alta_densidad else (8.0 if is_compact else 8.5),
+            leading=9.2 if es_alta_densidad else (10.5 if is_compact else 12.0),
+            textColor=c_alerta_texto
+        )
 
         raw_lower = cuerpo_txt.lower()
         es_orden = "solicito:" in raw_lower or "solicito " in raw_lower or "pedido" in raw_lower
         titulo_doc = cfg.get("titulo_documento") or ("ORDEN MÉDICA DE PROCEDIMIENTO" if es_orden else "INDICACIONES MÉDICAS")
 
         # 1. ENCABEZADO INSTITUCIONAL
-        col_w_header = [115 if is_compact else 130, content_width - (115 if is_compact else 130)]
+        col_w_header = [110 if is_compact else 130, content_width - (110 if is_compact else 130)]
         item_geclisa_id = item_ind.get("geclisa_im_id") or geclisa_im_id
         header_right = [
             Paragraph(titulo_doc, title_style),
@@ -326,8 +369,8 @@ def generar_pdf_indicacion_medica(
         header_left = []
         if logo_path and os.path.exists(logo_path):
             try:
-                img_w = 100 if is_compact else 115
-                img_h = 32 if is_compact else 40
+                img_w = 95 if is_compact else 115
+                img_h = 30 if is_compact else 40
                 header_left.append(RLImage(logo_path, width=img_w, height=img_h))
             except Exception:
                 header_left.append(Paragraph(f"<b>{nombre_institucion}</b>", title_style))
@@ -337,10 +380,10 @@ def generar_pdf_indicacion_medica(
         header_table = Table([[header_left, header_right]], colWidths=col_w_header)
         header_table.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 2 if is_compact else 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 1 if is_compact else 4),
         ]))
         story.append(header_table)
-        story.append(HRFlowable(width="100%", thickness=1.2, color=c_primario, spaceBefore=2 if is_compact else 4, spaceAfter=5 if is_compact else 8))
+        story.append(HRFlowable(width="100%", thickness=1.0, color=c_primario, spaceBefore=2 if is_compact else 4, spaceAfter=4 if is_compact else 8))
 
         # 2. TARJETA OFICIAL DEL PACIENTE (Ficha demográfica completa)
         col_w_card = [65, (content_width - 140) / 2, 75, (content_width - 140) / 2]
@@ -371,13 +414,13 @@ def generar_pdf_indicacion_medica(
             ('BOX', (0,0), (-1,-1), 0.75, c_borde_card),
             ('INNERGRID', (0,0), (-1,-1), 0.5, c_borde_card),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 2.5 if is_compact else 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 2.5 if is_compact else 4),
-            ('LEFTPADDING', (0,0), (-1,-1), 5),
-            ('RIGHTPADDING', (0,0), (-1,-1), 5),
+            ('TOPPADDING', (0,0), (-1,-1), 1.5 if is_compact else 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 1.5 if is_compact else 4),
+            ('LEFTPADDING', (0,0), (-1,-1), 4),
+            ('RIGHTPADDING', (0,0), (-1,-1), 4),
         ]))
         story.append(card_table)
-        story.append(Spacer(1, 6 if is_compact else 10))
+        story.append(Spacer(1, 3 if es_alta_densidad else (5 if is_compact else 8)))
 
         # 3. TEXTO DEL CUERPO DE LA INDICACIÓN / SOLICITUD
         if cuerpo_txt.strip():
@@ -386,21 +429,21 @@ def generar_pdf_indicacion_medica(
                 if p_limpio:
                     p_lower = p_limpio.lower()
                     if p_lower.startswith("solicito:") or p_lower.startswith("diagnóstico:") or p_lower.startswith("diagnostico:"):
-                        story.append(Paragraph(f"<b>{p_limpio}</b>", cuerpo_bold))
+                        story.append(Paragraph(f"<b>{p_limpio}</b>", p_cuerpo_bold))
                     else:
-                        story.append(Paragraph(p_limpio, cuerpo_style))
-                    story.append(Spacer(1, 4 if is_compact else 6))
-            story.append(Spacer(1, 6 if is_compact else 10))
+                        story.append(Paragraph(p_limpio, p_cuerpo_style))
+                    story.append(Spacer(1, 1.5 if es_alta_densidad else (3 if is_compact else 4)))
+            story.append(Spacer(1, 3 if es_alta_densidad else (5 if is_compact else 8)))
 
         # 4. ESQUEMA DE MEDICACIÓN Y COLIRIOS (SOLO SI TIENE FÁRMACOS)
         if isinstance(meds_list, list) and len(meds_list) > 0:
-            story.append(Paragraph("ESQUEMA DE MEDICACIÓN Y COLIRIOS OFTALMOLÓGICOS", section_heading))
+            story.append(Paragraph("ESQUEMA DE MEDICACIÓN Y COLIRIOS OFTALMOLÓGICOS", p_section_heading))
             headers_med = [
-                Paragraph("<b>Medicamento / Principio Activo</b>", ParagraphStyle('HM1', parent=body_bold, textColor=colors.white)),
-                Paragraph("<b>Dosis</b>", ParagraphStyle('HM2', parent=body_bold, textColor=colors.white)),
-                Paragraph("<b>Frecuencia</b>", ParagraphStyle('HM3', parent=body_bold, textColor=colors.white)),
-                Paragraph("<b>Duración</b>", ParagraphStyle('HM4', parent=body_bold, textColor=colors.white)),
-                Paragraph("<b>Instrucciones Clave</b>", ParagraphStyle('HM5', parent=body_bold, textColor=colors.white)),
+                Paragraph("<b>Medicamento / Principio Activo</b>", ParagraphStyle(f'HM1_{page_idx}', parent=body_bold, textColor=colors.white)),
+                Paragraph("<b>Dosis</b>", ParagraphStyle(f'HM2_{page_idx}', parent=body_bold, textColor=colors.white)),
+                Paragraph("<b>Frecuencia</b>", ParagraphStyle(f'HM3_{page_idx}', parent=body_bold, textColor=colors.white)),
+                Paragraph("<b>Duración</b>", ParagraphStyle(f'HM4_{page_idx}', parent=body_bold, textColor=colors.white)),
+                Paragraph("<b>Instrucciones Clave</b>", ParagraphStyle(f'HM5_{page_idx}', parent=body_bold, textColor=colors.white)),
             ]
             tabla_med_data = [headers_med]
             for m in meds_list:
@@ -425,20 +468,20 @@ def generar_pdf_indicacion_medica(
                 ('GRID', (0,0), (-1,-1), 0.5, c_borde_card),
                 ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor("#F1F5F9")]),
                 ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING', (0,0), (-1,-1), 2.5 if is_compact else 4),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 2.5 if is_compact else 4),
+                ('TOPPADDING', (0,0), (-1,-1), 2.0 if is_compact else 4),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2.0 if is_compact else 4),
                 ('LEFTPADDING', (0,0), (-1,-1), 4),
                 ('RIGHTPADDING', (0,0), (-1,-1), 4),
             ]))
             story.append(tabla_med)
-            story.append(Spacer(1, 4 if is_compact else 6))
+            story.append(Spacer(1, 3 if is_compact else 6))
 
             golden_rule_style = ParagraphStyle(
-                'GoldenRule',
+                f'GoldenRule_{page_idx}',
                 parent=styles['Normal'],
                 fontName='Helvetica',
-                fontSize=7.5 if is_compact else 8,
-                leading=9.5 if is_compact else 11,
+                fontSize=7.0 if is_compact else 8,
+                leading=9.0 if is_compact else 11,
                 textColor=colors.HexColor("#92400E")
             )
             golden_content = [
@@ -448,51 +491,51 @@ def generar_pdf_indicacion_medica(
             golden_table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#FFFBEB")),
                 ('BOX', (0,0), (-1,-1), 0.75, colors.HexColor("#F59E0B")),
-                ('TOPPADDING', (0,0), (-1,-1), 3),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+                ('TOPPADDING', (0,0), (-1,-1), 2.5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
                 ('LEFTPADDING', (0,0), (-1,-1), 6),
                 ('RIGHTPADDING', (0,0), (-1,-1), 6),
             ]))
             story.append(golden_table)
-            story.append(Spacer(1, 5 if is_compact else 8))
+            story.append(Spacer(1, 4 if is_compact else 8))
 
         # 5. PAUTAS DE REPOSO Y CUIDADOS (SOLO SI TIENE CONTENIDO)
         if cuid_txt.strip():
-            story.append(Paragraph("PAUTAS DE REPOSO Y CUIDADOS", section_heading))
+            story.append(Paragraph("PAUTAS DE REPOSO Y CUIDADOS", p_section_heading))
             for linea in cuid_txt.split('\n'):
                 linea_limpia = linea.strip()
                 if linea_limpia:
-                    story.append(Paragraph(f"• {linea_limpia.lstrip('•-* ')}", body_style))
-                    story.append(Spacer(1, 1.5))
-            story.append(Spacer(1, 4 if is_compact else 6))
+                    story.append(Paragraph(f"• {linea_limpia.lstrip('•-* ')}", p_cuerpo_style))
+                    story.append(Spacer(1, 1.2 if es_alta_densidad else 1.5))
+            story.append(Spacer(1, 2.5 if es_alta_densidad else (4 if is_compact else 6)))
 
         # 6. PAUTAS DE ALARMA (GUARDIA 24 HS) (SOLO SI TIENE CONTENIDO)
         if alar_txt.strip():
-            story.append(Paragraph("PAUTAS DE ALARMA (GUARDIA 24 HS)", section_heading))
+            story.append(Paragraph("PAUTAS DE ALARMA (GUARDIA 24 HS)", p_section_heading))
             alerta_content = [
-                Paragraph("<b>¡ATENCIÓN! SIGNOS DE ALERTA MÉDICA:</b>", ParagraphStyle('ABold', parent=alerta_style, fontName='Helvetica-Bold')),
-                Paragraph(alar_txt, alerta_style),
-                Paragraph(f"<b>Guardia Oftalmológica {nombre_institucion}:</b> Urgencias disponible las 24 horas.", alerta_style)
+                Paragraph("<b>¡ATENCIÓN! SIGNOS DE ALERTA MÉDICA:</b>", ParagraphStyle(f'ABold_{page_idx}', parent=p_alerta_style, fontName='Helvetica-Bold')),
+                Paragraph(alar_txt, p_alerta_style),
+                Paragraph(f"<b>Guardia Oftalmológica {nombre_institucion}:</b> Urgencias disponible las 24 horas.", p_alerta_style)
             ]
             alerta_table = Table([[alerta_content]], colWidths=[content_width])
             alerta_table.setStyle(TableStyle([
                 ('BACKGROUND', (0,0), (-1,-1), c_alerta_fondo),
                 ('BOX', (0,0), (-1,-1), 0.75, c_alerta_borde),
-                ('TOPPADDING', (0,0), (-1,-1), 3.5),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 3.5),
-                ('LEFTPADDING', (0,0), (-1,-1), 6),
-                ('RIGHTPADDING', (0,0), (-1,-1), 6),
+                ('TOPPADDING', (0,0), (-1,-1), 2.0 if es_alta_densidad else 3.5),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 2.0 if es_alta_densidad else 3.5),
+                ('LEFTPADDING', (0,0), (-1,-1), 5),
+                ('RIGHTPADDING', (0,0), (-1,-1), 5),
             ]))
             story.append(alerta_table)
-            story.append(Spacer(1, 6 if is_compact else 10))
+            story.append(Spacer(1, 3.5 if es_alta_densidad else (5 if is_compact else 8)))
 
         # 7. FIRMA Y SELLO DEL CIRUJANO (DESPLAZADA HACIA ABAJO Y A LA DERECHA)
         if mostrar_firma:
-            story.append(Spacer(1, 18 if is_compact else 28))
+            story.append(Spacer(1, 4 if es_alta_densidad else (16 if is_compact else 24)))
             firma_content = [
                 HRFlowable(width="85%", thickness=0.8, color=colors.HexColor("#94A3B8"), spaceBefore=2, spaceAfter=2),
-                Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle('FirmaMed', parent=subtitle_style, fontSize=8.2 if is_compact else 9, leading=10.5 if is_compact else 12, alignment=1)),
-                Paragraph(f"Especialista en Oftalmología • MP {medico_matricula or '-'}", ParagraphStyle('FirmaMP', parent=subtitle_style, fontSize=7.2 if is_compact else 8, leading=9.5 if is_compact else 11, alignment=1))
+                Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle(f'FirmaMed_{page_idx}', parent=subtitle_style, fontSize=8.0 if is_compact else 9, leading=10.0 if is_compact else 12, alignment=1)),
+                Paragraph(f"Especialista en Oftalmología • MP {medico_matricula or '-'}", ParagraphStyle(f'FirmaMP_{page_idx}', parent=subtitle_style, fontSize=7.0 if is_compact else 8, leading=9.0 if is_compact else 11, alignment=1))
             ]
             firma_table = Table([[Paragraph("", body_style), firma_content]], colWidths=[content_width * 0.58, content_width * 0.42])
             firma_table.setStyle(TableStyle([
@@ -510,7 +553,7 @@ def generar_pdf_indicacion_medica(
     # Generar cada indicación en su respectiva hoja
     total_ind = len(lista_indicaciones)
     for i, item_ind in enumerate(lista_indicaciones):
-        render_pagina_indicacion(item_ind, es_ultima=(i == total_ind - 1))
+        render_pagina_indicacion(item_ind, es_ultima=(i == total_ind - 1), page_idx=i+1)
 
     # Pie de página fijo al final de cada hoja (Pinned Footer)
     def draw_page_footer(canvas, doc_obj):
@@ -521,21 +564,21 @@ def generar_pdf_indicacion_medica(
             cur_geclisa_id = lista_indicaciones[p_num - 1].get("geclisa_im_id") or geclisa_im_id
 
         # Línea divisoria horizontal
-        y_line = 26 if is_compact else 32
+        y_line = 20 if is_compact else 28
         canvas.setStrokeColor(colors.HexColor("#CBD5E1"))
         canvas.setLineWidth(0.6)
         canvas.line(margin_left, y_line, page_size[0] - margin_right, y_line)
 
         # Texto legal institucional configurable
-        canvas.setFont('Helvetica', 6.8 if is_compact else 7.5)
+        canvas.setFont('Helvetica', 6.6 if is_compact else 7.5)
         canvas.setFillColor(colors.HexColor("#64748B"))
-        y_legal = 16 if is_compact else 21
+        y_legal = 12 if is_compact else 18
         txt_legal = pie_pagina_custom or "Documento médico oficial emitido electrónicamente por Centro Visión."
         canvas.drawString(margin_left, y_legal, txt_legal[:140])
 
         # Trazabilidad clínica y Geclisa
-        y_sub = 8 if is_compact else 11
-        canvas.setFont('Helvetica-Bold' if cur_geclisa_id else 'Helvetica', 6.5 if is_compact else 7.2)
+        y_sub = 5 if is_compact else 9
+        canvas.setFont('Helvetica-Bold' if cur_geclisa_id else 'Helvetica', 6.3 if is_compact else 7.2)
         canvas.setFillColor(colors.HexColor("#475569"))
         geclisa_txt = f" • Ref Geclisa: #{cur_geclisa_id}" if cur_geclisa_id else ""
         trazabilidad = f"ID Emisión: {emision_id[:8]}{geclisa_txt} • Validado clínicamente • Centro Visión"
@@ -543,7 +586,7 @@ def generar_pdf_indicacion_medica(
 
         # Número de página a la derecha si es multi-página
         if len(lista_indicaciones) > 1:
-            canvas.setFont('Helvetica', 6.8 if is_compact else 7.5)
+            canvas.setFont('Helvetica', 6.6 if is_compact else 7.5)
             canvas.setFillColor(colors.HexColor("#64748B"))
             canvas.drawRightString(page_size[0] - margin_right, y_sub, f"Hoja {p_num} de {len(lista_indicaciones)}")
 
