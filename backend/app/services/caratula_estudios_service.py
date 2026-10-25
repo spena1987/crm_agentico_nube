@@ -1,12 +1,14 @@
 import os
 import io
 import re
+import unicodedata
 import logging
 from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime, timezone, timedelta
 
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 import pypdf
+import reportlab
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -24,6 +26,17 @@ BANNER_LOCAL_PATH = os.path.join(
     "centrovision_banner.png"
 )
 
+STATIC_FONTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "static",
+    "fonts"
+)
+
+REPORTLAB_FONTS_DIR = os.path.join(
+    os.path.dirname(reportlab.__file__),
+    "fonts"
+)
+
 
 ARGENTINA_TZ = timezone(timedelta(hours=-3))
 
@@ -34,12 +47,50 @@ def get_argentina_now() -> datetime:
 
 
 def _load_pil_font(candidates: List[str], size: int) -> ImageFont.ImageFont:
-    """Intenta cargar la primera fuente válida en candidates o usa el fallback vectorial con tamaño explícito."""
-    for font_name in candidates:
+    """
+    Carga de forma robusta la primera fuente TrueType válida con soporte Unicode completo (Ñ, acentos, glifos).
+    Prioridades:
+      1. Fuentes estáticas locales del repositorio (backend/app/static/fonts/).
+      2. Fuentes TrueType empaquetadas en ReportLab (Vera.ttf / VeraBd.ttf).
+      3. Rutas del sistema operativo o nombres de fuentes estándar.
+      4. Fallback final vectorial.
+    """
+    is_bold = any("bold" in str(c).lower() or "bd" in str(c).lower() for c in candidates)
+
+    resolved_candidates: List[str] = []
+
+    # 1. Prioridad absoluta: fuentes estáticas del repositorio
+    primary_font_name = "DejaVuSans-Bold.ttf" if is_bold else "DejaVuSans.ttf"
+    primary_static_path = os.path.join(STATIC_FONTS_DIR, primary_font_name)
+    if os.path.exists(primary_static_path):
+        resolved_candidates.append(primary_static_path)
+
+    # 2. Respaldo secundario: fuentes TrueType empaquetadas en ReportLab
+    rl_font_name = "VeraBd.ttf" if is_bold else "Vera.ttf"
+    rl_font_path = os.path.join(REPORTLAB_FONTS_DIR, rl_font_name)
+    if os.path.exists(rl_font_path):
+        resolved_candidates.append(rl_font_path)
+
+    # 3. Candidatos explícitos solicitados por el llamador
+    for c in candidates:
+        if os.path.isabs(c):
+            if os.path.exists(c):
+                resolved_candidates.append(c)
+        else:
+            local_static = os.path.join(STATIC_FONTS_DIR, c)
+            if os.path.exists(local_static) and local_static not in resolved_candidates:
+                resolved_candidates.append(local_static)
+            rl_cand = os.path.join(REPORTLAB_FONTS_DIR, c)
+            if os.path.exists(rl_cand) and rl_cand not in resolved_candidates:
+                resolved_candidates.append(rl_cand)
+            resolved_candidates.append(c)
+
+    for font_path in resolved_candidates:
         try:
-            return ImageFont.truetype(font_name, size)
+            return ImageFont.truetype(font_path, size)
         except Exception:
             continue
+
     try:
         return ImageFont.load_default(size=size)
     except Exception:
@@ -475,29 +526,29 @@ def componer_lamina_digital_imagen(
     bar_y2 = bar_y1 + bar_h
     draw.rectangle([40, bar_y1, PAGE_W - 40, bar_y2], fill=(248, 250, 252), outline=(0, 122, 135), width=2)
 
-    tipo_estudio = (estudio.get("tipo_estudio") or "ESTUDIO OFTALMOLÓGICO").upper().strip()
-    ojo = (estudio.get("ojo") or "AO").upper().strip()
-    nombre_pac = (paciente.get("nombre") or paciente.get("nombre_completo") or "PACIENTE").upper().strip()
-    dni_pac = str(paciente.get("dni") or "N/A").strip()
+    tipo_estudio = unicodedata.normalize('NFC', (estudio.get("tipo_estudio") or "ESTUDIO OFTALMOLÓGICO").upper().strip())
+    ojo = unicodedata.normalize('NFC', (estudio.get("ojo") or "AO").upper().strip())
+    nombre_pac = unicodedata.normalize('NFC', (paciente.get("nombre") or paciente.get("nombre_completo") or "PACIENTE").upper().strip())
+    dni_pac = unicodedata.normalize('NFC', str(paciente.get("dni") or "N/A").strip())
     now_arg = get_argentina_now()
-    fecha_str = estudio.get("fecha_str") or now_arg.strftime("%d/%m/%Y")
-    hora_str = estudio.get("hora_str") or now_arg.strftime("%H:%M hs")
-    tecnico_str = (estudio.get("tecnico_nombre") or "").upper().strip()
+    fecha_str = unicodedata.normalize('NFC', estudio.get("fecha_str") or now_arg.strftime("%d/%m/%Y"))
+    hora_str = unicodedata.normalize('NFC', estudio.get("hora_str") or now_arg.strftime("%H:%M hs"))
+    tecnico_str = unicodedata.normalize('NFC', (estudio.get("tecnico_nombre") or "").upper().strip())
 
-    # Tipografía adaptativa para Windows y Linux (servidor Railway)
+    # Tipografía adaptativa con fuentes Unicode garantizadas en el repositorio
     bold_fonts = [
         "DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "VeraBd.ttf",
         "arialbd.ttf",
-        "LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+        "LiberationSans-Bold.ttf"
     ]
     reg_fonts = [
         "DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "Vera.ttf",
         "arial.ttf",
-        "LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        "LiberationSans-Regular.ttf"
     ]
     font_title = _load_pil_font(bold_fonts, 19)
     font_badge = _load_pil_font(bold_fonts, 18)
@@ -513,8 +564,8 @@ def componer_lamina_digital_imagen(
     pac_parts = [f"PACIENTE: {nombre_pac[:28]}", f"DNI: {dni_pac}"]
 
     # Cobertura médica y plan
-    cobertura = (paciente.get("obra_social") or "").strip().upper()
-    plan = (paciente.get("plan") or "").strip().upper()
+    cobertura = unicodedata.normalize('NFC', (paciente.get("obra_social") or "").strip().upper())
+    plan = unicodedata.normalize('NFC', (paciente.get("plan") or "").strip().upper())
     if cfg.get("mostrar_cobertura", True) and (cobertura or plan):
         cob_txt = f"{cobertura} ({plan})" if (cobertura and plan) else (cobertura or plan)
         pac_parts.append(f"COBERTURA: {cob_txt[:26]}")
@@ -527,7 +578,7 @@ def componer_lamina_digital_imagen(
         pac_parts.append(f"TÉC: {tecnico_str[:18]}")
 
     pac_parts.append(f"FECHA: {fecha_str} {hora_str}")
-    pac_line = "   |   ".join(pac_parts)
+    pac_line = unicodedata.normalize('NFC', "   |   ".join(pac_parts))
     draw.text((55, bar_y1 + 32), pac_line, fill=(71, 85, 105), font=font_info)
 
     # 6. Área del Estudio Diagnóstico (Ubicación continua inmediatamente después de la barra)
@@ -548,12 +599,12 @@ def componer_lamina_digital_imagen(
         sedes = cfg.get("sedes") or [
             "Mitre 540 (Ciudad)", "Roca 71 (Luján)", "Boedo 2879 (Carrodilla)"
         ]
-        foot_txt1 = f"Centrovisión  |  Urgencias: {linea_0800}  |  WhatsApp: {wa_num}  |  Sedes: {'  •  '.join(sedes)}"
-        foot_txt2 = cfg.get("texto_indicaciones") or "Presente este estudio a su médico oftalmólogo en su próxima consulta. Emitido digitalmente."
+        foot_txt1 = unicodedata.normalize('NFC', f"Centrovisión  |  Urgencias: {linea_0800}  |  WhatsApp: {wa_num}  |  Sedes: {'  •  '.join(sedes)}")
+        foot_txt2 = unicodedata.normalize('NFC', cfg.get("texto_indicaciones") or "Presente este estudio a su médico oftalmólogo en su próxima consulta. Emitido digitalmente.")
         draw.text((55, foot_y + 7), foot_txt1, fill=(100, 116, 139), font=font_footer)
         draw.text((55, foot_y + 23), foot_txt2, fill=(148, 163, 184), font=font_footer_sub)
     else:
-        pie_txt = cfg.get("pie_legal") or "Centrovisión Oftalmología Integral  •  Documento e informe técnico digital oficial"
+        pie_txt = unicodedata.normalize('NFC', cfg.get("pie_legal") or "Centrovisión Oftalmología Integral  •  Documento e informe técnico digital oficial")
         draw.text((55, foot_y + 6), pie_txt, fill=(100, 116, 139), font=font_footer)
 
     # Exportar según el formato solicitado

@@ -157,6 +157,43 @@ class TestCaratulaHibrida(unittest.TestCase):
         portada = generar_portada_pdf_a4(self.paciente, self.estudio, config=cfg_sin_sedes)
         self.assertGreater(len(portada), 1000)
 
+    def test_caracteres_especiales_espanol_sin_glifos_tofu(self):
+        from app.services.caratula_estudios_service import _load_pil_font
+        # Cargar fuentes del módulo
+        f_bold = _load_pil_font(["DejaVuSans-Bold.ttf"], 19)
+        f_reg = _load_pil_font(["DejaVuSans.ttf"], 13)
+
+        # Probar que no sea la fuente default recortada que genera rectángulos (10, 14)
+        # En la fuente completa, Ñ es más ancha que I acentuada
+        mask_enie = f_bold.getmask('Ñ')
+        mask_i_acute = f_bold.getmask('Í')
+        # Ñ (ancho ~15-16) debe ser significativamente más ancha que Í (ancho ~6-7)
+        self.assertNotEqual(mask_enie.size, (10, 14), "La fuente no debe ser el fallback ASCII mínimo de Pillow")
+        self.assertGreater(mask_enie.size[0], mask_i_acute.size[0], "Ñ debe tener un glifo más ancho que Í")
+
+        # Probar composición con nombres con acentos y eñes
+        paciente_especial = {
+            "nombre": "PEÑA, JUAN SEBASTIÁN",
+            "dni": "33516799",
+            "geclisa_ficha_id": 242646,
+            "obra_social": "MEDICINA PREPAGA - OSPÉ",
+            "plan": "PLAN ESTÁNDAR"
+        }
+        estudio_especial = {
+            "tipo_estudio": "PAQUIMETRÍA CORNEAL COMPUTARIZADA",
+            "ojo": "AO",
+            "tecnico_nombre": "TARIFEÑO, CAMILA",
+            "observaciones": "Atención oftalmológica integral"
+        }
+        img = Image.new("RGB", (640, 480), (10, 50, 90))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+
+        lamina_bytes = componer_lamina_digital_imagen(
+            buf.getvalue(), paciente_especial, estudio_especial, export_format="JPEG"
+        )
+        self.assertGreater(len(lamina_bytes), 2000)
+
 
 if __name__ == "__main__":
     unittest.main()
