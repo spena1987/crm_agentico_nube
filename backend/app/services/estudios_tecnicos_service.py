@@ -108,6 +108,25 @@ class ReintentarWhatsAppEstudioPayload(BaseModel):
     plantilla_whatsapp: Optional[str] = None
 
 
+class EditarEstudioPayload(BaseModel):
+    tipo_estudio: Optional[str] = None
+    ojo: Optional[str] = None
+    observaciones: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+    usuario_id: Optional[str] = None
+    is_admin: Optional[bool] = False
+
+
+class AnularEstudioPayload(BaseModel):
+    motivo: str
+    eliminar_de_geclisa: bool = True
+    notificar_whatsapp: bool = False
+    mensaje_whatsapp_personalizado: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+    usuario_id: Optional[str] = None
+    is_admin: Optional[bool] = False
+
+
 # =========================================================================
 # HELPERS DE PROCESAMIENTO EN MEMORIA RAM (OPTIMIZACIÓN / PDF UNIFICADO)
 # =========================================================================
@@ -1633,6 +1652,12 @@ async def reintentar_envio_whatsapp_estudio(
         raise HTTPException(status_code=404, detail="Registro de estudio no encontrado.")
 
     row = est_q.data[0]
+    if row.get("estado") == "anulado":
+        raise HTTPException(
+            status_code=400,
+            detail="No se puede reenviar por WhatsApp un estudio anulado. Debe registrar un nuevo estudio si corresponde."
+        )
+
     as_id = row.get("geclisa_as_id") or row.get("geclisa_archivo_id")
     if not as_id:
         raise HTTPException(
@@ -1713,16 +1738,269 @@ async def reintentar_envio_whatsapp_estudio(
     }
 
 
+@estudios_router.patch("/api/estudios-tecnicos/{estudio_id}/editar")
+async def editar_estudio_oftalmologico(
+    estudio_id: str,
+    payload: EditarEstudioPayload
+):
+    """
+    Permite rectificar metadatos clínicos de un estudio (Tipo, Ojo, Observaciones).
+    Aplica política RBAC Opción A: Técnicos pueden rectificar dentro de las 24 hs de creación;
+    Administradores sin límite de tiempo.
+    Guarda historial de auditoría forense en `historial_cambios`.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible.")
+
+    est_q = supabase.table("estudios_oftalmo").select("*").eq("id", estudio_id).limit(1).execute()
+    if not est_q.data or len(est_q.data) == 0:
+        raise HTTPException(status_code=404, detail="Registro de estudio no encontrado.")
+
+    row = est_q.data[0]
+    if row.get("estado") == "anulado":
+        raise HTTPException(status_code=400, detail="No se puede editar un estudio que ha sido anulado.")
+
+    # RBAC Opción A: Validar autor o admin
+    if not payload.is_admin:
+        # Validar plazo de 24 horas
+        created_at_str = row.get("created_at")
+        if created_at_str:
+            try:
+                clean_iso = created_at_str.replace("Z", "+00:00")
+                created_dt = datetime.fromisoformat(clean_iso)
+                now_utc = datetime.now(timezone.utc)
+                if (now_utc - created_dt).total_seconds() > 24 * 3600:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="El plazo de 24 hs para rectificar metadatos del estudio ha expirado. Comuníquese con un Administrador o Supervisor."
+                    )
+            except HTTPException:
+                raise
+            except Exception as dt_err:
+                logger.warning(f"Error parseando created_at ({created_at_str}): {dt_err}")
+
+        # Validar pertenencia de autor si existe usuario_id registrado
+        row_user_id = row.get("usuario_id")
+        if row_user_id and payload.usuario_id and str(row_user_id).strip() != str(payload.usuario_id).strip():
+            raise HTTPException(
+                status_code=403,
+                detail="Solo el técnico que generó el estudio o un Administrador pueden rectificar sus metadatos."
+            )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    changes = []
+
+    nuevo_tipo = (payload.tipo_estudio or "").strip()
+    if nuevo_tipo and nuevo_tipo != (row.get("tipo") or ""):
+        changes.append({
+            "campo": "tipo",
+            "anterior": row.get("tipo"),
+            "nuevo": nuevo_tipo,
+            "fecha": now_iso,
+            "usuario": payload.usuario_nombre or "Técnico"
+        })
+
+    nuevo_ojo = (payload.ojo or "").strip().upper()
+    if nuevo_ojo and nuevo_ojo != (row.get("ojo") or ""):
+        changes.append({
+            "campo": "ojo",
+            "anterior": row.get("ojo"),
+            "nuevo": nuevo_ojo,
+            "fecha": now_iso,
+            "usuario": payload.usuario_nombre or "Técnico"
+        })
+
+    if payload.observaciones is not None:
+        nueva_obs = payload.observaciones.strip()
+        obs_anterior = row.get("observaciones") or row.get("notas") or ""
+        if nueva_obs != obs_anterior:
+            changes.append({
+                "campo": "observaciones",
+                "anterior": obs_anterior,
+                "nuevo": nueva_obs,
+                "fecha": now_iso,
+                "usuario": payload.usuario_nombre or "Técnico"
+            })
+
+    if not changes:
+        return {
+            "success": True,
+            "mensaje": "No se detectaron modificaciones en los campos enviados.",
+            "estudio": row
+        }
+
+    historial_actual = row.get("historial_cambios") or []
+    if not isinstance(historial_actual, list):
+        historial_actual = []
+    historial_actual.extend(changes)
+
+    upd_data: Dict[str, Any] = {
+        "estado": "editado",
+        "editado_at": now_iso,
+        "editado_por_nombre": payload.usuario_nombre or "Técnico",
+        "editado_por_usuario_id": payload.usuario_id if payload.usuario_id else row.get("editado_por_usuario_id"),
+        "historial_cambios": historial_actual
+    }
+    if nuevo_tipo:
+        upd_data["tipo"] = nuevo_tipo
+    if nuevo_ojo:
+        upd_data["ojo"] = nuevo_ojo
+    if payload.observaciones is not None:
+        upd_data["observaciones"] = payload.observaciones.strip()
+        upd_data["notas"] = payload.observaciones.strip()
+
+    up_res = supabase.table("estudios_oftalmo").update(upd_data).eq("id", estudio_id).execute()
+    actualizado = up_res.data[0] if up_res.data else {**row, **upd_data}
+
+    log_event(
+        nivel="INFO",
+        modulo="ESTUDIOS",
+        accion="ESTUDIO_RECTIFICADO",
+        mensaje=f"Estudio {estudio_id} rectificado por {payload.usuario_nombre or 'Técnico'}",
+        detalles={"estudio_id": estudio_id, "cambios": changes, "usuario": payload.usuario_nombre}
+    )
+
+    return {
+        "success": True,
+        "mensaje": "Estudio rectificado correctamente.",
+        "estudio": actualizado,
+        "cambios_aplicados": changes
+    }
+
+
+@estudios_router.post("/api/estudios-tecnicos/{estudio_id}/anular")
+async def anular_estudio_oftalmologico(
+    estudio_id: str,
+    payload: AnularEstudioPayload
+):
+    """
+    Anula un estudio oftalmológico (Soft-delete con auditoría forense en el CRM).
+    Permite opcionalmente purgar el archivo adjunto en Geclisa para evitar errores médicos en consulta,
+    y enviar una notificación oficial de anulación al paciente vía WhatsApp Línea 2.
+    Aplica RBAC Opción A: Técnico autor o Administrador.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible.")
+
+    motivo_limpio = (payload.motivo or "").strip()
+    if len(motivo_limpio) < 3:
+        raise HTTPException(status_code=400, detail="Debe ingresar un motivo de anulación válido (mínimo 3 caracteres).")
+
+    est_q = supabase.table("estudios_oftalmo").select("*").eq("id", estudio_id).limit(1).execute()
+    if not est_q.data or len(est_q.data) == 0:
+        raise HTTPException(status_code=404, detail="Registro de estudio no encontrado.")
+
+    row = est_q.data[0]
+    if row.get("estado") == "anulado":
+        raise HTTPException(status_code=400, detail="El estudio ya se encuentra en estado anulado.")
+
+    # RBAC Opción A: Autor o Admin
+    if not payload.is_admin:
+        row_user_id = row.get("usuario_id")
+        if row_user_id and payload.usuario_id and str(row_user_id).strip() != str(payload.usuario_id).strip():
+            raise HTTPException(
+                status_code=403,
+                detail="Solo el técnico que generó el estudio o un Administrador pueden anularlo."
+            )
+
+    # 1. Purga segura en Geclisa si se solicitó y existe el archivo
+    as_id = row.get("geclisa_as_id") or row.get("geclisa_archivo_id")
+    geclisa_purgado = False
+    geclisa_error = None
+    if payload.eliminar_de_geclisa and as_id:
+        try:
+            del_res = await asyncio.to_thread(
+                geclisa_client.eliminar_archivo_historia_clinica,
+                archivo_id=int(as_id),
+                as_id=int(as_id)
+            )
+            if del_res.get("success"):
+                geclisa_purgado = True
+            else:
+                geclisa_error = del_res.get("error") or "Geclisa no confirmó la eliminación."
+                logger.warning(f"[Anular Estudio] Geclisa no eliminó archivo #{as_id}: {geclisa_error}")
+        except Exception as geclisa_exc:
+            geclisa_error = str(geclisa_exc)
+            logger.error(f"[Anular Estudio] Error eliminando archivo #{as_id} en Geclisa: {geclisa_exc}")
+
+    # 2. Notificación WhatsApp opcional de rectificación/anulación al paciente
+    wa_notificado = False
+    wa_error = None
+    dest_phone = row.get("telefono_destino")
+    if payload.notificar_whatsapp and dest_phone:
+        try:
+            phone_id, token = get_whatsapp_estudios_credentials()
+            if not phone_id or not token:
+                phone_id, token = get_whatsapp_cloud_credentials()
+            if phone_id and token:
+                pac_nombre = row.get("nombre_paciente") or "estimado/a paciente"
+                msg_text = payload.mensaje_whatsapp_personalizado or (
+                    f"⚠️ *COMUNICACIÓN OFICIAL - CENTROVISIÓN*\n\n"
+                    f"Estimado/a {pac_nombre}, le informamos que el archivo de estudio oftalmológico "
+                    f"enviado anteriormente (*{row.get('tipo', 'Estudio')} - {row.get('ojo', 'AO')}*) "
+                    f"ha sido *ANULADO* por un error administrativo y de carga.\n\n"
+                    f"Motivo: {motivo_limpio}.\n\n"
+                    f"Por favor desestime el documento recibido previamente. Nos comunicaremos a la brevedad si corresponde la emisión de un nuevo informe."
+                )
+                norm_tel = normalize_to_meta_e164(normalize_phone_number(dest_phone))
+                wa_cli = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token, line="estudios")
+                await wa_cli.send_text_message(to=norm_tel, text=msg_text)
+                wa_notificado = True
+        except Exception as wa_exc:
+            wa_error = str(wa_exc)
+            logger.warning(f"[Anular Estudio] No se pudo enviar mensaje de WhatsApp al anular: {wa_exc}")
+
+    # 3. Soft-delete con trazabilidad forense en el CRM
+    now_iso = datetime.now(timezone.utc).isoformat()
+    upd_data = {
+        "estado": "anulado",
+        "motivo_anulacion": motivo_limpio,
+        "anulado_at": now_iso,
+        "anulado_por_nombre": payload.usuario_nombre or "Técnico",
+        "anulado_por_usuario_id": payload.usuario_id if payload.usuario_id else row.get("anulado_por_usuario_id"),
+        "eliminado_geclisa": geclisa_purgado
+    }
+    up_res = supabase.table("estudios_oftalmo").update(upd_data).eq("id", estudio_id).execute()
+    actualizado = up_res.data[0] if up_res.data else {**row, **upd_data}
+
+    log_event(
+        nivel="INFO",
+        modulo="ESTUDIOS",
+        accion="ESTUDIO_ANULADO",
+        mensaje=f"Estudio {estudio_id} anulado por {payload.usuario_nombre or 'Técnico'}. Motivo: {motivo_limpio}",
+        detalles={
+            "estudio_id": estudio_id,
+            "motivo": motivo_limpio,
+            "geclisa_purgado": geclisa_purgado,
+            "geclisa_error": geclisa_error,
+            "whatsapp_notificado": wa_notificado,
+            "whatsapp_error": wa_error
+        }
+    )
+
+    return {
+        "success": True,
+        "mensaje": "Estudio anulado exitosamente.",
+        "geclisa_purgado": geclisa_purgado,
+        "geclisa_error": geclisa_error,
+        "whatsapp_notificado": wa_notificado,
+        "whatsapp_error": wa_error,
+        "estudio": actualizado
+    }
+
+
 @estudios_router.get("/api/estudios-tecnicos/historial")
 def listar_historial_estudios_enviados(
     dni: Optional[str] = Query(None),
     fecha: Optional[str] = Query(None),
     status_wa: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200)
 ):
     """
     Lista el historial de estudios oftalmológicos procesados por el equipo técnico,
-    junto con métricas operativas del día (total enviados, entregados/leídos, guardados en Geclisa, fallidos).
+    junto con métricas operativas del día (total enviados, entregados/leídos, guardados en Geclisa, fallidos, anulados).
+    Permite filtrar por estado ('todos', 'activos', 'anulados', 'editados').
     """
     if not supabase:
         raise HTTPException(status_code=500, detail="Base de datos no disponible.")
@@ -1738,11 +2016,20 @@ def listar_historial_estudios_enviados(
         if status_wa and status_wa.strip() and status_wa != "ALL":
             query = query.eq("whatsapp_status", status_wa.strip())
 
+        if estado and estado.strip() and estado.strip().lower() != "todos":
+            est_val = estado.strip().lower()
+            if est_val == "activos":
+                query = query.neq("estado", "anulado")
+            elif est_val == "anulados":
+                query = query.eq("estado", "anulado")
+            elif est_val == "editados":
+                query = query.eq("estado", "editado")
+
         res = query.limit(limit).execute()
         items = res.data or []
 
         hoy_str = date.today().isoformat()
-        hoy_q = supabase.table("estudios_oftalmo").select("id, geclisa_as_id, whatsapp_status").eq("fecha", hoy_str).not_.is_("geclisa_ficha_id", "null").execute()
+        hoy_q = supabase.table("estudios_oftalmo").select("id, geclisa_as_id, whatsapp_status, estado").eq("fecha", hoy_str).not_.is_("geclisa_ficha_id", "null").execute()
         hoy_items = hoy_q.data or []
 
         metricas = {
@@ -1750,7 +2037,8 @@ def listar_historial_estudios_enviados(
             "guardados_geclisa_hoy": sum(1 for x in hoy_items if x.get("geclisa_as_id")),
             "entregados_o_leidos_hoy": sum(1 for x in hoy_items if x.get("whatsapp_status") in ("sent", "delivered", "read")),
             "leidos_azul_hoy": sum(1 for x in hoy_items if x.get("whatsapp_status") == "read"),
-            "fallidos_hoy": sum(1 for x in hoy_items if x.get("whatsapp_status") == "failed")
+            "fallidos_hoy": sum(1 for x in hoy_items if x.get("whatsapp_status") == "failed"),
+            "anulados_hoy": sum(1 for x in hoy_items if x.get("estado") == "anulado")
         }
 
         return {
@@ -1761,6 +2049,7 @@ def listar_historial_estudios_enviados(
     except Exception as e:
         logger.error(f"[Estudios] Error listando historial de estudios: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 

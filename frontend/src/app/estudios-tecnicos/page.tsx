@@ -28,7 +28,11 @@ import {
   FolderOpen,
   RotateCcw,
   MessageSquare,
-  ChevronDown
+  ChevronDown,
+  Edit3,
+  Trash2,
+  Ban,
+  Info
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -104,6 +108,23 @@ interface EstudioHistorialItem {
   tecnico_nombre?: string | null
   tecnico_pre_id?: number | null
   created_at: string
+  estado?: 'activo' | 'editado' | 'anulado'
+  motivo_anulacion?: string | null
+  anulado_at?: string | null
+  anulado_por_nombre?: string | null
+  anulado_por_usuario_id?: string | null
+  eliminado_geclisa?: boolean
+  editado_at?: string | null
+  editado_por_nombre?: string | null
+  editado_por_usuario_id?: string | null
+  historial_cambios?: Array<{
+    campo: string
+    anterior: string | null
+    nuevo: string | null
+    fecha: string
+    usuario: string
+  }>
+  observaciones?: string | null
 }
 
 interface EstudioTemplateItem {
@@ -186,11 +207,31 @@ export default function EstudiosTecnicosPage() {
     guardados_geclisa_hoy: 0,
     entregados_o_leidos_hoy: 0,
     leidos_azul_hoy: 0,
-    fallidos_hoy: 0
+    fallidos_hoy: 0,
+    anulados_hoy: 0
   })
   const [filtroDniHistorial, setFiltroDniHistorial] = useState('')
   const [filtroStatusWa, setFiltroStatusWa] = useState('ALL')
+  const [filtroEstado, setFiltroEstado] = useState<'todos' | 'activos' | 'anulados'>('todos')
   const [cargandoHistorial, setCargandoHistorial] = useState(true)
+
+  // Estados para Edición / Rectificación
+  const [editingItem, setEditingItem] = useState<EstudioHistorialItem | null>(null)
+  const [editTipo, setEditTipo] = useState('')
+  const [editOjo, setEditOjo] = useState('AO')
+  const [editObservaciones, setEditObservaciones] = useState('')
+  const [editandoGuardando, setEditandoGuardando] = useState(false)
+
+  // Estados para Anulación y Purga Segura
+  const [anulatingItem, setAnulatingItem] = useState<EstudioHistorialItem | null>(null)
+  const [anularMotivo, setAnularMotivo] = useState('')
+  const [anularEliminarGeclisa, setAnularEliminarGeclisa] = useState(true)
+  const [anularNotificarWa, setAnularNotificarWa] = useState(false)
+  const [anularMensajeWa, setAnularMensajeWa] = useState('')
+  const [anulandoGuardando, setAnulandoGuardando] = useState(false)
+
+  // Modal para ver detalles / historial de auditoría
+  const [detalleItem, setDetalleItem] = useState<EstudioHistorialItem | null>(null)
 
   const tecnicoPreId = profile?.geclisa_pre_id || (manualPreId ? parseInt(manualPreId, 10) : null)
   const tecnicoNombre =
@@ -237,6 +278,7 @@ export default function EstudiosTecnicosPage() {
       const params = new URLSearchParams()
       if (filtroDniHistorial.trim()) params.set('dni', filtroDniHistorial.trim())
       if (filtroStatusWa !== 'ALL') params.set('status_wa', filtroStatusWa)
+      if (filtroEstado !== 'todos') params.set('estado', filtroEstado)
       params.set('limit', '50')
 
       const res = await apiFetch(`/api/estudios-tecnicos/historial?${params.toString()}`)
@@ -250,7 +292,7 @@ export default function EstudiosTecnicosPage() {
     } finally {
       setCargandoHistorial(false)
     }
-  }, [filtroDniHistorial, filtroStatusWa])
+  }, [filtroDniHistorial, filtroStatusWa, filtroEstado])
 
   useEffect(() => {
     refreshPermissions()
@@ -624,6 +666,10 @@ export default function EstudiosTecnicosPage() {
   }
 
   const handleReintentarWhatsapp = async (item: EstudioHistorialItem) => {
+    if (item.estado === 'anulado') {
+      alert('No se puede reenviar por WhatsApp un estudio anulado. Debe registrar uno nuevo si corresponde.')
+      return
+    }
     const defaultLocal = extractLocalArgentineNumber(item.telefono_destino || telefonoDestino)
     const nuevoTel = window.prompt(
       `Confirmar o corregir celular de WhatsApp para ${item.nombre_paciente} (código de área + número, sin 0 ni 15):\nEjemplo: 261 470 3230`,
@@ -665,6 +711,102 @@ export default function EstudiosTecnicosPage() {
       })
     } finally {
       setReintentandoId(null)
+    }
+  }
+
+  const handleOpenEdit = (item: EstudioHistorialItem) => {
+    if (item.estado === 'anulado') {
+      alert('No se puede rectificar un estudio que ha sido anulado.')
+      return
+    }
+    setEditingItem(item)
+    setEditTipo(item.tipo || '')
+    setEditOjo(item.ojo || 'AO')
+    setEditObservaciones(item.observaciones || '')
+  }
+
+  const handleGuardarEdicion = async () => {
+    if (!editingItem) return
+    setEditandoGuardando(true)
+    try {
+      const res = await apiFetch(`/api/estudios-tecnicos/${editingItem.id}/editar`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          tipo_estudio: editTipo.trim(),
+          ojo: editOjo.trim(),
+          observaciones: editObservaciones.trim(),
+          usuario_id: user?.id,
+          usuario_nombre: tecnicoNombre,
+          is_admin: isAdmin
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setFeedback({
+          type: 'success',
+          title: 'Estudio rectificado con éxito',
+          detail: `Se actualizaron los metadatos de ${editingItem.nombre_paciente} (${editTipo} - ${editOjo}).`
+        })
+        setEditingItem(null)
+        fetchHistorial()
+      } else {
+        alert(data.detail || data.error || 'No se pudo editar el estudio.')
+      }
+    } catch (e: any) {
+      alert(`Error al guardar cambios: ${e.message}`)
+    } finally {
+      setEditandoGuardando(false)
+    }
+  }
+
+  const handleOpenAnular = (item: EstudioHistorialItem) => {
+    if (item.estado === 'anulado') {
+      alert('Este estudio ya se encuentra en estado anulado.')
+      return
+    }
+    setAnulatingItem(item)
+    setAnularMotivo('')
+    setAnularEliminarGeclisa(Boolean(item.geclisa_as_id))
+    setAnularNotificarWa(false)
+    setAnularMensajeWa('')
+  }
+
+  const handleConfirmarAnulacion = async () => {
+    if (!anulatingItem) return
+    if (!anularMotivo.trim() || anularMotivo.trim().length < 3) {
+      alert('Debe especificar un motivo de anulación válido (mínimo 3 caracteres).')
+      return
+    }
+    setAnulandoGuardando(true)
+    try {
+      const res = await apiFetch(`/api/estudios-tecnicos/${anulatingItem.id}/anular`, {
+        method: 'POST',
+        body: JSON.stringify({
+          motivo: anularMotivo.trim(),
+          eliminar_de_geclisa: anularEliminarGeclisa,
+          notificar_whatsapp: anularNotificarWa,
+          mensaje_whatsapp_personalizado: anularMensajeWa.trim() || undefined,
+          usuario_id: user?.id,
+          usuario_nombre: tecnicoNombre,
+          is_admin: isAdmin
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setFeedback({
+          type: 'warning',
+          title: 'Estudio Anulado',
+          detail: `El estudio de ${anulatingItem.nombre_paciente} ha sido anulado.${data.geclisa_purgado ? ' Se eliminó de la Historia Clínica en Geclisa.' : ''}${data.whatsapp_notificado ? ' Se notificó al paciente por WhatsApp.' : ''}`
+        })
+        setAnulatingItem(null)
+        fetchHistorial()
+      } else {
+        alert(data.detail || data.error || 'No se pudo anular el estudio.')
+      }
+    } catch (e: any) {
+      alert(`Error al anular estudio: ${e.message}`)
+    } finally {
+      setAnulandoGuardando(false)
     }
   }
 
@@ -805,7 +947,7 @@ export default function EstudiosTecnicosPage() {
       )}
 
       {/* KPIs DEL DÍA */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
         <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs">
           <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--secondary)]">Estudios Hoy</span>
           <div className="text-2xl font-extrabold text-[var(--foreground)] mt-1">{metricas.total_hoy}</div>
@@ -828,6 +970,11 @@ export default function EstudiosTecnicosPage() {
           <span className="text-[11px] font-bold uppercase tracking-wider text-rose-500">Con Incidencia WA</span>
           <div className="text-2xl font-extrabold text-rose-500 mt-1">{metricas.fallidos_hoy}</div>
           <span className="text-[11px] text-[var(--secondary)]">Reintentables en 1 clic</span>
+        </div>
+        <div className="p-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-xs col-span-2 sm:col-span-1">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Anulados Hoy</span>
+          <div className="text-2xl font-extrabold text-slate-700 dark:text-slate-200 mt-1">{metricas.anulados_hoy}</div>
+          <span className="text-[11px] text-[var(--secondary)]">Auditoría / Purga</span>
         </div>
       </div>
 
@@ -1426,6 +1573,15 @@ export default function EstudiosTecnicosPage() {
               className="px-3 py-1.5 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)]"
             />
             <select
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value as any)}
+              className="px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)] font-medium"
+            >
+              <option value="todos">Todos los estados</option>
+              <option value="activos">Vigentes (Activos / Editados)</option>
+              <option value="anulados">Anulados (Baja)</option>
+            </select>
+            <select
               value={filtroStatusWa}
               onChange={(e) => setFiltroStatusWa(e.target.value)}
               className="px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)]"
@@ -1469,7 +1625,14 @@ export default function EstudiosTecnicosPage() {
                 </tr>
               ) : (
                 historial.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors">
+                  <tr
+                    key={item.id}
+                    className={`transition-colors ${
+                      item.estado === 'anulado'
+                        ? 'opacity-65 bg-rose-500/[0.04] hover:opacity-95'
+                        : 'hover:bg-slate-50/60 dark:hover:bg-slate-800/30'
+                    }`}
+                  >
                     <td className="py-3 px-3 whitespace-nowrap font-mono text-[11px] text-[var(--secondary)]">
                       {new Date(item.created_at).toLocaleString('es-AR', {
                         day: '2-digit',
@@ -1479,16 +1642,40 @@ export default function EstudiosTecnicosPage() {
                       })}
                     </td>
                     <td className="py-3 px-3">
-                      <p className="font-bold text-[var(--foreground)]">{item.nombre_paciente || 'Paciente'}</p>
+                      <p className={`font-bold ${item.estado === 'anulado' ? 'text-slate-500 line-through' : 'text-[var(--foreground)]'}`}>
+                        {item.nombre_paciente || 'Paciente'}
+                      </p>
                       <p className="text-[11px] font-mono text-[var(--secondary)]">
                         DNI {item.dni_paciente || '-'} • {formatPhoneDisplay(item.telefono_destino || '')}
                       </p>
                     </td>
                     <td className="py-3 px-3">
-                      <span className="font-bold text-[var(--foreground)]">{item.tipo}</span>{' '}
-                      <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 font-bold text-[10px]">
-                        {item.ojo || 'AO'}
-                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`font-bold ${item.estado === 'anulado' ? 'text-slate-500' : 'text-[var(--foreground)]'}`}>
+                          {item.tipo}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 font-bold text-[10px]">
+                          {item.ojo || 'AO'}
+                        </span>
+                        {item.estado === 'anulado' && (
+                          <span
+                            className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 font-bold text-[10px] inline-flex items-center gap-0.5"
+                            title={`Anulado por ${item.anulado_por_nombre || 'Técnico'}: ${item.motivo_anulacion || ''}`}
+                          >
+                            <Ban size={10} />
+                            Anulado
+                          </span>
+                        )}
+                        {item.estado === 'editado' && (
+                          <span
+                            className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold text-[10px] inline-flex items-center gap-0.5"
+                            title={`Rectificado por ${item.editado_por_nombre || 'Técnico'}`}
+                          >
+                            <Sparkles size={10} />
+                            Editado
+                          </span>
+                        )}
+                      </div>
                       {item.nombre_archivo && (
                         <p className="text-[10px] text-[var(--secondary)] truncate max-w-[200px]">
                           {item.nombre_archivo}
@@ -1496,7 +1683,15 @@ export default function EstudiosTecnicosPage() {
                       )}
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap">
-                      {item.geclisa_as_id ? (
+                      {item.estado === 'anulado' && item.eliminado_geclisa ? (
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 text-[11px] font-medium"
+                          title="El archivo fue purgado de la Historia Clínica en Geclisa para evitar errores diagnósticos"
+                        >
+                          <Trash2 size={12} />
+                          <span>Purgado Geclisa</span>
+                        </span>
+                      ) : item.geclisa_as_id ? (
                         <a
                           href={`${BACKEND_URL}/api/geclisa/archivos/${item.geclisa_as_id}/ver`}
                           target="_blank"
@@ -1523,18 +1718,52 @@ export default function EstudiosTecnicosPage() {
                       {item.tecnico_nombre || '-'}
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap text-right">
-                      {item.geclisa_as_id && (
-                        <button
-                          type="button"
-                          disabled={reintentandoId === item.id}
-                          onClick={() => handleReintentarWhatsapp(item)}
-                          className="px-2.5 py-1 rounded-lg border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-semibold inline-flex items-center gap-1"
-                          title="Reenviar por WhatsApp recuperando el archivo directamente desde Geclisa sin duplicarlo"
-                        >
-                          <RotateCcw size={12} className={reintentandoId === item.id ? 'animate-spin text-cyan-600' : ''} />
-                          <span>{item.whatsapp_status === 'failed' ? 'Reintentar WA' : 'Reenviar WA'}</span>
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-1.5">
+                        {item.estado !== 'anulado' && item.geclisa_as_id && (
+                          <button
+                            type="button"
+                            disabled={reintentandoId === item.id}
+                            onClick={() => handleReintentarWhatsapp(item)}
+                            className="px-2.5 py-1 rounded-lg border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-semibold inline-flex items-center gap-1"
+                            title="Reenviar por WhatsApp recuperando el archivo directamente desde Geclisa sin duplicarlo"
+                          >
+                            <RotateCcw size={12} className={reintentandoId === item.id ? 'animate-spin text-cyan-600' : ''} />
+                            <span>{item.whatsapp_status === 'failed' ? 'Reintentar WA' : 'Reenviar WA'}</span>
+                          </button>
+                        )}
+
+                        {item.estado !== 'anulado' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEdit(item)}
+                              className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] hover:text-cyan-600 transition-colors"
+                              title="Rectificar tipo de estudio, ojo u observaciones"
+                            >
+                              <Edit3 size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenAnular(item)}
+                              className="p-1.5 rounded-lg border border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                              title="Anular estudio y opcionalmente purgar de Geclisa"
+                            >
+                              <Ban size={13} />
+                            </button>
+                          </>
+                        )}
+
+                        {(item.estado === 'anulado' || (item.historial_cambios && item.historial_cambios.length > 0)) && (
+                          <button
+                            type="button"
+                            onClick={() => setDetalleItem(item)}
+                            className="p-1.5 rounded-lg border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-cyan-500 transition-colors"
+                            title="Ver auditoría y detalles de rectificación / anulación"
+                          >
+                            <Info size={13} />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -1543,6 +1772,305 @@ export default function EstudiosTecnicosPage() {
           </table>
         </div>
       </div>
+
+      {/* MODAL 1: RECTIFICACIÓN / EDICIÓN DE METADATOS */}
+      {editingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/15 text-amber-600">
+                  <Edit3 size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-[var(--foreground)]">Rectificar Metadatos de Estudio</h3>
+                  <p className="text-xs text-[var(--secondary)]">{editingItem.nombre_paciente} • DNI {editingItem.dni_paciente}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingItem(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-[var(--foreground)] mb-1">Tipo de Estudio</label>
+                <input
+                  type="text"
+                  list="presets-estudios"
+                  value={editTipo}
+                  onChange={(e) => setEditTipo(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)] text-[var(--foreground)]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[var(--foreground)] mb-1">Lateralidad / Ojo</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {['OD', 'OI', 'AO'].map((oj) => (
+                    <button
+                      key={oj}
+                      type="button"
+                      onClick={() => setEditOjo(oj)}
+                      className={`py-2 text-xs font-bold rounded-xl border transition-all ${
+                        editOjo === oj
+                          ? 'bg-cyan-500/15 border-cyan-500 text-cyan-600 dark:text-cyan-300'
+                          : 'border-[var(--border)] text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {oj === 'OD' ? 'Ojo Derecho (OD)' : oj === 'OI' ? 'Ojo Izquierdo (OI)' : 'Ambos Ojos (AO)'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[var(--foreground)] mb-1">Observaciones / Notas Clínicas</label>
+                <textarea
+                  rows={3}
+                  value={editObservaciones}
+                  onChange={(e) => setEditObservaciones(e.target.value)}
+                  placeholder="Indicaciones o aclaraciones complementarias..."
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)] text-[var(--foreground)]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={() => setEditingItem(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold border border-[var(--border)] text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={editandoGuardando || !editTipo.trim()}
+                onClick={handleGuardarEdicion}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+              >
+                {editandoGuardando ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                <span>Guardar Rectificación</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: ANULACIÓN CON PURGA SEGURA EN GECLISA */}
+      {anulatingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-rose-500/40 bg-[var(--card)] p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-rose-500/15 text-rose-600">
+                  <Ban size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-[var(--foreground)]">Anular Envío de Estudio Oftalmológico</h3>
+                  <p className="text-xs text-[var(--secondary)]">{anulatingItem.nombre_paciente} • DNI {anulatingItem.dni_paciente}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAnulatingItem(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs text-rose-800 dark:text-rose-200">
+              <p className="font-bold flex items-center gap-1.5">
+                <AlertTriangle size={14} className="text-rose-500 shrink-0" />
+                Atención: El estudio quedará registrado como ANULADO en el historial.
+              </p>
+              <p className="mt-1 opacity-90">
+                No se borrará físicamente del CRM para preservar la trazabilidad forense de la clínica.
+              </p>
+            </div>
+
+            <div className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-[var(--foreground)] mb-1">
+                  Motivo de Anulación <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={anularMotivo}
+                  onChange={(e) => setAnularMotivo(e.target.value)}
+                  placeholder="Ej: Archivo adjunto incorrecto, paciente equivocado, estudio no correspondía a esta fecha..."
+                  className="w-full px-3 py-2 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)] text-[var(--foreground)]"
+                />
+              </div>
+
+              {anulatingItem.geclisa_as_id && (
+                <label className="flex items-start gap-2.5 p-3 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/40 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={anularEliminarGeclisa}
+                    onChange={(e) => setAnularEliminarGeclisa(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-600 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div className="text-xs">
+                    <span className="font-bold text-[var(--foreground)]">
+                      Purgar archivo adjunto de Geclisa (AS #{anulatingItem.geclisa_as_id})
+                    </span>
+                    <p className="text-[11px] text-[var(--secondary)] mt-0.5">
+                      Recomendado: Elimina el archivo de la Historia Clínica del paciente en Geclisa para evitar errores diagnósticos durante la consulta médica.
+                    </p>
+                  </div>
+                </label>
+              )}
+
+              <div className="space-y-2">
+                <label className="flex items-start gap-2.5 p-3 rounded-xl border border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/40 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={anularNotificarWa}
+                    onChange={(e) => setAnularNotificarWa(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-600 text-cyan-600 focus:ring-cyan-500"
+                  />
+                  <div className="text-xs">
+                    <span className="font-bold text-[var(--foreground)]">
+                      Enviar mensaje formal de revocación por WhatsApp al paciente
+                    </span>
+                    <p className="text-[11px] text-[var(--secondary)] mt-0.5">
+                      Informa al paciente al número {formatPhoneDisplay(anulatingItem.telefono_destino)} que desestime el documento previo debido a un error administrativo.
+                    </p>
+                  </div>
+                </label>
+
+                {anularNotificarWa && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[var(--secondary)] mb-1">
+                      Mensaje personalizado (opcional, dejar en blanco para plantilla estándar):
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={anularMensajeWa}
+                      onChange={(e) => setAnularMensajeWa(e.target.value)}
+                      placeholder="Estimado/a paciente, le informamos que el archivo previo ha sido revocado..."
+                      className="w-full px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-800 border border-[var(--border)] text-[var(--foreground)]"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={() => setAnulatingItem(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold border border-[var(--border)] text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={anulandoGuardando || anularMotivo.trim().length < 3}
+                onClick={handleConfirmarAnulacion}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white flex items-center gap-1.5 shadow-sm shadow-rose-500/20 disabled:opacity-50"
+              >
+                {anulandoGuardando ? <RefreshCw size={14} className="animate-spin" /> : <Ban size={14} />}
+                <span>Confirmar Anulación</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: AUDITORÍA FORENSE Y DETALLES */}
+      {detalleItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-[var(--border)]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-600">
+                  <Info size={18} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-[var(--foreground)]">Trazabilidad y Auditoría Forense</h3>
+                  <p className="text-xs text-[var(--secondary)]">{detalleItem.nombre_paciente} • DNI {detalleItem.dni_paciente}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetalleItem(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-[var(--secondary)]">Estado actual:</span>
+                  <span className={`font-bold uppercase ${detalleItem.estado === 'anulado' ? 'text-rose-500' : detalleItem.estado === 'editado' ? 'text-amber-500' : 'text-emerald-500'}`}>
+                    {detalleItem.estado || 'activo'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--secondary)]">Técnico original:</span>
+                  <span className="font-medium text-[var(--foreground)]">{detalleItem.tecnico_nombre || '-'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[var(--secondary)]">Creado el:</span>
+                  <span className="font-mono text-[var(--foreground)]">{new Date(detalleItem.created_at).toLocaleString('es-AR')}</span>
+                </div>
+              </div>
+
+              {detalleItem.estado === 'anulado' && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 space-y-1.5">
+                  <span className="font-bold text-rose-600 dark:text-rose-400 block">Detalles de Anulación</span>
+                  <p className="text-[var(--foreground)]"><strong>Motivo:</strong> {detalleItem.motivo_anulacion || '-'}</p>
+                  <p className="text-[var(--secondary)]"><strong>Anulado por:</strong> {detalleItem.anulado_por_nombre || 'Técnico'}</p>
+                  {detalleItem.anulado_at && (
+                    <p className="text-[var(--secondary)] font-mono"><strong>Fecha anulación:</strong> {new Date(detalleItem.anulado_at).toLocaleString('es-AR')}</p>
+                  )}
+                  <p className="text-[var(--secondary)]"><strong>Archivo en Geclisa:</strong> {detalleItem.eliminado_geclisa ? 'Purgado con éxito' : 'Conservado o sin AS_ID'}</p>
+                </div>
+              )}
+
+              {detalleItem.historial_cambios && detalleItem.historial_cambios.length > 0 && (
+                <div className="space-y-2">
+                  <span className="font-bold text-[var(--foreground)] block">Historial de Rectificaciones ({detalleItem.historial_cambios.length})</span>
+                  <div className="max-h-40 overflow-y-auto space-y-1.5 pr-1">
+                    {detalleItem.historial_cambios.map((c, idx) => (
+                      <div key={idx} className="p-2 rounded-lg bg-slate-50 dark:bg-slate-800 border border-[var(--border)] text-[11px]">
+                        <div className="flex justify-between font-bold text-cyan-600 dark:text-cyan-400">
+                          <span>Campo: {c.campo.toUpperCase()}</span>
+                          <span className="font-mono text-[10px] text-[var(--secondary)]">{new Date(c.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        <div className="mt-1 text-[var(--secondary)]">
+                          <span className="line-through">{c.anterior || '(vacío)'}</span> → <span className="font-bold text-[var(--foreground)]">{c.nuevo}</span>
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-400">Por {c.usuario}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={() => setDetalleItem(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--foreground)]"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
