@@ -3822,6 +3822,8 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
         usu_alta = payload.get("usu_alta", "asesora_crm")
 
         modulos = payload.get("modulos")
+        tipo_documento = payload.get("tipo_documento")
+        titulo_documento = payload.get("titulo_documento")
         resultado = emitir_indicaciones_expediente(
             asesoria_id=asesoria_id,
             enviar_whatsapp=enviar_wa,
@@ -3830,7 +3832,9 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
             cuidados_override=cuidados_override,
             pautas_alarma_override=alarmas_override,
             usu_alta=usu_alta,
-            modulos=modulos
+            modulos=modulos,
+            tipo_documento=tipo_documento,
+            titulo_documento=titulo_documento
         )
         if not resultado.get("success"):
             raise HTTPException(status_code=400, detail=resultado.get("error", "Error al emitir indicación."))
@@ -3910,6 +3914,73 @@ def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)
         raise
     except Exception as e:
         logger.error(f"Error al reeditar indicación {emision_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/indicaciones/emisiones/{emision_id}/reenviar-whatsapp")
+def reenviar_whatsapp_indicacion_api(emision_id: str):
+    """
+    Reenvía el PDF oficial de una indicación/orden médica previamente emitida por WhatsApp al paciente.
+    """
+    try:
+        from app.services.indicaciones_service import despachar_indicacion_por_whatsapp
+        if not supabase or not is_valid_uuid(emision_id):
+            raise HTTPException(status_code=400, detail="ID de emisión inválido.")
+
+        res_em = supabase.table("emisiones_indicaciones_geclisa").select("*, pacientes(*)").eq("id", emision_id).limit(1).execute()
+        if not res_em.data or len(res_em.data) == 0:
+            raise HTTPException(status_code=404, detail="No se encontró el registro de la indicación médica.")
+
+        em = res_em.data[0]
+        pac = em.get("pacientes") or {}
+        paciente_id = em.get("paciente_id")
+        paciente_tel = pac.get("telefono")
+        paciente_nom = pac.get("nombre") or em.get("paciente_nombre") or "Paciente"
+        practica_nom = em.get("practica_nombre") or "Procedimiento Quirúrgico"
+        pdf_url = em.get("pdf_url")
+        titulo_doc = em.get("titulo_documento") or "DOCUMENTO MÉDICO OFICIAL"
+
+        if not paciente_tel:
+            raise HTTPException(status_code=400, detail="El paciente no tiene un número de WhatsApp registrado.")
+
+        backend_base = (
+            os.getenv("BACKEND_PUBLIC_URL")
+            or os.getenv("BACKEND_URL")
+            or "https://crmagenticonube-production.up.railway.app"
+        ).rstrip("/")
+        full_pdf_link = f"{backend_base}{pdf_url}"
+
+        mensaje_wa = (
+            f"📋 *{titulo_doc.upper()} - CENTRO VISIÓN*\n\n"
+            f"Estimado/a *{paciente_nom}*,\n"
+            f"Le reenviamos su documento médico oficial correspondiente a *{practica_nom}*.\n\n"
+            f"📄 *Descargue su documento aquí:*\n{full_pdf_link}\n\n"
+            f"_Centro Visión - Cuidamos su salud visual_"
+        )
+
+        st_wa, wa_send = despachar_indicacion_por_whatsapp(
+            paciente_id=paciente_id,
+            paciente_telefono=paciente_tel,
+            paciente_nombre=paciente_nom,
+            practica_nombre=practica_nom,
+            mensaje_wa=mensaje_wa,
+            pdf_url=pdf_url,
+            emision_uuid=emision_id
+        )
+
+        supabase.table("emisiones_indicaciones_geclisa").update({
+            "whatsapp_status": st_wa,
+            "whatsapp_mensaje_id": wa_send.get("messages", [{}])[0].get("id") if isinstance(wa_send, dict) and wa_send.get("messages") else None
+        }).eq("id", emision_id).execute()
+
+        return {
+            "success": True,
+            "whatsapp_status": st_wa,
+            "mensaje": "Documento reenviado por WhatsApp exitosamente." if st_wa == "enviado" else "El mensaje fue despachado o programado por WhatsApp."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reenviando indicación {emision_id} por WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

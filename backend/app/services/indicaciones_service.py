@@ -403,7 +403,9 @@ def emitir_indicaciones_expediente(
     cuidados_override: Optional[str] = None,
     pautas_alarma_override: Optional[str] = None,
     usu_alta: str = "asesora_crm",
-    modulos: Optional[List[Dict[str, Any]]] = None
+    modulos: Optional[List[Dict[str, Any]]] = None,
+    tipo_documento: Optional[str] = None,
+    titulo_documento: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Proceso central de Emisión de Indicaciones Médicas:
@@ -523,6 +525,32 @@ def emitir_indicaciones_expediente(
     else:
         logger.info(f"Emisión local en CRM (ficha Geclisa: {ficha_id_geclisa}, preId: {medico_id})")
 
+    # Resolver tipo_documento y titulo_documento
+    txt_low = str(texto_final or "").lower()
+    if not tipo_documento:
+        if "certifico" in txt_low or "certificado" in txt_low:
+            tipo_documento = "certificado"
+            titulo_documento = titulo_documento or "CERTIFICADO MÉDICO"
+        elif "solicito:" in txt_low or "solicito " in txt_low or "orden medica" in txt_low or "orden médica" in txt_low or "pedido" in txt_low:
+            tipo_documento = "orden_medica"
+            titulo_documento = titulo_documento or "ORDEN MÉDICA DE PROCEDIMIENTO"
+        elif "ayuno" in txt_low or "preoperatori" in txt_low or "prequirurgic" in txt_low:
+            tipo_documento = "prequirurgico"
+            titulo_documento = titulo_documento or "INDICACIONES PREQUIRÚRGICAS"
+        else:
+            tipo_documento = "postquirurgico"
+            titulo_documento = titulo_documento or "INDICACIONES POSTQUIRÚRGICAS"
+    else:
+        if not titulo_documento:
+            if tipo_documento == "certificado":
+                titulo_documento = "CERTIFICADO MÉDICO"
+            elif tipo_documento == "orden_medica":
+                titulo_documento = "ORDEN MÉDICA DE PROCEDIMIENTO"
+            elif tipo_documento == "prequirurgico":
+                titulo_documento = "INDICACIONES PREQUIRÚRGICAS"
+            else:
+                titulo_documento = "INDICACIONES POSTQUIRÚRGICAS"
+
     # 4. Generar el PDF Institucional con ReportLab
     datos_emision_pdf = {
         "paciente_nombre": paciente_nombre,
@@ -542,7 +570,9 @@ def emitir_indicaciones_expediente(
         "geclisa_im_id": geclisa_im_id,
         "geclisa_im_ids": geclisa_im_ids,
         "modulos": items_a_emitir,
-        "items": items_a_emitir
+        "items": items_a_emitir,
+        "titulo_documento": titulo_documento,
+        "tipo_documento": tipo_documento
     }
     
     pdf_resultado = generar_pdf_indicacion_medica(datos_emision_pdf, guardar_en_disco=True)
@@ -563,6 +593,8 @@ def emitir_indicaciones_expediente(
             "medico_matricula": medico_matricula,
             "practica_codigo": practica_codigo,
             "practica_nombre": practica_nombre,
+            "tipo_documento": tipo_documento,
+            "titulo_documento": titulo_documento,
             "texto_indicaciones": texto_final,
             "pdf_path": pdf_path,
             "pdf_url": pdf_url,
@@ -594,16 +626,28 @@ def emitir_indicaciones_expediente(
             ojo_actual = asesoria.get("ojo") or "OD"
             ojo_str = "👁️ *OJO DERECHO*" if "OD" in str(ojo_actual).upper() else "👁️ *OJO IZQUIERDO*" if "OI" in str(ojo_actual).upper() else f"👁️ *{ojo_actual}*"
 
-            txt_low = str(texto_final or "").lower()
-            es_orden_detectada = (
-                "solicito:" in txt_low
-                or "solicito " in txt_low
-                or "orden medica" in txt_low
-                or "orden médica" in txt_low
-                or "pedido" in txt_low
-            )
-
-            if es_orden_detectada:
+            if tipo_documento == "certificado":
+                mensaje_wa = (
+                    f"📄 *CERTIFICADO MÉDICO OFICIAL - CENTRO VISIÓN*\n\n"
+                    f"Estimado/a *{paciente_nombre}*,\n"
+                    f"Le acercamos su certificado médico oficial emitido por el *{medico_nombre}*.\n\n"
+                    f"• *Procedimiento:* {practica_nombre}\n\n"
+                    f"📥 *Descargue su certificado oficial aquí:*\n{full_pdf_link}\n\n"
+                    f"_Centro Visión - Cuidamos su salud visual_"
+                )
+            elif tipo_documento == "prequirurgico":
+                mensaje_wa = (
+                    f"📋 *INDICACIONES PREQUIRÚRGICAS - CENTRO VISIÓN*\n\n"
+                    f"Estimado/a *{paciente_nombre}*,\n"
+                    f"Le acercamos las pautas e indicaciones prequirúrgicas correspondientes a *{practica_nombre}*, "
+                    f"indicadas por el *{medico_nombre}*.\n\n"
+                    f"• *Procedimiento:* {practica_nombre}\n"
+                    f"• *Intervención:* {ojo_str}\n\n"
+                    f"📥 *Descargue sus indicaciones prequirúrgicas aquí:*\n{full_pdf_link}\n\n"
+                    f"📌 *Recuerde:* Concurrir en ayunas y con acompañante mayor de edad.\n\n"
+                    f"_Centro Visión - Cuidamos su salud visual_"
+                )
+            elif tipo_documento == "orden_medica":
                 mensaje_wa = (
                     f"📋 *ORDEN MÉDICA OFICIAL - CENTRO VISIÓN*\n\n"
                     f"Estimado/a *{paciente_nombre}*,\n"

@@ -355,7 +355,13 @@ def generar_pdf_indicacion_medica(
 
         raw_lower = cuerpo_txt.lower()
         es_orden = "solicito:" in raw_lower or "solicito " in raw_lower or "pedido" in raw_lower
-        titulo_doc = cfg.get("titulo_documento") or ("ORDEN MÉDICA DE PROCEDIMIENTO" if es_orden else "INDICACIONES MÉDICAS")
+        titulo_doc = (
+            item_ind.get("titulo_documento")
+            or datos_emision.get("titulo_documento")
+            or (item_ind.get("titulo") if item_ind.get("titulo") and item_ind.get("titulo") != "INDICACIÓN MÉDICA" else None)
+            or cfg.get("titulo_documento")
+            or ("ORDEN MÉDICA DE PROCEDIMIENTO" if es_orden else "INDICACIONES MÉDICAS")
+        )
 
         # 1. ENCABEZADO INSTITUCIONAL
         col_w_header = [110 if is_compact else 130, content_width - (110 if is_compact else 130)]

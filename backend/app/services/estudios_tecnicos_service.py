@@ -12,7 +12,7 @@ import os
 import re
 import asyncio
 import logging
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Body, Request
@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from app.db import supabase, get_paciente_by_dni, get_paciente_by_geclisa_id
 from app.services.geclisa_client import GeclisaClient
+from app.services.caratula_estudios_service import get_argentina_now, ARGENTINA_TZ
 from app.services.phone_normalizer import normalize_phone_number, format_phone_display
 from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
 from app.services.whatsapp_cloud.client import (
@@ -1252,7 +1253,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
                 "ficha_id": geclisa_ficha_id,
                 "geclisa_ficha_id": geclisa_ficha_id
             }
-            now_mza = datetime.now(timezone(timedelta(hours=-3)))
+            now_mza = get_argentina_now()
             estudio_meta = {
                 "tipo_estudio": tipo_estudio,
                 "ojo": ojo,
