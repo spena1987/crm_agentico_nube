@@ -413,6 +413,7 @@ export default function EstudiosTecnicosPage() {
 
   const handleEnviarEstudio = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (enviandoEstudio) return
     if (!paciente || !paciente.geclisa_ficha_id) {
       setFeedback({
         type: 'error',

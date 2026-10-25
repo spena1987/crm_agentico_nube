@@ -1379,74 +1379,87 @@ async def enviar_y_archivar_estudio_oftalmologico(
             wa_err = wa_res.get("error") or "Error al enviar por WhatsApp."
             wa_status = "failed"
 
-    # Verificar (SOLO LECTURA) si el paciente ya existe en public.pacientes para asociar paciente_id opcional
-    existing_paciente_id = None
+    # Sincronización y persistencia de auditoría (FAIL-SAFE)
+    # Una vez que Geclisa y/o WhatsApp procesaron el estudio, cualquier error en la persistencia
+    # local o resolución de IDs secundarios NUNCA debe abortar la respuesta ni propagar HTTP 500.
+    saved_record = None
     try:
-        p_crm = get_paciente_by_dni(dni_limpio)
-        if not p_crm and geclisa_pac_id:
-            p_crm = get_paciente_by_geclisa_id(int(geclisa_pac_id))
-        if p_crm:
-            existing_paciente_id = p_crm.get("id")
-    except Exception:
-        pass
-
-    # Persistir registro en public.estudios_oftalmo (0 bytes en Supabase Storage)
-    ahora_iso = datetime.now(timezone.utc).isoformat()
-    now_mza_save = datetime.now(timezone(timedelta(hours=-3)))
-    db_row: Dict[str, Any] = {
-        "paciente_id": existing_paciente_id,
-        "tipo": tipo_estudio.strip(),
-        "ojo": ojo.strip() or "AO",
-        "fecha": now_mza_save.date().isoformat(),
-        "notas": observaciones or "",
-        "observaciones": observaciones or "",
-        "archivo_url": f"/api/geclisa/archivos/{geclisa_as_id}/ver" if geclisa_as_id else None,
-        "archivo_nombre": final_filename,
-        "nombre_archivo": final_filename,
-        "mime_type": final_mime,
-        "tamano_bytes": len(final_bytes),
-        "geclisa_archivo_id": int(geclisa_as_id) if geclisa_as_id else None,
-        "geclisa_as_id": int(geclisa_as_id) if geclisa_as_id else None,
-        "geclisa_pac_id": int(geclisa_pac_id) if geclisa_pac_id else None,
-        "geclisa_ficha_id": int(geclisa_ficha_id),
-        "dni_paciente": dni_limpio,
-        "nombre_paciente": nombre_paciente.strip(),
-        "telefono_destino": tel_norm,
-        "wamid": wamid,
-        "whatsapp_media_id": media_id,
-        "whatsapp_status": wa_status,
-        "whatsapp_error": wa_err,
-        "whatsapp_sent_at": ahora_iso if wa_ok and wamid else None,
-        "tecnico_usuario_id": eff_user_id if eff_user_id else None,
-        "tecnico_nombre": resolved_tecnico_nombre,
-        "tecnico_pre_id": int(resolved_pre_id) if resolved_pre_id else None
-    }
-
-    saved_record = db_row
-    if supabase:
+        existing_paciente_id = None
         try:
-            ins = supabase.table("estudios_oftalmo").insert(db_row).execute()
-            if ins.data and len(ins.data) > 0:
-                saved_record = ins.data[0]
-        except Exception as db_e:
-            logger.error(f"[Estudios] Error insertando en estudios_oftalmo: {db_e}")
+            p_crm = get_paciente_by_dni(dni_limpio)
+            if not p_crm and geclisa_pac_id:
+                p_crm = get_paciente_by_geclisa_id(int(geclisa_pac_id))
+            if p_crm:
+                existing_paciente_id = p_crm.get("id")
+        except Exception as p_e:
+            logger.warning(f"[Estudios] Error buscando paciente existente: {p_e}")
 
-    log_event(
-        nivel="INFO" if (geclisa_ok and wa_ok) else "WARNING",
-        modulo="ESTUDIOS_TECNICOS",
-        accion="ENVIO_ESTUDIO_OFTALMOLOGICO",
-        mensaje=f"Estudio '{titulo_completo}' para {nombre_paciente} (DNI {dni_limpio}): Geclisa={'OK' if geclisa_ok else 'ERROR'}, WhatsApp={'OK' if wa_ok else 'ERROR'}",
-        detalles={
-            "estudio_id": saved_record.get("id"),
-            "dni": dni_limpio,
-            "ficha_id": geclisa_ficha_id,
-            "geclisa_as_id": geclisa_as_id,
+        # Persistir registro en public.estudios_oftalmo (0 bytes en Supabase Storage)
+        ahora_iso = datetime.now(timezone.utc).isoformat()
+        now_mza_save = get_argentina_now()
+        db_row: Dict[str, Any] = {
+            "paciente_id": existing_paciente_id,
+            "tipo": tipo_estudio.strip(),
+            "ojo": ojo.strip() or "AO",
+            "fecha": now_mza_save.date().isoformat(),
+            "notas": observaciones or "",
+            "observaciones": observaciones or "",
+            "archivo_url": f"/api/geclisa/archivos/{geclisa_as_id}/ver" if geclisa_as_id else None,
+            "archivo_nombre": final_filename,
+            "nombre_archivo": final_filename,
+            "mime_type": final_mime,
+            "tamano_bytes": len(final_bytes),
+            "geclisa_archivo_id": int(geclisa_as_id) if geclisa_as_id else None,
+            "geclisa_as_id": int(geclisa_as_id) if geclisa_as_id else None,
+            "geclisa_pac_id": int(geclisa_pac_id) if geclisa_pac_id else None,
+            "geclisa_ficha_id": int(geclisa_ficha_id),
+            "dni_paciente": dni_limpio,
+            "nombre_paciente": nombre_paciente.strip(),
+            "telefono_destino": tel_norm,
             "wamid": wamid,
-            "tecnico": resolved_tecnico_nombre,
-            "geclisa_error": geclisa_err,
-            "whatsapp_error": wa_err
+            "whatsapp_media_id": media_id,
+            "whatsapp_status": wa_status,
+            "whatsapp_error": wa_err,
+            "whatsapp_sent_at": ahora_iso if wa_ok and wamid else None,
+            "tecnico_usuario_id": eff_user_id if eff_user_id else None,
+            "tecnico_nombre": resolved_tecnico_nombre,
+            "tecnico_pre_id": int(resolved_pre_id) if resolved_pre_id else None
         }
-    )
+
+        saved_record = db_row
+        if supabase:
+            try:
+                ins = supabase.table("estudios_oftalmo").insert(db_row).execute()
+                if ins.data and len(ins.data) > 0:
+                    saved_record = ins.data[0]
+            except Exception as db_e:
+                logger.error(f"[Estudios] Error insertando en estudios_oftalmo: {db_e}")
+
+        log_event(
+            nivel="INFO" if (geclisa_ok and wa_ok) else "WARNING",
+            modulo="ESTUDIOS_TECNICOS",
+            accion="ENVIO_ESTUDIO_OFTALMOLOGICO",
+            mensaje=f"Estudio '{titulo_completo}' para {nombre_paciente} (DNI {dni_limpio}): Geclisa={'OK' if geclisa_ok else 'ERROR'}, WhatsApp={'OK' if wa_ok else 'ERROR'}",
+            detalles={
+                "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
+                "dni": dni_limpio,
+                "ficha_id": geclisa_ficha_id,
+                "geclisa_as_id": geclisa_as_id,
+                "wamid": wamid,
+                "tecnico": resolved_tecnico_nombre,
+                "geclisa_error": geclisa_err,
+                "whatsapp_error": wa_err
+            }
+        )
+    except Exception as post_e:
+        logger.error(f"[Estudios] Error no crítico post-envío: {post_e}", exc_info=True)
+        if saved_record is None:
+            saved_record = {
+                "dni_paciente": dni_limpio,
+                "nombre_paciente": nombre_paciente,
+                "geclisa_as_id": geclisa_as_id,
+                "wamid": wamid
+            }
 
     if guardar_en_geclisa and not geclisa_ok and enviar_whatsapp and not wa_ok:
         raise HTTPException(
@@ -1558,7 +1571,7 @@ async def enviar_archivo_existente_geclisa_por_whatsapp(
         "paciente_id": existing_paciente_id,
         "tipo": payload.tipo_estudio.strip(),
         "ojo": payload.ojo.strip() or "AO",
-        "fecha": date.today().isoformat(),
+        "fecha": get_argentina_now().date().isoformat(),
         "notas": payload.observaciones or "Reenvío de estudio existente en Geclisa",
         "observaciones": payload.observaciones or "Reenvío de estudio existente en Geclisa",
         "archivo_url": f"/api/geclisa/archivos/{payload.geclisa_as_id}/ver",
@@ -1584,9 +1597,12 @@ async def enviar_archivo_existente_geclisa_por_whatsapp(
 
     saved = db_row
     if supabase:
-        ins = supabase.table("estudios_oftalmo").insert(db_row).execute()
-        if ins.data:
-            saved = ins.data[0]
+        try:
+            ins = supabase.table("estudios_oftalmo").insert(db_row).execute()
+            if ins.data:
+                saved = ins.data[0]
+        except Exception as db_e:
+            logger.error(f"[Estudios] Error insertando estudio existente en estudios_oftalmo: {db_e}")
 
     return {
         "success": True,
