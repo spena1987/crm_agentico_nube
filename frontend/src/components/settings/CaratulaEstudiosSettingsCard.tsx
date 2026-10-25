@@ -480,39 +480,39 @@ export default function CaratulaEstudiosSettingsCard() {
             {previewTab === 'mobile' ? (
               /* VISTA MÓVIL: Lámina unificada de 1 sola página */
               <div className="w-[340px] bg-white text-slate-900 rounded-xl shadow-2xl border border-slate-300 overflow-hidden flex flex-col text-[11px]">
-                {/* Banner Oficial Centrovisión */}
-                <div className="p-2 border-b border-slate-200 bg-white flex justify-center">
+                {/* Banner Oficial Centrovisión Slim */}
+                <div className="p-1.5 border-b border-slate-200 bg-white flex justify-center">
                   <img
                     src="/branding/centrovision_banner.png"
                     alt="Centrovisión Banner"
-                    className="w-full h-auto object-contain max-h-12"
+                    className="w-auto h-auto object-contain max-h-7"
                   />
                 </div>
 
-                {/* Barra Clínica */}
+                {/* Barra Clínica Compacta */}
                 <div
-                  className="px-3 py-2 border-y flex flex-col gap-0.5"
+                  className="px-2.5 py-1.5 border-y flex flex-col gap-0.5"
                   style={{
                     backgroundColor: '#F8FAFC',
                     borderColor: config.color_primario
                   }}
                 >
                   <div className="flex items-center justify-between font-bold">
-                    <span className="text-[12px] truncate" style={{ color: config.color_primario }}>
+                    <span className="text-[11px] truncate" style={{ color: config.color_primario }}>
                       {previewEstudio}
                     </span>
-                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-teal-100 text-teal-800 font-mono">
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-teal-100 text-teal-800 font-mono">
                       Ojo: {previewOjo}
                     </span>
                   </div>
-                  <div className="text-[10px] text-slate-600 truncate">
-                    PEÑA, JUAN SEBASTIAN • DNI 33.516.799 • 23/10/2026
+                  <div className="text-[9px] text-slate-600 truncate">
+                    PEÑA, JUAN SEBASTIAN • DNI 33.516.799{config.mostrar_cobertura ? ' • OSDE (210)' : ''} • 25/10/2026
                   </div>
                 </div>
 
                 {/* Área del Scan Médico */}
-                <div className="p-3 bg-slate-900 flex-1 flex flex-col items-center justify-center text-center min-h-[220px]">
-                  <div className="w-full h-44 rounded border border-slate-700 bg-slate-800/80 flex flex-col items-center justify-center p-2 relative overflow-hidden">
+                <div className="p-3 bg-slate-900 flex-1 flex flex-col items-center justify-center text-center min-h-[240px]">
+                  <div className="w-full h-52 rounded border border-slate-700 bg-slate-800/80 flex flex-col items-center justify-center p-2 relative overflow-hidden">
                     {/* Gráfico decorativo de OCT / Topografía */}
                     <div className="w-24 h-24 rounded-full border-4 border-dashed border-teal-500/60 flex items-center justify-center mb-1 animate-pulse">
                       <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-teal-500/40 via-cyan-400/40 to-emerald-400/40 flex items-center justify-center text-[9px] font-bold text-white">
@@ -523,22 +523,30 @@ export default function CaratulaEstudiosSettingsCard() {
                       [ Imagen de Alta Definición del Equipo ]
                     </span>
                     <span className="text-[9px] text-slate-400">
-                      Escalado proporcional sin recortes
+                      Escalado proporcional maximizado
                     </span>
                   </div>
                 </div>
 
-                {/* Pie Institucional */}
-                <div className="p-2.5 bg-slate-50 border-t border-slate-200 text-[9px] text-slate-500 space-y-0.5">
-                  <div className="font-semibold text-slate-700">
-                    Centrovisión • Urgencias: {config.telefono_0800} | WhatsApp: {config.whatsapp_contacto}
-                  </div>
-                  <div className="truncate text-slate-500">
-                    {config.sedes.join(' • ')}
-                  </div>
-                  <div className="text-[8px] text-slate-400 italic">
-                    {config.texto_indicaciones}
-                  </div>
+                {/* Pie Institucional Dinámico */}
+                <div className="p-2 bg-slate-50 border-t border-slate-200 text-[8.5px] text-slate-500 space-y-0.5">
+                  {config.mostrar_sedes ? (
+                    <>
+                      <div className="font-semibold text-slate-700 truncate">
+                        Centrovisión • Urgencias: {config.telefono_0800} | WhatsApp: {config.whatsapp_contacto}
+                      </div>
+                      <div className="truncate text-slate-500">
+                        {config.sedes.join(' • ')}
+                      </div>
+                      <div className="text-[7.5px] text-slate-400 italic truncate">
+                        {config.texto_indicaciones}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-slate-600 font-medium truncate text-center py-0.5">
+                      {config.pie_legal || 'Centrovisión Oftalmología Integral • Documento e informe técnico digital'}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -615,12 +623,16 @@ export default function CaratulaEstudiosSettingsCard() {
 
                 {/* Footer Sedes */}
                 <div className="mt-auto pt-2 border-t border-slate-200 text-[8px] text-slate-500 text-center space-y-0.5">
-                  <div>
-                    Central: <b>{config.telefono_0800}</b> | WhatsApp: <b>{config.whatsapp_contacto}</b>
-                  </div>
-                  <div className="text-[7.5px] text-slate-400">
-                    {config.sedes.join(' • ')}
-                  </div>
+                  {config.mostrar_sedes && (
+                    <>
+                      <div>
+                        Central: <b>{config.telefono_0800}</b> | WhatsApp: <b>{config.whatsapp_contacto}</b>
+                      </div>
+                      <div className="text-[7.5px] text-slate-400">
+                        {config.sedes.join(' • ')}
+                      </div>
+                    </>
+                  )}
                   <div className="text-[7px] text-slate-400 italic">
                     {config.pie_legal}
                   </div>

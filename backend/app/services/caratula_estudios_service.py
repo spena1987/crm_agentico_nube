@@ -352,11 +352,16 @@ def generar_portada_pdf_a4(
     ]
     sedes_str = " &nbsp;•&nbsp; ".join(sedes_list)
 
-    footer_content = (
-        f"<b>Central Telefónica:</b> {linea_0800} &nbsp;&nbsp;|&nbsp;&nbsp; <b>WhatsApp Recepción:</b> {wa_contacto}<br/>"
-        f"<b>Sedes de Atención:</b> {sedes_str}<br/>"
-        f"<i>{cfg.get('pie_legal', 'Documento emitido electrónicamente por Centrovisión Oftalmología Integral.')}</i>"
-    )
+    if cfg.get("mostrar_sedes", True):
+        footer_content = (
+            f"<b>Central Telefónica:</b> {linea_0800} &nbsp;&nbsp;|&nbsp;&nbsp; <b>WhatsApp Recepción:</b> {wa_contacto}<br/>"
+            f"<b>Sedes de Atención:</b> {sedes_str}<br/>"
+            f"<i>{cfg.get('pie_legal', 'Documento emitido electrónicamente por Centrovisión Oftalmología Integral.')}</i>"
+        )
+    else:
+        footer_content = (
+            f"<i>{cfg.get('pie_legal', 'Documento emitido electrónicamente por Centrovisión Oftalmología Integral.')}</i>"
+        )
     story.append(Paragraph(footer_content, footer_style))
 
     doc.build(story)
@@ -421,36 +426,47 @@ def componer_lamina_digital_imagen(
 
     study_resized = study_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # 2. Medir dimensiones del Banner Oficial de Centrovisión
-    margin_top = 20
+    # 2. Medir dimensiones del Banner Oficial de Centrovisión (Diseño Slim)
+    margin_top = 10
     banner_src = None
-    banner_h = 115
+    banner_h = 48
+    banner_w = 404
+    banner_x = 40
     if os.path.exists(BANNER_LOCAL_PATH):
         try:
             banner_src = Image.open(BANNER_LOCAL_PATH)
-            banner_h = int(max_w * (banner_src.height / banner_src.width))
+            # Escala proporcional limitando la altura a 48 px para maximizar el área de estudio
+            banner_h = 48
+            banner_w = int(banner_h * (banner_src.width / banner_src.height))
+            if banner_w > max_w:
+                banner_w = max_w
+                banner_h = int(banner_w * (banner_src.height / banner_src.width))
+            banner_x = 40 + (max_w - banner_w) // 2
         except Exception as e:
             logger.warning(f"Aviso leyendo dimensiones del banner: {e}")
-            banner_h = 115
+            banner_h = 48
+            banner_w = 404
+            banner_x = 40
 
-    spacing = 15
-    bar_h = 92
-    footer_h = 80
-    margin_bottom = 20
+    spacing = 8
+    bar_h = 56
+    mostrar_sedes = cfg.get("mostrar_sedes", True)
+    footer_h = 42 if mostrar_sedes else 24
+    margin_bottom = 10
 
-    # 3. Calcular ALTURA TOTAL DINÁMICA de la lámina (Cero espacio muerto)
+    # 3. Calcular ALTURA TOTAL DINÁMICA de la lámina (Cero espacio muerto, máximo estudio)
     PAGE_H = margin_top + banner_h + spacing + bar_h + spacing + new_h + spacing + footer_h + margin_bottom
 
     # Crear lienzo elástico blanco
     canvas_img = Image.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
     draw = ImageDraw.Draw(canvas_img)
 
-    # 4. Estampar Banner Oficial Superior
+    # 4. Estampar Banner Oficial Superior Slim
     banner_y = margin_top
     if banner_src:
         try:
-            banner_resized = banner_src.resize((max_w, banner_h), Image.Resampling.LANCZOS)
-            canvas_img.paste(banner_resized, (40, banner_y), banner_resized if "A" in banner_resized.mode else None)
+            banner_resized = banner_src.resize((banner_w, banner_h), Image.Resampling.LANCZOS)
+            canvas_img.paste(banner_resized, (banner_x, banner_y), banner_resized if "A" in banner_resized.mode else None)
         except Exception as e:
             logger.warning(f"No se pudo estampar banner en lámina: {e}")
 
@@ -483,21 +499,36 @@ def componer_lamina_digital_imagen(
         "LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
     ]
-    font_title = _load_pil_font(bold_fonts, 25)
-    font_badge = _load_pil_font(bold_fonts, 21)
-    font_info = _load_pil_font(reg_fonts, 18)
-    font_footer = _load_pil_font(reg_fonts, 14)
+    font_title = _load_pil_font(bold_fonts, 19)
+    font_badge = _load_pil_font(bold_fonts, 18)
+    font_info = _load_pil_font(reg_fonts, 13)
+    font_footer = _load_pil_font(reg_fonts, 12)
+    font_footer_sub = _load_pil_font(reg_fonts, 11)
 
     # Texto Fila 1 en barra
-    draw.text((60, bar_y1 + 14), tipo_estudio[:45], fill=(15, 23, 42), font=font_title)
-    draw.text((PAGE_W - 240, bar_y1 + 16), f"OJO: {ojo}", fill=(0, 122, 135), font=font_badge)
+    draw.text((55, bar_y1 + 8), tipo_estudio[:50], fill=(15, 23, 42), font=font_title)
+    draw.text((PAGE_W - 190, bar_y1 + 8), f"OJO: {ojo}", fill=(0, 122, 135), font=font_badge)
 
-    # Texto Fila 2 en barra (separadores universales limpios para evitar caracteres de reemplazo)
-    pac_line = f"PACIENTE: {nombre_pac[:30]}   |   DNI: {dni_pac}"
-    if tecnico_str:
-        pac_line += f"   |   TÉCNICO: {tecnico_str[:22]}"
-    pac_line += f"   |   FECHA: {fecha_str} {hora_str}"
-    draw.text((60, bar_y1 + 54), pac_line, fill=(71, 85, 105), font=font_info)
+    # Texto Fila 2 en barra (separadores universales limpios con Cobertura y Plan)
+    pac_parts = [f"PACIENTE: {nombre_pac[:28]}", f"DNI: {dni_pac}"]
+
+    # Cobertura médica y plan
+    cobertura = (paciente.get("obra_social") or "").strip().upper()
+    plan = (paciente.get("plan") or "").strip().upper()
+    if cfg.get("mostrar_cobertura", True) and (cobertura or plan):
+        cob_txt = f"{cobertura} ({plan})" if (cobertura and plan) else (cobertura or plan)
+        pac_parts.append(f"COBERTURA: {cob_txt[:26]}")
+
+    ficha_id = paciente.get("ficha_id") or paciente.get("geclisa_ficha_id")
+    if cfg.get("mostrar_ficha", True) and ficha_id:
+        pac_parts.append(f"FICHA: #{ficha_id}")
+
+    if cfg.get("mostrar_tecnico", True) and tecnico_str:
+        pac_parts.append(f"TÉC: {tecnico_str[:18]}")
+
+    pac_parts.append(f"FECHA: {fecha_str} {hora_str}")
+    pac_line = "   |   ".join(pac_parts)
+    draw.text((55, bar_y1 + 32), pac_line, fill=(71, 85, 105), font=font_info)
 
     # 6. Área del Estudio Diagnóstico (Ubicación continua inmediatamente después de la barra)
     study_y = bar_y2 + spacing
@@ -507,18 +538,23 @@ def componer_lamina_digital_imagen(
     draw.rectangle([pos_x - 1, study_y - 1, pos_x + new_w + 1, study_y + new_h + 1], outline=(226, 232, 240), width=1)
     canvas_img.paste(study_resized, (pos_x, study_y))
 
-    # 7. Pie Institucional Inferior (Anclado justo al terminar la imagen médica)
+    # 7. Pie Institucional Inferior Dinámico (Respeta mostrar_sedes y texto de indicaciones)
     foot_y = study_y + new_h + spacing
     draw.line([40, foot_y, PAGE_W - 40, foot_y], fill=(226, 232, 240), width=1)
-    linea_0800 = cfg.get("telefono_0800", "0-800-222-4040")
-    wa_num = cfg.get("whatsapp_contacto", "261 553-0888")
-    sedes = cfg.get("sedes") or [
-        "Mitre 540 (Ciudad)", "Roca 71 (Luján)", "Boedo 2879 (Carrodilla)"
-    ]
-    foot_txt1 = f"Centrovisión  |  Urgencias: {linea_0800}  |  WhatsApp: {wa_num}  |  Sedes: {'  •  '.join(sedes)}"
-    foot_txt2 = "Presente este estudio a su médico oftalmólogo en su próxima consulta. Emitido digitalmente."
-    draw.text((60, foot_y + 14), foot_txt1, fill=(100, 116, 139), font=font_footer)
-    draw.text((60, foot_y + 40), foot_txt2, fill=(148, 163, 184), font=font_footer)
+
+    if mostrar_sedes:
+        linea_0800 = cfg.get("telefono_0800", "0-800-222-4040")
+        wa_num = cfg.get("whatsapp_contacto", "261 553-0888")
+        sedes = cfg.get("sedes") or [
+            "Mitre 540 (Ciudad)", "Roca 71 (Luján)", "Boedo 2879 (Carrodilla)"
+        ]
+        foot_txt1 = f"Centrovisión  |  Urgencias: {linea_0800}  |  WhatsApp: {wa_num}  |  Sedes: {'  •  '.join(sedes)}"
+        foot_txt2 = cfg.get("texto_indicaciones") or "Presente este estudio a su médico oftalmólogo en su próxima consulta. Emitido digitalmente."
+        draw.text((55, foot_y + 7), foot_txt1, fill=(100, 116, 139), font=font_footer)
+        draw.text((55, foot_y + 23), foot_txt2, fill=(148, 163, 184), font=font_footer_sub)
+    else:
+        pie_txt = cfg.get("pie_legal") or "Centrovisión Oftalmología Integral  •  Documento e informe técnico digital oficial"
+        draw.text((55, foot_y + 6), pie_txt, fill=(100, 116, 139), font=font_footer)
 
     # Exportar según el formato solicitado
     if str(export_format).upper() in ("JPEG", "JPG"):

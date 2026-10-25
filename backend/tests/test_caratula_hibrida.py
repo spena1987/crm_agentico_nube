@@ -67,9 +67,9 @@ class TestCaratulaHibrida(unittest.TestCase):
         self.assertGreater(len(jpg_bytes), 1000)
         res_img = Image.open(io.BytesIO(jpg_bytes))
         self.assertEqual(res_img.width, 1240)
-        # La altura debe ser dinámica/compacta (~1040 px) y mucho menor al A4 rígido de 1754 px
-        self.assertLess(res_img.height, 1250)
-        self.assertGreater(res_img.height, 900)
+        # La altura debe ser dinámica/compacta slim (~824 px) ahorrando más de 220 px respecto al diseño previo
+        self.assertLess(res_img.height, 950)
+        self.assertGreater(res_img.height, 750)
 
     def test_componer_estudio_hibrido_caso_imagen(self):
         img = Image.new("RGB", (640, 480), (10, 50, 90))
@@ -116,6 +116,46 @@ class TestCaratulaHibrida(unittest.TestCase):
         reader = pypdf.PdfReader(io.BytesIO(final_bytes))
         # Portada + estudio original = 2 páginas
         self.assertEqual(len(reader.pages), 2)
+
+
+    def test_mostrar_sedes_flag_en_lamina_y_portada(self):
+        # Con mostrar_sedes = False, la altura debe ser aún menor (pie ultra-slim)
+        img = Image.new("RGB", (640, 480), (10, 50, 90))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+
+        cfg_sin_sedes = {
+            "activo": True,
+            "mostrar_sedes": False,
+            "mostrar_cobertura": True,
+            "sedes": ["Mitre 540", "Roca 71"],
+            "telefono_0800": "0800-TEST",
+            "whatsapp_contacto": "261-TEST"
+        }
+        lamina_sin_sedes = componer_lamina_digital_imagen(
+            buf.getvalue(), self.paciente, self.estudio, config=cfg_sin_sedes, export_format="JPEG"
+        )
+        img_sin_sedes = Image.open(io.BytesIO(lamina_sin_sedes))
+
+        cfg_con_sedes = {
+            "activo": True,
+            "mostrar_sedes": True,
+            "mostrar_cobertura": True,
+            "sedes": ["Mitre 540", "Roca 71"],
+            "telefono_0800": "0800-TEST",
+            "whatsapp_contacto": "261-TEST"
+        }
+        lamina_con_sedes = componer_lamina_digital_imagen(
+            buf.getvalue(), self.paciente, self.estudio, config=cfg_con_sedes, export_format="JPEG"
+        )
+        img_con_sedes = Image.open(io.BytesIO(lamina_con_sedes))
+
+        # La versión sin sedes debe ser más compacta en altura
+        self.assertLess(img_sin_sedes.height, img_con_sedes.height)
+
+        # Portada A4 no debe fallar con mostrar_sedes = False
+        portada = generar_portada_pdf_a4(self.paciente, self.estudio, config=cfg_sin_sedes)
+        self.assertGreater(len(portada), 1000)
 
 
 if __name__ == "__main__":

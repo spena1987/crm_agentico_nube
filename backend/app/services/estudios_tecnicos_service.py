@@ -1158,7 +1158,9 @@ async def enviar_y_archivar_estudio_oftalmologico(
     usuario_nombre: Optional[str] = Form(None),
     tecnico_pre_id: Optional[int] = Form(None),
     plantilla_whatsapp: Optional[str] = Form(None),
-    aplicar_caratula: bool = Form(True)
+    aplicar_caratula: bool = Form(True),
+    obra_social: Optional[str] = Form(None),
+    plan: Optional[str] = Form(None)
 ):
     """
     Flujo Maestro de Estudios Oftalmológicos:
@@ -1251,7 +1253,9 @@ async def enviar_y_archivar_estudio_oftalmologico(
                 "nombre": nombre_paciente,
                 "dni": dni_limpio,
                 "ficha_id": geclisa_ficha_id,
-                "geclisa_ficha_id": geclisa_ficha_id
+                "geclisa_ficha_id": geclisa_ficha_id,
+                "obra_social": (obra_social or "").strip(),
+                "plan": (plan or "").strip()
             }
             now_mza = get_argentina_now()
             estudio_meta = {

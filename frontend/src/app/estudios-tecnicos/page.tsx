@@ -468,6 +468,12 @@ export default function EstudiosTecnicosPage() {
       if (paciente.geclisa_pac_id) {
         formData.append('geclisa_pac_id', String(paciente.geclisa_pac_id))
       }
+      if (paciente.obra_social) {
+        formData.append('obra_social', paciente.obra_social)
+      }
+      if (paciente.plan) {
+        formData.append('plan', paciente.plan)
+      }
       formData.append('tipo_estudio', tipoEstudio.trim())
       formData.append('ojo', ojo)
       formData.append('observaciones', observaciones.trim())
