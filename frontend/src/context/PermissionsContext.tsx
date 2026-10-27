@@ -8,6 +8,7 @@ import { LANDING_PAGE_OPTIONS } from '@/config/modules'
 export interface UserProfile {
   id: string
   email: string
+  username?: string | null
   nombre_completo: string
   rol_id: string | null
   activo: boolean
@@ -80,6 +81,7 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
         .select(`
           id,
           email,
+          username,
           nombre_completo,
           rol_id,
           activo,
@@ -168,7 +170,8 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
 
   // ¿Es Administrador?
   const isAdmin = useMemo(() => {
-    return profile?.roles?.codigo === 'admin' || !profile?.rol_id
+    const code = profile?.roles?.codigo?.toLowerCase()
+    return code === 'admin' || code === 'superadmin'
   }, [profile])
 
   // Función para verificar si tiene una acción específica en un módulo

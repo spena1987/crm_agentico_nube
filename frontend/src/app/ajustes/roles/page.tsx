@@ -3,32 +3,32 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { SYSTEM_MODULES, ModuleDefinition, LANDING_PAGE_OPTIONS } from '@/config/modules'
-import { 
-  ShieldCheck, 
-  Plus, 
-  Check, 
-  Trash2, 
-  Edit3, 
-  Loader2, 
-  CheckCircle2, 
-  AlertCircle, 
-  XCircle, 
-  Lock, 
-  RefreshCw, 
-  Layers, 
-  LayoutDashboard, 
-  MessageSquare, 
-  Users, 
-  FileText, 
-  Settings, 
-  Calendar, 
-  TrendingUp, 
-  UserCheck, 
-  Building2, 
-  Activity, 
-  Eye, 
+import {
+  ShieldCheck,
+  Plus,
+  Check,
+  Trash2,
+  Edit3,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
+  Lock,
+  Layers,
+  LayoutDashboard,
+  MessageSquare,
+  Users,
+  FileText,
+  Settings,
+  Calendar,
+  TrendingUp,
+  UserCheck,
+  Building2,
+  Activity,
+  Eye,
   ScrollText,
-  Compass
+  Compass,
+  HelpCircle,
 } from 'lucide-react'
 
 // Mapa de iconos dinámicos
@@ -45,6 +45,7 @@ const ICON_MAP: Record<string, any> = {
   Users,
   ScrollText,
   Settings,
+  HelpCircle,
 }
 
 interface RolPermiso {
@@ -52,6 +53,13 @@ interface RolPermiso {
   modulo_codigo: string
   accion: string
   permitido: boolean
+}
+
+interface AssignedUser {
+  id: string
+  nombre_completo: string
+  username?: string | null
+  activo: boolean
 }
 
 interface RoleItem {
@@ -62,6 +70,8 @@ interface RoleItem {
   es_sistema: boolean
   landing_page?: string | null
   rol_permisos?: RolPermiso[]
+  usuarios_count?: number
+  usuarios_asignados?: AssignedUser[]
 }
 
 export default function RolesPage() {
@@ -69,6 +79,10 @@ export default function RolesPage() {
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
   const [currentPerms, setCurrentPerms] = useState<Record<string, Record<string, boolean>>>({})
   const [currentLandingPage, setCurrentLandingPage] = useState<string>('/')
+  const [currentRoleName, setCurrentRoleName] = useState<string>('')
+  const [currentRoleDesc, setCurrentRoleDesc] = useState<string>('')
+  const [editingMeta, setEditingMeta] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -97,7 +111,7 @@ export default function RolesPage() {
   }
 
   // Cargar roles y permisos
-  const loadRoles = async () => {
+  const loadRoles = async (targetRoleId?: string) => {
     try {
       setLoading(true)
       const headers = await getHeaders(false)
@@ -106,13 +120,16 @@ export default function RolesPage() {
 
       if (data.roles) {
         setRoles(data.roles)
-        // Seleccionar por defecto el primer rol si no hay uno seleccionado
-        const activeId = selectedRoleId || data.roles[0]?.id
+        const activeId = targetRoleId || selectedRoleId || data.roles[0]?.id
         if (activeId) {
           setSelectedRoleId(activeId)
           const found = data.roles.find((r: RoleItem) => r.id === activeId)
           populatePermsMap(found)
           setCurrentLandingPage(found?.landing_page || '/')
+          setCurrentRoleName(found?.nombre || '')
+          setCurrentRoleDesc(found?.descripcion || '')
+          setIsDirty(false)
+          setEditingMeta(false)
         }
       }
     } catch (err: any) {
@@ -160,10 +177,21 @@ export default function RolesPage() {
 
   // Al cambiar de rol seleccionado
   const handleSelectRole = (roleId: string) => {
+    if (roleId === selectedRoleId) return
+    if (isDirty) {
+      const ok = window.confirm(
+        'Tienes cambios de permisos o configuración sin guardar en este perfil. ¿Deseas descartarlos y cambiar de rol?'
+      )
+      if (!ok) return
+    }
     setSelectedRoleId(roleId)
     const role = roles.find((r) => r.id === roleId)
     populatePermsMap(role)
     setCurrentLandingPage(role?.landing_page || '/')
+    setCurrentRoleName(role?.nombre || '')
+    setCurrentRoleDesc(role?.descripcion || '')
+    setIsDirty(false)
+    setEditingMeta(false)
     setFeedback(null)
   }
 
@@ -172,6 +200,7 @@ export default function RolesPage() {
     const activeRole = roles.find((r) => r.id === selectedRoleId)
     if (activeRole?.codigo === 'admin') return // Admin siempre tiene acceso total
 
+    setIsDirty(true)
     setCurrentPerms((prev) => {
       const modPerms = { ...prev[modCode] }
       const nextVal = !modPerms[actCode]
@@ -203,6 +232,7 @@ export default function RolesPage() {
     const modPerms = currentPerms[mod.code] || {}
     const allChecked = mod.actions.every((a) => modPerms[a.code])
 
+    setIsDirty(true)
     setCurrentPerms((prev) => {
       const nextModPerms: Record<string, boolean> = {}
       mod.actions.forEach((a) => {
@@ -242,9 +272,11 @@ export default function RolesPage() {
       const res = await fetch(`/api/admin/roles/${selectedRoleId}`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ 
+        body: JSON.stringify({
+          nombre: !activeRole?.es_sistema && currentRoleName.trim() ? currentRoleName.trim() : undefined,
+          descripcion: currentRoleDesc.trim() || null,
           landing_page: currentLandingPage,
-          permisos: activeRole?.codigo === 'admin' ? undefined : flatPerms 
+          permisos: activeRole?.codigo === 'admin' ? undefined : flatPerms,
         }),
       })
 
@@ -256,9 +288,11 @@ export default function RolesPage() {
 
       setFeedback({
         type: 'success',
-        message: 'Configuración de rol y matriz de permisos guardadas con éxito.',
+        message: `Configuración y matriz de permisos de "${currentRoleName || activeRole?.nombre}" guardadas con éxito.`,
       })
-      await loadRoles()
+      setIsDirty(false)
+      setEditingMeta(false)
+      await loadRoles(selectedRoleId)
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })
     } finally {
@@ -310,8 +344,7 @@ export default function RolesPage() {
       setNewRoleDesc('')
       setNewRoleLandingPage('/')
       setCopyFromRoleId('')
-      await loadRoles()
-      setSelectedRoleId(data.role.id)
+      await loadRoles(data.role.id)
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })
     } finally {
@@ -344,6 +377,7 @@ export default function RolesPage() {
       })
       setShowDeleteModal(false)
       setSelectedRoleId(null)
+      setIsDirty(false)
       await loadRoles()
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message })
@@ -375,6 +409,7 @@ export default function RolesPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {roles.map((role) => {
             const isSelected = role.id === selectedRoleId
+            const userCount = role.usuarios_count ?? 0
             return (
               <button
                 key={role.id}
@@ -386,14 +421,14 @@ export default function RolesPage() {
                 }`}
               >
                 <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-xs text-[var(--foreground)]">{role.nombre}</span>
+                  <div className="flex items-center justify-between mb-1 gap-1">
+                    <span className="font-bold text-xs text-[var(--foreground)] truncate">{role.nombre}</span>
                     {role.es_sistema ? (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center gap-0.5">
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center gap-0.5 shrink-0">
                         <Lock size={9} /> Sistema
                       </span>
                     ) : (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600">
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 dark:bg-emerald-950/40 text-emerald-600 shrink-0">
                         Personalizado
                       </span>
                     )}
@@ -406,6 +441,10 @@ export default function RolesPage() {
                 <div className="mt-3 pt-2 border-t border-[var(--border)] flex items-center justify-between text-[10px]">
                   <span className="text-blue-600 font-bold">
                     {isSelected ? '✓ Seleccionado' : 'Hacer clic para editar'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] font-semibold">
+                    <Users size={10} />
+                    <span>{userCount}</span>
                   </span>
                 </div>
               </button>
@@ -436,19 +475,87 @@ export default function RolesPage() {
       {/* Matriz de Permisos del Rol Seleccionado */}
       {activeRole && (
         <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--border)] pb-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={20} className="text-blue-600" />
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-[var(--border)] pb-4">
+            <div className="space-y-2 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <ShieldCheck size={20} className="text-blue-600 shrink-0" />
                 <h3 className="text-sm font-extrabold text-[var(--foreground)]">
-                  Matriz de Permisos: {activeRole.nombre}
+                  Matriz de Permisos: {currentRoleName || activeRole.nombre}
                 </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingMeta(!editingMeta)}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 transition-colors"
+                  title="Editar nombre o descripción del perfil"
+                >
+                  <Edit3 size={11} />
+                  <span>{editingMeta ? 'Ocultar edición' : 'Editar nombre / descripción'}</span>
+                </button>
+                {isDirty && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-300 dark:border-amber-800 animate-pulse">
+                    ● Cambios sin guardar
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-[var(--secondary)] mt-1">
-                {activeRole.codigo === 'admin'
-                  ? 'El Administrador General posee permiso total e irrevocable sobre todas las acciones y módulos del CRM.'
-                  : 'Marca o desmarca las acciones que los usuarios con este rol podrán ejecutar en cada módulo del sistema.'}
-              </p>
+
+              {editingMeta ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 max-w-2xl">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                      Nombre del Rol {activeRole.es_sistema && '(Rol de Sistema Fijo)'}
+                    </label>
+                    <input
+                      type="text"
+                      disabled={activeRole.es_sistema}
+                      value={currentRoleName}
+                      onChange={(e) => {
+                        setCurrentRoleName(e.target.value)
+                        setIsDirty(true)
+                      }}
+                      className="w-full px-3 py-1.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                      Descripción Operativa
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Describe qué personal utiliza este perfil..."
+                      value={currentRoleDesc}
+                      onChange={(e) => {
+                        setCurrentRoleDesc(e.target.value)
+                        setIsDirty(true)
+                      }}
+                      className="w-full px-3 py-1.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--secondary)]">
+                  {activeRole.codigo === 'admin'
+                    ? 'El Administrador General posee permiso total e irrevocable sobre todas las acciones y módulos del CRM.'
+                    : currentRoleDesc || 'Marca o desmarca las acciones que los usuarios con este rol podrán ejecutar en cada módulo del sistema.'}
+                </p>
+              )}
+
+              {/* Lista de usuarios asignados a este rol */}
+              {activeRole.usuarios_asignados && activeRole.usuarios_asignados.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                  <span className="text-[10px] font-bold text-[var(--secondary)] uppercase flex items-center gap-1">
+                    <Users size={11} className="text-blue-600" />
+                    Personal con este perfil ({activeRole.usuarios_asignados.length}):
+                  </span>
+                  {activeRole.usuarios_asignados.map((u) => (
+                    <span
+                      key={u.id}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-[var(--foreground)] border border-[var(--border)]"
+                    >
+                      {u.nombre_completo} {u.username ? `(@${u.username})` : ''}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
@@ -494,7 +601,10 @@ export default function RolesPage() {
             <div className="sm:w-72 shrink-0">
               <select
                 value={currentLandingPage}
-                onChange={(e) => setCurrentLandingPage(e.target.value)}
+                onChange={(e) => {
+                  setCurrentLandingPage(e.target.value)
+                  setIsDirty(true)
+                }}
                 className="w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-[var(--card)] font-medium text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-sm"
               >
                 {LANDING_PAGE_OPTIONS.map((opt) => (
@@ -512,7 +622,6 @@ export default function RolesPage() {
               const Icon = ICON_MAP[mod.icon] || LayoutDashboard
               const modPerms = currentPerms[mod.code] || {}
               const allChecked = mod.actions.every((a) => modPerms[a.code])
-              const someChecked = mod.actions.some((a) => modPerms[a.code])
 
               return (
                 <div
@@ -694,8 +803,19 @@ export default function RolesPage() {
 
             <p className="text-xs text-[var(--secondary)] leading-relaxed">
               Esta acción eliminará de forma permanente el perfil y toda su configuración de permisos.
-              No se podrá eliminar si existen usuarios que lo tengan asignado actualmente.
             </p>
+
+            {activeRole.usuarios_asignados && activeRole.usuarios_asignados.length > 0 && (
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                <p className="font-bold">
+                  Atención: Hay {activeRole.usuarios_asignados.length} usuario(s) con este rol asignado:
+                </p>
+                <p className="text-[11px]">
+                  {activeRole.usuarios_asignados.map((u) => u.nombre_completo).join(', ')}. Debes reasignarlos a otro
+                  rol en Usuarios &amp; Accesos antes de poder eliminar este perfil.
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-2 justify-end pt-2">
               <button
@@ -709,7 +829,7 @@ export default function RolesPage() {
               <button
                 type="button"
                 onClick={handleDeleteRole}
-                disabled={saving}
+                disabled={saving || Boolean(activeRole.usuarios_count && activeRole.usuarios_count > 0)}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50"
               >
                 {saving ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}

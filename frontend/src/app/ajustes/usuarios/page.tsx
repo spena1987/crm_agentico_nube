@@ -4,29 +4,31 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
-import { 
-  UserPlus, 
-  Search, 
-  Shield, 
-  KeyRound, 
-  Trash2, 
-  Edit, 
-  CheckCircle2, 
-  XCircle, 
-  Loader2, 
-  Copy, 
-  Check, 
-  Eye, 
-  EyeOff, 
+import {
+  UserPlus,
+  Search,
+  Shield,
+  KeyRound,
+  Trash2,
+  Edit,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  Copy,
+  Check,
+  Eye,
+  EyeOff,
   RefreshCw,
   AlertCircle,
   Users,
   Stethoscope,
-  ChevronDown,
   X,
   Phone,
   AlertTriangle,
-  MessageSquare
+  AtSign,
+  Clock,
+  Share2,
+  Mail,
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 
@@ -41,6 +43,7 @@ interface Role {
 interface UserItem {
   id: string
   email: string
+  username?: string | null
   nombre_completo: string
   rol_id: string | null
   activo: boolean
@@ -48,6 +51,7 @@ interface UserItem {
   geclisa_pre_id?: number | null
   geclisa_matricula?: string | null
   geclisa_prestador_nombre?: string | null
+  last_sign_in_at?: string | null
   created_at: string
   updated_at?: string
   roles?: Role | null
@@ -60,6 +64,60 @@ interface PrestadorGeclisa {
   especialidad?: string
 }
 
+function normalizeUsernameInput(val: string): string {
+  return val
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '')
+}
+
+function suggestUsernameFromName(fullName: string): string {
+  const clean = fullName
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b(dr|dra|lic|tec|sr|sra)\.?\s+/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+
+  const parts = clean.split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return ''
+  if (parts.length === 1) return parts[0].slice(0, 20)
+  return `${parts[0].charAt(0)}${parts[parts.length - 1]}`.slice(0, 20)
+}
+
+function isInternalSyntheticEmail(email?: string | null): boolean {
+  if (!email) return true
+  return email.endsWith('@interno.centrovision.local')
+}
+
+function formatLastSignIn(isoDate?: string | null): { label: string; isRecent: boolean; never: boolean } {
+  if (!isoDate) return { label: 'Sin ingresos', isRecent: false, never: true }
+  const date = new Date(isoDate)
+  if (isNaN(date.getTime())) return { label: 'Sin ingresos', isRecent: false, never: true }
+
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffHours = diffMs / (1000 * 60 * 60)
+  const isToday = date.toDateString() === now.toDateString()
+
+  const timeStr = date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+  if (isToday) {
+    return { label: `Hoy ${timeStr}`, isRecent: true, never: false }
+  }
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) {
+    return { label: `Ayer ${timeStr}`, isRecent: true, never: false }
+  }
+
+  const dateStr = date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  return { label: `${dateStr} ${timeStr}`, isRecent: diffHours < 72, never: false }
+}
+
 export default function UsuariosPage() {
   const { user } = useAuth()
   const { refreshPermissions } = usePermissions()
@@ -68,6 +126,7 @@ export default function UsuariosPage() {
   const [prestadores, setPrestadores] = useState<PrestadorGeclisa[]>([])
   const [cargandoPrestadores, setCargandoPrestadores] = useState(false)
   const [search, setSearch] = useState('')
+  const [roleFilter, setRoleFilter] = useState<string>('ALL')
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState(false)
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -80,6 +139,8 @@ export default function UsuariosPage() {
 
   // Formulario Crear
   const [createNombre, setCreateNombre] = useState('')
+  const [createUsername, setCreateUsername] = useState('')
+  const [createUsernameTouched, setCreateUsernameTouched] = useState(false)
   const [createEmail, setCreateEmail] = useState('')
   const [createPassword, setCreatePassword] = useState('')
   const [createRolId, setCreateRolId] = useState('')
@@ -90,13 +151,19 @@ export default function UsuariosPage() {
   const [createPrestadorNombre, setCreatePrestadorNombre] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [copiedPassword, setCopiedPassword] = useState(false)
+  const [copiedShareCard, setCopiedShareCard] = useState(false)
 
   // Formulario Editar
   const [editNombre, setEditNombre] = useState('')
+  const [editUsername, setEditUsername] = useState('')
+  const [editEmail, setEditEmail] = useState('')
   const [editRolId, setEditRolId] = useState('')
   const [editActivo, setEditActivo] = useState(true)
   const [editTelefono, setEditTelefono] = useState('')
   const [editPassword, setEditPassword] = useState('')
+  const [showEditPassword, setShowEditPassword] = useState(false)
+  const [copiedEditPassword, setCopiedEditPassword] = useState(false)
+  const [copiedEditShareCard, setCopiedEditShareCard] = useState(false)
   const [editPreId, setEditPreId] = useState<number | null>(null)
   const [editMatricula, setEditMatricula] = useState('')
   const [editPrestadorNombre, setEditPrestadorNombre] = useState('')
@@ -173,26 +240,82 @@ export default function UsuariosPage() {
   }, [])
 
   // Generador de contraseña segura aleatoria
-  const generateRandomPassword = () => {
+  const generateRandomPassword = (forEdit = false) => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*'
     let pass = ''
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 10; i++) {
       pass += chars.charAt(Math.floor(Math.random() * chars.length))
     }
-    setCreatePassword(pass)
-    setShowPassword(true)
+    if (forEdit) {
+      setEditPassword(pass)
+      setShowEditPassword(true)
+    } else {
+      setCreatePassword(pass)
+      setShowPassword(true)
+    }
   }
 
-  const copyToClipboard = (text: string) => {
+  const copyToClipboard = (text: string, isEdit = false) => {
     navigator.clipboard.writeText(text)
-    setCopiedPassword(true)
-    setTimeout(() => setCopiedPassword(false), 2000)
+    if (isEdit) {
+      setCopiedEditPassword(true)
+      setTimeout(() => setCopiedEditPassword(false), 2000)
+    } else {
+      setCopiedPassword(true)
+      setTimeout(() => setCopiedPassword(false), 2000)
+    }
   }
+
+  const copyCredentialsCard = (
+    nombre: string,
+    usernameVal: string,
+    emailVal: string,
+    passwordVal: string,
+    isEdit = false
+  ) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://crm-agentico-nube.vercel.app'
+    const realEmail = !isInternalSyntheticEmail(emailVal) ? emailVal.trim() : ''
+    const lines = [
+      `🏥 *Credenciales de Acceso — MedCRM Clínico*`,
+      `👤 Nombre: ${nombre || 'Personal'}`,
+      `🆔 Usuario: *${usernameVal}*`,
+      ...(realEmail ? [`📧 Correo alternativo: ${realEmail}`] : []),
+      ...(passwordVal ? [`🔑 Contraseña: *${passwordVal}*`] : []),
+      `🔗 Ingreso: ${origin}/login`,
+    ]
+    navigator.clipboard.writeText(lines.join('\n'))
+    if (isEdit) {
+      setCopiedEditShareCard(true)
+      setTimeout(() => setCopiedEditShareCard(false), 2500)
+    } else {
+      setCopiedShareCard(true)
+      setTimeout(() => setCopiedShareCard(false), 2500)
+    }
+  }
+
+  // Verificar si el username sugerido o escrito ya existe
+  const createUsernameConflict = useMemo(() => {
+    if (!createUsername.trim()) return null
+    const clean = createUsername.trim().toLowerCase()
+    return users.find((u) => u.username?.toLowerCase() === clean) || null
+  }, [users, createUsername])
+
+  const editUsernameConflict = useMemo(() => {
+    if (!editUsername.trim() || !selectedUser) return null
+    const clean = editUsername.trim().toLowerCase()
+    return users.find((u) => u.id !== selectedUser.id && u.username?.toLowerCase() === clean) || null
+  }, [users, editUsername, selectedUser])
 
   // Manejar Creación de Usuario
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault()
     setFeedback(null)
+
+    if (!createUsername.trim() || createUsername.trim().length < 2) {
+      setFeedback({ type: 'error', message: 'Debes definir un nombre de usuario de al menos 2 caracteres.' })
+      return
+    }
+
     setActionLoading(true)
 
     try {
@@ -202,7 +325,8 @@ export default function UsuariosPage() {
         headers,
         body: JSON.stringify({
           nombre_completo: createNombre,
-          email: createEmail,
+          username: createUsername.trim().toLowerCase(),
+          email: createEmail.trim() || null,
           password: createPassword,
           rol_id: createRolId || null,
           activo: createActivo,
@@ -221,11 +345,13 @@ export default function UsuariosPage() {
 
       setFeedback({
         type: 'success',
-        message: `Usuario ${createNombre} (${createEmail}) creado exitosamente con perfil y prestador Geclisa asignado.`,
+        message: `Usuario ${createNombre} (@${data.user?.username || createUsername}) creado exitosamente.`,
       })
       setShowCreateModal(false)
       // Resetear campos
       setCreateNombre('')
+      setCreateUsername('')
+      setCreateUsernameTouched(false)
       setCreateEmail('')
       setCreatePassword('')
       setCreateTelefono('')
@@ -242,16 +368,19 @@ export default function UsuariosPage() {
   }
 
   // Abrir Modal de Edición
-  const openEditModal = (user: UserItem) => {
-    setSelectedUser(user)
-    setEditNombre(user.nombre_completo)
-    setEditRolId(user.rol_id || '')
-    setEditActivo(user.activo)
-    setEditTelefono(user.telefono || '')
+  const openEditModal = (u: UserItem) => {
+    setSelectedUser(u)
+    setEditNombre(u.nombre_completo)
+    setEditUsername(u.username || suggestUsernameFromName(u.nombre_completo))
+    setEditEmail(isInternalSyntheticEmail(u.email) ? '' : u.email)
+    setEditRolId(u.rol_id || '')
+    setEditActivo(u.activo)
+    setEditTelefono(u.telefono || '')
     setEditPassword('')
-    setEditPreId(user.geclisa_pre_id || null)
-    setEditMatricula(user.geclisa_matricula || '')
-    setEditPrestadorNombre(user.geclisa_prestador_nombre || '')
+    setShowEditPassword(false)
+    setEditPreId(u.geclisa_pre_id || null)
+    setEditMatricula(u.geclisa_matricula || '')
+    setEditPrestadorNombre(u.geclisa_prestador_nombre || '')
     setSearchPreEdit('')
     setDropdownOpenEdit(false)
     setShowEditModal(true)
@@ -267,6 +396,8 @@ export default function UsuariosPage() {
     try {
       const payload: any = {
         nombre_completo: editNombre,
+        username: editUsername.trim().toLowerCase(),
+        email: editEmail.trim(),
         rol_id: editRolId || null,
         activo: editActivo,
         telefono: editTelefono.trim() ? normalizePhoneNumber(editTelefono) : null,
@@ -293,7 +424,9 @@ export default function UsuariosPage() {
 
       setFeedback({
         type: 'success',
-        message: `Perfil de ${editNombre} actualizado correctamente.`,
+        message: `Perfil de ${editNombre} (@${data.user?.username || editUsername}) actualizado correctamente.${
+          editPassword.trim() ? ' La contraseña también fue renovada.' : ''
+        }`,
       })
       setShowEditModal(false)
       if (selectedUser.id === user?.id) {
@@ -340,17 +473,24 @@ export default function UsuariosPage() {
     }
   }
 
-  // Filtrado de usuarios por búsqueda en tabla
+  // Filtrado de usuarios por búsqueda y filtro rápido de rol/estado
   const filteredUsers = useMemo(() => {
-    return users.filter(
-      (u) =>
-        u.nombre_completo?.toLowerCase().includes(search.toLowerCase()) ||
-        u.email?.toLowerCase().includes(search.toLowerCase()) ||
-        u.roles?.nombre?.toLowerCase().includes(search.toLowerCase()) ||
-        u.geclisa_prestador_nombre?.toLowerCase().includes(search.toLowerCase()) ||
-        u.geclisa_matricula?.includes(search)
-    )
-  }, [users, search])
+    return users.filter((u) => {
+      if (roleFilter === 'INACTIVE' && u.activo) return false
+      if (roleFilter !== 'ALL' && roleFilter !== 'INACTIVE' && u.rol_id !== roleFilter) return false
+
+      if (!search.trim()) return true
+      const q = search.toLowerCase().trim()
+      return (
+        u.nombre_completo?.toLowerCase().includes(q) ||
+        u.username?.toLowerCase().includes(q) ||
+        (!isInternalSyntheticEmail(u.email) && u.email?.toLowerCase().includes(q)) ||
+        u.roles?.nombre?.toLowerCase().includes(q) ||
+        u.geclisa_prestador_nombre?.toLowerCase().includes(q) ||
+        u.geclisa_matricula?.includes(q)
+      )
+    })
+  }, [users, search, roleFilter])
 
   // Filtrado de prestadores para modal de creación
   const prestadoresFiltradosCreate = useMemo(() => {
@@ -386,9 +526,9 @@ export default function UsuariosPage() {
               <Users size={20} />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-[var(--foreground)]">Gestión de Usuarios</h1>
+              <h1 className="text-xl font-bold text-[var(--foreground)]">Gestión de Usuarios & Accesos</h1>
               <p className="text-xs text-[var(--secondary)]">
-                Crea cuentas, asigna roles de acceso y vincula matrículas y prestadores oficiales de Geclisa.
+                Administra usuarios con ingreso por <strong>@usuario</strong> o correo, asigna perfiles RBAC y vincula prestadores de Geclisa.
               </p>
             </div>
           </div>
@@ -396,8 +536,12 @@ export default function UsuariosPage() {
 
         <button
           onClick={() => {
+            setCreateNombre('')
+            setCreateUsername('')
+            setCreateUsernameTouched(false)
+            setCreateEmail('')
             setShowCreateModal(true)
-            generateRandomPassword()
+            generateRandomPassword(false)
           }}
           className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md glow-primary"
         >
@@ -425,37 +569,85 @@ export default function UsuariosPage() {
         </div>
       )}
 
-      {/* Barra de Búsqueda y Estadísticas */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="relative w-full sm:w-80">
-          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Buscar por nombre, email, rol o matrícula..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 text-xs border border-[var(--border)] rounded-xl bg-[var(--card)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-          />
+      {/* Barra de Búsqueda, Filtros por Rol y Estadísticas */}
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="relative w-full sm:w-96">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Buscar por nombre, @usuario, email, rol o matrícula..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 text-xs border border-[var(--border)] rounded-xl bg-[var(--card)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            />
+          </div>
+
+          <div className="flex items-center gap-3 text-xs text-[var(--secondary)]">
+            <span>
+              Total: <strong>{users.length}</strong> usuarios
+            </span>
+            <span>•</span>
+            <span>
+              Activos:{' '}
+              <strong className="text-emerald-600">
+                {users.filter((u) => u.activo).length}
+              </strong>
+            </span>
+            <span>•</span>
+            <span>
+              Con Prestador:{' '}
+              <strong className="text-blue-600">
+                {users.filter((u) => u.geclisa_pre_id).length}
+              </strong>
+            </span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-[var(--secondary)]">
-          <span>
-            Total: <strong>{users.length}</strong> usuarios
-          </span>
-          <span>•</span>
-          <span>
-            Activos:{' '}
-            <strong className="text-emerald-600">
-              {users.filter((u) => u.activo).length}
-            </strong>
-          </span>
-          <span>•</span>
-          <span>
-            Con Prestador:{' '}
-            <strong className="text-blue-600">
-              {users.filter((u) => u.geclisa_pre_id).length}
-            </strong>
-          </span>
+        {/* Píldoras de Filtro Rápido por Rol */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <button
+            type="button"
+            onClick={() => setRoleFilter('ALL')}
+            className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all whitespace-nowrap border ${
+              roleFilter === 'ALL'
+                ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                : 'bg-[var(--card)] text-[var(--secondary)] border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            Todos ({users.length})
+          </button>
+          {roles.map((r) => {
+            const count = users.filter((u) => u.rol_id === r.id).length
+            if (count === 0) return null
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => setRoleFilter(r.id)}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all whitespace-nowrap border ${
+                  roleFilter === r.id
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                    : 'bg-[var(--card)] text-[var(--secondary)] border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {r.nombre} ({count})
+              </button>
+            )
+          })}
+          {users.some((u) => !u.activo) && (
+            <button
+              type="button"
+              onClick={() => setRoleFilter('INACTIVE')}
+              className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all whitespace-nowrap border ${
+                roleFilter === 'INACTIVE'
+                  ? 'bg-red-600 text-white border-red-600 shadow-xs'
+                  : 'bg-[var(--card)] text-red-500 border-red-200 dark:border-red-900/50 hover:bg-red-50 dark:hover:bg-red-950/30'
+              }`}
+            >
+              Suspendidos ({users.filter((u) => !u.activo).length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -471,7 +663,9 @@ export default function UsuariosPage() {
             <Users size={32} className="mx-auto opacity-40 mb-2" />
             <p className="text-sm font-semibold">No se encontraron usuarios</p>
             <p className="text-xs text-[var(--secondary)]">
-              {search ? 'Intenta con otro término de búsqueda.' : 'Crea el primer usuario haciendo clic arriba.'}
+              {search || roleFilter !== 'ALL'
+                ? 'Intenta cambiar el filtro o término de búsqueda.'
+                : 'Crea el primer usuario haciendo clic arriba.'}
             </p>
           </div>
         ) : (
@@ -479,108 +673,177 @@ export default function UsuariosPage() {
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="border-b border-[var(--border)] bg-slate-50/50 dark:bg-slate-800/30 text-[11px] uppercase tracking-wider font-bold text-[var(--secondary)]">
-                  <th className="py-3 px-4">Usuario</th>
-                  <th className="py-3 px-4">Email</th>
+                  <th className="py-3 px-4">Personal</th>
+                  <th className="py-3 px-4">Login (Usuario / Email)</th>
                   <th className="py-3 px-4">Rol / Permisos</th>
                   <th className="py-3 px-4">Prestador Geclisa</th>
                   <th className="py-3 px-4">WhatsApp / Guardia</th>
+                  <th className="py-3 px-4">Último Acceso</th>
                   <th className="py-3 px-4">Estado</th>
                   <th className="py-3 px-4 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {filteredUsers.map((u) => (
-                  <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm">
-                          {u.nombre_completo.charAt(0).toUpperCase()}
+                {filteredUsers.map((u) => {
+                  const isSelf = u.id === user?.id
+                  const isSynthetic = isInternalSyntheticEmail(u.email)
+                  const signInInfo = formatLastSignIn(u.last_sign_in_at)
+
+                  return (
+                    <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 text-white flex items-center justify-center font-bold text-xs shadow-sm shrink-0">
+                            {u.nombre_completo.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <p className="font-bold text-[var(--foreground)]">{u.nombre_completo}</p>
+                              {isSelf && (
+                                <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                  Tú
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-mono">ID: {u.id.slice(0, 8)}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-bold text-[var(--foreground)]">{u.nombre_completo}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">ID: {u.id.slice(0, 8)}...</p>
-                        </div>
-                      </div>
-                    </td>
+                      </td>
 
-                    <td className="py-3 px-4 text-[var(--secondary)] font-mono">{u.email}</td>
-
-                    <td className="py-3 px-4">
-                      {u.roles ? (
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                          <Shield size={12} className="text-indigo-600" />
-                          <span>{u.roles.nombre}</span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 italic">Sin rol asignado</span>
-                      )}
-                    </td>
-
-                    <td className="py-3 px-4">
-                      {u.geclisa_prestador_nombre ? (
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                          <Stethoscope size={13} className="text-blue-600 shrink-0" />
-                          <span>{u.geclisa_prestador_nombre}</span>
-                          {u.geclisa_matricula && (
-                            <span className="text-[10px] opacity-75 font-mono">({u.geclisa_matricula})</span>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-col gap-0.5">
+                          {u.username ? (
+                            <span className="inline-flex items-center gap-1 font-mono font-bold text-blue-600 dark:text-blue-400 text-xs">
+                              <AtSign size={12} className="shrink-0" />
+                              <span>{u.username}</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">Sin usuario</span>
+                          )}
+                          {isSynthetic ? (
+                            <span className="text-[10px] text-slate-400 italic">
+                              Cuenta de puesto (sin email externo)
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-[var(--secondary)] font-mono truncate max-w-[210px]" title={u.email}>
+                              {u.email}
+                            </span>
                           )}
                         </div>
-                      ) : (
-                        <span className="text-slate-400 italic text-[11px]">Acceso General</span>
-                      )}
-                    </td>
+                      </td>
 
-                    <td className="py-3 px-4">
-                      {u.telefono ? (
-                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-mono">
-                          <Phone size={12} className="text-emerald-600 shrink-0" />
-                          <span>{formatPhoneDisplay(u.telefono)}</span>
+                      <td className="py-3 px-4">
+                        {u.roles ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                            <Shield size={12} className="text-indigo-600" />
+                            <span>{u.roles.nombre}</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic">Sin rol asignado</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4">
+                        {u.geclisa_prestador_nombre ? (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                            <Stethoscope size={13} className="text-blue-600 shrink-0" />
+                            <span>{u.geclisa_prestador_nombre}</span>
+                            {u.geclisa_matricula && (
+                              <span className="text-[10px] opacity-75 font-mono">({u.geclisa_matricula})</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">Acceso General</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4">
+                        {u.telefono ? (
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-mono">
+                            <Phone size={12} className="text-emerald-600 shrink-0" />
+                            <span>{formatPhoneDisplay(u.telefono)}</span>
+                          </div>
+                        ) : u.roles?.codigo === 'medico' ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                            title="Sin teléfono de guardia: No podrá recibir avisos de urgencia postquirúrgica por WhatsApp"
+                          >
+                            <AlertTriangle size={11} className="text-amber-600 shrink-0" />
+                            <span>Sin WhatsApp de guardia</span>
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">No configurado</span>
+                        )}
+                      </td>
+
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1.5 text-[11px]">
+                          <Clock
+                            size={12}
+                            className={
+                              signInInfo.never
+                                ? 'text-slate-300 dark:text-slate-600'
+                                : signInInfo.isRecent
+                                ? 'text-emerald-500'
+                                : 'text-slate-400'
+                            }
+                          />
+                          <span
+                            className={
+                              signInInfo.never
+                                ? 'text-slate-400 italic'
+                                : signInInfo.isRecent
+                                ? 'font-semibold text-[var(--foreground)]'
+                                : 'text-[var(--secondary)]'
+                            }
+                          >
+                            {signInInfo.label}
+                          </span>
                         </div>
-                      ) : u.roles?.codigo === 'medico' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300 border border-amber-300 dark:border-amber-800" title="Sin teléfono de guardia: No podrá recibir avisos de urgencia postquirúrgica por WhatsApp">
-                          <AlertTriangle size={11} className="text-amber-600 shrink-0" />
-                          <span>Sin WhatsApp de guardia</span>
-                        </span>
-                      ) : (
-                        <span className="text-slate-400 italic text-[11px]">No configurado</span>
-                      )}
-                    </td>
+                      </td>
 
-                    <td className="py-3 px-4">
-                      {u.activo ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                          Activo
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300 border border-red-200 dark:border-red-800">
-                          Inactivo
-                        </span>
-                      )}
-                    </td>
+                      <td className="py-3 px-4">
+                        {u.activo ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                            Activo
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300 border border-red-200 dark:border-red-800">
+                            Inactivo
+                          </span>
+                        )}
+                      </td>
 
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => openEditModal(u)}
-                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-all"
-                          title="Editar usuario"
-                        >
-                          <Edit size={15} />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedUser(u)
-                            setShowDeleteModal(true)
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-800 rounded-lg transition-all"
-                          title="Eliminar usuario"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openEditModal(u)}
+                            className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-all"
+                            title="Editar usuario, credenciales o prestador"
+                          >
+                            <Edit size={15} />
+                          </button>
+                          <button
+                            disabled={isSelf}
+                            onClick={() => {
+                              if (isSelf) return
+                              setSelectedUser(u)
+                              setShowDeleteModal(true)
+                            }}
+                            className={`p-1.5 rounded-lg transition-all ${
+                              isSelf
+                                ? 'text-slate-300 dark:text-slate-700 cursor-not-allowed'
+                                : 'text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-slate-800'
+                            }`}
+                            title={isSelf ? 'No puedes eliminar tu propia cuenta activa' : 'Eliminar usuario'}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -599,7 +862,7 @@ export default function UsuariosPage() {
                 <div>
                   <h3 className="text-sm font-bold text-[var(--foreground)]">Crear Nuevo Usuario</h3>
                   <p className="text-[11px] text-[var(--secondary)]">
-                    Genera una cuenta de acceso inmediato al CRM
+                    Habilita el ingreso por nombre de usuario y/o correo electrónico
                   </p>
                 </div>
               </div>
@@ -611,33 +874,80 @@ export default function UsuariosPage() {
               </button>
             </div>
 
-            <form onSubmit={handleCreateUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+            <form onSubmit={handleCreateUser} className="p-5 space-y-4 max-h-[82vh] overflow-y-auto">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Nombre Completo *
+                  Nombre Completo / Puesto *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="Ej: Dr. Juan Pérez"
+                  placeholder="Ej: Dr. Juan Pérez o Cabina de Estudios"
                   value={createNombre}
-                  onChange={(e) => setCreateNombre(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setCreateNombre(val)
+                    if (!createUsernameTouched) {
+                      setCreateUsername(suggestUsernameFromName(val))
+                    }
+                  }}
                   className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Correo Electrónico (Login) *
-                </label>
-                <input
-                  type="email"
-                  required
-                  placeholder="usuario@centrovision.com.ar"
-                  value={createEmail}
-                  onChange={(e) => setCreateEmail(e.target.value)}
-                  className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                    Nombre de Usuario (Login) *
+                  </label>
+                  <div className="relative">
+                    <AtSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600" />
+                    <input
+                      type="text"
+                      required
+                      minLength={2}
+                      placeholder="ej: jperez o quirofano"
+                      value={createUsername}
+                      onChange={(e) => {
+                        setCreateUsernameTouched(true)
+                        setCreateUsername(normalizeUsernameInput(e.target.value))
+                      }}
+                      className={`w-full pl-8 pr-3 py-2 text-xs border rounded-xl bg-slate-50 dark:bg-slate-800 font-mono font-bold focus:outline-none focus:ring-2 ${
+                        createUsernameConflict
+                          ? 'border-red-400 focus:ring-red-500/20'
+                          : 'border-[var(--border)] focus:ring-blue-500/20'
+                      }`}
+                    />
+                  </div>
+                  {createUsernameConflict ? (
+                    <p className="text-[10px] text-red-500 mt-1 font-semibold">
+                      Ya en uso por {createUsernameConflict.nombre_completo}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Podrá iniciar sesión escribiendo solo <strong>{createUsername || 'usuario'}</strong>
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                    Correo Electrónico <span className="text-[10px] font-normal lowercase">(Opcional)</span>
+                  </label>
+                  <div className="relative">
+                    <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="email"
+                      placeholder="usuario@centrovision.com.ar"
+                      value={createEmail}
+                      onChange={(e) => setCreateEmail(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Si es un puesto sin mail propio, déjalo en blanco.
+                  </p>
+                </div>
               </div>
 
               <div>
@@ -645,14 +955,29 @@ export default function UsuariosPage() {
                   <label className="block text-xs font-bold text-slate-500 uppercase">
                     Contraseña Inicial *
                   </label>
-                  <button
-                    type="button"
-                    onClick={generateRandomPassword}
-                    className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1"
-                  >
-                    <KeyRound size={12} />
-                    <span>Generar Segura</span>
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => generateRandomPassword(false)}
+                      className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1"
+                    >
+                      <KeyRound size={12} />
+                      <span>Generar Segura</span>
+                    </button>
+                    {createUsername && createPassword && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyCredentialsCard(createNombre, createUsername, createEmail, createPassword, false)
+                        }
+                        className="text-[11px] text-emerald-600 font-bold hover:underline flex items-center gap-1"
+                        title="Copiar mensaje listo para pegar en WhatsApp"
+                      >
+                        {copiedShareCard ? <Check size={12} /> : <Share2 size={12} />}
+                        <span>{copiedShareCard ? '¡Ficha Copiada!' : 'Copiar para WhatsApp'}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div className="relative">
                   <input
@@ -676,7 +1001,7 @@ export default function UsuariosPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => copyToClipboard(createPassword)}
+                      onClick={() => copyToClipboard(createPassword, false)}
                       className="p-1 text-slate-400 hover:text-blue-600"
                       tabIndex={-1}
                       title="Copiar contraseña"
@@ -692,15 +1017,19 @@ export default function UsuariosPage() {
                 const selectedRole = roles.find((r) => r.id === createRolId)
                 const isMedico = selectedRole?.codigo === 'medico'
                 return (
-                  <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
-                    isMedico 
-                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800' 
-                      : 'bg-slate-50/60 dark:bg-slate-800/40 border-[var(--border)]'
-                  }`}>
+                  <div
+                    className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+                      isMedico
+                        ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
+                        : 'bg-slate-50/60 dark:bg-slate-800/40 border-[var(--border)]'
+                    }`}
+                  >
                     <div className="flex items-center justify-between">
-                      <label className={`block text-xs font-bold uppercase flex items-center gap-1.5 ${
-                        isMedico ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'
-                      }`}>
+                      <label
+                        className={`block text-xs font-bold uppercase flex items-center gap-1.5 ${
+                          isMedico ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'
+                        }`}
+                      >
                         <Phone size={14} className={isMedico ? 'text-emerald-600' : 'text-slate-400'} />
                         <span>Teléfono Móvil (WhatsApp)</span>
                         {isMedico && (
@@ -722,12 +1051,18 @@ export default function UsuariosPage() {
                     {createTelefono.trim() ? (
                       <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
                         <CheckCircle2 size={12} />
-                        <span>WhatsApp: <strong>{formatPhoneDisplay(createTelefono)}</strong> ({normalizePhoneNumber(createTelefono)})</span>
+                        <span>
+                          WhatsApp: <strong>{formatPhoneDisplay(createTelefono)}</strong> (
+                          {normalizePhoneNumber(createTelefono)})
+                        </span>
                       </p>
                     ) : isMedico ? (
                       <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
                         <AlertTriangle size={12} className="shrink-0" />
-                        <span>Recomendado: El bot enviará alertas automáticas por WhatsApp a este número ante signos de alarma de sus pacientes.</span>
+                        <span>
+                          Recomendado: El bot enviará alertas automáticas por WhatsApp a este número ante signos de
+                          alarma de sus pacientes.
+                        </span>
                       </p>
                     ) : (
                       <p className="text-[11px] text-slate-400">
@@ -790,7 +1125,7 @@ export default function UsuariosPage() {
                       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       <input
                         type="text"
-                        placeholder="Buscar médico por nombre o matrícula..."
+                        placeholder="Buscar médico o técnico por nombre o matrícula..."
                         value={searchPreCreate}
                         onFocus={() => setDropdownOpenCreate(true)}
                         onChange={(e) => {
@@ -895,7 +1230,7 @@ export default function UsuariosPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={actionLoading}
+                  disabled={actionLoading || Boolean(createUsernameConflict)}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 glow-primary disabled:opacity-50"
                 >
                   {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
@@ -917,8 +1252,11 @@ export default function UsuariosPage() {
                   <Edit size={18} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-[var(--foreground)]">Editar Perfil de Usuario</h3>
-                  <p className="text-[11px] text-[var(--secondary)]">{selectedUser.email}</p>
+                  <h3 className="text-sm font-bold text-[var(--foreground)]">Editar Perfil y Credenciales</h3>
+                  <p className="text-[11px] text-[var(--secondary)] font-mono">
+                    @{selectedUser.username || 'sin-usuario'} •{' '}
+                    {isInternalSyntheticEmail(selectedUser.email) ? 'Sin email externo' : selectedUser.email}
+                  </p>
                 </div>
               </div>
               <button
@@ -929,10 +1267,10 @@ export default function UsuariosPage() {
               </button>
             </div>
 
-            <form onSubmit={handleEditUser} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+            <form onSubmit={handleEditUser} className="p-5 space-y-4 max-h-[82vh] overflow-y-auto">
               <div>
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Nombre Completo *
+                  Nombre Completo / Puesto *
                 </label>
                 <input
                   type="text"
@@ -941,6 +1279,57 @@ export default function UsuariosPage() {
                   onChange={(e) => setEditNombre(e.target.value)}
                   className="w-full px-3.5 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                    Nombre de Usuario (Login) *
+                  </label>
+                  <div className="relative">
+                    <AtSign size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-600" />
+                    <input
+                      type="text"
+                      required
+                      minLength={2}
+                      value={editUsername}
+                      onChange={(e) => setEditUsername(normalizeUsernameInput(e.target.value))}
+                      className={`w-full pl-8 pr-3 py-2 text-xs border rounded-xl bg-slate-50 dark:bg-slate-800 font-mono font-bold focus:outline-none focus:ring-2 ${
+                        editUsernameConflict
+                          ? 'border-red-400 focus:ring-red-500/20'
+                          : 'border-[var(--border)] focus:ring-blue-500/20'
+                      }`}
+                    />
+                  </div>
+                  {editUsernameConflict ? (
+                    <p className="text-[10px] text-red-500 mt-1 font-semibold">
+                      Ya en uso por {editUsernameConflict.nombre_completo}
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 mt-1">
+                      Identificador corto para iniciar sesión.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                    Correo Electrónico <span className="text-[10px] font-normal lowercase">(Editable)</span>
+                  </label>
+                  <div className="relative">
+                    <Mail size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="email"
+                      placeholder="Sin correo externo (solo @usuario)"
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Actualiza el correo real o déjalo vacío si es cuenta interna.
+                  </p>
+                </div>
               </div>
 
               {/* Selector Buscable de Prestador Geclisa en Edición */}
@@ -995,7 +1384,7 @@ export default function UsuariosPage() {
                       <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       <input
                         type="text"
-                        placeholder="Buscar médico por nombre o matrícula..."
+                        placeholder="Buscar médico o técnico por nombre o matrícula..."
                         value={searchPreEdit}
                         onFocus={() => setDropdownOpenEdit(true)}
                         onChange={(e) => {
@@ -1079,9 +1468,10 @@ export default function UsuariosPage() {
                     Estado
                   </label>
                   <select
+                    disabled={selectedUser.id === user?.id}
                     value={editActivo ? 'true' : 'false'}
                     onChange={(e) => setEditActivo(e.target.value === 'true')}
-                    className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60"
                   >
                     <option value="true">Activo</option>
                     <option value="false">Inactivo (Suspendido)</option>
@@ -1094,15 +1484,19 @@ export default function UsuariosPage() {
                 const selectedRole = roles.find((r) => r.id === editRolId)
                 const isMedico = selectedRole?.codigo === 'medico'
                 return (
-                  <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
-                    isMedico 
-                      ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800' 
-                      : 'bg-slate-50/60 dark:bg-slate-800/40 border-[var(--border)]'
-                  }`}>
+                  <div
+                    className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+                      isMedico
+                        ? 'bg-emerald-50/50 dark:bg-emerald-950/20 border-emerald-300 dark:border-emerald-800'
+                        : 'bg-slate-50/60 dark:bg-slate-800/40 border-[var(--border)]'
+                    }`}
+                  >
                     <div className="flex items-center justify-between">
-                      <label className={`block text-xs font-bold uppercase flex items-center gap-1.5 ${
-                        isMedico ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'
-                      }`}>
+                      <label
+                        className={`block text-xs font-bold uppercase flex items-center gap-1.5 ${
+                          isMedico ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-500'
+                        }`}
+                      >
                         <Phone size={14} className={isMedico ? 'text-emerald-600' : 'text-slate-400'} />
                         <span>Teléfono Móvil (WhatsApp)</span>
                         {isMedico && (
@@ -1124,12 +1518,18 @@ export default function UsuariosPage() {
                     {editTelefono.trim() ? (
                       <p className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1 font-mono">
                         <CheckCircle2 size={12} />
-                        <span>WhatsApp: <strong>{formatPhoneDisplay(editTelefono)}</strong> ({normalizePhoneNumber(editTelefono)})</span>
+                        <span>
+                          WhatsApp: <strong>{formatPhoneDisplay(editTelefono)}</strong> (
+                          {normalizePhoneNumber(editTelefono)})
+                        </span>
                       </p>
                     ) : isMedico ? (
                       <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
                         <AlertTriangle size={12} className="shrink-0" />
-                        <span>Recomendado: El bot enviará alertas automáticas por WhatsApp a este número ante signos de alarma de sus pacientes.</span>
+                        <span>
+                          Recomendado: El bot enviará alertas automáticas por WhatsApp a este número ante signos de
+                          alarma de sus pacientes.
+                        </span>
                       </p>
                     ) : (
                       <p className="text-[11px] text-slate-400">
@@ -1140,17 +1540,65 @@ export default function UsuariosPage() {
                 )
               })()}
 
+              {/* Restablecer Contraseña con controles completos */}
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                  Restablecer Contraseña (Opcional)
-                </label>
-                <input
-                  type="password"
-                  placeholder="Dejar en blanco para mantener la actual"
-                  value={editPassword}
-                  onChange={(e) => setEditPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-500 uppercase">
+                    Restablecer Contraseña (Opcional)
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => generateRandomPassword(true)}
+                      className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1"
+                    >
+                      <KeyRound size={12} />
+                      <span>Generar Nueva</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        copyCredentialsCard(editNombre, editUsername, editEmail, editPassword, true)
+                      }
+                      className="text-[11px] text-emerald-600 font-bold hover:underline flex items-center gap-1"
+                      title="Copiar datos de acceso listos para WhatsApp"
+                    >
+                      {copiedEditShareCard ? <Check size={12} /> : <Share2 size={12} />}
+                      <span>{copiedEditShareCard ? '¡Ficha Copiada!' : 'Copiar Ficha WhatsApp'}</span>
+                    </button>
+                  </div>
+                </div>
+                <div className="relative">
+                  <input
+                    type={showEditPassword ? 'text' : 'password'}
+                    placeholder="Dejar en blanco para mantener la contraseña actual"
+                    value={editPassword}
+                    onChange={(e) => setEditPassword(e.target.value)}
+                    className="w-full pl-3.5 pr-20 py-2.5 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowEditPassword(!showEditPassword)}
+                      className="p-1 text-slate-400 hover:text-slate-600"
+                      tabIndex={-1}
+                      title="Ver/Ocultar"
+                    >
+                      {showEditPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                    </button>
+                    {editPassword && (
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(editPassword, true)}
+                        className="p-1 text-slate-400 hover:text-blue-600"
+                        tabIndex={-1}
+                        title="Copiar nueva contraseña"
+                      >
+                        {copiedEditPassword ? <Check size={15} className="text-emerald-600" /> : <Copy size={15} />}
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="flex gap-2 justify-end pt-2 border-t border-[var(--border)]">
@@ -1164,7 +1612,7 @@ export default function UsuariosPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={actionLoading}
+                  disabled={actionLoading || Boolean(editUsernameConflict)}
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 glow-primary disabled:opacity-50"
                 >
                   {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
@@ -1186,7 +1634,8 @@ export default function UsuariosPage() {
             <div>
               <h3 className="text-sm font-bold text-[var(--foreground)]">¿Eliminar Usuario?</h3>
               <p className="text-xs text-[var(--secondary)] mt-1">
-                Esta acción eliminará el acceso de <strong>{selectedUser.nombre_completo}</strong> ({selectedUser.email}). Esta acción no se puede deshacer.
+                Esta acción eliminará el acceso de <strong>{selectedUser.nombre_completo}</strong> (
+                @{selectedUser.username || selectedUser.email}). Esta acción no se puede deshacer.
               </p>
             </div>
             <div className="flex gap-2 justify-center pt-2 border-t border-[var(--border)]">

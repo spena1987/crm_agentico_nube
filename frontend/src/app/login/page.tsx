@@ -4,10 +4,10 @@ import React, { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/context/AuthContext'
-import { Activity, Lock, Mail, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Clock } from 'lucide-react'
+import { Activity, Lock, Mail, User as UserIcon, Eye, EyeOff, ShieldCheck, AlertCircle, Loader2, Clock } from 'lucide-react'
 
 function LoginForm() {
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -18,6 +18,7 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const isInactiveReason = searchParams.get('reason') === 'inactivity'
   const isTokenExpiredReason = searchParams.get('reason') === 'token_expired'
+  const isDeactivatedError = searchParams.get('error') === 'account_deactivated'
   const returnUrl = searchParams.get('returnUrl')
 
   useEffect(() => {
@@ -31,20 +32,20 @@ function LoginForm() {
     e.preventDefault()
     setErrorMsg(null)
 
-    if (!email.trim() || !password) {
-      setErrorMsg('Por favor, ingresa tu correo electrónico y contraseña.')
+    if (!identifier.trim() || !password) {
+      setErrorMsg('Por favor, ingresa tu usuario (o correo electrónico) y contraseña.')
       return
     }
 
     setIsSubmitting(true)
 
     try {
-      const { error } = await signIn(email.trim(), password)
+      const { error } = await signIn(identifier.trim(), password)
       if (error) {
         if (error.message.includes('Invalid login credentials')) {
-          setErrorMsg('Credenciales incorrectas. Verifica tu correo y contraseña.')
+          setErrorMsg('Credenciales incorrectas. Verifica tu nombre de usuario/correo y contraseña.')
         } else if (error.message.includes('Email not confirmed')) {
-          setErrorMsg('El correo electrónico no ha sido confirmado aún.')
+          setErrorMsg('La cuenta no ha sido confirmada aún.')
         } else {
           setErrorMsg(error.message || 'Error al iniciar sesión. Intenta nuevamente.')
         }
@@ -69,6 +70,8 @@ function LoginForm() {
     )
   }
 
+  const isEmailInput = identifier.includes('@')
+
   return (
     <div className="min-h-screen w-full flex items-center justify-center p-4 bg-[var(--background)] relative overflow-hidden">
       {/* Elementos visuales de fondo */}
@@ -85,9 +88,22 @@ function LoginForm() {
             MedCRM Clínico
           </h1>
           <p className="text-sm text-[var(--secondary)] mt-1.5">
-            Ingreso exclusivo para personal médico y administrativo autorizado
+            Ingreso exclusivo para personal médico, técnico y administrativo autorizado
           </p>
         </div>
+
+        {/* Aviso de Cuenta Desactivada */}
+        {isDeactivatedError && !errorMsg && (
+          <div className="mb-6 p-4 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 flex items-start gap-3 text-red-800 dark:text-red-300 text-xs">
+            <AlertCircle size={18} className="shrink-0 mt-0.5 text-red-600" />
+            <div className="space-y-0.5">
+              <p className="font-bold">Cuenta suspendida</p>
+              <p className="text-red-700 dark:text-red-400">
+                Tu acceso ha sido desactivado por un administrador del sistema.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Aviso de Sesión Cerrada por Inactividad */}
         {isInactiveReason && (
@@ -127,18 +143,22 @@ function LoginForm() {
         <form onSubmit={handleSubmit} className="flex flex-col gap-5">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--secondary)] mb-2">
-              Correo Electrónico
+              Usuario o Correo Electrónico
             </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Mail size={18} />
+                {isEmailInput ? <Mail size={18} /> : <UserIcon size={18} />}
               </div>
               <input
-                type="email"
+                type="text"
                 required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="doctor@clinica.com"
+                autoComplete="username"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="Ej: hgras, quirofano o doctor@clinica.com"
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-900/50 border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 disabled={isSubmitting}
               />
@@ -156,6 +176,7 @@ function LoginForm() {
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
@@ -196,7 +217,7 @@ function LoginForm() {
         <div className="mt-8 pt-6 border-t border-[var(--border)] text-center space-y-3">
           <p className="text-xs text-[var(--secondary)] flex items-center justify-center gap-1.5">
             <Lock size={13} className="shrink-0" />
-            Acceso restringido. Nuevas cuentas deben ser dadas de alta por la administración en Supabase.
+            Acceso restringido. Solicita tu usuario o restablecimiento a la administración de la clínica.
           </p>
 
           {/* Enlaces Legales Públicos requeridos por Meta WhatsApp API */}

@@ -26,7 +26,12 @@ import {
   Building2,
   UserCheck,
   Eye,
-  HelpCircle
+  EyeOff,
+  HelpCircle,
+  KeyRound,
+  CheckCircle2,
+  AlertCircle,
+  Loader2
 } from 'lucide-react'
 
 import { apiFetch, BACKEND_URL } from '@/lib/api'
@@ -97,6 +102,59 @@ export default function Navigation() {
   const [asesoriaMenuOpen, setAsesoriaMenuOpen] = useState(true)
   const [clinicLogo, setClinicLogo] = useState<string | null>(null)
   const [clinicName, setClinicName] = useState<string>('Centro Médico Nube')
+
+  // Modal de autogestión de contraseña
+  const [showPassModal, setShowPassModal] = useState(false)
+  const [selfNewPass, setSelfNewPass] = useState('')
+  const [selfConfirmPass, setSelfConfirmPass] = useState('')
+  const [showSelfPass, setShowSelfPass] = useState(false)
+  const [selfPassLoading, setSelfPassLoading] = useState(false)
+  const [selfPassFeedback, setSelfPassFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+
+  const handleSelfPasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSelfPassFeedback(null)
+
+    if (selfNewPass.trim().length < 6) {
+      setSelfPassFeedback({ type: 'error', message: 'La contraseña debe tener al menos 6 caracteres.' })
+      return
+    }
+    if (selfNewPass.trim() !== selfConfirmPass.trim()) {
+      setSelfPassFeedback({ type: 'error', message: 'Las contraseñas ingresadas no coinciden.' })
+      return
+    }
+
+    setSelfPassLoading(true)
+    try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (sessionData.session?.access_token) {
+        headers['Authorization'] = `Bearer ${sessionData.session.access_token}`
+      }
+
+      const res = await fetch('/api/auth/me/password', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ newPassword: selfNewPass.trim() }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Error al actualizar la contraseña.')
+      }
+
+      setSelfPassFeedback({ type: 'success', message: 'Contraseña actualizada correctamente.' })
+      setSelfNewPass('')
+      setSelfConfirmPass('')
+      setTimeout(() => {
+        setShowPassModal(false)
+        setSelfPassFeedback(null)
+      }, 1500)
+    } catch (err: any) {
+      setSelfPassFeedback({ type: 'error', message: err.message })
+    } finally {
+      setSelfPassLoading(false)
+    }
+  }
 
   const fetchUnreadMetrics = async () => {
     try {
@@ -441,40 +499,60 @@ export default function Navigation() {
           isCollapsed ? 'p-1.5 justify-center' : 'p-2.5 justify-between gap-2'
         }`}>
           <div className="flex items-center gap-2.5 min-w-0">
-            <div 
-              className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs shrink-0 glow-primary"
-              title={isCollapsed ? `${displayName} (${roleName})` : undefined}
+            <button
+              type="button"
+              onClick={() => {
+                setSelfPassFeedback(null)
+                setSelfNewPass('')
+                setSelfConfirmPass('')
+                setShowPassModal(true)
+              }}
+              className="w-8 h-8 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-xs shrink-0 glow-primary hover:ring-2 hover:ring-blue-400 transition-all"
+              title={`${displayName} (${profile?.username ? `@${profile.username} • ` : ''}${roleName}) - Clic para cambiar contraseña`}
             >
               {initials}
-            </div>
+            </button>
             {!isCollapsed && (
               <div className="truncate min-w-0">
                 <p className="text-xs font-bold leading-tight truncate text-[var(--foreground)]" title={displayName}>
                   {displayName}
                 </p>
                 <p className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold truncate" title={roleName}>
-                  {roleName}
+                  {profile?.username ? `@${profile.username} • ` : ''}{roleName}
                 </p>
               </div>
             )}
           </div>
 
           {!isCollapsed && (
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelfPassFeedback(null)
+                  setSelfNewPass('')
+                  setSelfConfirmPass('')
+                  setShowPassModal(true)
+                }}
+                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg transition-colors"
+                title="Cambiar mi contraseña"
+              >
+                <KeyRound size={15} />
+              </button>
               <Link
                 href="/ayuda"
                 onClick={() => setMobileOpen(false)}
                 className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg transition-colors"
                 title="Centro de Ayuda y Manuales"
               >
-                <HelpCircle size={16} />
+                <HelpCircle size={15} />
               </Link>
               <button 
                 onClick={handleLogout}
                 className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-lg transition-colors"
                 title="Cerrar sesión"
               >
-                <LogOut size={16} />
+                <LogOut size={15} />
               </button>
             </div>
           )}
@@ -527,6 +605,107 @@ export default function Navigation() {
       >
         {sidebarContent}
       </aside>
+
+      {/* Modal Autogestión: Cambiar mi Contraseña */}
+      {showPassModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-xl w-full max-w-sm overflow-hidden animate-scale-up">
+            <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold">
+                  <KeyRound size={16} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-[var(--foreground)]">Cambiar mi Contraseña</h3>
+                  <p className="text-[10px] text-[var(--secondary)]">
+                    {profile?.username ? `Usuario: @${profile.username}` : userEmail}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowPassModal(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSelfPasswordChange} className="p-4 space-y-3.5">
+              {selfPassFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 border ${
+                    selfPassFeedback.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
+                      : 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800'
+                  }`}
+                >
+                  {selfPassFeedback.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
+                  <span>{selfPassFeedback.message}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
+                  Nueva Contraseña
+                </label>
+                <div className="relative">
+                  <input
+                    type={showSelfPass ? 'text' : 'password'}
+                    required
+                    minLength={6}
+                    placeholder="Mínimo 6 caracteres"
+                    value={selfNewPass}
+                    onChange={(e) => setSelfNewPass(e.target.value)}
+                    className="w-full pl-3 pr-9 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSelfPass(!showSelfPass)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    tabIndex={-1}
+                  >
+                    {showSelfPass ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
+                  Confirmar Nueva Contraseña
+                </label>
+                <input
+                  type={showSelfPass ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  placeholder="Repite la nueva contraseña"
+                  value={selfConfirmPass}
+                  onChange={(e) => setSelfConfirmPass(e.target.value)}
+                  className="w-full px-3 py-2 text-xs border border-[var(--border)] rounded-xl bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => setShowPassModal(false)}
+                  className="px-3.5 py-2 border border-[var(--border)] rounded-xl text-slate-500 hover:bg-slate-50 text-xs font-bold"
+                  disabled={selfPassLoading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={selfPassLoading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 glow-primary disabled:opacity-50"
+                >
+                  {selfPassLoading && <Loader2 size={14} className="animate-spin" />}
+                  <span>Guardar Clave</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   )
 }

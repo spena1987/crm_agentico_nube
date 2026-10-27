@@ -2,38 +2,69 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { verifyServerAdmin } from '@/lib/serverAuth'
 
-// GET: Listar todos los roles con sus permisos asociados
+// GET: Listar todos los roles con sus permisos asociados y cantidad de usuarios
 export async function GET(request: Request) {
   try {
-    const auth = await verifyServerAdmin(request)
+    let auth = await verifyServerAdmin(request, 'ver_roles')
+    if (!auth.isAdmin) {
+      auth = await verifyServerAdmin(request, 'ver_usuarios')
+    }
     if (!auth.isAdmin) {
       return auth.errorResponse!
     }
 
-    const { data: roles, error: rolesError } = await supabaseAdmin
-      .from('roles')
-      .select(`
-        id,
-        codigo,
-        nombre,
-        descripcion,
-        es_sistema,
-        landing_page,
-        created_at,
-        rol_permisos (
+    const [rolesResult, usersResult] = await Promise.all([
+      supabaseAdmin
+        .from('roles')
+        .select(`
           id,
-          modulo_codigo,
-          accion,
-          permitido
-        )
-      `)
-      .order('created_at', { ascending: true })
+          codigo,
+          nombre,
+          descripcion,
+          es_sistema,
+          landing_page,
+          created_at,
+          rol_permisos (
+            id,
+            modulo_codigo,
+            accion,
+            permitido
+          )
+        `)
+        .order('created_at', { ascending: true }),
+      supabaseAdmin
+        .from('usuarios_perfil')
+        .select('id, nombre_completo, username, rol_id, activo'),
+    ])
 
-    if (rolesError) {
-      return NextResponse.json({ error: rolesError.message }, { status: 500 })
+    if (rolesResult.error) {
+      return NextResponse.json({ error: rolesResult.error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ roles: roles || [] })
+    const usersByRole = new Map<string, { id: string; nombre_completo: string; username?: string | null; activo: boolean }[]>()
+    for (const u of usersResult.data || []) {
+      if (u.rol_id) {
+        const list = usersByRole.get(u.rol_id) || []
+        list.push({
+          id: u.id,
+          nombre_completo: u.nombre_completo,
+          username: u.username,
+          activo: u.activo,
+        })
+        usersByRole.set(u.rol_id, list)
+      }
+    }
+
+    const enrichedRoles = (rolesResult.data || []).map((r: any) => {
+      const assigned = usersByRole.get(r.id) || []
+      return {
+        ...r,
+        usuarios_count: assigned.length,
+        usuarios_asignados: assigned,
+      }
+    })
+
+    return NextResponse.json({ roles: enrichedRoles })
   } catch (err: any) {
     console.error('Error en GET /api/admin/roles:', err)
     return NextResponse.json({ error: err.message || 'Error interno del servidor' }, { status: 500 })
@@ -43,7 +74,7 @@ export async function GET(request: Request) {
 // POST: Crear un nuevo rol y sus permisos
 export async function POST(request: Request) {
   try {
-    const auth = await verifyServerAdmin(request)
+    const auth = await verifyServerAdmin(request, 'ver_roles')
     if (!auth.isAdmin) {
       return auth.errorResponse!
     }

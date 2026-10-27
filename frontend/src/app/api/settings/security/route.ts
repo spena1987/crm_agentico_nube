@@ -33,7 +33,7 @@ export async function GET() {
 // PATCH: Guardar nueva configuración de seguridad (solo administradores)
 export async function PATCH(request: Request) {
   try {
-    const auth = await verifyServerAdmin(request)
+    const auth = await verifyServerAdmin(request, 'ver_seguridad')
     if (!auth.isAdmin) {
       return auth.errorResponse!
     }

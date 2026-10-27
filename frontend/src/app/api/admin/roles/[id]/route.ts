@@ -8,7 +8,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const auth = await verifyServerAdmin(request)
+    const auth = await verifyServerAdmin(request, 'ver_roles')
     if (!auth.isAdmin) {
       return auth.errorResponse!
     }
@@ -72,7 +72,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const auth = await verifyServerAdmin(request)
+    const auth = await verifyServerAdmin(request, 'ver_roles')
     if (!auth.isAdmin) {
       return auth.errorResponse!
     }

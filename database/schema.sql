@@ -305,6 +305,7 @@ create table if not exists public.rol_permisos (
 create table if not exists public.usuarios_perfil (
     id uuid primary key references auth.users(id) on delete cascade,
     email varchar not null,
+    username varchar(64) unique,
     nombre_completo varchar not null,
     rol_id uuid references public.roles(id) on delete set null,
     activo boolean default true not null,

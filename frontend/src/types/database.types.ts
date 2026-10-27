@@ -825,6 +825,7 @@ export type Database = {
           descripcion: string | null
           es_sistema: boolean
           id: string
+          landing_page: string | null
           nombre: string
           updated_at: string
         }
@@ -834,6 +835,7 @@ export type Database = {
           descripcion?: string | null
           es_sistema?: boolean
           id?: string
+          landing_page?: string | null
           nombre: string
           updated_at?: string
         }
@@ -843,6 +845,7 @@ export type Database = {
           descripcion?: string | null
           es_sistema?: boolean
           id?: string
+          landing_page?: string | null
           nombre?: string
           updated_at?: string
         }
@@ -934,7 +937,9 @@ export type Database = {
           id: string
           nombre_completo: string
           rol_id: string | null
+          telefono: string | null
           updated_at: string
+          username: string | null
         }
         Insert: {
           activo?: boolean
@@ -947,7 +952,9 @@ export type Database = {
           id: string
           nombre_completo: string
           rol_id?: string | null
+          telefono?: string | null
           updated_at?: string
+          username?: string | null
         }
         Update: {
           activo?: boolean
@@ -960,7 +967,9 @@ export type Database = {
           id?: string
           nombre_completo?: string
           rol_id?: string | null
+          telefono?: string | null
           updated_at?: string
+          username?: string | null
         }
         Relationships: [
           {

@@ -19,8 +19,10 @@ const ROUTE_TO_MODULE: Record<string, string> = {
   '/calculo-lio': 'calculo-lio',
   '/presupuestos': 'presupuestos',
   '/pacientes': 'pacientes',
+  '/estudios-tecnicos': 'estudios-tecnicos',
   '/logs': 'logs',
   '/ajustes': 'ajustes',
+  '/ayuda': 'ayuda',
 }
 
 function resolveModuleCode(pathname: string): string | null {

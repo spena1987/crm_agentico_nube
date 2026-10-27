@@ -8,7 +8,7 @@ interface AuthContextType {
   user: User | null
   session: Session | null
   loading: boolean
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>
+  signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>
   signOut: () => Promise<void>
 }
 
@@ -60,10 +60,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (identifier: string, password: string) => {
     try {
+      const cleanId = identifier.trim()
+      let targetEmail = cleanId.toLowerCase()
+
+      // Resolver si es nombre de usuario o verificar estado activo de la cuenta
+      try {
+        const res = await fetch('/api/auth/resolve-identifier', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: cleanId }),
+        })
+        const data = await res.json()
+
+        if (!res.ok) {
+          throw new Error(data.error || 'No se pudo verificar la cuenta.')
+        }
+
+        if (data.email) {
+          targetEmail = data.email
+        }
+      } catch (resolveErr: any) {
+        // Si el endpoint devolvió explícitamente error de cuenta inactiva, propagarlo
+        if (resolveErr.message && resolveErr.message.includes('desactivada')) {
+          throw resolveErr
+        }
+        // Si hubo un fallo de red y no contiene '@', no podrá autenticar directamente
+        if (!cleanId.includes('@')) {
+          throw new Error('Error al resolver el nombre de usuario. Verifica tu conexión.')
+        }
+      }
+
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: targetEmail,
         password,
       })
       if (error) throw error

@@ -12,7 +12,7 @@ export interface ServerAuthResult {
 /**
  * Extrae token JWT desde los headers Authorization o cookies de Supabase.
  */
-function extractToken(request: Request): string {
+export function extractToken(request: Request): string {
   const authHeader = request.headers.get('Authorization') || request.headers.get('authorization')
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.substring(7).trim()
@@ -49,9 +49,13 @@ function extractToken(request: Request): string {
 }
 
 /**
- * Valida la autenticación y el rol de administrador del usuario que invoca una API Route de Next.js.
+ * Valida la autenticación y el rol de administrador (o permiso granular en 'ajustes')
+ * del usuario que invoca una API Route de Next.js.
  */
-export async function verifyServerAdmin(request: Request): Promise<ServerAuthResult> {
+export async function verifyServerAdmin(
+  request: Request,
+  requiredAjustesAction?: string
+): Promise<ServerAuthResult> {
   const token = extractToken(request)
 
   if (!token) {
@@ -118,9 +122,24 @@ export async function verifyServerAdmin(request: Request): Promise<ServerAuthRes
   }
 
   const roleCode = (profile.roles?.codigo || '').toLowerCase()
-  const isAdmin = roleCode === 'admin' || roleCode === 'superadmin' || profile.roles?.es_sistema === true
+  let isAuthorized = roleCode === 'admin' || roleCode === 'superadmin'
 
-  if (!isAdmin) {
+  // Si no es admin general pero la ruta admite un permiso granular de ajustes (ej: ver_usuarios, ver_roles, ver_seguridad)
+  if (!isAuthorized && requiredAjustesAction && profile.rol_id) {
+    const { data: perm } = await supabaseAdmin
+      .from('rol_permisos')
+      .select('permitido')
+      .eq('rol_id', profile.rol_id)
+      .eq('modulo_codigo', 'ajustes')
+      .eq('accion', requiredAjustesAction)
+      .maybeSingle()
+
+    if (perm?.permitido === true) {
+      isAuthorized = true
+    }
+  }
+
+  if (!isAuthorized) {
     return {
       authenticated: true,
       isAdmin: false,
