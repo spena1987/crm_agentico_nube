@@ -2622,7 +2622,9 @@ def create_presupuesto_api(payload: Dict[str, Any] = Body(...)):
             "asesoria_id": payload.get("asesoria_id"),
             "cobertura": payload.get("cobertura"),
             "estado": payload.get("estado", "enviado"),
-            "items": items_parsed
+            "items": items_parsed,
+            "fecha_emision": payload.get("fecha_emision"),
+            "validez_dias": payload.get("validez_dias")
         })
         
         return {
@@ -3824,6 +3826,7 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
         modulos = payload.get("modulos")
         tipo_documento = payload.get("tipo_documento")
         titulo_documento = payload.get("titulo_documento")
+        fecha_emision = payload.get("fecha_emision")
         resultado = emitir_indicaciones_expediente(
             asesoria_id=asesoria_id,
             enviar_whatsapp=enviar_wa,
@@ -3834,7 +3837,8 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
             usu_alta=usu_alta,
             modulos=modulos,
             tipo_documento=tipo_documento,
-            titulo_documento=titulo_documento
+            titulo_documento=titulo_documento,
+            fecha_emision=fecha_emision
         )
         if not resultado.get("success"):
             raise HTTPException(status_code=400, detail=resultado.get("error", "Error al emitir indicación."))
@@ -3897,6 +3901,7 @@ def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)
         alarmas = payload.get("pautas_alarma")
         reenviar_wa = payload.get("reenviar_whatsapp", True)
         usu = payload.get("usu_modificacion", "asesora_crm")
+        fecha_emision = payload.get("fecha_emision")
 
         res = reeditar_emision_indicaciones(
             emision_id=emision_id,
@@ -3905,7 +3910,8 @@ def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)
             cuidados_generales=cuidados,
             pautas_alarma=alarmas,
             reenviar_whatsapp=reenviar_wa,
-            usu_modificacion=usu
+            usu_modificacion=usu,
+            fecha_emision=fecha_emision
         )
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error", "Error reeditando indicación."))

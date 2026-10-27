@@ -19,7 +19,9 @@ import {
   Check,
   CheckSquare,
   Square,
-  Shield
+  Shield,
+  Calendar,
+  Clock
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
@@ -69,6 +71,8 @@ export interface PresupuestoEdicionData {
   total_ars?: number
   total_usd?: number
   pdf_url?: string | null
+  fecha_emision?: string | null
+  validez_dias?: number | null
   items_presupuesto?: Array<any>
 }
 
@@ -88,6 +92,7 @@ interface ModalCrearPresupuestoPacienteProps {
     moneda?: string | null
   } | null
   presupuestoAEditar?: PresupuestoEdicionData | null
+  fechaCirugia?: string | null
   onPresupuestoCreado: (nuevoPresupuesto: any) => void
   onPresupuestoActualizado?: (presupuestoActualizado: any) => void
 }
@@ -102,6 +107,7 @@ export default function ModalCrearPresupuestoPaciente({
   asesoriaId,
   practicaInicial,
   presupuestoAEditar,
+  fechaCirugia,
   onPresupuestoCreado,
   onPresupuestoActualizado
 }: ModalCrearPresupuestoPacienteProps) {
@@ -120,6 +126,8 @@ export default function ModalCrearPresupuestoPaciente({
   const [practicaRequiereLente, setPracticaRequiereLente] = useState(false)
 
   const [emitirEstado, setEmitirEstado] = useState<'enviado' | 'borrador' | 'aprobado'>('enviado')
+  const [fechaEmision, setFechaEmision] = useState<string>(() => new Date().toISOString().slice(0, 10))
+  const [validezDias, setValidezDias] = useState<number>(30)
   const [guardando, setGuardando] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -245,6 +253,13 @@ export default function ModalCrearPresupuestoPaciente({
 
         if (presupuestoAEditar.estado) {
           setEmitirEstado(presupuestoAEditar.estado as any)
+        }
+
+        if (presupuestoAEditar.fecha_emision) {
+          setFechaEmision(String(presupuestoAEditar.fecha_emision).slice(0, 10))
+        }
+        if (presupuestoAEditar.validez_dias) {
+          setValidezDias(Number(presupuestoAEditar.validez_dias))
         }
 
         const rawItems = (presupuestoAEditar.items_presupuesto && presupuestoAEditar.items_presupuesto.length > 0)
@@ -574,6 +589,8 @@ export default function ModalCrearPresupuestoPaciente({
       cobertura: coberturaPresupuesto.trim() || 'Particular',
       estado: emitirEstado,
       moneda: totalUSD > 0 && totalARS === 0 ? 'USD' : 'ARS',
+      fecha_emision: fechaEmision,
+      validez_dias: Number(validezDias) || 30,
       items: items.map((it) => ({
         servicio_id: it.servicio_id || null,
         codigo: it.codigo || null,
@@ -677,6 +694,75 @@ export default function ModalCrearPresupuestoPaciente({
               <span>{error}</span>
             </div>
           )}
+
+          {/* Vigencia y Fecha de Emisión (Permite posfechar a fecha de cirugía y elegir días de validez) */}
+          <div className="p-4 rounded-xl bg-neutral-950/60 border border-blue-500/20 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col gap-1.5 flex-1">
+              <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                <Calendar size={14} className="text-blue-400" />
+                Fecha de Emisión (Documental / PDF)
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  type="date"
+                  value={fechaEmision}
+                  onChange={(e) => setFechaEmision(e.target.value)}
+                  className="px-3 py-1.5 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white font-mono focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setFechaEmision(new Date().toISOString().slice(0, 10))}
+                  className={`px-2.5 py-1.5 text-xs rounded-xl font-bold transition-all border ${
+                    fechaEmision === new Date().toISOString().slice(0, 10)
+                      ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
+                      : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
+                  }`}
+                >
+                  Hoy
+                </button>
+                {fechaCirugia && (
+                  <button
+                    type="button"
+                    onClick={() => setFechaEmision(fechaCirugia.split('T')[0])}
+                    className={`px-2.5 py-1.5 text-xs rounded-xl font-bold transition-all border ${
+                      fechaEmision === fechaCirugia.split('T')[0]
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                        : 'bg-neutral-900 border-[var(--border)] text-emerald-400 hover:bg-emerald-950/30'
+                    }`}
+                    title={`Fijar a fecha de cirugía: ${fechaCirugia.split('T')[0]}`}
+                  >
+                    Fecha Cirugía
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 flex-1">
+              <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                <Clock size={14} className="text-amber-400" />
+                Validez Comercial de la Cotización
+              </label>
+              <div className="flex items-center gap-2 flex-wrap">
+                {[15, 30, 45, 60, 90].map((dias) => (
+                  <button
+                    key={dias}
+                    type="button"
+                    onClick={() => setValidezDias(dias)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all ${
+                      validezDias === dias
+                        ? 'bg-amber-600 text-white border-amber-500 shadow-sm'
+                        : 'bg-neutral-900 border-[var(--border)] text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {dias}d
+                  </button>
+                ))}
+                <span className="text-[11px] text-gray-400 ml-1 font-mono">
+                  (Vence en {validezDias} días)
+                </span>
+              </div>
+            </div>
+          </div>
 
           {/* Configuración de Moneda, Estado y Cobertura */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 rounded-xl bg-neutral-950/40 border border-[var(--border)]">

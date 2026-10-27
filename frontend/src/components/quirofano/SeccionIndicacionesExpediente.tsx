@@ -27,7 +27,8 @@ import {
   Edit2,
   X,
   Save,
-  Download
+  Download,
+  Calendar
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
 
@@ -47,6 +48,7 @@ interface SeccionIndicacionesExpedienteProps {
   indicacionGeclisaImId?: number | null
   indicacionesEmitidasAt?: string | null
   indicacionesPdfUrl?: string | null
+  fechaCirugia?: string | null
   onIndicacionEmitida?: (resultado: any) => void
 }
 
@@ -66,6 +68,7 @@ export default function SeccionIndicacionesExpediente({
   indicacionGeclisaImId,
   indicacionesEmitidasAt,
   indicacionesPdfUrl,
+  fechaCirugia,
   onIndicacionEmitida
 }: SeccionIndicacionesExpedienteProps) {
   const [desplegado, setDesplegado] = useState<boolean>(true)
@@ -98,6 +101,9 @@ export default function SeccionIndicacionesExpediente({
   const [previewPdfBlobUrl, setPreviewPdfBlobUrl] = useState<string | null>(null)
   const [generandoPreview, setGenerandoPreview] = useState<boolean>(false)
   
+  // Fecha de Emisión del Documento (permite posfechar a fecha de cirugía o libre)
+  const [fechaEmision, setFechaEmision] = useState<string>(() => new Date().toISOString().slice(0, 10))
+
   // Estado para reenviar WhatsApp
   const [reenviandoWaId, setReenviandoWaId] = useState<string | null>(null)
   
@@ -105,6 +111,7 @@ export default function SeccionIndicacionesExpediente({
   const [modalReedicionOpen, setModalReedicionOpen] = useState<boolean>(false)
   const [emisionParaReeditar, setEmisionParaReeditar] = useState<any | null>(null)
   const [textoReedicion, setTextoReedicion] = useState<string>('')
+  const [fechaReedicion, setFechaReedicion] = useState<string>('')
   const [reenviarWaReedicion, setReenviarWaReedicion] = useState<boolean>(true)
   const [guardandoReedicion, setGuardandoReedicion] = useState<boolean>(false)
   
@@ -381,6 +388,8 @@ export default function SeccionIndicacionesExpediente({
         modulosSeleccionadosIds.includes(m.id)
       )
 
+      const fechaParts = fechaEmision ? fechaEmision.split('-') : null
+      const fechaFormateada = fechaParts && fechaParts.length === 3 ? `${fechaParts[2]}/${fechaParts[1]}/${fechaParts[0]}` : undefined
       const datosPayload: any = {
         paciente_nombre: pacienteNombre || 'Paciente',
         paciente_dni: pacienteDni || '',
@@ -396,7 +405,9 @@ export default function SeccionIndicacionesExpediente({
         geclisa_im_id: geclisaImId,
         asesoria_id: asesoriaId,
         tipo_documento: tipoDocumento,
-        titulo_documento: tituloDocumento
+        titulo_documento: tituloDocumento,
+        fecha: fechaFormateada,
+        fecha_emision: fechaEmision
       }
 
       if (modulosActivos.length > 0) {
@@ -454,7 +465,8 @@ export default function SeccionIndicacionesExpediente({
           pautas_alarma: pautasAlarma,
           modulos: modulosActivos.length > 0 ? modulosActivos : undefined,
           tipo_documento: tipoDocumento,
-          titulo_documento: tituloDocumento
+          titulo_documento: tituloDocumento,
+          fecha_emision: fechaEmision
         })
       })
 
@@ -517,6 +529,7 @@ export default function SeccionIndicacionesExpediente({
   const handleAbrirReedicion = (em: any) => {
     setEmisionParaReeditar(em)
     setTextoReedicion(em.texto_indicaciones || '')
+    setFechaReedicion(em.fecha_emision ? String(em.fecha_emision).slice(0, 10) : new Date().toISOString().slice(0, 10))
     setReenviarWaReedicion(true)
     setModalReedicionOpen(true)
   }
@@ -531,7 +544,8 @@ export default function SeccionIndicacionesExpediente({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           texto_indicaciones: textoReedicion,
-          reenviar_whatsapp: reenviarWaReedicion
+          reenviar_whatsapp: reenviarWaReedicion,
+          fecha_emision: fechaReedicion || undefined
         })
       })
       const data = await res.json()
@@ -750,11 +764,14 @@ export default function SeccionIndicacionesExpediente({
                               <span>{em.whatsapp_status === 'enviado' ? 'WhatsApp Enviado ✓' : em.whatsapp_status || 'Pendiente'}</span>
                             </span>
 
-                            {/* Fecha de emisión */}
-                            <span className="text-[10px] text-[var(--secondary)]">
-                              {em.created_at
-                                ? new Date(em.created_at).toLocaleDateString() + ' ' + new Date(em.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                : '-'}
+                            {/* Fecha de emisión / Vigencia médica */}
+                            <span
+                              className="text-[10px] font-medium text-[var(--foreground)] px-2 py-0.5 rounded-md bg-[var(--hover-bg)] border border-[var(--border-color)]"
+                              title={em.fecha_emision ? `Fecha Documento: ${em.fecha_emision} | Generado: ${new Date(em.created_at).toLocaleString('es-AR')}` : undefined}
+                            >
+                              📅 {em.fecha_emision
+                                ? (em.fecha_emision.includes('-') ? em.fecha_emision.split('-').reverse().join('/') : em.fecha_emision)
+                                : (em.created_at ? new Date(em.created_at).toLocaleDateString('es-AR') : '-')}
                             </span>
                           </div>
 
@@ -908,6 +925,55 @@ export default function SeccionIndicacionesExpediente({
                 <div>
                   <span className="text-[var(--secondary)] block">Destinatario WhatsApp:</span>
                   <span className="font-bold text-[var(--foreground)]">{pacienteNombre || 'Paciente'} ({pacienteTelefono || 'Sin teléfono'})</span>
+                </div>
+              </div>
+
+              {/* Selector de Fecha de Emisión Oficial (Vigencia Clínica / Posdatado) */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs">
+                <div className="flex items-center gap-2">
+                  <Calendar size={16} className="text-blue-500 shrink-0" />
+                  <div>
+                    <span className="font-bold text-[var(--foreground)] block">Fecha de Emisión del Documento</span>
+                    <span className="text-[11px] text-[var(--secondary)]">
+                      Fecha legal y clínica impresa en la orden o receta. Puede emitirse hoy o posdatarse a la fecha de cirugía.
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <input
+                    type="date"
+                    value={fechaEmision}
+                    onChange={(e) => setFechaEmision(e.target.value)}
+                    className="px-2.5 py-1.5 rounded-lg border border-[var(--border-color)] bg-[var(--card-bg)] text-[var(--foreground)] font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setFechaEmision(new Date().toISOString().slice(0, 10))}
+                    className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition ${
+                      fechaEmision === new Date().toISOString().slice(0, 10)
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-[var(--card-bg)] text-[var(--foreground)] border-[var(--border-color)] hover:bg-[var(--hover-bg)]'
+                    }`}
+                  >
+                    Hoy
+                  </button>
+                  {fechaCirugia && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const fClean = fechaCirugia.split('T')[0]
+                        setFechaEmision(fClean)
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold transition ${
+                        fechaEmision === fechaCirugia.split('T')[0]
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-[var(--card-bg)] text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10'
+                      }`}
+                      title={`Fijar a fecha de cirugía: ${fechaCirugia.split('T')[0]}`}
+                    >
+                      Fecha Cirugía
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1176,6 +1242,36 @@ export default function SeccionIndicacionesExpediente({
               >
                 <X size={16} />
               </button>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-[var(--foreground)] block mb-1">
+                Fecha del Documento (Emisión):
+              </label>
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="date"
+                  value={fechaReedicion}
+                  onChange={(e) => setFechaReedicion(e.target.value)}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setFechaReedicion(new Date().toISOString().slice(0, 10))}
+                  className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[var(--hover-bg)] text-[var(--foreground)] border border-[var(--border-color)]"
+                >
+                  Hoy
+                </button>
+                {fechaCirugia && (
+                  <button
+                    type="button"
+                    onClick={() => setFechaReedicion(fechaCirugia.split('T')[0])}
+                    className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30"
+                  >
+                    Fecha Cirugía
+                  </button>
+                )}
+              </div>
             </div>
 
             <div>

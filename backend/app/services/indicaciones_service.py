@@ -405,7 +405,8 @@ def emitir_indicaciones_expediente(
     usu_alta: str = "asesora_crm",
     modulos: Optional[List[Dict[str, Any]]] = None,
     tipo_documento: Optional[str] = None,
-    titulo_documento: Optional[str] = None
+    titulo_documento: Optional[str] = None,
+    fecha_emision: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Proceso central de Emisión de Indicaciones Médicas:
@@ -551,6 +552,30 @@ def emitir_indicaciones_expediente(
             else:
                 titulo_documento = "INDICACIONES POSTQUIRÚRGICAS"
 
+    # Resolver fecha de emisión documental (permite fecha actual o posdatada a futuro / día de cirugía)
+    fecha_pdf = None
+    fecha_db = None
+    if fecha_emision:
+        try:
+            s_f = str(fecha_emision).strip()
+            if "-" in s_f:
+                p = s_f.split("T")[0].split("-")
+                if len(p) == 3:
+                    fecha_db = f"{p[0]}-{p[1]}-{p[2]}"
+                    fecha_pdf = f"{p[2]}/{p[1]}/{p[0]}"
+            elif "/" in s_f:
+                p = s_f.split("/")
+                if len(p) == 3:
+                    fecha_pdf = f"{p[0]}/{p[1]}/{p[2]}"
+                    fecha_db = f"{p[2]}-{p[1]}-{p[0]}"
+        except Exception as e_f:
+            logger.warning(f"Error interpretando fecha_emision {fecha_emision}: {e_f}")
+
+    if not fecha_db:
+        fecha_db = datetime.now().strftime("%Y-%m-%d")
+    if not fecha_pdf:
+        fecha_pdf = datetime.now().strftime("%d/%m/%Y")
+
     # 4. Generar el PDF Institucional con ReportLab
     datos_emision_pdf = {
         "paciente_nombre": paciente_nombre,
@@ -572,7 +597,8 @@ def emitir_indicaciones_expediente(
         "modulos": items_a_emitir,
         "items": items_a_emitir,
         "titulo_documento": titulo_documento,
-        "tipo_documento": tipo_documento
+        "tipo_documento": tipo_documento,
+        "fecha": fecha_pdf
     }
     
     pdf_resultado = generar_pdf_indicacion_medica(datos_emision_pdf, guardar_en_disco=True)
@@ -596,6 +622,7 @@ def emitir_indicaciones_expediente(
             "tipo_documento": tipo_documento,
             "titulo_documento": titulo_documento,
             "texto_indicaciones": texto_final,
+            "fecha_emision": fecha_db,
             "pdf_path": pdf_path,
             "pdf_url": pdf_url,
             "whatsapp_status": whatsapp_status
@@ -728,7 +755,8 @@ def reeditar_emision_indicaciones(
     cuidados_generales: Optional[str] = None,
     pautas_alarma: Optional[str] = None,
     reenviar_whatsapp: bool = True,
-    usu_modificacion: str = "asesora_crm"
+    usu_modificacion: str = "asesora_crm",
+    fecha_emision: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Reedita una indicación médica ya emitida:
@@ -761,6 +789,33 @@ def reeditar_emision_indicaciones(
     practica_nombre = emision.get("practica_nombre") or "Procedimiento Quirúrgico"
     ojo_intervenido = asesoria.get("ojo") or "OD"
 
+    # Resolver fecha de emisión si viene provista
+    fecha_pdf = None
+    fecha_db = None
+    if fecha_emision:
+        try:
+            s_f = str(fecha_emision).strip()
+            if "-" in s_f:
+                p = s_f.split("T")[0].split("-")
+                if len(p) == 3:
+                    fecha_db = f"{p[0]}-{p[1]}-{p[2]}"
+                    fecha_pdf = f"{p[2]}/{p[1]}/{p[0]}"
+            elif "/" in s_f:
+                p = s_f.split("/")
+                if len(p) == 3:
+                    fecha_pdf = f"{p[0]}/{p[1]}/{p[2]}"
+                    fecha_db = f"{p[2]}-{p[1]}-{p[0]}"
+        except Exception as e_f:
+            logger.warning(f"Error interpretando fecha_emision en reedición {fecha_emision}: {e_f}")
+
+    if not fecha_pdf and emision.get("fecha_emision"):
+        raw_em = str(emision.get("fecha_emision")).strip()
+        if "-" in raw_em:
+            p = raw_em.split("-")
+            fecha_pdf = f"{p[2]}/{p[1]}/{p[0]}"
+        else:
+            fecha_pdf = raw_em
+
     # Generar nuevo PDF
     datos_pdf = {
         "paciente_nombre": paciente_nombre,
@@ -777,7 +832,8 @@ def reeditar_emision_indicaciones(
         "medicamentos": medicamentos or [],
         "cuidados_generales": cuidados_generales or "",
         "pautas_alarma": pautas_alarma or "",
-        "geclisa_im_id": emision.get("geclisa_im_id")
+        "geclisa_im_id": emision.get("geclisa_im_id"),
+        "fecha": fecha_pdf
     }
 
     config_diseno = {
@@ -795,6 +851,8 @@ def reeditar_emision_indicaciones(
         "pdf_path": pdf_path,
         "pdf_url": pdf_url
     }
+    if fecha_db:
+        upd_em["fecha_emision"] = fecha_db
     
     # Despachar WhatsApp si corresponde
     whatsapp_status = emision.get("whatsapp_status")

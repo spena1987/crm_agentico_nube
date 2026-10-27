@@ -2646,6 +2646,7 @@ export default function CasoFormularioActivo({
               indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
               indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
               indicacionesPdfUrl={caso.indicaciones_pdf_url}
+              fechaCirugia={fechaDefinitiva || fechaProbable || caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || (caso as any)?.turnos_quirofano?.fecha_cirugia || null}
               onIndicacionEmitida={() => {
                 onGuardar({})
               }}
@@ -2706,9 +2707,19 @@ export default function CasoFormularioActivo({
                               >
                                 {p.estado.toUpperCase()}
                               </span>
-                              <span className="text-[10px] text-gray-400">
-                                {new Date(p.created_at).toLocaleDateString('es-AR')}
+                              <span
+                                className="text-[10px] text-gray-300 font-medium"
+                                title={p.fecha_emision ? `Fecha Emisión: ${p.fecha_emision} | Auditoría: ${new Date(p.created_at).toLocaleDateString('es-AR')}` : undefined}
+                              >
+                                📅 {p.fecha_emision
+                                  ? (p.fecha_emision.includes('-') ? p.fecha_emision.split('-').reverse().join('/') : p.fecha_emision)
+                                  : new Date(p.created_at).toLocaleDateString('es-AR')}
                               </span>
+                              {p.validez_dias && (
+                                <span className="text-[9px] text-amber-400/80 font-mono">
+                                  ({p.validez_dias}d)
+                                </span>
+                              )}
                             </div>
 
                             {/* Ítems del presupuesto */}

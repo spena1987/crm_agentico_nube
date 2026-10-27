@@ -526,16 +526,32 @@ def generar_pdf_presupuesto(
     else:
         moneda_resumen = "Pesos Argentinos (ARS)"
         
-    fecha_emision = parse_and_format_date(presupuesto.get('created_at'))
-    validez_dias = int(plantilla.get('validez_dias', 30) or 30)
+    # 1. Determinar fecha de emisión (priorizar fecha_emision sobre created_at)
+    fecha_emision_raw = presupuesto.get('fecha_emision')
+    if fecha_emision_raw:
+        fecha_emision = parse_and_format_date(fecha_emision_raw)
+    else:
+        fecha_emision = parse_and_format_date(presupuesto.get('created_at'))
+
+    # Determinar validez en días (priorizar presupuesto sobre plantilla o defecto 30)
+    validez_dias = int(presupuesto.get('validez_dias') or plantilla.get('validez_dias') or 30)
     
-    # Calcular fecha exacta de vencimiento
+    # Calcular fecha exacta de vencimiento a partir de la fecha de emisión efectiva
     try:
-        created_val = presupuesto.get('created_at')
-        if created_val and str(created_val).lower() not in ('now()', 'none', ''):
-            dt_base = datetime.fromisoformat(str(created_val).strip().replace("Z", "+00:00")).astimezone(TZ_ARGENTINA)
+        if fecha_emision_raw:
+            raw_str = str(fecha_emision_raw).strip()
+            if "-" in raw_str:
+                dt_base = datetime.strptime(raw_str[:10], "%Y-%m-%d").replace(tzinfo=TZ_ARGENTINA)
+            elif "/" in raw_str:
+                dt_base = datetime.strptime(raw_str[:10], "%d/%m/%Y").replace(tzinfo=TZ_ARGENTINA)
+            else:
+                dt_base = datetime.fromisoformat(raw_str.replace("Z", "+00:00")).astimezone(TZ_ARGENTINA)
         else:
-            dt_base = datetime.now(TZ_ARGENTINA)
+            created_val = presupuesto.get('created_at')
+            if created_val and str(created_val).lower() not in ('now()', 'none', ''):
+                dt_base = datetime.fromisoformat(str(created_val).strip().replace("Z", "+00:00")).astimezone(TZ_ARGENTINA)
+            else:
+                dt_base = datetime.now(TZ_ARGENTINA)
     except Exception:
         dt_base = datetime.now(TZ_ARGENTINA)
         

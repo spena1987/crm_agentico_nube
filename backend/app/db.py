@@ -4884,6 +4884,14 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
         if not cobertura_in:
             cobertura_in = paciente.get("obra_social") or "Particular"
 
+        # Resolver fecha de emisión y validez comercial
+        fecha_emision = payload.get("fecha_emision")
+        validez_dias = payload.get("validez_dias") or 30
+        try:
+            validez_dias = int(validez_dias)
+        except Exception:
+            validez_dias = 30
+
         # 4. Insertar cabecera de presupuesto en Supabase (obtiene numero_presupuesto correlativo de la BD)
         pres_data = {
             "id": presupuesto_id,
@@ -4894,8 +4902,11 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             "total": total_escalar,
             "total_ars": total_ars,
             "total_usd": total_usd,
+            "validez_dias": validez_dias,
             "pdf_url": pdf_url
         }
+        if fecha_emision:
+            pres_data["fecha_emision"] = str(fecha_emision).strip()
         p_ins = supabase.table("presupuestos").insert(pres_data).execute()
         if not p_ins.data:
             raise Exception("No se pudo crear la cabecera del presupuesto.")
@@ -4910,7 +4921,9 @@ def crear_presupuesto_rapido(payload: dict) -> Dict[str, Any]:
             "total_usd": total_usd,
             "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
             "cobertura": cobertura_in,
-            "created_at": presupuesto_db.get("created_at") or "now()"
+            "created_at": presupuesto_db.get("created_at") or "now()",
+            "fecha_emision": presupuesto_db.get("fecha_emision") or fecha_emision,
+            "validez_dias": validez_dias
         }
         generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)
             
@@ -5120,6 +5133,13 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
             update_data["estado"] = payload["estado"]
         if asesoria_id:
             update_data["asesoria_id"] = asesoria_id
+        if "fecha_emision" in payload and payload["fecha_emision"]:
+            update_data["fecha_emision"] = str(payload["fecha_emision"]).strip()
+        if "validez_dias" in payload and payload["validez_dias"]:
+            try:
+                update_data["validez_dias"] = int(payload["validez_dias"])
+            except Exception:
+                pass
 
         p_upd = supabase.table("presupuestos").update(update_data).eq("id", presupuesto_id).execute()
         if p_upd.data:
@@ -5144,7 +5164,9 @@ def actualizar_presupuesto_rapido(presupuesto_id: str, payload: dict) -> Dict[st
             "total_usd": total_usd,
             "moneda": "USD" if (total_usd > 0 and total_ars == 0) else "ARS",
             "cobertura": cobertura_in,
-            "created_at": presupuesto_db.get("created_at") or "now()"
+            "created_at": presupuesto_db.get("created_at") or "now()",
+            "fecha_emision": presupuesto_db.get("fecha_emision"),
+            "validez_dias": presupuesto_db.get("validez_dias") or 30
         }
         try:
             generar_pdf_presupuesto(pdf_dict, paciente, items_para_pdf)

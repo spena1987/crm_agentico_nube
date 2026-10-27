@@ -25,6 +25,8 @@ export interface PresupuestoPaciente {
   total_usd?: number
   pdf_url: string | null
   created_at: string
+  fecha_emision?: string | null
+  validez_dias?: number | null
   items_presupuesto?: Array<{
     id: string
     servicio_id?: string
@@ -706,6 +708,7 @@ export default function ItemCasoQuirurgicoAcordeon({
           obraSocial={caso.cobertura_obra_social || obraSocialDefault || 'Particular'}
           practicaInicial={practicaParaModalPresupuesto}
           presupuestoAEditar={presupuestoAEditar}
+          fechaCirugia={caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || (caso as any).turnos_quirofano?.fecha_cirugia || null}
           onPresupuestoCreado={handlePresupuestoCreado}
           onPresupuestoActualizado={handlePresupuestoActualizado}
         />
