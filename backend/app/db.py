@@ -3685,7 +3685,9 @@ def get_datos_recordatorio_quirurgico(asesoria_id: str, ojo: Optional[str] = Non
             "plantilla_recomendada": "recordatorio_cirugia_preparacion_v1",
             "es_bilateral_escalonada": es_bilateral_escalonada,
             "primer_ojo": primer_ojo_info,
-            "segundo_ojo": segundo_ojo_info
+            "segundo_ojo": segundo_ojo_info,
+            "whatsapp_mensaje_envio": (get_configuracion_quirofano() or {}).get("whatsapp_mensaje_envio"),
+            "whatsapp_mensaje_confirmacion": (get_configuracion_quirofano() or {}).get("whatsapp_mensaje_confirmacion")
         }
     except Exception as e:
         logger.error(f"Error al obtener datos de recordatorio quirúrgico: {e}")

@@ -81,6 +81,8 @@ interface DatosConsentimientoBackend {
   es_bilateral_escalonada?: boolean
   primer_ojo?: InfoOjoBilateral
   segundo_ojo?: InfoOjoBilateral
+  whatsapp_mensaje_envio?: string
+  whatsapp_mensaje_confirmacion?: string
 }
 
 interface ModalEnviarConsentimientoWhatsAppProps {
@@ -277,10 +279,24 @@ export default function ModalEnviarConsentimientoWhatsApp({
   const templateStatus = templateActualInfo ? templateActualInfo.status : 'NO_REGISTRADA'
   const isAprobadaMeta = templateStatus === 'APPROVED'
 
-  // Generar texto completo del mensaje para previsualización
+  // Generar texto completo del mensaje para previsualización (prioriza plantilla de Ajustes)
   const cuerpoTextoRenderizado = modoEnvio === 'template' && plantillaSeleccionada === 'apertura_conversacion'
     ? `Hola ${pacienteNombre || '[Paciente]'}, nos comunicamos de Centrovisión respecto a su cirugía programada. Por favor responda a este mensaje para activar el canal y enviarle la documentación prequirúrgica.`
-    : `Hola ${pacienteNombre || '[Paciente]'}, le escribimos de Centrovisión respecto a su cirugía de ${cirugia || '[Cirugía]'} programada para el día ${fecha || '[Fecha]'} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, le compartimos su Consentimiento Informado oficial:\n${enlaceFirma || '[Enlace de firma]'}\n\nAnte cualquier consulta, estamos a su disposición.`
+    : (() => {
+        if (datosOriginales?.whatsapp_mensaje_envio && datosOriginales.whatsapp_mensaje_envio.trim()) {
+          let custom = datosOriginales.whatsapp_mensaje_envio
+          custom = custom.replaceAll('{paciente}', pacienteNombre || '[Paciente]')
+          custom = custom.replaceAll('{cirugia}', cirugia || '[Cirugía]')
+          custom = custom.replaceAll('{ojo_intervenido}', datosOriginales.ojo_desc || '[Ojo]')
+          custom = custom.replaceAll('{ojo}', datosOriginales.ojo_desc || '[Ojo]')
+          custom = custom.replaceAll('{fecha_cirugia}', fecha || '[Fecha]')
+          custom = custom.replaceAll('{fecha}', fecha || '[Fecha]')
+          custom = custom.replaceAll('{cirujano}', cirujanoNombre || '[Cirujano]')
+          custom = custom.replaceAll('{enlace_firma}', enlaceFirma || '[Enlace de firma]')
+          return custom
+        }
+        return `Hola ${pacienteNombre || '[Paciente]'}, le escribimos de Centrovisión respecto a su cirugía de ${cirugia || '[Cirugía]'} programada para el día ${fecha || '[Fecha]'} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, le compartimos su Consentimiento Informado oficial:\n${enlaceFirma || '[Enlace de firma]'}\n\nAnte cualquier consulta, estamos a su disposición.`
+      })()
 
   // Mensaje secundario en caso de previsualizar envío de ambos
   const cuerpoTextoSegundoMensaje = datosOriginales?.es_bilateral_escalonada && datosOriginales.segundo_ojo

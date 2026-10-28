@@ -6066,46 +6066,75 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
             paciente = turno.get("pacientes") or {}
             tel = paciente.get("telefono")
             if tel:
-                # Determinar indicación de ayuno dinámica según la práctica médica
+                # 1. Determinar nombre amigable del paciente (evita mayúsculas o 'APELLIDO, NOMBRE' de Geclisa)
+                pac_nombre_raw = str(paciente.get("nombre") or "").strip()
+                saludo_nombre = pac_nombre_raw
+                if "," in pac_nombre_raw:
+                    partes = [p.strip() for p in pac_nombre_raw.split(",") if p.strip()]
+                    if len(partes) >= 2:
+                        saludo_nombre = partes[1].title()
+                    elif len(partes) == 1:
+                        saludo_nombre = partes[0].title()
+                elif pac_nombre_raw:
+                    saludo_nombre = pac_nombre_raw.title()
+                if not saludo_nombre:
+                    saludo_nombre = "Paciente"
+
+                # 2. Formatear fecha de cirugía a formato amigable argentino (DD/MM/YYYY)
+                fecha_raw = str(turno.get("fecha_cirugia") or "").strip()
+                fecha_formateada = fecha_raw
+                if "-" in fecha_raw:
+                    try:
+                        p_f = fecha_raw.split("T")[0].split("-")
+                        if len(p_f) == 3:
+                            fecha_formateada = f"{p_f[2]}/{p_f[1]}/{p_f[0]}"
+                    except Exception:
+                        pass
+
+                # 3. Datos contextuales de práctica, ojo y cirujano
+                cirugia_nombre = turno.get("practica_nombre") or turno.get("practica") or "Cirugía Oftalmológica"
+                ojo_raw = str(turno.get("ojo") or "").upper()
+                ojo_desc = "Ojo Derecho (OD)" if "OD" in ojo_raw else "Ojo Izquierdo (OI)" if "OI" in ojo_raw else (ojo_raw or "Ojo Quirúrgico")
+                cirujano = turno.get("cirujano_nombre") or "Médico Cirujano"
+
+                # 4. Determinar indicación de ayuno dinámica según la práctica médica
                 practica_id = turno.get("practica_id")
                 practica_cod = turno.get("practica_codigo") or turno.get("practica_cod")
-                practica_nombre = turno.get("practica_nombre") or turno.get("practica")
-                resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or practica_nombre)
+                resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or cirugia_nombre)
 
                 ayuno_horas = int(resumen_practica.get("ayuno_horas", 8)) if resumen_practica else 8
                 habilitar_prep = bool(resumen_practica.get("habilitar_preparacion", False)) if resumen_practica else False
 
                 if habilitar_prep and ayuno_horas == 0:
                     indicacion_ayuno = "Recordá que para tu intervención no se requiere ayuno estricto (dieta liviana habitual)."
-                elif ayuno_horas > 0:
+                elif habilitar_prep and ayuno_horas > 0:
                     indicacion_ayuno = f"Recordá concurrir con {ayuno_horas} horas de ayuno total (líquidos y sólidos)."
+                elif not habilitar_prep:
+                    indicacion_ayuno = ""
                 else:
-                    indicacion_ayuno = "Recordá que no se requiere ayuno estricto."
+                    indicacion_ayuno = f"Recordá concurrir con {ayuno_horas} horas de ayuno total (líquidos y sólidos)."
 
+                # 5. Obtener plantilla de confirmación de configuracion_quirofano
                 config = get_configuracion_quirofano()
-                conf_msg = config.get("whatsapp_mensaje_confirmacion") or (
-                    "¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}. "
-                    "{indicacion_ayuno}"
-                )
-                
-                if "{indicacion_ayuno}" in conf_msg:
-                    msg_ok = conf_msg.format(
-                        paciente=paciente.get("nombre") or "Paciente",
-                        fecha_cirugia=str(turno.get("fecha_cirugia") or ""),
-                        indicacion_ayuno=indicacion_ayuno
+                conf_msg = (config.get("whatsapp_mensaje_confirmacion") or "").strip()
+                if not conf_msg:
+                    conf_msg = (
+                        "¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}."
                     )
-                else:
-                    msg_temp = conf_msg.format(
-                        paciente=paciente.get("nombre") or "Paciente",
-                        fecha_cirugia=str(turno.get("fecha_cirugia") or "")
-                    )
-                    import re
-                    if re.search(r'Record[áa]\s+concurrir\s+con\s+8\s+horas\s+de\s+ayuno[^.]*\.?', msg_temp, re.IGNORECASE):
-                        msg_ok = re.sub(r'Record[áa]\s+concurrir\s+con\s+8\s+horas\s+de\s+ayuno[^.]*\.?', indicacion_ayuno, msg_temp, flags=re.IGNORECASE)
-                    elif "8 horas de ayuno" in msg_temp:
-                        msg_ok = msg_temp.replace("8 horas de ayuno total (líquidos y sólidos)", indicacion_ayuno).replace("8 horas de ayuno total", indicacion_ayuno).replace("8 horas de ayuno", indicacion_ayuno)
-                    else:
-                        msg_ok = f"{msg_temp} {indicacion_ayuno}".strip()
+
+                # Reemplazo seguro de variables (evita KeyError de .format())
+                msg_ok = conf_msg.replace("{paciente}", saludo_nombre) \
+                                 .replace("{fecha_cirugia}", fecha_formateada) \
+                                 .replace("{fecha}", fecha_formateada) \
+                                 .replace("{cirugia}", cirugia_nombre) \
+                                 .replace("{ojo_intervenido}", ojo_desc) \
+                                 .replace("{ojo}", ojo_desc) \
+                                 .replace("{cirujano}", cirujano) \
+                                 .replace("{indicacion_ayuno}", indicacion_ayuno)
+
+                # Limpieza de espacios dobles si indicacion_ayuno no se utilizó
+                import re
+                msg_ok = re.sub(r"[ \t]+", " ", msg_ok).strip()
 
                 jid = tel if "@" in tel else f"{tel}@s.whatsapp.net"
                 try:

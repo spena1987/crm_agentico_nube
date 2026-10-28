@@ -20,7 +20,10 @@ import {
   Sliders,
   Timer,
   CalendarDays,
-  Eye
+  Eye,
+  Send,
+  CheckCheck,
+  Sparkles
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import LioSettingsCard from './LioSettingsCard'
@@ -1300,43 +1303,166 @@ export default function QuirofanoSettingsCard({
 
       {/* SECCIÓN 5: MENSAJES WHATSAPP */}
       {activeSubSection === 'whatsapp' && (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <div>
-            <h3 className="text-sm font-bold text-[var(--foreground)]">Plantillas de Mensajes de WhatsApp y Firma</h3>
+            <h3 className="text-sm font-bold text-[var(--foreground)]">Plantillas y Mensajería de Consentimiento Informado</h3>
             <p className="text-xs text-[var(--secondary)]">
-              Mensajes automáticos que recibe el paciente con el enlace único para firmar desde su smartphone.
+              Personaliza el mensaje inicial con el enlace de firma y la respuesta automática que recibe el paciente al firmar digitalmente.
             </p>
           </div>
 
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-bold text-[var(--foreground)]">Mensaje de Envío con Enlace de Firma</label>
-              <textarea
-                rows={3}
-                value={waMensajeEnvio}
-                onChange={(e) => setWaMensajeEnvio(e.target.value)}
-                className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
-                placeholder="Hola {paciente}, confirmamos tu turno..."
-              />
-              <p className="text-[11px] text-[var(--secondary)] mt-1">
-                Debe incluir el tag <code className="font-mono text-blue-600">{"{enlace_firma}"}</code>.
-              </p>
+          <div className="space-y-6">
+            {/* Mensaje 1: Envío con Enlace */}
+            <div className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/60 dark:bg-slate-900/40 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                    <Send size={15} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[var(--foreground)]">
+                      1. Mensaje de Envío con Enlace de Firma
+                    </h4>
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      Se envía cuando la ventana de 24h está activa o como mensaje libre personalizado con el enlace de firma.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)] block mb-1">
+                  Variables dinámicas disponibles (clic para insertar):
+                </label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[
+                    { tag: '{paciente}', desc: 'Nombre del paciente' },
+                    { tag: '{fecha_cirugia}', desc: 'Fecha (DD/MM/AAAA)' },
+                    { tag: '{cirugia}', desc: 'Nombre de la práctica' },
+                    { tag: '{ojo_intervenido}', desc: 'Ojo quirúrgico (OD/OI/AO)' },
+                    { tag: '{cirujano}', desc: 'Médico cirujano' },
+                    { tag: '{enlace_firma}', desc: 'Enlace web seguro' }
+                  ].map(({ tag, desc }) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setWaMensajeEnvio((prev) => (prev ? `${prev} ${tag}` : tag))}
+                      className="px-2 py-1 rounded-md text-[10.5px] font-mono font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 hover:text-emerald-500 transition text-[var(--foreground)] shadow-2xs"
+                      title={desc}
+                    >
+                      + {tag}
+                    </button>
+                  ))}
+                </div>
+
+                <textarea
+                  rows={4}
+                  value={waMensajeEnvio}
+                  onChange={(e) => setWaMensajeEnvio(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] leading-relaxed font-sans focus:ring-2 focus:ring-emerald-500 outline-none"
+                  placeholder="Hola {paciente}, confirmamos tu cirugía de {cirugia} para el día {fecha_cirugia}... {enlace_firma}"
+                />
+              </div>
+
+              {/* Vista Previa Mensaje 1 */}
+              <div className="mt-2 p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20">
+                <div className="flex items-center gap-1.5 text-[10.5px] font-bold text-emerald-600 dark:text-emerald-400 mb-1.5">
+                  <Sparkles size={12} />
+                  <span>Vista Previa del Paciente en WhatsApp:</span>
+                </div>
+                <div className="bg-emerald-900/30 text-emerald-100 dark:text-emerald-200 text-xs p-3 rounded-xl max-w-lg border border-emerald-500/30 whitespace-pre-wrap leading-relaxed shadow-sm">
+                  {(waMensajeEnvio || 'Hola {paciente}, confirmamos tu turno de cirugía de {cirugia} ({ojo_intervenido}) para el día {fecha_cirugia} con el Dr. {cirujano}. Por favor firmá tu consentimiento: {enlace_firma}')
+                    .replaceAll('{paciente}', 'Carolina Paula')
+                    .replaceAll('{cirugia}', 'Facoemulsificación con LIO')
+                    .replaceAll('{ojo_intervenido}', 'Ojo Derecho (OD)')
+                    .replaceAll('{ojo}', 'Ojo Derecho (OD)')
+                    .replaceAll('{fecha_cirugia}', '05/11/2026')
+                    .replaceAll('{cirujano}', 'Dr. Juan Pérez')
+                    .replaceAll('{enlace_firma}', 'https://crm.centrovision.com/consentimiento/abc123xyz')}
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-[var(--foreground)]">Mensaje de Confirmación tras la Firma (Con Ayuno)</label>
-              <textarea
-                rows={2}
-                value={waMensajeConfirmacion}
-                onChange={(e) => setWaMensajeConfirmacion(e.target.value)}
-                className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)]"
-                placeholder="¡Muchas gracias {paciente}! Hemos registrado tu consentimiento..."
-              />
+            {/* Mensaje 2: Confirmación tras Firma */}
+            <div className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/60 dark:bg-slate-900/40 space-y-3">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                    <CheckCheck size={16} />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-[var(--foreground)]">
+                      2. Mensaje de Confirmación Automática tras la Firma
+                    </h4>
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      Respuesta inmediata que despacha el sistema cuando el paciente concluye la firma digital en su celular.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-semibold text-[var(--secondary)] block mb-1">
+                  Variables dinámicas disponibles (clic para insertar):
+                </label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[
+                    { tag: '{paciente}', desc: 'Nombre de pila del paciente (ej: Carolina Paula)' },
+                    { tag: '{fecha_cirugia}', desc: 'Fecha formateada (ej: 05/11/2026)' },
+                    { tag: '{cirugia}', desc: 'Nombre del procedimiento' },
+                    { tag: '{ojo_intervenido}', desc: 'Ojo intervenido (OD/OI/AO)' },
+                    { tag: '{cirujano}', desc: 'Nombre del cirujano' },
+                    { tag: '{indicacion_ayuno}', desc: 'Ayuno configurado en la práctica (opcional)' }
+                  ].map(({ tag, desc }) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setWaMensajeConfirmacion((prev) => (prev ? `${prev} ${tag}` : tag))}
+                      className="px-2 py-1 rounded-md text-[10.5px] font-mono font-semibold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-blue-500 hover:text-blue-500 transition text-[var(--foreground)] shadow-2xs"
+                      title={desc}
+                    >
+                      + {tag}
+                    </button>
+                  ))}
+                </div>
+
+                <textarea
+                  rows={3}
+                  value={waMensajeConfirmacion}
+                  onChange={(e) => setWaMensajeConfirmacion(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] leading-relaxed font-sans focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}."
+                />
+
+                <p className="text-[11px] text-[var(--secondary)] mt-1.5 leading-relaxed bg-blue-500/5 p-2 rounded-lg border border-blue-500/15">
+                  💡 <strong>Control de ayuno:</strong> Si incluyes el tag <code className="font-mono text-blue-500 font-bold">{"{indicacion_ayuno}"}</code>, el sistema insertará la pauta de ayuno configurada para la práctica en el Nomenclador. <strong>Si NO lo incluyes</strong>, el mensaje no agregará instrucciones de ayuno, respetando estrictamente tu texto.
+                </p>
+              </div>
+
+              {/* Vista Previa Mensaje 2 */}
+              <div className="mt-2 p-3 rounded-xl bg-blue-950/20 border border-blue-500/20">
+                <div className="flex items-center gap-1.5 text-[10.5px] font-bold text-blue-600 dark:text-blue-400 mb-1.5">
+                  <Sparkles size={12} />
+                  <span>Vista Previa de la Confirmación en WhatsApp:</span>
+                </div>
+                <div className="bg-blue-900/30 text-blue-100 dark:text-blue-200 text-xs p-3 rounded-xl max-w-lg border border-blue-500/30 whitespace-pre-wrap leading-relaxed shadow-sm">
+                  {(waMensajeConfirmacion || '¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}.')
+                    .replaceAll('{paciente}', 'Carolina Paula')
+                    .replaceAll('{fecha_cirugia}', '05/11/2026')
+                    .replaceAll('{fecha}', '05/11/2026')
+                    .replaceAll('{cirugia}', 'Facoemulsificación con LIO')
+                    .replaceAll('{ojo_intervenido}', 'Ojo Derecho (OD)')
+                    .replaceAll('{ojo}', 'Ojo Derecho (OD)')
+                    .replaceAll('{cirujano}', 'Dr. Juan Pérez')
+                    .replaceAll('{indicacion_ayuno}', 'Recordá concurrir con 8 horas de ayuno total.')}
+                </div>
+              </div>
             </div>
 
-            <div className="pt-2">
+            {/* Vigencia del Token */}
+            <div className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50/60 dark:bg-slate-900/40">
               <label className="text-xs font-bold text-[var(--foreground)]">Vigencia del Enlace Web Seguro</label>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="flex items-center gap-2 mt-1.5">
                 <input
                   type="number"
                   min={12}
