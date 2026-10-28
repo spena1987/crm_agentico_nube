@@ -51,6 +51,7 @@ import ModalAsistenteSRKT from '@/components/calculo-lio/ModalAsistenteSRKT'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepAlerta, reproducirBeepScan } from '@/lib/audioFeedback'
+import { useAuth } from '@/context/AuthContext'
 
 interface OpcionLio {
   id: string
@@ -92,6 +93,8 @@ const TORICOS_OPCIONES = [
 ]
 
 export default function CalculoLioPage() {
+  const { user } = useAuth()
+  const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email || ""
   const [todosPacientes, setTodosPacientes] = useState<any[]>([])
   const [cirujanos, setCirujanos] = useState<string[]>([])
   const [cirujanoSeleccionado, setCirujanoSeleccionado] = useState<string>('todos')
@@ -462,7 +465,7 @@ export default function CalculoLioPage() {
 
     try {
       setGuardandoBorrador(true)
-      const cirujano = pacienteActivo.cirujano_nombre || 'Cirujano'
+      const cirujano = currentUserName || pacienteActivo.cirujano_nombre || 'Cirujano'
       const payload = {
         turno_id: pacienteActivo.turno_id,
         asesoria_id: pacienteActivo.asesoria_id,
@@ -510,7 +513,7 @@ export default function CalculoLioPage() {
 
     try {
       setConfirmandoCalculo(true)
-      const cirujano = pacienteActivo.cirujano_nombre || 'Cirujano'
+      const cirujano = currentUserName || pacienteActivo.cirujano_nombre || 'Cirujano'
       const payload = {
         turno_id: pacienteActivo.turno_id,
         asesoria_id: pacienteActivo.asesoria_id,
@@ -590,7 +593,7 @@ export default function CalculoLioPage() {
       const nuevoEstado = !pacienteActivo.lio_stock_reservado
       const res = await apiFetch(`/api/turnos-quirofano/${pacienteActivo.turno_id}/reservar-stock`, {
         method: 'PUT',
-        body: JSON.stringify({ reservado: nuevoEstado })
+        body: JSON.stringify({ reservado: nuevoEstado, usuario: currentUserName || "Farmacia / LIO" })
       })
       const data = await res.json()
       if (res.ok && data.success) {

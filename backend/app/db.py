@@ -4579,7 +4579,7 @@ def sincronizar_presupuesto_desde_caso_quirurgico(
                                 "asesoria_id": asesoria_id,
                                 "paciente_id": paciente_id,
                                 "usuario_nombre": "Sistema CRM (Pipeline Qx / Quirófano)",
-                                "tipo_contacto": "presencial",
+                                "tipo_contacto": "interno",
                                 "contenido": f"Presupuesto #{prefix_id} marcado como OPERADO automáticamente tras confirmarse la realización de la cirugía.",
                                 "fecha_contacto": "now()"
                             })
@@ -4616,7 +4616,7 @@ def sincronizar_presupuesto_desde_caso_quirurgico(
                                 "asesoria_id": asesoria_id,
                                 "paciente_id": paciente_id,
                                 "usuario_nombre": "Sistema CRM (Pipeline Qx)",
-                                "tipo_contacto": "presencial",
+                                "tipo_contacto": "interno",
                                 "contenido": f"Presupuesto #{prefix_id} marcado como APROBADO automáticamente tras avanzar caso quirúrgico a '{estado_caso}'.",
                                 "fecha_contacto": "now()"
                             })
@@ -5759,7 +5759,8 @@ def enviar_presupuesto_por_whatsapp(
             crear_evolucion_asesoria({
                 "asesoria_id": target_asesoria_id,
                 "paciente_id": paciente.get("id"),
-                "usuario_nombre": "Asesoramiento Quirúrgico (Sistema)",
+                "usuario_id": usuario_id,
+                "usuario_nombre": usuario_nombre or "Asesoramiento Quirúrgico (Sistema)",
                 "tipo_contacto": "whatsapp",
                 "contenido": f"Presupuesto médico oficial #{presupuesto_id[:8]} enviado exitosamente por WhatsApp al número {clean_phone} [{modo_desc}]. Caso quirúrgico avanza a etapa 'En Análisis'."
             })

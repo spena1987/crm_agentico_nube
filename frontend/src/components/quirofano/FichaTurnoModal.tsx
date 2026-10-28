@@ -41,6 +41,7 @@ import { supabase } from '@/lib/supabase'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import { Printer } from 'lucide-react'
+import { useAuth } from '@/context/AuthContext'
 
 interface FichaTurnoModalProps {
   turno?: any
@@ -75,6 +76,8 @@ export default function FichaTurnoModal({
   onClose,
   onSaved
 }: FichaTurnoModalProps) {
+  const { user } = useAuth()
+  const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split("@")[0] || null
   const esEdicion = !!turno?.id
 
   // Casos confirmados desde Asesoramiento Quirúrgico
@@ -437,6 +440,7 @@ export default function FichaTurnoModal({
 
       const payload = {
         ...formData,
+        ...(esEdicion ? {} : { usuario_alta: currentUserName || (formData as any).usuario_alta || null }),
         forzar_conflicto_cirujano: confirmadoConflictoCirujano || !!conflictoCirujanoCrossRoom,
         obra_social: formData.obra_social?.trim() || 'Particular',
         duracion_minutos: Number(formData.duracion_minutos) || 20,

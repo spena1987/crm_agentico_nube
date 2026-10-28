@@ -124,17 +124,20 @@ export default function ReportePdfExportModal({
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(71, 85, 105)
       doc.text('COLABORADOR/A', 16, yPos + 5)
-      doc.text('ROL', 70, yPos + 5)
-      doc.text('CONTACTOS', 115, yPos + 5)
-      doc.text('WHATSAPP', 135, yPos + 5)
-      doc.text('LLAMADAS', 155, yPos + 5)
-      doc.text('ESTUDIOS', 175, yPos + 5)
+      doc.text('ROL', 64, yPos + 5)
+      doc.text('ACCIONES', 105, yPos + 5)
+      doc.text('CHATS RES.', 126, yPos + 5)
+      doc.text('WHATSAPP', 148, yPos + 5)
+      doc.text('LLAMADAS', 168, yPos + 5)
+      doc.text('ESTUDIOS', 184, yPos + 5)
 
       yPos += 8
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(30, 41, 59)
 
-      const topUsuarios = usuarios.slice(0, 12)
+      const topUsuarios = usuarios
+        .filter((u: any) => u.es_humano !== false && (u.acciones_totales ?? u.contactos_totales ?? 0) > 0)
+        .slice(0, 12)
       topUsuarios.forEach((u: any, idx: number) => {
         if (yPos > 265) {
           doc.addPage()
@@ -146,14 +149,18 @@ export default function ReportePdfExportModal({
           doc.rect(14, yPos - 2, 182, 6.5, 'F')
         }
 
+        const totalAcc = u.acciones_totales ?? u.contactos_totales ?? 0
+        const chatsRes = u.desglose?.casos_finalizados ?? 0
+
         doc.setFont('helvetica', 'bold')
-        doc.text(String(u.nombre || 'Personal').substring(0, 28), 16, yPos + 3)
+        doc.text(String(u.nombre || 'Personal').substring(0, 26), 16, yPos + 3)
         doc.setFont('helvetica', 'normal')
-        doc.text(String(u.rol || '-').substring(0, 22), 70, yPos + 3)
-        doc.text(String(u.contactos_totales || 0), 115, yPos + 3)
-        doc.text(String(u.canales?.whatsapp || 0), 135, yPos + 3)
-        doc.text(String(u.canales?.llamada || 0), 155, yPos + 3)
-        doc.text(String(u.estudios_procesados || 0), 175, yPos + 3)
+        doc.text(String(u.rol || '-').substring(0, 20), 64, yPos + 3)
+        doc.text(String(totalAcc), 105, yPos + 3)
+        doc.text(String(chatsRes), 126, yPos + 3)
+        doc.text(String(u.canales?.whatsapp || 0), 148, yPos + 3)
+        doc.text(String(u.canales?.llamada || 0), 168, yPos + 3)
+        doc.text(String(u.estudios_procesados || 0), 184, yPos + 3)
 
         yPos += 6.5
       })

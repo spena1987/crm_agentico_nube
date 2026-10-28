@@ -28,6 +28,7 @@ import {
   RefreshCw
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
 
 interface TemplateInfo {
   id?: string
@@ -127,6 +128,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   turnoIdDefault,
   onMensajeEnviado
 }: ModalRecordatorioCirugiaWhatsAppProps) {
+  const { user } = useAuth()
   const [cargando, setCargando] = useState<boolean>(true)
   const [enviando, setEnviando] = useState<boolean>(false)
   const [sincronizandoEstado, setSincronizandoEstado] = useState<boolean>(false)
@@ -338,6 +340,12 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
     setErrorMsg(null)
 
     try {
+      const currentUserName =
+        user?.user_metadata?.nombre_completo ||
+        user?.user_metadata?.full_name ||
+        user?.email?.split('@')[0] ||
+        'Asesora Quirúrgica'
+
       const payload = {
         telefono: telefono.trim(),
         template_name: plantillaSeleccionada,
@@ -352,7 +360,9 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
         texto_renderizado: cuerpoTextoRenderizado,
         paciente_id: pacienteId || datosOriginales?.paciente_id,
         turno_id: turnoIdSeleccionado || datosOriginales?.turno_id,
-        ojo: ojoTarget || datosOriginales?.ojo
+        ojo: ojoTarget || datosOriginales?.ojo,
+        usuario_id: user?.id || null,
+        usuario_nombre: currentUserName
       }
 
       const res = await apiFetch(`/api/asesorias-quirurgicas/${casoId}/enviar-recordatorio-whatsapp`, {

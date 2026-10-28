@@ -12,7 +12,7 @@ from app.db import supabase
 
 logger = logging.getLogger(__name__)
 
-# Cache simple en memoria con TTL de 60 segundos
+# Cache simple en memoria con TTL de 45 segundos
 _CACHE_STORE: Dict[str, Dict[str, Any]] = {}
 CACHE_TTL_SECONDS = 45
 
@@ -60,6 +60,29 @@ def _calcular_rango_fechas(dias: int = 30, fecha_inicio: Optional[str] = None, f
     return dt_inicio, dt_fin
 
 
+def _fetch_paginated(table_name: str, select_cols: str, iso_inicio: str, iso_fin: str, date_col: str = "created_at", extra_eq: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    Recupera todos los registros en el rango de fechas superando el límite de 1.000 filas por página de PostgREST.
+    """
+    all_rows: List[Dict[str, Any]] = []
+    offset = 0
+    page_size = 1000
+    while True:
+        q = supabase.table(table_name).select(select_cols).gte(date_col, iso_inicio).lte(date_col, iso_fin)
+        if extra_eq:
+            for k, v in extra_eq.items():
+                q = q.eq(k, v)
+        res = q.range(offset, offset + page_size - 1).execute()
+        batch = res.data or []
+        all_rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+        if offset >= 15000:
+            break
+    return all_rows
+
+
 def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None) -> Dict[str, Any]:
     """
     Retorna los KPIs macro de dirección, tendencia de facturación, estado del pipeline y ratios clave.
@@ -86,7 +109,7 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
         presupuestos = pres_res.data or []
 
         total_emitidos = len(presupuestos)
-        aprobados = [p for p in presupuestos if p.get("estado") == "aprobado"]
+        aprobados = [p for p in presupuestos if p.get("estado") in ("aprobado", "operado")]
         rechazados = [p for p in presupuestos if p.get("estado") == "rechazado"]
         pendientes = [p for p in presupuestos if p.get("estado") in ("borrador", "enviado")]
 
@@ -102,7 +125,7 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
             if c_date:
                 tendencia_map[c_date]["fecha"] = c_date
                 tendencia_map[c_date]["emitidos"] += 1
-                if p.get("estado") == "aprobado":
+                if p.get("estado") in ("aprobado", "operado"):
                     tendencia_map[c_date]["aprobados"] += 1
                     tendencia_map[c_date]["monto_ars"] += float(p.get("total_ars") or p.get("total") or 0)
 
@@ -217,14 +240,46 @@ def obtener_resumen_gerencial(dias: int = 30, fecha_inicio: Optional[str] = None
         return {"error": str(e)}
 
 
+# Nombres de cuentas de sistema / automatismos o etiquetas genéricas sin operador individual
+NOMBRES_AUTOMATISMOS_Y_GENERICOS = {
+    "sistema crm (pipeline qx)",
+    "sistema crm (pipeline qx / quirófano)",
+    "sistema crm (pipeline qx / quirofano)",
+    "sistema crm",
+    "asistente whatsapp (meta)",
+    "asistente ia whatsapp",
+    "asesoramiento quirúrgico (sistema)",
+    "asesoramiento quirurgico (sistema)",
+    "asesora quirúrgica",
+    "asesora quirurgica",
+    "asesoría quirúrgica",
+    "asesoria quirurgica",
+    "automatismo crm (d-2 a d-3)",
+    "operador sin identificar (histórico)",
+    "personal no identificado"
+}
+
+
 def obtener_productividad_usuarios(dias: int = 30, fecha_inicio: Optional[str] = None, fecha_fin: Optional[str] = None) -> Dict[str, Any]:
     """
-    Consolida las acciones de cada usuario/a del staff médico y administrativo:
-    - Asesoras: Contactos en bitácora por canal (Llamada, WhatsApp, Presencial, Interno)
-    - Técnicos: Estudios procesados, guardados y confirmados
-    - Operadores: Conversaciones y mensajes gestionados
+    Consolida de forma integral todas las acciones operativas y asistenciales de cada usuario/a del staff:
+    1. Bandeja de Entrada WhatsApp (`public.mensajes` emisor='operador'):
+       - Mensajes de chat directo respondidos
+       - Plantillas Meta enviadas (Presupuestos PDF, Recordatorios Qx, Consentimientos, Aperturas, Comunicación)
+       - Conversaciones tomadas (`ASIGNACION_TOMADA`)
+       - Casos de chat resueltos / finalizados (`CASO_FINALIZADO`)
+       - Derivaciones internas (`DERIVACION_INTERNA`)
+    2. Bitácora de Asesoramiento Quirúrgico (`public.asesoria_evoluciones`):
+       - Llamadas telefónicas y tareas de seguimiento cumplidas
+       - Atención presencial real (excluyendo sincronizaciones automáticas de presupuestos)
+       - Notas internas y cambios de etapa en el Pipeline Quirúrgico
+       - Contactos manuales por WhatsApp registrados en bitácora
+    3. Consola de Estudios Técnicos (`public.estudios_oftalmo`):
+       - Estudios subidos a Geclisa y despachados por WhatsApp Línea 2 + confirmación de lectura
+    4. Quirófano, Cálculo de LIO y Reserva de Stock (`public.turnos_quirofano`, `public.asesorias_quirurgicas`, `public.system_logs`):
+       - Turnos quirúrgicos programados (`usuario_alta`), cálculos de LIO confirmados (`lio_calculado_por`) y reservas de stock LIO.
     """
-    cache_key = f"productividad_usuarios_{dias}_{fecha_inicio}_{fecha_fin}"
+    cache_key = f"productividad_usuarios_v2_{dias}_{fecha_inicio}_{fecha_fin}"
     cached = _get_from_cache(cache_key)
     if cached:
         return cached
@@ -237,32 +292,52 @@ def obtener_productividad_usuarios(dias: int = 30, fecha_inicio: Optional[str] =
         iso_inicio = dt_inicio.isoformat()
         iso_fin = dt_fin.isoformat()
 
-        # 1. Obtener lista de usuarios oficiales
+        # 1. Obtener lista de usuarios oficiales de `usuarios_perfil` y construir mapa de resolución de alias
         usuarios_res = supabase.table("usuarios_perfil")\
             .select("id, nombre_completo, email, activo, roles(nombre)")\
             .execute()
         usuarios_db = usuarios_res.data or []
 
-        # Estructura base de colaboradores
-        colaboradores = {}
-        for u in usuarios_db:
-            u_id = u.get("id")
-            nombre = u.get("nombre_completo") or u.get("email")
-            rol_obj = u.get("roles") or {}
-            rol_nombre = rol_obj.get("nombre") if isinstance(rol_obj, dict) else "Personal"
-            
-            colaboradores[nombre] = {
+        colaboradores: Dict[str, Dict[str, Any]] = {}
+        alias_map: Dict[str, str] = {}  # lower_alias -> canonical_key
+
+        def _crear_estructura_colaborador(
+            key: str,
+            u_id: Optional[str],
+            nombre: str,
+            email: str,
+            rol: str,
+            es_oficial: bool,
+            es_humano: bool
+        ) -> Dict[str, Any]:
+            return {
                 "id": u_id,
                 "nombre": nombre,
-                "email": u.get("email"),
-                "rol": rol_nombre,
-                "es_oficial": True,
+                "email": email,
+                "rol": rol,
+                "es_oficial": es_oficial,
+                "es_humano": es_humano,
                 "contactos_totales": 0,
+                "acciones_totales": 0,
                 "canales": {
                     "whatsapp": 0,
                     "llamada": 0,
                     "presencial": 0,
                     "interno": 0
+                },
+                "desglose": {
+                    "mensajes_chat": 0,
+                    "plantillas_wa": 0,
+                    "presupuestos_wa": 0,
+                    "chats_tomados": 0,
+                    "casos_finalizados": 0,
+                    "derivaciones_chat": 0,
+                    "llamadas": 0,
+                    "presencial": 0,
+                    "bitacora_interno": 0,
+                    "estudios_procesados": 0,
+                    "estudios_leidos": 0,
+                    "quirofano_lio": 0
                 },
                 "estudios_procesados": 0,
                 "estudios_leidos": 0,
@@ -270,93 +345,342 @@ def obtener_productividad_usuarios(dias: int = 30, fecha_inicio: Optional[str] =
                 "ultima_actividad": None
             }
 
-        # 2. Consultar Evoluciones / Bitácoras de Asesoramiento
-        ev_res = supabase.table("asesoria_evoluciones")\
-            .select("id, usuario_id, usuario_nombre, tipo_contacto, created_at")\
-            .gte("created_at", iso_inicio)\
-            .lte("created_at", iso_fin)\
-            .execute()
-        evoluciones = ev_res.data or []
+        for u in usuarios_db:
+            u_id = u.get("id")
+            nombre = (u.get("nombre_completo") or u.get("email") or "Usuario").strip()
+            if nombre.lower() == "lorean adaro":
+                nombre = "Lorena Adaro"
+            email = (u.get("email") or "").strip()
+            rol_obj = u.get("roles") or {}
+            rol_nombre = rol_obj.get("nombre") if isinstance(rol_obj, dict) else "Personal"
+
+            # Cuentas genéricas de rol ("Asesoramiento", "Administracion", "Quirofano") siguen siendo cuentas de perfil
+            colaboradores[nombre] = _crear_estructura_colaborador(
+                key=nombre,
+                u_id=u_id,
+                nombre=nombre,
+                email=email,
+                rol=rol_nombre,
+                es_oficial=True,
+                es_humano=True
+            )
+
+            # Registrar alias por ID, nombre, email y prefijo de email
+            if u_id:
+                alias_map[str(u_id).lower()] = nombre
+            alias_map[nombre.lower()] = nombre
+            if email:
+                alias_map[email.lower()] = nombre
+                prefix = email.split("@")[0].lower()
+                alias_map[prefix] = nombre
+
+        # Alias conocidos específicos de producción (ej. errores de tipeo históricos o formatos apellido, nombre)
+        for k_alias, target_sub in [
+            ("lorena adaro", "adaro"),
+            ("lorean adaro", "adaro"),
+            ("ladaro", "adaro"),
+            ("sebastian.pena", "peña"),
+            ("sebastian pena", "peña"),
+            ("sebastián peña", "peña"),
+            ("romina perez", "romina"),
+            ("romina pérez", "romina"),
+            ("griselda concina", "griselda"),
+            ("ana manita", "ana manita"),
+            ("claudia sibecas", "sibecas"),
+        ]:
+            # Buscar cuál es la clave canónica en colaboradores
+            for c_key in list(colaboradores.keys()):
+                if target_sub in c_key.lower():
+                    alias_map[k_alias] = c_key
+                    break
+
+        def _resolver_colaborador(raw_name: Optional[str], raw_id: Optional[str] = None, rol_default: str = "Asesoramiento / Operativo") -> str:
+            if raw_id and str(raw_id).lower() in alias_map:
+                return alias_map[str(raw_id).lower()]
+            
+            clean = (raw_name or "").strip()
+            if not clean:
+                clean = "Operador Sin Identificar (Histórico)"
+            
+            low = clean.lower()
+            if low in alias_map:
+                return alias_map[low]
+
+            # Caso especial: Técnicos de Geclisa como "TARIFEÑO, CAMILA"
+            if "tarife" in low and "camila" in low:
+                canon = "Camila Tarifeño"
+                alias_map[low] = canon
+                if canon not in colaboradores:
+                    colaboradores[canon] = _crear_estructura_colaborador(
+                        key=canon,
+                        u_id=raw_id,
+                        nombre=canon,
+                        email="",
+                        rol="Técnica Oftalmóloga",
+                        es_oficial=True,
+                        es_humano=True
+                    )
+                return canon
+
+            es_auto = low in NOMBRES_AUTOMATISMOS_Y_GENERICOS or "sistema" in low or "asistente" in low or "automatismo" in low
+            rol_calc = "Automatismo / Genérico" if es_auto else rol_default
+
+            if clean not in colaboradores:
+                colaboradores[clean] = _crear_estructura_colaborador(
+                    key=clean,
+                    u_id=raw_id,
+                    nombre=clean,
+                    email="",
+                    rol=rol_calc,
+                    es_oficial=not es_auto,
+                    es_humano=not es_auto
+                )
+            alias_map[low] = clean
+            return clean
+
+        def _actualizar_ultima_actividad(c_key: str, ts: Optional[str]):
+            if not ts:
+                return
+            curr = colaboradores[c_key]["ultima_actividad"]
+            if not curr or ts > curr:
+                colaboradores[c_key]["ultima_actividad"] = ts
+
+        # =========================================================================
+        # FUENTE 1: Tabla `mensajes` (emisor = 'operador') - Gestión en WhatsApp / Chat
+        # =========================================================================
+        op_msgs = _fetch_paginated(
+            table_name="mensajes",
+            select_cols="id, conversacion_id, emisor, contenido, metadata_json, created_at",
+            iso_inicio=iso_inicio,
+            iso_fin=iso_fin,
+            date_col="created_at",
+            extra_eq={"emisor": "operador"}
+        )
+
+        for m in op_msgs:
+            meta = m.get("metadata_json") or {}
+            if not isinstance(meta, dict):
+                meta = {}
+            raw_op_name = meta.get("operador_nombre") or meta.get("usuario_nombre") or meta.get("resuelta_por")
+            raw_op_id = meta.get("operador_id") or meta.get("usuario_id")
+            
+            # Si es un mensaje automático de recordatorio o sin operador_nombre
+            if not raw_op_name and not raw_op_id:
+                raw_op_name = "Operador Sin Identificar (Histórico)"
+
+            c_key = _resolver_colaborador(raw_op_name, raw_op_id)
+            col = colaboradores[c_key]
+            _actualizar_ultima_actividad(c_key, m.get("created_at"))
+
+            tipo_ev = (meta.get("tipo_evento") or "").upper()
+            tipo_msg = (meta.get("tipo") or "").lower()
+            tpl_name = (meta.get("template_name") or "").lower()
+
+            if tipo_ev == "ASIGNACION_TOMADA":
+                col["desglose"]["chats_tomados"] += 1
+                col["canales"]["interno"] += 1
+            elif tipo_ev == "CASO_FINALIZADO":
+                col["desglose"]["casos_finalizados"] += 1
+                col["canales"]["interno"] += 1
+            elif tipo_ev == "DERIVACION_INTERNA":
+                col["desglose"]["derivaciones_chat"] += 1
+                col["canales"]["interno"] += 1
+            elif tipo_msg == "template" or tpl_name:
+                col["desglose"]["plantillas_wa"] += 1
+                col["canales"]["whatsapp"] += 1
+                if "presupuesto" in tpl_name:
+                    col["desglose"]["presupuestos_wa"] += 1
+                    col["presupuestos_relacionados"] += 1
+            elif meta.get("es_nota_interna"):
+                col["desglose"]["bitacora_interno"] += 1
+                col["canales"]["interno"] += 1
+            else:
+                # Mensaje directo de chat (texto, documento PDF, audio, imagen) enviado por el operador
+                col["desglose"]["mensajes_chat"] += 1
+                col["canales"]["whatsapp"] += 1
+
+        # =========================================================================
+        # FUENTE 2: Tabla `asesoria_evoluciones` - Bitácora del Pipeline Quirúrgico
+        # =========================================================================
+        evoluciones = _fetch_paginated(
+            table_name="asesoria_evoluciones",
+            select_cols="id, usuario_id, usuario_nombre, tipo_contacto, contenido, created_at",
+            iso_inicio=iso_inicio,
+            iso_fin=iso_fin,
+            date_col="created_at"
+        )
 
         for ev in evoluciones:
-            u_nom = ev.get("usuario_nombre") or "Personal No Identificado"
-            # Si el usuario no estaba en la tabla de perfiles (ej. alias o bot)
-            if u_nom not in colaboradores:
-                colaboradores[u_nom] = {
-                    "id": ev.get("usuario_id"),
-                    "nombre": u_nom,
-                    "email": "",
-                    "rol": "Asesoramiento / Operativo",
-                    "es_oficial": False,
-                    "contactos_totales": 0,
-                    "canales": {"whatsapp": 0, "llamada": 0, "presencial": 0, "interno": 0},
-                    "estudios_procesados": 0,
-                    "estudios_leidos": 0,
-                    "presupuestos_relacionados": 0,
-                    "ultima_actividad": None
-                }
-
+            u_nom = ev.get("usuario_nombre")
+            u_id = ev.get("usuario_id")
+            contenido = (ev.get("contenido") or "").strip()
             canal = (ev.get("tipo_contacto") or "interno").lower()
-            if canal not in colaboradores[u_nom]["canales"]:
-                colaboradores[u_nom]["canales"][canal] = 0
-            
-            colaboradores[u_nom]["canales"][canal] += 1
-            colaboradores[u_nom]["contactos_totales"] += 1
-            
-            act_date = ev.get("created_at")
-            if act_date:
-                curr_last = colaboradores[u_nom]["ultima_actividad"]
-                if not curr_last or act_date > curr_last:
-                    colaboradores[u_nom]["ultima_actividad"] = act_date
 
-        # 3. Consultar Estudios procesados por Técnicos
-        est_res = supabase.table("estudios_oftalmo")\
-            .select("id, tecnico_nombre, tecnico_usuario_id, whatsapp_status, created_at")\
-            .gte("created_at", iso_inicio)\
-            .lte("created_at", iso_fin)\
-            .execute()
-        estudios = est_res.data or []
+            # Detectar si es una nota espejo automática de envío de plantilla WhatsApp que ya se cuenta en `mensajes`
+            es_espejo_wa = (
+                contenido.startswith("Presupuesto médico oficial #")
+                or contenido.startswith("Recordatorio prequirúrgico enviado por WhatsApp")
+                or contenido.startswith("📲 Consentimiento Informado")
+                or contenido.startswith("⏳ Plantilla de Apertura de WhatsApp")
+            )
+            if es_espejo_wa and (not u_nom or u_nom.lower() in NOMBRES_AUTOMATISMOS_Y_GENERICOS):
+                # Se registra en su cuenta de sistema para auditoría, pero no como llamada ni presencial
+                c_key = _resolver_colaborador(u_nom or "Asesoramiento Quirúrgico (Sistema)", u_id)
+                colaboradores[c_key]["desglose"]["plantillas_wa"] += 1
+                colaboradores[c_key]["canales"]["whatsapp"] += 1
+                _actualizar_ultima_actividad(c_key, ev.get("created_at"))
+                continue
+
+            # Detectar sincronización automática de presupuestos que antes se guardaba como 'presencial'
+            es_auto_sync_presupuesto = (
+                "marcado como APROBADO automáticamente" in contenido
+                or "marcado como OPERADO automáticamente" in contenido
+            )
+            if es_auto_sync_presupuesto:
+                canal = "interno"
+
+            c_key = _resolver_colaborador(u_nom, u_id)
+            col = colaboradores[c_key]
+            _actualizar_ultima_actividad(c_key, ev.get("created_at"))
+
+            if canal == "llamada":
+                col["desglose"]["llamadas"] += 1
+                col["canales"]["llamada"] += 1
+            elif canal == "presencial":
+                col["desglose"]["presencial"] += 1
+                col["canales"]["presencial"] += 1
+            elif canal == "whatsapp":
+                # Si es una nota manual de WhatsApp en la bitácora (no un espejo ya contado en mensajes)
+                if not es_espejo_wa:
+                    col["desglose"]["mensajes_chat"] += 1
+                    col["canales"]["whatsapp"] += 1
+            else:
+                col["desglose"]["bitacora_interno"] += 1
+                col["canales"]["interno"] += 1
+
+        # =========================================================================
+        # FUENTE 3: Tabla `estudios_oftalmo` - Técnicos Oftalmólogos
+        # =========================================================================
+        estudios = _fetch_paginated(
+            table_name="estudios_oftalmo",
+            select_cols="id, tecnico_nombre, tecnico_usuario_id, whatsapp_status, created_at",
+            iso_inicio=iso_inicio,
+            iso_fin=iso_fin,
+            date_col="created_at"
+        )
 
         for st in estudios:
-            tec_nom = st.get("tecnico_nombre") or "Técnico No Identificado"
-            if tec_nom not in colaboradores:
-                colaboradores[tec_nom] = {
-                    "id": st.get("tecnico_usuario_id"),
-                    "nombre": tec_nom,
-                    "email": "",
-                    "rol": "Técnico Oftalmólogo",
-                    "es_oficial": False,
-                    "contactos_totales": 0,
-                    "canales": {"whatsapp": 0, "llamada": 0, "presencial": 0, "interno": 0},
-                    "estudios_procesados": 0,
-                    "estudios_leidos": 0,
-                    "presupuestos_relacionados": 0,
-                    "ultima_actividad": None
-                }
-
-            colaboradores[tec_nom]["estudios_procesados"] += 1
-            if st.get("whatsapp_status") == "read":
-                colaboradores[tec_nom]["estudios_leidos"] += 1
+            tec_nom = (st.get("tecnico_nombre") or "").strip()
+            tec_id = st.get("tecnico_usuario_id") if not tec_nom else None
+            c_key = _resolver_colaborador(tec_nom or "Técnico No Identificado", tec_id, rol_default="Técnica Oftalmóloga")
+            col = colaboradores[c_key]
             
-            st_date = st.get("created_at")
-            if st_date:
-                curr_last = colaboradores[tec_nom]["ultima_actividad"]
-                if not curr_last or st_date > curr_last:
-                    colaboradores[tec_nom]["ultima_actividad"] = st_date
+            col["estudios_procesados"] += 1
+            col["desglose"]["estudios_procesados"] += 1
+            if st.get("whatsapp_status") == "read":
+                col["estudios_leidos"] += 1
+                col["desglose"]["estudios_leidos"] += 1
+            _actualizar_ultima_actividad(c_key, st.get("created_at"))
 
-        # Lista ordenada de mayor a menor actividad global
+        # =========================================================================
+        # FUENTE 4: Turnos de Quirófano (`usuario_alta`, `lio_calculado_por`) y Logs de Reserva LIO
+        # =========================================================================
+        turnos_qx = _fetch_paginated(
+            table_name="turnos_quirofano",
+            select_cols="id, usuario_alta, lio_calculado, lio_calculado_por, lio_calculado_at, created_at",
+            iso_inicio=iso_inicio,
+            iso_fin=iso_fin,
+            date_col="created_at"
+        )
+        for t in turnos_qx:
+            u_alta = t.get("usuario_alta")
+            if u_alta:
+                c_key = _resolver_colaborador(u_alta, None, rol_default="Programación Quirúrgica")
+                colaboradores[c_key]["desglose"]["quirofano_lio"] += 1
+                colaboradores[c_key]["canales"]["interno"] += 1
+                _actualizar_ultima_actividad(c_key, t.get("created_at"))
+            
+            lio_por = t.get("lio_calculado_por")
+            if t.get("lio_calculado") and lio_por:
+                c_key = _resolver_colaborador(lio_por, None, rol_default="Cálculo Biométrico LIO")
+                colaboradores[c_key]["desglose"]["quirofano_lio"] += 1
+                colaboradores[c_key]["canales"]["interno"] += 1
+                _actualizar_ultima_actividad(c_key, t.get("lio_calculado_at") or t.get("created_at"))
+
+        # Consultar reservas de stock LIO en system_logs
+        try:
+            logs_lio = supabase.table("system_logs")\
+                .select("accion, detalles, created_at")\
+                .eq("accion", "RESERVA_STOCK_LIO")\
+                .gte("created_at", iso_inicio)\
+                .lte("created_at", iso_fin)\
+                .execute()
+            for lg in (logs_lio.data or []):
+                det = lg.get("detalles") or {}
+                usr_lio = det.get("usuario") if isinstance(det, dict) else None
+                if usr_lio:
+                    c_key = _resolver_colaborador(usr_lio, None, rol_default="Farmacéutica / Gestión de LIOs")
+                    colaboradores[c_key]["desglose"]["quirofano_lio"] += 1
+                    colaboradores[c_key]["canales"]["interno"] += 1
+                    _actualizar_ultima_actividad(c_key, lg.get("created_at"))
+        except Exception:
+            pass
+
+        # =========================================================================
+        # CONSOLIDACIÓN FINAL DE TOTALES POR USUARIO
+        # =========================================================================
+        for col in colaboradores.values():
+            d = col["desglose"]
+            total_u = (
+                d["mensajes_chat"]
+                + d["plantillas_wa"]
+                + d["chats_tomados"]
+                + d["casos_finalizados"]
+                + d["derivaciones_chat"]
+                + d["llamadas"]
+                + d["presencial"]
+                + d["bitacora_interno"]
+                + d["estudios_procesados"]
+                + d["quirofano_lio"]
+            )
+            col["acciones_totales"] = total_u
+            col["contactos_totales"] = total_u
+
+        # Ordenar de mayor a menor actividad
         ranking_usuarios = sorted(
             colaboradores.values(),
-            key=lambda x: (x["contactos_totales"] + x["estudios_procesados"]),
+            key=lambda x: (1 if x["es_humano"] else 0, x["acciones_totales"]),
             reverse=True
         )
 
-        # Totales por Canal Global
+        # Calcular totales separando Personal Clínico Humano vs Global (con Automatismos)
+        usuarios_humanos = [u for u in ranking_usuarios if u["es_humano"]]
+
+        def _sumar_metricas_grupo(lista: List[Dict[str, Any]]) -> Dict[str, Any]:
+            return {
+                "acciones_totales": sum(u["acciones_totales"] for u in lista),
+                "whatsapp_total": sum(u["canales"]["whatsapp"] for u in lista),
+                "mensajes_chat": sum(u["desglose"]["mensajes_chat"] for u in lista),
+                "plantillas_wa": sum(u["desglose"]["plantillas_wa"] for u in lista),
+                "presupuestos_wa": sum(u["desglose"]["presupuestos_wa"] for u in lista),
+                "llamadas": sum(u["desglose"]["llamadas"] for u in lista),
+                "presencial": sum(u["desglose"]["presencial"] for u in lista),
+                "casos_finalizados": sum(u["desglose"]["casos_finalizados"] for u in lista),
+                "chats_tomados": sum(u["desglose"]["chats_tomados"] for u in lista),
+                "bitacora_interno": sum(u["desglose"]["bitacora_interno"] for u in lista),
+                "estudios_procesados": sum(u["desglose"]["estudios_procesados"] for u in lista),
+                "quirofano_lio": sum(u["desglose"]["quirofano_lio"] for u in lista)
+            }
+
+        metricas_humanos = _sumar_metricas_grupo(usuarios_humanos)
+        metricas_todos = _sumar_metricas_grupo(ranking_usuarios)
+
+        # Mantener `canales_totales` y `total_acciones` apuntando al Personal Clínico por defecto
         canales_totales = {
-            "whatsapp": sum(u["canales"]["whatsapp"] for u in ranking_usuarios),
-            "llamada": sum(u["canales"]["llamada"] for u in ranking_usuarios),
-            "presencial": sum(u["canales"]["presencial"] for u in ranking_usuarios),
-            "interno": sum(u["canales"]["interno"] for u in ranking_usuarios)
+            "whatsapp": metricas_humanos["whatsapp_total"],
+            "llamada": metricas_humanos["llamadas"],
+            "presencial": metricas_humanos["presencial"],
+            "interno": metricas_humanos["bitacora_interno"] + metricas_humanos["chats_tomados"] + metricas_humanos["casos_finalizados"]
         }
 
         res = {
@@ -365,8 +689,10 @@ def obtener_productividad_usuarios(dias: int = 30, fecha_inicio: Optional[str] =
                 "inicio": iso_inicio,
                 "fin": iso_fin
             },
-            "total_acciones": sum(u["contactos_totales"] + u["estudios_procesados"] for u in ranking_usuarios),
+            "total_acciones": metricas_humanos["acciones_totales"],
             "canales_totales": canales_totales,
+            "resumen_humanos": metricas_humanos,
+            "resumen_incluyendo_sistema": metricas_todos,
             "usuarios": ranking_usuarios
         }
 

@@ -30,6 +30,7 @@ import {
   Unlock
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
 
 interface TemplateInfo {
   id?: string
@@ -105,6 +106,7 @@ export default function ModalEnviarConsentimientoWhatsApp({
   ojoDefault,
   onConsentimientoEnviado
 }: ModalEnviarConsentimientoWhatsAppProps) {
+  const { user } = useAuth()
   const [cargando, setCargando] = useState<boolean>(true)
   const [enviando, setEnviando] = useState<boolean>(false)
   const [copiado, setCopiado] = useState<boolean>(false)
@@ -327,6 +329,12 @@ export default function ModalEnviarConsentimientoWhatsApp({
           }
         }
 
+        const currentUserName =
+          user?.user_metadata?.nombre_completo ||
+          user?.user_metadata?.full_name ||
+          user?.email?.split('@')[0] ||
+          'Asesora Quirúrgica'
+
         const payload = {
           asesoria_id: casoId || datosOriginales?.caso_id || null,
           turno_id: targetTurnoId,
@@ -345,7 +353,9 @@ export default function ModalEnviarConsentimientoWhatsApp({
             cirujano_nombre: cirujanoNombre,
             enlace_firma: enlaceFirma
           },
-          texto_renderizado: cuerpoTextoRenderizado
+          texto_renderizado: cuerpoTextoRenderizado,
+          usuario_id: user?.id || null,
+          usuario_nombre: currentUserName
         }
 
         const res = await apiFetch('/api/consentimiento-whatsapp/enviar', {

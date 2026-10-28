@@ -46,6 +46,7 @@ import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentim
 import SeccionIndicacionesExpediente from '@/components/quirofano/SeccionIndicacionesExpediente'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
 
 interface PrestadorGeclisa {
   pre_id: number
@@ -147,6 +148,7 @@ export default function CasoFormularioActivo({
   onModificarPresupuesto,
   onEliminarPresupuesto
 }: CasoFormularioActivoProps) {
+  const { user } = useAuth()
   // Estados Locales Editables
   const estadoInicial = (caso.estado === 'presupuesto_enviado' ? 'en_analisis' : caso.estado) as AsesoriaQuirurgica['estado']
   const [estado, setEstado] = useState<AsesoriaQuirurgica['estado']>(estadoInicial)
@@ -289,9 +291,16 @@ export default function CasoFormularioActivo({
   const handleConfirmarCompletarAccion = async () => {
     try {
       setCompletandoAccion(true)
+      const currentUserName =
+        user?.user_metadata?.nombre_completo ||
+        user?.user_metadata?.full_name ||
+        user?.email?.split('@')[0] ||
+        'Asesora Quirúrgica'
+
       const payload = {
         resultado: conclusionAccion.trim() || 'Acción completada con éxito.',
-        usuario_nombre: 'Asesora Quirúrgica',
+        usuario_id: user?.id || null,
+        usuario_nombre: currentUserName,
         tipo_contacto: 'llamada'
       }
 
@@ -317,7 +326,8 @@ export default function CasoFormularioActivo({
         await supabase.from('asesoria_evoluciones').insert({
           asesoria_id: caso.id,
           paciente_id: pacienteId,
-          usuario_nombre: 'Asesora Quirúrgica',
+          usuario_id: user?.id || null,
+          usuario_nombre: currentUserName,
           tipo_contacto: 'llamada',
           contenido: `✅ ACCIÓN PROGRAMADA CUMPLIDA:\n• Tarea pautada: ${textoPautado} (${fechaPautada})\n• Conclusión: ${conclusionAccion.trim() || 'Realizada con éxito.'}`,
           fecha_contacto: new Date().toISOString()
