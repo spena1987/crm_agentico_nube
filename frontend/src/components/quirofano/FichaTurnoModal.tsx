@@ -736,22 +736,37 @@ export default function FichaTurnoModal({
     const horaFinMin = horaIniMin + durMin
 
     // Comprobar con turnos existentes
-    const turnoChocando = (turnosExistentes || []).find((t: any) => {
+    const permiteSimultaneos = Boolean(quirofanoActual?.permite_simultaneos)
+    const capacidadMax = permiteSimultaneos ? Math.max(1, Number(quirofanoActual?.capacidad_simultanea) || 3) : 1
+
+    const turnosChocando = (turnosExistentes || []).filter((t: any) => {
       if (turno?.id && t.id === turno.id) return false
       if (t.quirofano_id !== formData.quirofano_id || t.fecha_cirugia !== formData.fecha_cirugia) return false
+      if (t.estado === 'cancelado') return false
       const tIni = horaAMinutos(t.hora_inicio)
       const tDur = Number(t.duracion_minutos) || 20
       const tFin = tIni + tDur
       return horaIniMin < tFin && horaFinMin > tIni
     })
 
-    if (turnoChocando) {
-      const pNombre = turnoChocando.pacientes?.nombre || 'Otro Paciente'
-      const tIni = (turnoChocando.hora_inicio || '').slice(0, 5)
-      const tFin = minutosAHora(horaAMinutos(tIni) + (Number(turnoChocando.duracion_minutos) || 20))
-      return {
-        tipo: 'turno',
-        mensaje: `Superposición de Horario: Se solapa con el turno de ${pNombre} (${tIni} a ${tFin} hs, ${turnoChocando.practica_nombre || 'Cirugía'}) en este mismo quirófano.`
+    if (permiteSimultaneos) {
+      if (turnosChocando.length >= capacidadMax) {
+        const nombres = turnosChocando.map((t: any) => t.pacientes?.nombre || t.paciente_nombre || 'Paciente').slice(0, 3).join(', ')
+        return {
+          tipo: 'turno',
+          mensaje: `Cupo Completo: La sala '${quirofanoActual?.nombre || 'Sala'}' ya alcanzó su capacidad máxima de ${capacidadMax} pacientes simultáneos en este horario (${nombres}).`
+        }
+      }
+    } else {
+      if (turnosChocando.length > 0) {
+        const turnoChocando = turnosChocando[0]
+        const pNombre = turnoChocando.pacientes?.nombre || 'Otro Paciente'
+        const tIni = (turnoChocando.hora_inicio || '').slice(0, 5)
+        const tFin = minutosAHora(horaAMinutos(tIni) + (Number(turnoChocando.duracion_minutos) || 20))
+        return {
+          tipo: 'turno',
+          mensaje: `Superposición de Horario: Se solapa con el turno de ${pNombre} (${tIni} a ${tFin} hs, ${turnoChocando.practica_nombre || 'Cirugía'}) en este mismo quirófano.`
+        }
       }
     }
 

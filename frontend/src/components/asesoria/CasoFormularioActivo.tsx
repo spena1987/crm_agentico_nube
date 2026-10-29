@@ -690,11 +690,15 @@ export default function CasoFormularioActivo({
       return slotMin >= bIni && slotMin < bFin
     })
     if (bloqueo) {
-      return { estado: 'bloqueado', label: `⛔ ${slotHora} hs • Bloqueado (${bloqueo.motivo || 'Mantenimiento'})` }
+      return { estado: 'bloqueado', label: `⛔ ${slotHora} hs • Bloqueado (${bloqueo.motivo || 'Mantenimiento'})`, badge: '⛔ Bloqueado' }
     }
 
-    // 2. Turno solapado
-    const turnoSolapado = (turnosList || []).find((t: any) => {
+    const qActual = (quirofanos || []).find((q: any) => q.id === qId)
+    const permiteSimultaneos = Boolean(qActual?.permite_simultaneos)
+    const capacidad = permiteSimultaneos ? Math.max(1, Number(qActual?.capacidad_simultanea) || 3) : 1
+
+    // 2. Turnos solapados
+    const turnosSolapados = (turnosList || []).filter((t: any) => {
       if (t.estado === 'cancelado') return false
       if (turnoExcluirId && t.id === turnoExcluirId) return false
       if (t.asesoria_id && t.asesoria_id === caso.id) return false
@@ -704,12 +708,37 @@ export default function CasoFormularioActivo({
       const tFin = tIni + dur
       return slotMin >= tIni && slotMin < tFin
     })
-    if (turnoSolapado) {
-      const pacNom = turnoSolapado.pacientes?.nombre || turnoSolapado.cirujano_nombre || 'Paciente'
-      return { estado: 'ocupado', label: `🔴 ${slotHora} hs • Ocupado (${pacNom})` }
-    }
 
-    return { estado: 'libre', label: `🟢 ${slotHora} hs • Disponible` }
+    if (permiteSimultaneos) {
+      const cant = turnosSolapados.length
+      if (cant >= capacidad) {
+        return {
+          estado: 'ocupado',
+          label: `🔴 ${slotHora} hs • Cupo Completo (${cant}/${capacidad})`,
+          badge: `🔴 Completo (${cant}/${capacidad})`
+        }
+      }
+      if (cant > 0) {
+        const nombres = turnosSolapados.map((t: any) => t.pacientes?.nombre || 'Paciente').slice(0, 2).join(', ')
+        return {
+          estado: 'libre',
+          label: `🟢 ${slotHora} hs • Disponible (${cant}/${capacidad} ocupados: ${nombres})`,
+          badge: `🟢 Cupo ${cant}/${capacidad}`
+        }
+      }
+      return {
+        estado: 'libre',
+        label: `🟢 ${slotHora} hs • Disponible (0/${capacidad})`,
+        badge: '🟢 Libre'
+      }
+    } else {
+      if (turnosSolapados.length > 0) {
+        const turnoSolapado = turnosSolapados[0]
+        const pacNom = turnoSolapado.pacientes?.nombre || turnoSolapado.cirujano_nombre || 'Paciente'
+        return { estado: 'ocupado', label: `🔴 ${slotHora} hs • Ocupado (${pacNom})`, badge: '🔴 Ocupado' }
+      }
+      return { estado: 'libre', label: `🟢 ${slotHora} hs • Disponible`, badge: '🟢 Libre' }
+    }
   }
 
   // Datos biométricos de LIO calculados
@@ -1782,7 +1811,7 @@ export default function CasoFormularioActivo({
                                       : 'bg-amber-500/20 text-amber-300'
                                   }`}
                                 >
-                                  {slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
+                                  {(slotEstado as any).badge || (slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado')}
                                 </span>
                               )
                             })()}
@@ -2002,7 +2031,7 @@ export default function CasoFormularioActivo({
                                   <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
                                     slotEstado.estado === 'libre' ? 'bg-emerald-500/20 text-emerald-300' : slotEstado.estado === 'ocupado' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
                                   }`}>
-                                    {slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
+                                    {(slotEstado as any).badge || (slotEstado.estado === 'libre' ? '🟢 Libre' : slotEstado.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado')}
                                   </span>
                                 )
                               })()}
@@ -2162,7 +2191,7 @@ export default function CasoFormularioActivo({
                                   <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
                                     slotEstado2.estado === 'libre' ? 'bg-emerald-500/20 text-emerald-300' : slotEstado2.estado === 'ocupado' ? 'bg-red-500/20 text-red-300' : 'bg-amber-500/20 text-amber-300'
                                   }`}>
-                                    {slotEstado2.estado === 'libre' ? '🟢 Libre' : slotEstado2.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado'}
+                                    {(slotEstado2 as any).badge || (slotEstado2.estado === 'libre' ? '🟢 Libre' : slotEstado2.estado === 'ocupado' ? '🔴 Ocupado' : '⛔ Bloqueado')}
                                   </span>
                                 )
                               })()}

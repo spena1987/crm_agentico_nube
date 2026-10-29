@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Lock, FileCheck2, Send, Clock, User, Eye, UserCheck, Timer, CalendarX } from 'lucide-react'
+import { Lock, Users, FileCheck2, Send, Clock, User, Eye, UserCheck, Timer, CalendarX } from 'lucide-react'
 
 interface TurneroGridProps {
   modo: 'dia' | 'semana'
@@ -307,16 +307,19 @@ export default function TurneroGrid({
                   quirofanos.map((q) => {
                     const diasOp = q.dias_operativos || [1, 2, 3, 4, 5]
                     const estaOperativoHoy = diasOp.includes(numDiaHoy)
+                    const permiteSimultaneos = Boolean(q.permite_simultaneos)
+                    const capacidadMax = permiteSimultaneos ? Math.max(1, Number(q.capacidad_simultanea) || 3) : 1
 
-                    const turnoInicio = turnos.find(
+                    const turnosInicio = turnos.filter(
                       (t) =>
                         t.quirofano_id === q.id &&
                         t.fecha_cirugia === fechaSeleccionada &&
-                        (t.hora_inicio || '').slice(0, 5) === horaSlot
+                        (t.hora_inicio || '').slice(0, 5) === horaSlot &&
+                        t.estado !== 'cancelado'
                     )
 
-                    const turnoCubriendo = turnos.find((t) => {
-                      if (t.quirofano_id !== q.id || t.fecha_cirugia !== fechaSeleccionada) return false
+                    const turnosCubriendo = turnos.filter((t) => {
+                      if (t.quirofano_id !== q.id || t.fecha_cirugia !== fechaSeleccionada || t.estado === 'cancelado') return false
                       const tInicioMin = horaAMinutos(t.hora_inicio)
                       const dur = t.duracion_minutos || q.duracion_slot_minutos || 20
                       const tFinMin = tInicioMin + dur
@@ -330,28 +333,13 @@ export default function TurneroGrid({
                       return slotMin >= desde && slotMin < hasta
                     })
 
-                    if (!estaOperativoHoy && !turnoInicio && !turnoCubriendo && !bloqueo) {
+                    if (!estaOperativoHoy && turnosInicio.length === 0 && turnosCubriendo.length === 0 && !bloqueo) {
                       return (
                         <td
                           key={q.id}
                           className="p-1 border-r border-[var(--border)] last:border-0 bg-slate-100/50 dark:bg-slate-900/20 select-none opacity-40 text-center"
                         >
                           <span className="text-[9px] text-slate-400 italic">No operativo</span>
-                        </td>
-                      )
-                    }
-
-                    if (turnoCubriendo) {
-                      return (
-                        <td
-                          key={q.id}
-                          className="p-1 border-r border-[var(--border)] last:border-0 bg-blue-50/20 dark:bg-blue-950/10 border-dashed"
-                        >
-                          <div className="h-5 flex items-center justify-center">
-                            <span className="text-[9px] font-mono text-blue-400 opacity-60">
-                              ▲ Ocupado ({turnoCubriendo.practica_nombre?.slice(0, 18)}...)
-                            </span>
-                          </div>
                         </td>
                       )
                     }
@@ -378,70 +366,110 @@ export default function TurneroGrid({
                       )
                     }
 
-                    if (turnoInicio) {
-                      const pac = turnoInicio.pacientes || {}
-                      const ojo = turnoInicio.ojo || 'OD'
-                      const ojoBadge = ojo === 'OD' ? 'Ojo Der' : ojo === 'OI' ? 'Ojo Izq' : 'Ambos'
-                      const isFirmado = turnoInicio.consentimiento_estado === 'firmado_digital'
-                      const isEnviado = turnoInicio.consentimiento_estado === 'enviado_whatsapp'
-                      const duracion = turnoInicio.duracion_minutos || q.duracion_slot_minutos || 20
-
+                    if (turnosInicio.length > 0) {
                       return (
-                        <td key={q.id} className="p-1.5 border-r border-[var(--border)] last:border-0">
-                          <div
-                            onClick={() => onTurnoClick(turnoInicio)}
-                            className={`p-2.5 rounded-xl border cursor-pointer transition-all shadow-sm hover:shadow-md ${
-                              isFirmado
-                                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500/40 hover:border-emerald-500'
-                                : isEnviado
-                                ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500/40 hover:border-amber-500'
-                                : 'bg-blue-50 dark:bg-blue-950/40 border-blue-500/40 hover:border-blue-500'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="text-xs font-bold text-[var(--foreground)] truncate">
-                                {pac.nombre || 'Paciente'}
-                              </span>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
-                                  {ojoBadge}
-                                </span>
-                                <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-100 dark:bg-blue-900/60 px-1 py-0.2 rounded">
-                                  {duracion}m
+                        <td key={q.id} className="p-1.5 border-r border-[var(--border)] last:border-0 align-top">
+                          <div className="space-y-1.5">
+                            {permiteSimultaneos && turnosInicio.length > 1 && (
+                              <div className="flex items-center justify-between px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[9px] font-bold text-amber-600 dark:text-amber-300">
+                                <span className="flex items-center gap-1">
+                                  <Users size={10} /> {turnosInicio.length}/{capacidadMax} simultáneos
                                 </span>
                               </div>
-                            </div>
+                            )}
 
-                            <p className="text-[11px] text-[var(--secondary)] truncate mt-0.5">
-                              {turnoInicio.practica_nombre} • <span className="font-semibold">{turnoInicio.cirujano_nombre}</span>
-                            </p>
+                            {turnosInicio.map((tItem: any) => {
+                              const pac = tItem.pacientes || {}
+                              const ojo = tItem.ojo || 'OD'
+                              const ojoBadge = ojo === 'OD' ? 'Ojo Der' : ojo === 'OI' ? 'Ojo Izq' : 'Ambos'
+                              const isFirmado = tItem.consentimiento_estado === 'firmado_digital'
+                              const isEnviado = tItem.consentimiento_estado === 'enviado_whatsapp'
+                              const duracion = tItem.duracion_minutos || q.duracion_slot_minutos || 20
 
-                            <div className="flex items-center justify-between mt-1.5 pt-1 border-t border-[var(--border)]/40 text-[10px]">
-                              <span className="font-semibold text-slate-600 dark:text-slate-400">
-                                {turnoInicio.obra_social || 'Particular'}
-                              </span>
-                              <span
-                                className={`font-bold flex items-center gap-1 ${
-                                  isFirmado
-                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                    : isEnviado
-                                    ? 'text-amber-600 dark:text-amber-400'
-                                    : 'text-slate-400'
-                                }`}
+                              return (
+                                <div
+                                  key={tItem.id}
+                                  onClick={() => onTurnoClick(tItem)}
+                                  className={`p-2 rounded-xl border cursor-pointer transition-all shadow-xs hover:shadow-md ${
+                                    isFirmado
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500/40 hover:border-emerald-500'
+                                      : isEnviado
+                                      ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500/40 hover:border-amber-500'
+                                      : 'bg-blue-50 dark:bg-blue-950/40 border-blue-500/40 hover:border-blue-500'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-[11.5px] font-bold text-[var(--foreground)] truncate">
+                                      {pac.nombre || 'Paciente'}
+                                    </span>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
+                                        {ojoBadge}
+                                      </span>
+                                      <span className="text-[9px] font-mono font-bold text-blue-600 bg-blue-100 dark:bg-blue-900/60 px-1 py-0.2 rounded">
+                                        {duracion}m
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <p className="text-[10px] text-[var(--secondary)] truncate mt-0.5">
+                                    {tItem.practica_nombre} • <span className="font-semibold">{tItem.cirujano_nombre}</span>
+                                  </p>
+
+                                  <div className="flex items-center justify-between mt-1 pt-0.5 border-t border-[var(--border)]/40 text-[9.5px]">
+                                    <span className="font-semibold text-slate-600 dark:text-slate-400">
+                                      {tItem.obra_social || 'Particular'}
+                                    </span>
+                                    <span
+                                      className={`font-bold flex items-center gap-1 ${
+                                        isFirmado
+                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                          : isEnviado
+                                          ? 'text-amber-600 dark:text-amber-400'
+                                          : 'text-slate-400'
+                                      }`}
+                                    >
+                                      {isFirmado ? (
+                                        <>
+                                          <FileCheck2 size={10} /> Firmado
+                                        </>
+                                      ) : isEnviado ? (
+                                        <>
+                                          <Send size={10} /> WA Enviado
+                                        </>
+                                      ) : (
+                                        'Pendiente WA'
+                                      )}
+                                    </span>
+                                  </div>
+                                </div>
+                              )
+                            })}
+
+                            {permiteSimultaneos && turnosInicio.length < capacidadMax && (
+                              <button
+                                type="button"
+                                onClick={() => onSlotClick(q.id, horaSlot, fechaSeleccionada)}
+                                className="w-full py-1 px-1.5 rounded-lg border border-dashed border-amber-500/40 hover:bg-amber-500/10 text-amber-600 dark:text-amber-300 text-[9.5px] font-bold transition-all text-center flex items-center justify-center gap-1"
                               >
-                                {isFirmado ? (
-                                  <>
-                                    <FileCheck2 size={11} /> Firmado
-                                  </>
-                                ) : isEnviado ? (
-                                  <>
-                                    <Send size={11} /> WA Enviado
-                                  </>
-                                ) : (
-                                  'Pendiente WA'
-                                )}
-                              </span>
-                            </div>
+                                <span>+ Sumar Paciente ({turnosInicio.length}/{capacidadMax})</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )
+                    }
+
+                    if (turnosCubriendo.length > 0 && (!permiteSimultaneos || turnosCubriendo.length >= capacidadMax)) {
+                      return (
+                        <td
+                          key={q.id}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-blue-50/20 dark:bg-blue-950/10 border-dashed"
+                        >
+                          <div className="h-5 flex items-center justify-center">
+                            <span className="text-[9px] font-mono text-blue-400 opacity-60">
+                              ▲ Ocupado ({turnosCubriendo[0].practica_nombre?.slice(0, 18)}...)
+                            </span>
                           </div>
                         </td>
                       )
@@ -465,16 +493,19 @@ export default function TurneroGrid({
                     const qId = quirofanoActual?.id
                     const diasOp = quirofanoActual?.dias_operativos || [1, 2, 3, 4, 5]
                     const estaOperativoEsteDia = diasOp.includes(d.numeroDia)
+                    const permiteSimultaneos = Boolean(quirofanoActual?.permite_simultaneos)
+                    const capacidadMax = permiteSimultaneos ? Math.max(1, Number(quirofanoActual?.capacidad_simultanea) || 3) : 1
 
-                    const turnoInicio = turnos.find(
+                    const turnosInicio = turnos.filter(
                       (t) =>
                         t.quirofano_id === qId &&
                         t.fecha_cirugia === d.fecha &&
-                        (t.hora_inicio || '').slice(0, 5) === horaSlot
+                        (t.hora_inicio || '').slice(0, 5) === horaSlot &&
+                        t.estado !== 'cancelado'
                     )
 
-                    const turnoCubriendo = turnos.find((t) => {
-                      if (t.quirofano_id !== qId || t.fecha_cirugia !== d.fecha) return false
+                    const turnosCubriendo = turnos.filter((t) => {
+                      if (t.quirofano_id !== qId || t.fecha_cirugia !== d.fecha || t.estado === 'cancelado') return false
                       const tInicioMin = horaAMinutos(t.hora_inicio)
                       const dur = t.duracion_minutos || quirofanoActual?.duracion_slot_minutos || 20
                       const tFinMin = tInicioMin + dur
@@ -497,7 +528,7 @@ export default function TurneroGrid({
                     )
 
                     // Si este día no es operativo habitual y no hay turno ni bloqueo en este slot:
-                    if (!estaOperativoEsteDia && !turnoInicio && !turnoCubriendo && !bloqueo) {
+                    if (!estaOperativoEsteDia && turnosInicio.length === 0 && turnosCubriendo.length === 0 && !bloqueo) {
                       return (
                         <td
                           key={d.fecha}
@@ -508,21 +539,6 @@ export default function TurneroGrid({
                           <span className="text-[9px] text-slate-400 group-hover:text-blue-600 italic font-medium">
                             Cerrado (+ Agendar)
                           </span>
-                        </td>
-                      )
-                    }
-
-                    if (turnoCubriendo) {
-                      return (
-                        <td
-                          key={d.fecha}
-                          className="p-1 border-r border-[var(--border)] last:border-0 bg-blue-50/20 dark:bg-blue-950/10 border-dashed"
-                        >
-                          <div className="h-5 flex items-center justify-center">
-                            <span className="text-[9px] font-mono text-blue-400 opacity-60">
-                              ▲ Ocupado ({turnoCubriendo.practica_nombre?.slice(0, 15)}...)
-                            </span>
-                          </div>
                         </td>
                       )
                     }
@@ -549,55 +565,95 @@ export default function TurneroGrid({
                       )
                     }
 
-                    if (turnoInicio) {
-                      const pac = turnoInicio.pacientes || {}
-                      const ojo = turnoInicio.ojo || 'OD'
-                      const ojoBadge = ojo === 'OD' ? 'OD' : ojo === 'OI' ? 'OI' : 'AO'
-                      const isFirmado = turnoInicio.consentimiento_estado === 'firmado_digital'
-                      const isEnviado = turnoInicio.consentimiento_estado === 'enviado_whatsapp'
-                      const duracion = turnoInicio.duracion_minutos || quirofanoActual?.duracion_slot_minutos || 20
-
+                    if (turnosInicio.length > 0) {
                       return (
-                        <td key={d.fecha} className="p-1.5 border-r border-[var(--border)] last:border-0">
-                          <div
-                            onClick={() => onTurnoClick(turnoInicio)}
-                            className={`p-2.5 rounded-xl border cursor-pointer transition-all shadow-sm hover:shadow-md ${
-                              isFirmado
-                                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500/40 hover:border-emerald-500'
-                                : isEnviado
-                                ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500/40 hover:border-amber-500'
-                                : 'bg-blue-50 dark:bg-blue-950/40 border-blue-500/40 hover:border-blue-500'
-                            }`}
-                          >
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="text-xs font-bold text-[var(--foreground)] truncate">
-                                {pac.nombre || 'Paciente'}
-                              </span>
-                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
-                                {ojoBadge} ({duracion}m)
-                              </span>
-                            </div>
+                        <td key={d.fecha} className="p-1.5 border-r border-[var(--border)] last:border-0 align-top">
+                          <div className="space-y-1.5">
+                            {permiteSimultaneos && turnosInicio.length > 1 && (
+                              <div className="flex items-center justify-between px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[9px] font-bold text-amber-600 dark:text-amber-300">
+                                <span className="flex items-center gap-1">
+                                  <Users size={10} /> {turnosInicio.length}/{capacidadMax} simultáneos
+                                </span>
+                              </div>
+                            )}
 
-                            <p className="text-[10px] text-[var(--secondary)] truncate mt-0.5">
-                              {turnoInicio.practica_nombre} • <span className="font-semibold">{turnoInicio.cirujano_nombre}</span>
-                            </p>
+                            {turnosInicio.map((tItem: any) => {
+                              const pac = tItem.pacientes || {}
+                              const ojo = tItem.ojo || 'OD'
+                              const ojoBadge = ojo === 'OD' ? 'OD' : ojo === 'OI' ? 'OI' : 'AO'
+                              const isFirmado = tItem.consentimiento_estado === 'firmado_digital'
+                              const isEnviado = tItem.consentimiento_estado === 'enviado_whatsapp'
+                              const duracion = tItem.duracion_minutos || quirofanoActual?.duracion_slot_minutos || 20
 
-                            <div className="flex items-center justify-between mt-1 pt-1 border-t border-[var(--border)]/40 text-[9px]">
-                              <span className="font-semibold text-slate-600 dark:text-slate-400">
-                                {turnoInicio.obra_social || 'Particular'}
-                              </span>
-                              <span
-                                className={`font-bold flex items-center gap-1 ${
-                                  isFirmado
-                                    ? 'text-emerald-600 dark:text-emerald-400'
-                                    : isEnviado
-                                    ? 'text-amber-600 dark:text-amber-400'
-                                    : 'text-slate-400'
-                                }`}
+                              return (
+                                <div
+                                  key={tItem.id}
+                                  onClick={() => onTurnoClick(tItem)}
+                                  className={`p-2 rounded-xl border cursor-pointer transition-all shadow-xs hover:shadow-md ${
+                                    isFirmado
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-500/40 hover:border-emerald-500'
+                                      : isEnviado
+                                      ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-500/40 hover:border-amber-500'
+                                      : 'bg-blue-50 dark:bg-blue-950/40 border-blue-500/40 hover:border-blue-500'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-[11px] font-bold text-[var(--foreground)] truncate">
+                                      {pac.nombre || 'Paciente'}
+                                    </span>
+                                    <span className="text-[8.5px] font-bold px-1 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
+                                      {ojoBadge} ({duracion}m)
+                                    </span>
+                                  </div>
+
+                                  <p className="text-[9.5px] text-[var(--secondary)] truncate mt-0.5">
+                                    {tItem.practica_nombre} • <span className="font-semibold">{tItem.cirujano_nombre}</span>
+                                  </p>
+
+                                  <div className="flex items-center justify-between mt-1 pt-0.5 border-t border-[var(--border)]/40 text-[9px]">
+                                    <span className="font-semibold text-slate-600 dark:text-slate-400">
+                                      {tItem.obra_social || 'Particular'}
+                                    </span>
+                                    <span
+                                      className={`font-bold flex items-center gap-1 ${
+                                        isFirmado
+                                          ? 'text-emerald-600 dark:text-emerald-400'
+                                          : isEnviado
+                                          ? 'text-amber-600 dark:text-amber-400'
+                                          : 'text-slate-400'
+                                      }`}
+                                    >
+                                      {isFirmado ? '🟢 Firmado' : isEnviado ? '🟡 WA' : '⚪ Pend'}
+                                    </span>
+                                  </div>
+                                </div>
+                              )
+                            })}
+
+                            {permiteSimultaneos && turnosInicio.length < capacidadMax && (
+                              <button
+                                type="button"
+                                onClick={() => onSlotClick(qId, horaSlot, d.fecha)}
+                                className="w-full py-1 px-1.5 rounded-lg border border-dashed border-amber-500/40 hover:bg-amber-500/10 text-amber-600 dark:text-amber-300 text-[9px] font-bold transition-all text-center flex items-center justify-center gap-1"
                               >
-                                {isFirmado ? '🟢 Firmado' : isEnviado ? '🟡 WA' : '⚪ Pend'}
-                              </span>
-                            </div>
+                                <span>+ Sumar Paciente ({turnosInicio.length}/{capacidadMax})</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )
+                    }
+
+                    if (turnosCubriendo.length > 0 && (!permiteSimultaneos || turnosCubriendo.length >= capacidadMax)) {
+                      return (
+                        <td
+                          key={d.fecha}
+                          className="p-1 border-r border-[var(--border)] last:border-0 bg-blue-50/20 dark:bg-blue-950/10 border-dashed"
+                        >
+                          <div className="h-5 flex items-center justify-center">
+                            <span className="text-[9px] font-mono text-blue-400 opacity-60">
+                              ▲ Ocupado ({turnosCubriendo[0].practica_nombre?.slice(0, 15)}...)
+                            </span>
                           </div>
                         </td>
                       )

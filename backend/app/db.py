@@ -6386,7 +6386,8 @@ def get_quirofanos(
 ALLOWED_KEYS_QUIROFANO = {
     "nombre", "codigo", "descripcion", "color", "activo", "orden", 
     "duracion_slot_minutos", "equipamiento", "mostrar_en_pizarra", 
-    "mostrar_en_recepcion", "tipo_sala"
+    "mostrar_en_recepcion", "tipo_sala", "permite_simultaneos", "capacidad_simultanea",
+    "hora_inicio", "hora_fin", "dias_operativos"
 }
 
 def crear_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
@@ -6502,7 +6503,7 @@ def get_turnos_quirofano(
     if not supabase:
         return []
     try:
-        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)")
+        q = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)")
         if fecha_desde:
             q = q.gte("fecha_cirugia", fecha_desde)
         if fecha_hasta:
@@ -6524,7 +6525,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
     if not supabase or not turno_id:
         return None
     try:
-        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)").eq("id", turno_id).limit(1).execute()
+        resp = supabase.table("turnos_quirofano").select("*, pacientes(*), quirofanos(id, nombre, codigo, color, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala, permite_simultaneos, capacidad_simultanea), asesorias_quirurgicas(medico_derivador_nombre, medico_derivador_matricula, practica_nombre, practica_codigo)").eq("id", turno_id).limit(1).execute()
         if resp.data and len(resp.data) > 0:
             return resp.data[0]
         return None
@@ -6575,12 +6576,27 @@ def verificar_solapamiento_turno_quirofano(
         h_ini_min = a_minutos(hora_inicio)
         h_fin_min = h_ini_min + (duracion_minutos or 20)
 
+        # 0. Consultar configuración de la sala (simultaneidad y capacidad máxima)
+        permite_simultaneos = False
+        capacidad_max = 1
+        sala_nombre = "Sala"
+        try:
+            q_conf = supabase.table("quirofanos").select("id, nombre, permite_simultaneos, capacidad_simultanea").eq("id", quirofano_id).limit(1).execute()
+            if q_conf.data and len(q_conf.data) > 0:
+                sala_info = q_conf.data[0]
+                sala_nombre = sala_info.get("nombre") or "Sala"
+                permite_simultaneos = bool(sala_info.get("permite_simultaneos", False))
+                capacidad_max = max(1, int(sala_info.get("capacidad_simultanea") or 1)) if permite_simultaneos else 1
+        except Exception as e_q:
+            logger.warning(f"Aviso al consultar capacidad de quirófano {quirofano_id}: {e_q}")
+
         # 1. Comprobar turnos en la misma sala
         res_sala = supabase.table("turnos_quirofano").select(
             "id, hora_inicio, duracion_minutos, estado, quirofano_id, pacientes(nombre)"
         ).eq("quirofano_id", quirofano_id).eq("fecha_cirugia", fecha_cirugia).neq("estado", "cancelado").execute()
         turnos_sala = res_sala.data or []
 
+        turnos_solapados = []
         for t in turnos_sala:
             if excluir_turno_id and str(t.get("id")) == str(excluir_turno_id):
                 continue
@@ -6592,12 +6608,36 @@ def verificar_solapamiento_turno_quirofano(
 
             if max(h_ini_min, t_ini) < min(h_fin_min, t_fin):
                 pac_nombre = (t.get("pacientes") or {}).get("nombre") or "Otro Paciente"
-                return {
-                    "tipo": "sala",
+                turnos_solapados.append({
                     "turno_id": t.get("id"),
                     "paciente": pac_nombre,
                     "hora_inicio": t.get("hora_inicio", "")[:5],
                     "hora_fin": minutos_a_hora(t_fin)
+                })
+
+        if permite_simultaneos:
+            if len(turnos_solapados) >= capacidad_max:
+                primer_conflicto = turnos_solapados[0]
+                nombres_pac = ", ".join([ts["paciente"] for ts in turnos_solapados[:3]])
+                return {
+                    "tipo": "sala_cupo_lleno",
+                    "capacidad": capacidad_max,
+                    "ocupados": len(turnos_solapados),
+                    "paciente": nombres_pac,
+                    "hora_inicio": primer_conflicto["hora_inicio"],
+                    "hora_fin": primer_conflicto["hora_fin"],
+                    "mensaje": f"Cupo Completo: La sala '{sala_nombre}' ya alcanzó su capacidad máxima de {capacidad_max} pacientes simultáneos en este horario ({nombres_pac})."
+                }
+        else:
+            if len(turnos_solapados) > 0:
+                primer_conflicto = turnos_solapados[0]
+                return {
+                    "tipo": "sala",
+                    "turno_id": primer_conflicto["turno_id"],
+                    "paciente": primer_conflicto["paciente"],
+                    "hora_inicio": primer_conflicto["hora_inicio"],
+                    "hora_fin": primer_conflicto["hora_fin"],
+                    "mensaje": f"Superposición de Horario: La sala '{sala_nombre}' ya está ocupada por el turno de {primer_conflicto['paciente']} de {primer_conflicto['hora_inicio']} a {primer_conflicto['hora_fin']} hs."
                 }
 
         # 2. Comprobar turnos del mismo cirujano en otras salas

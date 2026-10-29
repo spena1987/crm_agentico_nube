@@ -42,6 +42,8 @@ interface Quirofano {
   mostrar_en_pizarra?: boolean
   mostrar_en_recepcion?: boolean
   tipo_sala?: 'quirofano' | 'consultorio'
+  permite_simultaneos?: boolean
+  capacidad_simultanea?: number
 }
 
 interface BloqueMedico {
@@ -368,7 +370,9 @@ export default function QuirofanoSettingsCard({
           duracion_slot_minutos: Number(salaEnEdicion.duracion_slot_minutos) || 15,
           hora_inicio: salaEnEdicion.hora_inicio || '08:00',
           hora_fin: salaEnEdicion.hora_fin || '14:00',
-          dias_operativos: salaEnEdicion.dias_operativos || [1, 2, 3, 4, 5]
+          dias_operativos: salaEnEdicion.dias_operativos || [1, 2, 3, 4, 5],
+          permite_simultaneos: Boolean(salaEnEdicion.permite_simultaneos),
+          capacidad_simultanea: salaEnEdicion.permite_simultaneos ? (Number(salaEnEdicion.capacidad_simultanea) || 3) : 1
         })
       })
       const data = await res.json()
@@ -576,7 +580,9 @@ export default function QuirofanoSettingsCard({
                   orden: quirofanos.length + 1,
                   mostrar_en_pizarra: true,
                   mostrar_en_recepcion: true,
-                  tipo_sala: 'quirofano'
+                  tipo_sala: 'quirofano',
+                  permite_simultaneos: false,
+                  capacidad_simultanea: 1
                 })
                 setMostrandoFormSala(true)
               }}
@@ -783,6 +789,60 @@ export default function QuirofanoSettingsCard({
                     </span>
                   </div>
                 </div>
+
+                {/* Capacidad y Turnos Simultáneos */}
+                <div className="pt-3 border-t border-[var(--border)]/70">
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="space-y-0.5">
+                        <label className="flex items-center gap-2 cursor-pointer font-bold text-xs text-amber-900 dark:text-amber-200">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(salaEnEdicion.permite_simultaneos)}
+                            onChange={(e) =>
+                              setSalaEnEdicion({
+                                ...salaEnEdicion,
+                                permite_simultaneos: e.target.checked,
+                                capacidad_simultanea: e.target.checked ? (salaEnEdicion.capacidad_simultanea || 3) : 1
+                              })
+                            }
+                            className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                          />
+                          <span>👥 Permitir asignación de turnos simultáneos en el mismo horario</span>
+                        </label>
+                        <p className="text-[10px] text-amber-800/80 dark:text-amber-300/80 pl-6 leading-relaxed">
+                          Habilita citas en paralelo en este quirófano/sala (ideal para Inyecciones Intravítreas y tratamientos ambulatorios). Desactiva el bloqueo de superposición horaria 1 a 1.
+                        </p>
+                      </div>
+
+                      {salaEnEdicion.permite_simultaneos && (
+                        <div className="flex items-center gap-2 pl-6 sm:pl-0 shrink-0">
+                          <label className="text-[11px] font-bold text-amber-950 dark:text-amber-200 whitespace-nowrap">
+                            Capacidad Máx:
+                          </label>
+                          <select
+                            value={salaEnEdicion.capacidad_simultanea || 3}
+                            onChange={(e) =>
+                              setSalaEnEdicion({
+                                ...salaEnEdicion,
+                                capacidad_simultanea: parseInt(e.target.value) || 3
+                              })
+                            }
+                            className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-neutral-900 border border-amber-400 text-xs font-bold font-mono text-[var(--foreground)] outline-none"
+                          >
+                            <option value={2}>2 pacientes</option>
+                            <option value={3}>3 pacientes</option>
+                            <option value={4}>4 pacientes</option>
+                            <option value={5}>5 pacientes</option>
+                            <option value={6}>6 pacientes</option>
+                            <option value={8}>8 pacientes</option>
+                            <option value={10}>10 pacientes</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Selector de Días Operativos (Lunes a Domingo) */}
@@ -982,6 +1042,16 @@ export default function QuirofanoSettingsCard({
                     ) : (
                       <span className="px-2 py-0.5 rounded-md font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
                         🚫 Sin Recepción
+                      </span>
+                    )}
+
+                    {q.permite_simultaneos ? (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300/40 flex items-center gap-1">
+                        👥 Simultáneo (hasta {q.capacidad_simultanea || 3} pac)
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-300/30">
+                        👤 Turno Único
                       </span>
                     )}
                   </div>

@@ -5640,10 +5640,10 @@ def crear_turno(payload: Dict[str, Any] = Body(...)):
                 cirujano_nombre=cnom
             )
             if conflicto:
-                if conflicto.get("tipo") == "sala":
+                if conflicto.get("tipo") in ("sala", "sala_cupo_lleno"):
                     raise HTTPException(
                         status_code=409,
-                        detail=f"Superposición de Horario: La sala ya está ocupada por el turno de {conflicto.get('paciente')} de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs."
+                        detail=conflicto.get("mensaje") or f"Superposición de Horario: La sala ya está ocupada por el turno de {conflicto.get('paciente')} de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs."
                     )
                 elif conflicto.get("tipo") == "cirujano" and not forzar_conflicto:
                     raise HTTPException(
@@ -5681,10 +5681,10 @@ def actualizar_turno(turno_id: str, payload: Dict[str, Any] = Body(...)):
                 excluir_turno_id=turno_id
             )
             if conflicto:
-                if conflicto.get("tipo") == "sala":
+                if conflicto.get("tipo") in ("sala", "sala_cupo_lleno"):
                     raise HTTPException(
                         status_code=409,
-                        detail=f"Superposición de Horario: La sala ya está ocupada por el turno de {conflicto.get('paciente')} de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs."
+                        detail=conflicto.get("mensaje") or f"Superposición de Horario: La sala ya está ocupada por el turno de {conflicto.get('paciente')} de {conflicto.get('hora_inicio')} a {conflicto.get('hora_fin')} hs."
                     )
                 elif conflicto.get("tipo") == "cirujano" and not forzar_conflicto:
                     raise HTTPException(
