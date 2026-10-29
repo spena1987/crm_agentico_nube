@@ -1741,14 +1741,8 @@ async def handle_automated_interactive_action(
             except Exception as as_err:
                 logger.error(f"[Interactive Asesoria] Error sincronizando asesoría para confirmación: {as_err}")
 
-        if turno_data:
-            f_val = turno_data.get("fecha_cirugia") or ""
-            h_val = str(turno_data.get("hora_inicio") or "")[:5]
-            hora_str = f" a las {h_val} hs" if h_val else ""
-            practica_str = f" para {turno_data.get('practica_nombre')}" if turno_data.get('practica_nombre') else ""
-            reply_text = f"✅ ¡Excelente! Su asistencia a la cirugía{practica_str} para el día {f_val}{hora_str} ha sido confirmada con éxito. Lo esperamos en Centrovisión."
-        else:
-            reply_text = "✅ ¡Muchas gracias! Su asistencia a la cirugía ha sido confirmada correctamente en nuestro sistema. Lo esperamos en Centrovisión."
+        # Confirmación limpia y directa de asistencia (sin horario para evitar confusiones de citación previa)
+        reply_text = "✅ ¡Excelente! Su asistencia a la cirugía ha sido confirmada con éxito. Lo esperamos en Centrovisión."
 
         phone_id, token = get_whatsapp_cloud_credentials()
         if phone_id and token:
