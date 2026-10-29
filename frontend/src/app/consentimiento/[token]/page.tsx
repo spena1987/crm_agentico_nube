@@ -19,7 +19,8 @@ import {
   Utensils,
   Info,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  MessageSquare
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -425,6 +426,23 @@ export default function ConsentimientoPublicoPage() {
           </div>
 
           <div className="space-y-2">
+            {(() => {
+              const clinicaWa = datos?.clinica?.whatsapp_telefono || '5492616859303'
+              const cleanWa = String(clinicaWa).replace(/\D/g, '')
+              const waText = encodeURIComponent(`Hola, acabo de firmar mi consentimiento informado para mi cirugía del ${turno?.fecha_cirugia || ''}.`)
+              return (
+                <a
+                  href={`https://wa.me/${cleanWa}?text=${waText}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-2 w-full px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
+                >
+                  <MessageSquare size={16} />
+                  <span>Contactar a la Clínica por WhatsApp</span>
+                </a>
+              )
+            })()}
+
             {firmadoExito.pdf_url && (
               <a
                 href={`${BACKEND_URL}${firmadoExito.pdf_url}`}

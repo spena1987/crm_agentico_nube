@@ -220,8 +220,12 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
             elif status_name == "failed":
                 errors = status_dict.get("errors", [{}])
                 first_err = errors[0] if errors else {}
-                current_meta["error_code"] = first_err.get("code")
-                current_meta["error_message"] = first_err.get("message")
+                err_code = first_err.get("code")
+                err_msg = first_err.get("message")
+                current_meta["error_code"] = err_code
+                current_meta["error_message"] = err_msg
+                if err_code in (131047, 131026) or "re-engagement" in str(err_msg).lower() or "24 hour" in str(err_msg).lower():
+                    current_meta["is_window_closed_error"] = True
 
             supabase.table("mensajes").update({
                 "metadata_json": current_meta,

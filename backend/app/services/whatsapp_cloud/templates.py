@@ -249,6 +249,14 @@ async def sync_templates_from_meta():
                 "4": "medico_nombre",
                 "5": "enlace_consentimiento"
             },
+            "confirmacion_consentimiento_quirurgico_v1": {
+                "1": "paciente_nombre",
+                "2": "turno_fecha"
+            },
+            "confirmacion_consentimiento_v1": {
+                "1": "paciente_nombre",
+                "2": "turno_fecha"
+            },
             "recordatorio_cirugia_preparacion_v1": {
                 "1": "paciente_nombre",
                 "2": "practica_nombre",

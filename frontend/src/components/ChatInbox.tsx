@@ -2995,7 +2995,13 @@ export default function ChatInbox() {
                     const isFailed = msg.metadata_json?.delivery_status === 'fallido' || 
                                      msg.metadata_json?.delivery_status === 'failed' || 
                                      Boolean(msg.metadata_json?.error_message)
-                    const isWindowClosedError = Boolean(msg.metadata_json?.is_window_closed_error)
+                    const isWindowClosedError = Boolean(
+                      msg.metadata_json?.is_window_closed_error ||
+                      msg.metadata_json?.error_code === 131047 ||
+                      msg.metadata_json?.error_code === 131026 ||
+                      String(msg.metadata_json?.error_message || '').toLowerCase().includes('re-engagement') ||
+                      String(msg.metadata_json?.error_message || '').toLowerCase().includes('24 hour')
+                    )
 
                     const isDocumentFilename = Boolean(
                       msg.contenido && (

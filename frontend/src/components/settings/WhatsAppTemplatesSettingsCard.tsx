@@ -170,6 +170,19 @@ const PREMADE_TEMPLATES: PremadeTemplate[] = [
     buttons: []
   },
   {
+    title: 'Confirmación Firma de Consentimiento (Post-Firma)',
+    name: 'confirmacion_consentimiento_quirurgico_v1',
+    category: 'UTILITY' as const,
+    header_content: '',
+    body_text: '¡Muchas gracias {{1}}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {{2}} en Centrovisión. Ante cualquier consulta, estamos a tu disposición.',
+    footer_text: 'Centrovisión • Quirófano',
+    variable_mappings: {
+      '1': 'paciente_nombre',
+      '2': 'turno_fecha'
+    },
+    buttons: []
+  },
+  {
     title: 'Apertura de Conversación (Ventana 24h)',
     name: 'apertura_conversacion',
     category: 'UTILITY' as const,

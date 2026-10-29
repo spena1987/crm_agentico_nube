@@ -6020,7 +6020,8 @@ def obtener_datos_consentimiento_publico(token: str):
             "preparacion": preparacion_info,
             "clinica": {
                 "nombre": (load_settings().get("clinica") or {}).get("nombre") or "Centro Médico Nube",
-                "logo_url": (load_settings().get("clinica") or {}).get("logo_url") or (load_settings().get("plantilla_presupuesto") or {}).get("logo_url") or ""
+                "logo_url": (load_settings().get("clinica") or {}).get("logo_url") or (load_settings().get("plantilla_presupuesto") or {}).get("logo_url") or "",
+                "whatsapp_telefono": (load_settings().get("clinica") or {}).get("whatsapp") or "5492616859303"
             }
         }
     except Exception as e:
@@ -6138,7 +6139,132 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
 
                 jid = tel if "@" in tel else f"{tel}@s.whatsapp.net"
                 try:
-                    whatsapp_manager.enviar_mensaje(jid, msg_ok)
+                    # Despacho Inteligente de Confirmación Post-Firma (Meta Cloud API / Smart Fallback)
+                    from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+                    from app.services.whatsapp_cloud.client import (
+                        WhatsAppCloudClient,
+                        get_whatsapp_cloud_credentials,
+                        ConversationWindowClosedError
+                    )
+                    from app.db import check_patient_24h_window, get_or_create_conversacion, guardar_mensaje
+                    from app.services.whatsapp_cloud.worker import record_outbound_audit_message
+
+                    paciente_id = paciente.get("id") or turno.get("paciente_id")
+                    phone_id, token_waba = get_whatsapp_cloud_credentials()
+                    norm_to = normalize_to_meta_e164(tel)
+
+                    if phone_id and token_waba and norm_to:
+                        # 1. Resolver conversación para registrar el historial en el chat
+                        conversacion_id = None
+                        if paciente_id:
+                            try:
+                                conv = get_or_create_conversacion(paciente_id)
+                                if conv:
+                                    conversacion_id = conv.get("id")
+                            except Exception as e_conv:
+                                logger.warning(f"Error resolviendo conversación para {tel}: {e_conv}")
+
+                        # 2. Evaluar ventana de 24 horas del paciente
+                        win_info = check_patient_24h_window(paciente_id, tel)
+                        is_window_open = bool(win_info.get("is_open", False))
+
+                        modo_utilizado = "template"
+                        template_name = None
+                        texto_guardado = msg_ok
+                        wamid = None
+                        wa_client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token_waba)
+
+                        if is_window_open:
+                            try:
+                                logger.info(f"[Confirmación Post-Firma] Ventana 24h abierta para {norm_to}. Intentando texto libre...")
+                                res_ft = await wa_client.send_free_text(norm_to, msg_ok)
+                                wamid = res_ft.get("wamid")
+                                modo_utilizado = "free_text"
+                            except (ConversationWindowClosedError, Exception) as e_ft:
+                                logger.warning(f"[Confirmación Post-Firma] Texto libre rechazado ({e_ft}). Conmutando a plantilla oficial...")
+                                modo_utilizado = "template"
+
+                        if modo_utilizado == "template":
+                            # Comprobar si confirmacion_consentimiento_quirurgico_v1 está APPROVED
+                            target_tpl = None
+                            try:
+                                res_tpl = supabase.table("whatsapp_templates").select("name, status, body_text").eq("name", "confirmacion_consentimiento_quirurgico_v1").limit(1).execute()
+                                if res_tpl.data and res_tpl.data[0].get("status") == "APPROVED":
+                                    target_tpl = "confirmacion_consentimiento_quirurgico_v1"
+                            except Exception as e_tpl_chk:
+                                logger.warning(f"[Confirmación Post-Firma] Error comprobando estado plantilla: {e_tpl_chk}")
+
+                            if target_tpl == "confirmacion_consentimiento_quirurgico_v1":
+                                template_name = "confirmacion_consentimiento_quirurgico_v1"
+                                components = [
+                                    {
+                                        "type": "BODY",
+                                        "parameters": [
+                                            {"type": "text", "text": saludo_nombre},
+                                            {"type": "text", "text": fecha_formateada}
+                                        ]
+                                    }
+                                ]
+                                texto_guardado = f"¡Muchas gracias {saludo_nombre}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_formateada} en Centrovisión. Ante cualquier consulta, estamos a tu disposición."
+                            else:
+                                # Fallback a plantilla de asistencia UTILITY ya aprobada por Meta
+                                template_name = "comunicacion_asistencial_paciente_v1"
+                                cuerpo_asist = f"Hemos registrado exitosamente su consentimiento informado firmado digitalmente para su intervención del día {fecha_formateada}."
+                                components = [
+                                    {
+                                        "type": "BODY",
+                                        "parameters": [
+                                            {"type": "text", "text": saludo_nombre},
+                                            {"type": "text", "text": cuerpo_asist}
+                                        ]
+                                    }
+                                ]
+                                texto_guardado = f"Hola {saludo_nombre}, le escribimos desde el centro de atención médica de Centrovisión en relación a su gestión de asesoramiento:\n\n{cuerpo_asist}\n\nAnte cualquier duda, puede responder a este mensaje y un asesor lo atenderá a la brevedad."
+
+                            logger.info(f"[Confirmación Post-Firma] Despachando plantilla '{template_name}' a {norm_to}...")
+                            res_meta = await wa_client.send_template(
+                                to_phone=norm_to,
+                                template_name=template_name,
+                                language_code="es_AR",
+                                components=components
+                            )
+                            wamid = res_meta.get("wamid")
+
+                        # Registrar en auditoría de mensajes salientes
+                        if wamid:
+                            try:
+                                await record_outbound_audit_message(
+                                    wamid=wamid,
+                                    to_phone=norm_to,
+                                    message_type="template" if modo_utilizado == "template" else "text",
+                                    content_text=texto_guardado,
+                                    payload={"to": norm_to, "modo": modo_utilizado, "template": template_name, "wamid": wamid}
+                                )
+                            except Exception as e_aud:
+                                logger.warning(f"Error en record_outbound_audit_message: {e_aud}")
+
+                        # Registrar en la conversación del paciente para visualización en ChatInbox
+                        if conversacion_id and wamid:
+                            try:
+                                meta_payload = {
+                                    "wamid": wamid,
+                                    "delivery_status": "enviado",
+                                    "provider": "meta_cloud_api",
+                                    "operador_nombre": "Sistema Quirófano",
+                                    "template_name": template_name,
+                                    "modo_utilizado": modo_utilizado
+                                }
+                                guardar_mensaje(
+                                    conversacion_id=conversacion_id,
+                                    emisor="operador",
+                                    contenido=texto_guardado,
+                                    whatsapp_message_id=wamid,
+                                    metadata_json=meta_payload
+                                )
+                            except Exception as e_guardar:
+                                logger.warning(f"Error guardando mensaje en conversación: {e_guardar}")
+                    else:
+                        whatsapp_manager.enviar_mensaje(jid, msg_ok)
                 except Exception as err_w:
                     logger.warning(f"No se pudo enviar confirmación por WhatsApp tras firma: {err_w}")
                     
