@@ -18,6 +18,8 @@ class TestConfirmacionPostFirma(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.main.registrar_firma_consentimiento")
     @patch("app.main.get_consentimiento_by_token")
+    @patch("app.main.get_configuracion_quirofano", return_value={})
+    @patch("app.main.get_practica_resumen_operativo", return_value={})
     @patch("app.db.check_patient_24h_window")
     @patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials")
     @patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.send_template")
@@ -32,6 +34,8 @@ class TestConfirmacionPostFirma(unittest.IsolatedAsyncioTestCase):
         mock_send_template,
         mock_get_creds,
         mock_check_win,
+        mock_get_resumen,
+        mock_get_config,
         mock_get_turno,
         mock_guardar_firma
     ):
@@ -74,6 +78,8 @@ class TestConfirmacionPostFirma(unittest.IsolatedAsyncioTestCase):
 
     @patch("app.main.registrar_firma_consentimiento")
     @patch("app.main.get_consentimiento_by_token")
+    @patch("app.main.get_configuracion_quirofano", return_value={})
+    @patch("app.main.get_practica_resumen_operativo", return_value={})
     @patch("app.main.supabase")
     @patch("app.db.check_patient_24h_window")
     @patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials")
@@ -90,6 +96,8 @@ class TestConfirmacionPostFirma(unittest.IsolatedAsyncioTestCase):
         mock_get_creds,
         mock_check_win,
         mock_supabase,
+        mock_get_resumen,
+        mock_get_config,
         mock_get_turno,
         mock_guardar_firma
     ):

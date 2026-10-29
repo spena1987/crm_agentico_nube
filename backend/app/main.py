@@ -6102,8 +6102,10 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
                 practica_id = turno.get("practica_id")
                 practica_cod = turno.get("practica_codigo") or turno.get("practica_cod")
                 resumen_practica = get_practica_resumen_operativo(practica_id or practica_cod or cirugia_nombre)
+                if not isinstance(resumen_practica, dict):
+                    resumen_practica = {}
 
-                ayuno_horas = int(resumen_practica.get("ayuno_horas", 8)) if resumen_practica else 8
+                ayuno_horas = int(resumen_practica.get("ayuno_horas", 8)) if isinstance(resumen_practica.get("ayuno_horas"), (int, float, str)) else 8
                 habilitar_prep = bool(resumen_practica.get("habilitar_preparacion", False)) if resumen_practica else False
 
                 if habilitar_prep and ayuno_horas == 0:
@@ -6117,7 +6119,10 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
 
                 # 5. Obtener plantilla de confirmación de configuracion_quirofano
                 config = get_configuracion_quirofano()
-                conf_msg = (config.get("whatsapp_mensaje_confirmacion") or "").strip()
+                if not isinstance(config, dict):
+                    config = {}
+                raw_conf = config.get("whatsapp_mensaje_confirmacion")
+                conf_msg = str(raw_conf).strip() if isinstance(raw_conf, str) and raw_conf.strip() else ""
                 if not conf_msg:
                     conf_msg = (
                         "¡Muchas gracias {paciente}! Hemos registrado tu consentimiento firmado digitalmente para tu cirugía del {fecha_cirugia}."
@@ -6188,9 +6193,12 @@ async def firmar_consentimiento_publico(token: str, payload: FirmaPayload, reque
                             # Comprobar si confirmacion_consentimiento_quirurgico_v1 está APPROVED
                             target_tpl = None
                             try:
-                                res_tpl = supabase.table("whatsapp_templates").select("name, status, body_text").eq("name", "confirmacion_consentimiento_quirurgico_v1").limit(1).execute()
-                                if res_tpl.data and res_tpl.data[0].get("status") == "APPROVED":
-                                    target_tpl = "confirmacion_consentimiento_quirurgico_v1"
+                                if supabase and hasattr(supabase, "table"):
+                                    res_tpl = supabase.table("whatsapp_templates").select("name, status, body_text").eq("name", "confirmacion_consentimiento_quirurgico_v1").limit(1).execute()
+                                    data_tpl = getattr(res_tpl, "data", None)
+                                    if isinstance(data_tpl, list) and len(data_tpl) > 0 and isinstance(data_tpl[0], dict):
+                                        if data_tpl[0].get("status") == "APPROVED":
+                                            target_tpl = "confirmacion_consentimiento_quirurgico_v1"
                             except Exception as e_tpl_chk:
                                 logger.warning(f"[Confirmación Post-Firma] Error comprobando estado plantilla: {e_tpl_chk}")
 

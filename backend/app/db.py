@@ -6322,12 +6322,13 @@ def get_pipeline_quirurgico() -> Dict[str, Any]:
 
 def get_configuracion_quirofano() -> Dict[str, Any]:
     """Obtiene la configuración global de quirófanos y plantillas de consentimiento."""
-    if not supabase:
+    if not supabase or not hasattr(supabase, "table"):
         return {}
     try:
         resp = supabase.table("configuracion_quirofano").select("*").eq("id", "default").limit(1).execute()
-        if resp.data and len(resp.data) > 0:
-            return resp.data[0]
+        data = getattr(resp, "data", None)
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            return data[0]
         # Crear default si no existe
         nuevo = {
             "id": "default",
