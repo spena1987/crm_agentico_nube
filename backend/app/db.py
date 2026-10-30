@@ -3228,16 +3228,28 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 logger.warning(f"Aviso al cancelar turnos de quirófano en cascada: {e_c}")
         elif datos.get("estado") == "operado":
             try:
+                # Obtener la asesoría actual para chequear lateralidad
+                as_actual = resp.data[0] if resp.data else {}
+                ojo_as = (as_actual.get("ojo") or "").upper()
+                es_bilat = (ojo_as == "AO") or (as_actual.get("modalidad_bilateral") in ["escalonada", "simultanea"])
+                
                 from datetime import datetime, timezone
                 ahora_iso = datetime.now(timezone.utc).isoformat()
-                supabase.table("turnos_quirofano").update({
-                    "estado": "operado",
-                    "fin_cirugia_at": ahora_iso,
-                    "updated_at": ahora_iso
-                }).eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
-                logger.info(f"Turnos de quirófano sincronizados a 'operado' para asesoría cerrada {asesoria_id}")
+                
+                if not es_bilat:
+                    # En casos unilaterales, sincronizar el turno activo a operado
+                    supabase.table("turnos_quirofano").update({
+                        "estado": "operado",
+                        "fin_cirugia_at": ahora_iso,
+                        "updated_at": ahora_iso
+                    }).eq("asesoria_id", asesoria_id).neq("estado", "cancelado").execute()
+                    logger.info(f"Turno de quirófano unilateral sincronizado a 'operado' para asesoría cerrada {asesoria_id}")
+                else:
+                    # En casos bilaterales AO, NO cerrar en bloque turnos futuros;
+                    # se preserva la independencia clínica de cada ojo y turno.
+                    logger.info(f"Asesoría bilateral {asesoria_id} en 'operado': se preserva la independencia de cada turno.")
             except Exception as e_op_t:
-                logger.warning(f"Aviso al actualizar turnos de quirófano a operado en cascada: {e_op_t}")
+                logger.warning(f"Aviso al actualizar turnos de quirófano a operado: {e_op_t}")
 
         # 2. Sincronizar hacia turnos de quirófano vinculados a esta asesoría
         if "practica_nombre" in datos or "practica_codigo" in datos or "medico_cirujano_nombre" in datos or "medico_cirujano_id" in datos or "ojo" in datos:
@@ -7293,7 +7305,9 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 "estado": "programado"
             }
             if turno_p1:
-                # Actualizar turno existente
+                # Actualizar turno existente preservando estado si ya avanzó en quirófano
+                if turno_p1.get("estado") in ["en_espera", "pre_quirofano", "en_operacion", "operado"]:
+                    datos_turno_1["estado"] = turno_p1.get("estado")
                 payload_upd = {k: v for k, v in datos_turno_1.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
                 payload_upd["updated_at"] = "now()"
                 upd_res = supabase.table("turnos_quirofano").update(payload_upd).eq("id", turno_p1["id"]).execute()
@@ -7336,6 +7350,9 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                     "estado": "programado"
                 }
                 if turno_p2:
+                    # Actualizar turno existente preservando estado si ya avanzó en quirófano
+                    if turno_p2.get("estado") in ["en_espera", "pre_quirofano", "en_operacion", "operado"]:
+                        datos_turno_2["estado"] = turno_p2.get("estado")
                     payload_upd2 = {k: v for k, v in datos_turno_2.items() if k in COLUMN_KEYS_TURNOS_QUIROFANO and v is not None}
                     payload_upd2["updated_at"] = "now()"
                     upd_res2 = supabase.table("turnos_quirofano").update(payload_upd2).eq("id", turno_p2["id"]).execute()
@@ -8779,7 +8796,13 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         from datetime import datetime, timezone
         ahora_iso = datetime.now(timezone.utc).isoformat()
         
-        if nuevo_estado == "en_espera":
+        if nuevo_estado == "programado":
+            # Revertir / deshacer recepción accidental: limpia timestamps de avance clínico
+            update_payload["llegada_at"] = None
+            update_payload["ingreso_pre_quirofano_at"] = None
+            update_payload["inicio_cirugia_at"] = None
+            update_payload["fin_cirugia_at"] = None
+        elif nuevo_estado == "en_espera":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
         elif nuevo_estado == "pre_quirofano":
@@ -9649,26 +9672,81 @@ def procesar_escaneo_qr_turno(
 
         # 3. Búsqueda a través de asesorias_quirurgicas.codigo_caso (ej. 'QX-26-0001' o 'QX-26-0012')
         if not turno:
+            ojo_solicitado = None
+            id_str_upper = id_str.upper()
+            if id_str_upper.endswith("-OD") or ":OD" in id_str_upper:
+                ojo_solicitado = "OD"
+            elif id_str_upper.endswith("-OI") or ":OI" in id_str_upper:
+                ojo_solicitado = "OI"
+
+            from datetime import datetime
+            import zoneinfo
+            try:
+                tz_ar = zoneinfo.ZoneInfo("America/Argentina/Buenos_Aires")
+                fecha_hoy_ar = datetime.now(tz_ar).strftime("%Y-%m-%d")
+            except Exception:
+                fecha_hoy_ar = datetime.utcnow().strftime("%Y-%m-%d")
+
             cod_limpio = id_str.replace("QX-", "").replace("qx-", "").replace("-OD", "").replace("-OI", "").replace("-od", "").replace("-oi", "").strip()
             as_resp = supabase.table("asesorias_quirurgicas").select("id").ilike("codigo_caso", f"%{cod_limpio}%").limit(1).execute()
             if as_resp.data and len(as_resp.data) > 0:
                 as_id = as_resp.data[0]["id"]
                 resp_as = supabase.table("turnos_quirofano").select(
                     "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
-                ).eq("asesoria_id", as_id).neq("estado", "cancelado").order("fecha_cirugia", desc=True).limit(1).execute()
-                if resp_as.data and len(resp_as.data) > 0:
-                    turno = resp_as.data[0]
+                ).eq("asesoria_id", as_id).neq("estado", "cancelado").execute()
+                candidatos = resp_as.data or []
+                
+                # 3.a Si se indicó lateralidad en el código escaneado, filtrar por ese ojo
+                if ojo_solicitado:
+                    candidatos_ojo = [c for c in candidatos if (c.get("ojo") or "").upper() == ojo_solicitado]
+                    if candidatos_ojo:
+                        candidatos = candidatos_ojo
+
+                # 3.b Priorizar turno de la fecha quirúrgica de hoy
+                candidatos_hoy = [c for c in candidatos if c.get("fecha_cirugia") == fecha_hoy_ar]
+                if candidatos_hoy:
+                    activos_hoy = [c for c in candidatos_hoy if c.get("estado") != "operado"]
+                    turno = activos_hoy[0] if activos_hoy else candidatos_hoy[0]
+                elif candidatos:
+                    # 3.c Si no hay turno hoy, ordenar por fecha más próxima ascendente (priorizando no operados)
+                    activos = [c for c in candidatos if c.get("estado") != "operado"]
+                    lista_a_ordenar = activos if activos else candidatos
+                    lista_a_ordenar.sort(key=lambda x: x.get("fecha_cirugia") or "")
+                    turno = lista_a_ordenar[0]
 
         # 4. Si es numérico (DNI de paciente)
         if not turno and id_str.isdigit():
-            pac_resp = supabase.table("pacientes").select("id").eq("dni", id_str).limit(1).execute()
+            from datetime import datetime
+            import zoneinfo
+            try:
+                tz_ar = zoneinfo.ZoneInfo("America/Argentina/Buenos_Aires")
+                fecha_hoy_ar = datetime.now(tz_ar).strftime("%Y-%m-%d")
+            except Exception:
+                fecha_hoy_ar = datetime.utcnow().strftime("%Y-%m-%d")
+
+            dni_raw = id_str.strip()
+            dni_sin_ceros = dni_raw.lstrip("0") or dni_raw
+            dni_zfill8 = dni_sin_ceros.zfill(8)
+            dni_zfill9 = dni_sin_ceros.zfill(9)
+            pac_resp = supabase.table("pacientes").select("id").in_("dni", [dni_raw, dni_sin_ceros, dni_zfill8, dni_zfill9]).limit(1).execute()
             if pac_resp.data and len(pac_resp.data) > 0:
                 pac_id = pac_resp.data[0]["id"]
                 resp_pac = supabase.table("turnos_quirofano").select(
                     "*, pacientes(*), quirofanos(nombre, codigo, color), asesorias_quirurgicas(medico_derivador_nombre, practica_nombre, practica_codigo, codigo_caso)"
-                ).eq("paciente_id", pac_id).neq("estado", "cancelado").order("fecha_cirugia", desc=True).limit(1).execute()
-                if resp_pac.data and len(resp_pac.data) > 0:
-                    turno = resp_pac.data[0]
+                ).eq("paciente_id", pac_id).neq("estado", "cancelado").execute()
+                candidatos_pac = resp_pac.data or []
+                
+                # 4.a Priorizar turno de la fecha quirúrgica de hoy
+                candidatos_hoy = [c for c in candidatos_pac if c.get("fecha_cirugia") == fecha_hoy_ar]
+                if candidatos_hoy:
+                    activos_hoy = [c for c in candidatos_hoy if c.get("estado") != "operado"]
+                    turno = activos_hoy[0] if activos_hoy else candidatos_hoy[0]
+                elif candidatos_pac:
+                    # 4.b Si no hay turno hoy, seleccionar el turno activo más próximo en el tiempo (ascendente)
+                    activos = [c for c in candidatos_pac if c.get("estado") != "operado"]
+                    lista_a_ordenar = activos if activos else candidatos_pac
+                    lista_a_ordenar.sort(key=lambda x: x.get("fecha_cirugia") or "")
+                    turno = lista_a_ordenar[0]
 
         if not turno:
             return {"success": False, "error": f"No se encontró ningún turno quirúrgico activo para '{identificador}'."}

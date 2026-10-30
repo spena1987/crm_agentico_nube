@@ -35,8 +35,8 @@ import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepAlerta, reproducirBeepScan } from '@/lib/audioFeedback'
-import { Printer, QrCode, Camera, Barcode } from 'lucide-react'
-import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
+import { Printer, QrCode, Camera, Barcode, Undo2 } from 'lucide-react'
+import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, getFechaHoyLocal } from '@/lib/dateUtils'
 
 interface TurnoRecepcion {
   id: string
@@ -299,8 +299,42 @@ export default function RecepcionPacientesDia() {
     }
   }, [fecha])
 
+  // Revertir Recepción: Vuelve el turno a 'programado' (citado)
+  const handleRevertirRecepcion = async (turnoId: string, nombrePac?: string) => {
+    if (!window.confirm(`¿Revertir la recepción de ${nombrePac || 'este paciente'} y devolver su turno a citado?`)) {
+      return
+    }
+    setProcesandoId(turnoId)
+    try {
+      setTurnos((prev) =>
+        prev.map((t) =>
+          t.id === turnoId
+            ? { ...t, estado: 'programado', llegada_at: undefined, ingreso_pre_quirofano_at: undefined }
+            : t
+        )
+      )
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/revertir-recepcion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      })
+      if (!res.ok) {
+        throw new Error('Error al revertir recepción')
+      }
+      fetchTurnosHoy()
+    } catch (err: any) {
+      console.error('Error al revertir recepción:', err)
+      fetchTurnosHoy()
+    } finally {
+      setProcesandoId(null)
+    }
+  }
+
   // Recepcionar Paciente: Pasa a 'en_espera'
   const handleRecepcionar = async (turnoId: string) => {
+    if (fecha !== getFechaHoyLocal()) {
+      const confirmar = window.confirm(`Atención: La fecha seleccionada (${fecha}) no coincide con el día de hoy (${getFechaHoyLocal()}). ¿Deseas registrar la llegada de este paciente de todas formas?`)
+      if (!confirmar) return
+    }
     try {
       setProcesandoId(turnoId)
       const ahoraIso = new Date().toISOString()
@@ -861,7 +895,7 @@ export default function RecepcionPacientesDia() {
                     {/* Timestamps de Trazabilidad */}
                     {t.llegada_at && (
                       <span className="text-[11px] font-mono text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20">
-                        Llegó: {formatearHoraDesdeIso(t.llegada_at)}
+                        Llegó: {formatearHoraConFechaSiDifiere(t.llegada_at, fecha)}
                       </span>
                     )}
 
@@ -980,10 +1014,22 @@ export default function RecepcionPacientesDia() {
                     </button>
                   )}
                   {esEnEspera && (
-                    <span className="px-3 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1">
-                      <Activity size={12} className="text-amber-400" />
-                      <span>En Sala de Espera</span>
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-3 py-1.5 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold flex items-center gap-1">
+                        <Activity size={12} className="text-amber-400" />
+                        <span>En Sala de Espera</span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={procesandoId === t.id}
+                        onClick={() => handleRevertirRecepcion(t.id, t.paciente_nombre)}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-gray-300 hover:text-white rounded-lg text-[11px] font-semibold flex items-center gap-1 border border-slate-700 transition"
+                        title="Deshacer recepción: devolver a citado y limpiar hora de llegada"
+                      >
+                        <Undo2 size={12} />
+                        <span>Deshacer</span>
+                      </button>
+                    </div>
                   )}
                   {esPreQuirofano && (
                     <span className="px-3 py-1.5 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm">

@@ -7833,6 +7833,7 @@ class CambiarEstadoPayload(BaseModel):
 
 @app.put("/api/turnos-quirofano/{turno_id}/estado")
 @app.put("/api/turnos-quirofano/{turno_id}/cambiar-estado")
+@app.post("/api/turnos-quirofano/{turno_id}/cambiar-estado")
 def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
     try:
         res = cambiar_estado_turno_quirofano(turno_id=turno_id, nuevo_estado=payload.estado)
@@ -7843,6 +7844,24 @@ def cambiar_estado_turno_endpoint(turno_id: str, payload: CambiarEstadoPayload):
         raise
     except Exception as e:
         logger.error(f"Error en endpoint cambiar estado {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/turnos-quirofano/{turno_id}/revertir-recepcion")
+@app.put("/api/turnos-quirofano/{turno_id}/revertir-recepcion")
+def revertir_recepcion_turno_endpoint(turno_id: str):
+    """
+    Revierte un turno recepcionado accidentalmente de regreso a 'programado' (citado),
+    limpiando los timestamps de llegada y dilatación prequirúrgica.
+    """
+    try:
+        res = cambiar_estado_turno_quirofano(turno_id=turno_id, nuevo_estado="programado")
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al revertir recepción de turno")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint revertir recepcion {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ====================================================================

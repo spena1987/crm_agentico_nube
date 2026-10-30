@@ -30,6 +30,87 @@ export const formatearHoraDesdeIso = (isoStr?: string | null, fallback: string =
   }
 }
 
+/**
+ * Formatea la hora mostrando fecha (DD/MM) si el timestamp no pertenece a la fecha de referencia
+ */
+export const formatearHoraConFechaSiDifiere = (
+  isoStr?: string | null,
+  fechaReferencia?: string | null,
+  fallback: string = '--:--'
+): string => {
+  if (!isoStr) return fallback
+  try {
+    const d = new Date(isoStr)
+    if (isNaN(d.getTime())) return String(isoStr).slice(11, 16) || fallback
+    const hours = String(d.getHours()).padStart(2, '0')
+    const minutes = String(d.getMinutes()).padStart(2, '0')
+
+    if (fechaReferencia && fechaReferencia.length >= 10) {
+      const pYear = parseInt(fechaReferencia.slice(0, 4), 10)
+      const pMonth = parseInt(fechaReferencia.slice(5, 7), 10) - 1
+      const pDay = parseInt(fechaReferencia.slice(8, 10), 10)
+      if (d.getFullYear() !== pYear || d.getMonth() !== pMonth || d.getDate() !== pDay) {
+        const dia = String(d.getDate()).padStart(2, '0')
+        const mes = String(d.getMonth() + 1).padStart(2, '0')
+        return `${dia}/${mes} ${hours}:${minutes} hs`
+      }
+    }
+    return `${hours}:${minutes} hs`
+  } catch (e) {
+    return fallback
+  }
+}
+
+/**
+ * Formatea el tiempo de espera quirúrgico evitando desbordes interdiarios absurdos.
+ */
+export const formatearTiempoEsperaSeguro = (
+  llegadaIso?: string | null,
+  fechaPizarra?: string | null
+): { minutos: number; texto: string; esFechaAnterior: boolean } => {
+  if (!llegadaIso) return { minutos: 0, texto: '', esFechaAnterior: false }
+  try {
+    const llegada = new Date(llegadaIso)
+    if (isNaN(llegada.getTime())) return { minutos: 0, texto: '', esFechaAnterior: false }
+
+    let esFechaAnterior = false
+    if (fechaPizarra && fechaPizarra.length >= 10) {
+      const pYear = parseInt(fechaPizarra.slice(0, 4), 10)
+      const pMonth = parseInt(fechaPizarra.slice(5, 7), 10) - 1
+      const pDay = parseInt(fechaPizarra.slice(8, 10), 10)
+      if (
+        llegada.getFullYear() !== pYear ||
+        llegada.getMonth() !== pMonth ||
+        llegada.getDate() !== pDay
+      ) {
+        esFechaAnterior = true
+      }
+    }
+
+    const now = new Date()
+    const diffMs = Math.max(0, now.getTime() - llegada.getTime())
+    const diffMin = Math.floor(diffMs / 60000)
+
+    if (esFechaAnterior || diffMin > 720) {
+      const dia = String(llegada.getDate()).padStart(2, '0')
+      const mes = String(llegada.getMonth() + 1).padStart(2, '0')
+      return {
+        minutos: diffMin,
+        texto: `Ingreso ant. (${dia}/${mes})`,
+        esFechaAnterior: true
+      }
+    }
+
+    return {
+      minutos: diffMin,
+      texto: `Esperando hace ${diffMin} min`,
+      esFechaAnterior: false
+    }
+  } catch {
+    return { minutos: 0, texto: '', esFechaAnterior: false }
+  }
+}
+
 export const calcularMinutosTranscurridos = (inicioIso?: string | null, finIso?: string | null): number => {
   if (!inicioIso) return 0
   try {

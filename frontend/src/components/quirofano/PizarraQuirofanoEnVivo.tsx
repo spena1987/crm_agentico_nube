@@ -43,7 +43,8 @@ import {
   Moon,
   Sun,
   ShieldAlert,
-  Barcode
+  Barcode,
+  Undo2
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
@@ -55,7 +56,7 @@ import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepScan, reproducirBeepAlerta } from '@/lib/audioFeedback'
 import { Printer, QrCode, Camera } from 'lucide-react'
-import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
+import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, formatearTiempoEsperaSeguro, getFechaHoyLocal } from '@/lib/dateUtils'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 
@@ -1152,6 +1153,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               : 'border-l-[5px] border-l-blue-500 border-y-[var(--border)] border-r-[var(--border)] bg-[var(--card)]'
 
             const minutosEsperando = esEnEspera ? calcularMinutosTranscurridos(t.llegada_at) : 0
+                    const esperaInfo = esEnEspera ? formatearTiempoEsperaSeguro(t.llegada_at, fecha) : null
             const minutosPreQx = esPreQuirofano ? calcularMinutosTranscurridos(t.ingreso_pre_quirofano_at || t.llegada_at) : 0
 
             return (
@@ -1186,7 +1188,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     {/* Badge de Llegada / Espera */}
                     {t.llegada_at && (
                       <span className="text-[11px] font-mono text-emerald-600 dark:text-emerald-400 font-semibold">
-                        Llegó: {formatearHoraDesdeIso(t.llegada_at)}
+                        Llegó: {formatearHoraConFechaSiDifiere(t.llegada_at, fecha)}
                       </span>
                     )}
 
@@ -1201,12 +1203,14 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     {/* Badge Dinámico de Tiempo en Espera */}
                     {esEnEspera && (
                       <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold flex items-center gap-1 border ${
-                        minutosEsperando > 40
+                        esperaInfo?.esFechaAnterior
+                          ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30'
+                          : minutosEsperando > 40
                           ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border-rose-300 dark:border-rose-800 animate-pulse'
                           : 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700'
                       }`}>
                         <Clock size={12} />
-                        <span>Esperando hace {minutosEsperando} min</span>
+                        <span>{esperaInfo?.texto || `Esperando hace ${minutosEsperando} min`}</span>
                       </span>
                     )}
 
@@ -1422,6 +1426,11 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         disabled={procesandoId === t.id}
                         onClick={(e) => {
                           e.stopPropagation()
+                          if (fecha !== getFechaHoyLocal()) {
+                            if (!window.confirm(`Atención: La fecha de la pizarra (${fecha}) no coincide con el día de hoy (${getFechaHoyLocal()}). ¿Confirmar recepción anticipada para este paciente?`)) {
+                              return
+                            }
+                          }
                           handleCambiarEstado(t.id, 'en_espera')
                         }}
                         className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow transition disabled:opacity-50"
@@ -1432,21 +1441,38 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </button>
                     )}
 
-                    {/* Botón 2: Pasar a Pre-Quirófano (pasa a pre_quirofano) */}
+                    {/* Botón 2: Pasar a Pre-Quirófano (pasa a pre_quirofano) & Deshacer Recepción */}
                     {esEnEspera && (
-                      <button
-                        type="button"
-                        disabled={procesandoId === t.id}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          solicitarPasoAPreQuirofano(t)
-                        }}
-                        className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-cyan-500/20 transition disabled:opacity-50"
-                        title="Ingresar paciente al circuito de Pre-Quirófano (Dilatación y Chequeos con salvaguarda de consentimiento)"
-                      >
-                        {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={14} />}
-                        <span>🩵 Pasar a Pre-Qx</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            solicitarPasoAPreQuirofano(t)
+                          }}
+                          className="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-cyan-500/20 transition disabled:opacity-50"
+                          title="Ingresar paciente al circuito de Pre-Quirófano (Dilatación y Chequeos con salvaguarda de consentimiento)"
+                        >
+                          {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={14} />}
+                          <span>🩵 Pasar a Pre-Qx</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (window.confirm(`¿Revertir la recepción de ${pac.nombre || 'este paciente'} y devolver su turno a citado?`)) {
+                              handleCambiarEstado(t.id, 'programado')
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1 border border-gray-300 dark:border-slate-700 transition"
+                          title="Deshacer recepción accidental: Vuelve el turno a 'Citado' y limpia el horario de llegada"
+                        >
+                          <Undo2 size={13} />
+                          <span>Deshacer</span>
+                        </button>
+                      </div>
                     )}
 
                     {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS y pasa a en_operacion) */}
