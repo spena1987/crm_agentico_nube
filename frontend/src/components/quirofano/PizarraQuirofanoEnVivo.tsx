@@ -88,6 +88,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [quirofanos, setQuirofanos] = useState<any[]>([])
   const [turnos, setTurnos] = useState<any[]>([])
   const [cargando, setCargando] = useState(true)
+  const [sincronizando, setSincronizando] = useState(false)
   const [procesandoId, setProcesandoId] = useState<string | null>(null)
   const [horaActual, setHoraActual] = useState(new Date())
   const [turnoModalDetalle, setTurnoModalDetalle] = useState<any | null>(null)
@@ -346,10 +347,14 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     loadQuirofanos()
   }, [])
 
-  // Cargar turnos del día (solo salas destinadas a quirófano)
-  const fetchTurnosDia = async () => {
+  // Cargar turnos del día con soporte de sincronización silenciosa en segundo plano
+  const fetchTurnosDia = async (silencioso = false) => {
     try {
-      setCargando(true)
+      if (!silencioso && turnos.length === 0) {
+        setCargando(true)
+      } else {
+        setSincronizando(true)
+      }
       let url = `/api/turnos-quirofano-dia?fecha=${fecha}&solo_pizarra=true`
       if (quirofanoFiltro !== 'todos') {
         url += `&quirofano_id=${quirofanoFiltro}`
@@ -358,21 +363,24 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       const data = await res.json()
       if (res.ok && data.success) {
         setTurnos(data.turnos || [])
-      } else {
+      } else if (!silencioso) {
         setTurnos([])
       }
     } catch (err) {
       console.error('Error cargando turnos del día:', err)
     } finally {
       setCargando(false)
+      setSincronizando(false)
     }
   }
 
   useEffect(() => {
-    fetchTurnosDia()
+    // Si cambia de fecha o quirófano, recarga con indicador inicial
+    setCargando(true)
+    fetchTurnosDia(false)
   }, [fecha, quirofanoFiltro])
 
-  // Suscripción Realtime a Supabase con Delta Updates incrementales
+  // Suscripción Realtime a Supabase con Delta Updates incrementales y sin parpadeo de pantalla
   useEffect(() => {
     const channel = supabase
       .channel('realtime-pizarra-quirofano-' + fecha)
@@ -386,7 +394,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               prev.map((t) => (t.id === payload.new.id ? { ...t, ...payload.new } : t))
             )
           } else {
-            fetchTurnosDia()
+            fetchTurnosDia(true)
           }
         }
       )
@@ -394,7 +402,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         'postgres_changes',
         { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
         () => {
-          fetchTurnosDia()
+          // Sincronización silenciosa en segundo plano sin desmontar las tarjetas activas
+          fetchTurnosDia(true)
         }
       )
       .subscribe()
@@ -404,10 +413,40 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     }
   }, [fecha, quirofanoFiltro])
 
-  // Cambiar estado del turno (en_espera, pre_quirofano, en_operacion, operado, cancelado)
+  // Cambiar estado del turno con Optimistic UI (0 ms de latencia en pantalla)
   const handleCambiarEstado = async (turnoId: string, nuevoEstado: string, extras?: any) => {
+    const turnoPrevio = turnos.find((t) => t.id === turnoId)
     try {
       setProcesandoId(turnoId)
+
+      const ahoraIso = new Date().toISOString()
+      const timestampsOptimistas: Record<string, any> = {}
+      if (nuevoEstado === 'en_espera') {
+        if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
+      } else if (nuevoEstado === 'pre_quirofano') {
+        if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
+        if (!turnoPrevio?.ingreso_pre_quirofano_at) timestampsOptimistas.ingreso_pre_quirofano_at = ahoraIso
+      } else if (nuevoEstado === 'en_operacion') {
+        if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
+        if (!turnoPrevio?.ingreso_pre_quirofano_at) timestampsOptimistas.ingreso_pre_quirofano_at = ahoraIso
+        if (!turnoPrevio?.inicio_cirugia_at) timestampsOptimistas.inicio_cirugia_at = ahoraIso
+      } else if (nuevoEstado === 'operado') {
+        if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
+        if (!turnoPrevio?.ingreso_pre_quirofano_at) timestampsOptimistas.ingreso_pre_quirofano_at = ahoraIso
+        if (!turnoPrevio?.inicio_cirugia_at) timestampsOptimistas.inicio_cirugia_at = ahoraIso
+        if (!turnoPrevio?.fin_cirugia_at) timestampsOptimistas.fin_cirugia_at = ahoraIso
+      }
+
+      // 1. Mutación optimista instantánea (0 ms): la tarjeta y los KPIs cambian en el acto
+      setTurnos((prev) =>
+        prev.map((t) =>
+          t.id === turnoId
+            ? { ...t, estado: nuevoEstado, ...timestampsOptimistas, ...(extras || {}) }
+            : t
+        )
+      )
+
+      // 2. Persistencia asíncrona en backend
       const res = await apiFetch(`/api/turnos-quirofano/${turnoId}/cambiar-estado`, {
         method: 'PUT',
         body: JSON.stringify({ estado: nuevoEstado, ...(extras || {}) })
@@ -415,13 +454,21 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       const data = await res.json()
       if (res.ok && data.success) {
         setTurnos((prev) =>
-          prev.map((t) => (t.id === turnoId ? { ...t, estado: nuevoEstado, ...data.turno } : t))
+          prev.map((t) => (t.id === turnoId ? { ...t, ...data.turno, estado: nuevoEstado } : t))
         )
       } else {
+        // Revertir al estado anterior si el backend rechazó el cambio
+        if (turnoPrevio) {
+          setTurnos((prev) => prev.map((t) => (t.id === turnoId ? turnoPrevio : t)))
+        }
         alert(data.detail || data.error || 'Error al cambiar estado')
       }
     } catch (err) {
       console.error('Error actualizando estado:', err)
+      if (turnoPrevio) {
+        setTurnos((prev) => prev.map((t) => (t.id === turnoId ? turnoPrevio : t)))
+      }
+      alert('Error de conexión al actualizar el estado del turno.')
     } finally {
       setProcesandoId(null)
     }
@@ -809,12 +856,12 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           </button>
 
           <button
-            onClick={fetchTurnosDia}
-            disabled={cargando}
+            onClick={() => fetchTurnosDia(true)}
+            disabled={cargando || sincronizando}
             className="p-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl border border-[var(--border)] transition"
-            title="Refrescar datos"
+            title="Refrescar datos en vivo"
           >
-            <RefreshCw size={15} className={cargando ? 'animate-spin text-blue-600' : ''} />
+            <RefreshCw size={15} className={(cargando || sincronizando) ? 'animate-spin text-blue-600' : ''} />
           </button>
         </div>
       </div>
@@ -1561,7 +1608,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             } else {
               await handleCambiarEstado(tId, 'en_operacion')
             }
-            fetchTurnosDia()
+            fetchTurnosDia(true)
           }}
           procesando={procesandoId === turnoParaPausaOms.id}
         />
@@ -1572,7 +1619,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           isOpen={!!pulseraTurnoId}
           onClose={() => setPulseraTurnoId(null)}
           turnoId={pulseraTurnoId}
-          onPulseraImpresa={() => fetchTurnosDia()}
+          onPulseraImpresa={() => fetchTurnosDia(true)}
         />
       )}
 
@@ -1586,7 +1633,12 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           rawQR={scanVerifRawQR}
           turnoId={scanVerifTurnoId}
           estacion="Pizarra de Quirófano en Vivo"
-          onEstadoActualizado={() => fetchTurnosDia()}
+          onEstadoActualizado={(turnoUpd?: any) => {
+            if (turnoUpd) {
+              setTurnos((prev) => prev.map((t) => (t.id === turnoUpd.id ? { ...t, ...turnoUpd } : t)))
+            }
+            fetchTurnosDia(true)
+          }}
         />
       )}
 
@@ -1691,7 +1743,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           pacienteNombreDefault={consentimientoModalTurno.pacientes?.nombre || consentimientoModalTurno.paciente_nombre}
           pacienteTelefonoDefault={consentimientoModalTurno.pacientes?.telefono || consentimientoModalTurno.paciente_telefono}
           onConsentimientoEnviado={() => {
-            fetchTurnosDia()
+            fetchTurnosDia(true)
             setAlertaConsentimiento(null)
           }}
         />
