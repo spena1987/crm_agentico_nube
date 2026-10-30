@@ -101,3 +101,12 @@ def test_actualizar_asesoria_quirurgica_persiste_todos_los_campos():
         # 3. Comprobar resultado retornado
         assert resultado["practica_nombre"] == "Facoemulsificación con Implante de LIO"
         assert resultado["turnos_activos"] == []
+
+def test_actualizar_asesoria_rechaza_practica_vacia_o_placeholder():
+    """
+    Verifica que no se permita persistir casos quirúrgicos sin práctica válida o con placeholders temporales.
+    """
+    with patch("app.db.supabase"):
+        for placeholder in ["", "   ", "Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar"]:
+            with pytest.raises(ValueError, match="La práctica quirúrgica es obligatoria"):
+                actualizar_asesoria_quirurgica("qx-test", {"practica_nombre": placeholder})

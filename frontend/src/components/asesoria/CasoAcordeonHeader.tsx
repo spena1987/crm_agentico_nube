@@ -7,6 +7,7 @@ import {
   DollarSign,
   Clock,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -80,14 +81,32 @@ export default function CasoAcordeonHeader({
 
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-bold text-white truncate max-w-md">
-              {caso.practica_nombre || 'Cirugía / Procedimiento sin determinar'}
-            </h4>
-            {caso.practica_codigo && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-800 text-gray-400 border border-[var(--border)]">
-                {caso.practica_codigo}
-              </span>
-            )}
+            {(() => {
+              const nomLimpio = (caso.practica_nombre || '').trim()
+              const esInvalida = !nomLimpio || nomLimpio === 'Nueva Cirugía / Procedimiento' || nomLimpio === 'Práctica Quirúrgica a Determinar' || nomLimpio === 'Cirugía / Procedimiento sin determinar'
+              
+              if (esInvalida) {
+                return (
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-300 bg-amber-500/20 border border-amber-500/50 px-2.5 py-1 rounded-lg flex items-center gap-1.5 shadow-sm animate-pulse">
+                    <AlertTriangle size={13} className="text-amber-400 shrink-0" />
+                    <span>⚠️ Práctica Quirúrgica No Asignada</span>
+                  </span>
+                )
+              }
+
+              return (
+                <>
+                  <h4 className="text-sm font-bold text-white truncate max-w-md">
+                    {caso.practica_nombre}
+                  </h4>
+                  {caso.practica_codigo && (
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      Cód. {caso.practica_codigo}
+                    </span>
+                  )}
+                </>
+              )
+            })()}
             {/* Badge de Ojo */}
             {caso.ojo && (
               <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md border font-mono ${

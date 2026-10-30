@@ -4604,8 +4604,20 @@ def actualizar_asesoria(asesoria_id: str, payload: Dict[str, Any] = Body(...)):
     Actualiza estado, fechas, condiciones o notas de un caso quirúrgico.
     """
     try:
+        # Validación de obligatoriedad de Práctica Quirúrgica
+        if "practica_nombre" in payload:
+            nom_p = str(payload.get("practica_nombre") or "").strip()
+            if not nom_p or nom_p in ("Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La práctica quirúrgica es obligatoria para guardar el caso quirúrgico."
+                )
         asesoria = actualizar_asesoria_quirurgica(asesoria_id, payload)
         return {"success": True, "mensaje": "Caso quirúrgico actualizado.", "asesoria": asesoria}
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.error(f"Error al actualizar asesoría {asesoria_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

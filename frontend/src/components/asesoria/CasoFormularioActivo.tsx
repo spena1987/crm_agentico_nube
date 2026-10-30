@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Link2,
   Stethoscope,
@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Clock,
   AlertCircle,
+  AlertTriangle,
   Save,
   Loader2,
   Trash2,
@@ -175,12 +176,35 @@ export default function CasoFormularioActivo({
   const [buscandoCirujano, setBuscandoCirujano] = useState(false)
   const [mostrarDropdownCirujano, setMostrarDropdownCirujano] = useState(false)
 
-  // Práctica / Nomenclador
+  // Práctica / Nomenclador (Con refs y estado reactivo de obligatoriedad)
+  const practicaInputRef = useRef<HTMLInputElement>(null)
+  const practicaCardRef = useRef<HTMLDivElement>(null)
+
+  const esPlaceholderInicial = !caso.practica_nombre || caso.practica_nombre === 'Nueva Cirugía / Procedimiento' || caso.practica_nombre === 'Práctica Quirúrgica a Determinar' || caso.practica_nombre === 'Cirugía / Procedimiento sin determinar'
   const [practicaCodigo, setPracticaCodigo] = useState(caso.practica_codigo || '')
-  const [practicaNombre, setPracticaNombre] = useState(caso.practica_nombre || '')
+  const [practicaNombre, setPracticaNombre] = useState(esPlaceholderInicial ? '' : (caso.practica_nombre || ''))
   const [busquedaPractica, setBusquedaPractica] = useState(
-    caso.practica_codigo ? `[${caso.practica_codigo}] ${caso.practica_nombre}` : caso.practica_nombre || ''
+    caso.practica_codigo && !esPlaceholderInicial ? `[${caso.practica_codigo}] ${caso.practica_nombre}` : (esPlaceholderInicial ? '' : caso.practica_nombre || '')
   )
+
+  const esPracticaInvalida = useMemo(() => {
+    const nom = (practicaNombre || '').trim()
+    const busq = (busquedaPractica || '').trim()
+    const effNom = nom || (busq.replace(/^\[.*?\]\s*/, '').trim())
+    return !effNom || effNom === 'Nueva Cirugía / Procedimiento' || effNom === 'Práctica Quirúrgica a Determinar' || effNom === 'Cirugía / Procedimiento sin determinar'
+  }, [practicaNombre, busquedaPractica])
+
+  // Auto-enfoque y apertura del Nomenclador al crear o ingresar a una cirugía sin práctica
+  useEffect(() => {
+    if (esPlaceholderInicial) {
+      const timer = setTimeout(() => {
+        practicaInputRef.current?.focus()
+        setMostrarDropdownPractica(true)
+        buscarPracticasNomenclador('')
+      }, 350)
+      return () => clearTimeout(timer)
+    }
+  }, [caso.id])
   const [practicasNomenclador, setPracticasNomenclador] = useState<PracticaNomenclador[]>([])
   const [buscandoPractica, setBuscandoPractica] = useState(false)
   const [mostrarDropdownPractica, setMostrarDropdownPractica] = useState(false)
@@ -951,9 +975,10 @@ export default function CasoFormularioActivo({
       })
       setBusquedaCirujano(caso.medico_cirujano_nombre || '')
       setPracticaCodigo(caso.practica_codigo || '')
-      setPracticaNombre(caso.practica_nombre || '')
+      const esPlaceholderSync = !caso.practica_nombre || caso.practica_nombre === 'Nueva Cirugía / Procedimiento' || caso.practica_nombre === 'Práctica Quirúrgica a Determinar' || caso.practica_nombre === 'Cirugía / Procedimiento sin determinar'
+      setPracticaNombre(esPlaceholderSync ? '' : (caso.practica_nombre || ''))
       setBusquedaPractica(
-        caso.practica_codigo ? `[${caso.practica_codigo}] ${caso.practica_nombre}` : caso.practica_nombre || ''
+        caso.practica_codigo && !esPlaceholderSync ? `[${caso.practica_codigo}] ${caso.practica_nombre}` : (esPlaceholderSync ? '' : caso.practica_nombre || '')
       )
       setMontoExtra(caso.monto_extra || 0)
       setMonedaExtra(caso.moneda_extra || 'ARS')
@@ -1161,7 +1186,15 @@ export default function CasoFormularioActivo({
     if (!cleanPracticaNombre && busquedaPractica) {
       cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
     }
-    if (!cleanPracticaNombre) cleanPracticaNombre = 'Nueva Cirugía / Procedimiento'
+    if (!cleanPracticaNombre || cleanPracticaNombre === 'Nueva Cirugía / Procedimiento' || cleanPracticaNombre === 'Práctica Quirúrgica a Determinar' || cleanPracticaNombre === 'Cirugía / Procedimiento sin determinar') {
+      setAvisoValidacion('⛔ Campo Obligatorio: Debe seleccionar una Práctica Quirúrgica del Nomenclador antes de emitir presupuesto.')
+      setTimeout(() => setAvisoValidacion(null), 6000)
+      practicaCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      practicaInputRef.current?.focus()
+      setMostrarDropdownPractica(true)
+      buscarPracticasNomenclador(busquedaPractica)
+      return
+    }
 
     const derivNombre = (medicoDerivador.nombre || busquedaDerivador || '').trim() || null
     const cirujNombre = (medicoCirujano.nombre || busquedaCirujano || '').trim() || null
@@ -1235,7 +1268,15 @@ export default function CasoFormularioActivo({
     if (!cleanPracticaNombre && busquedaPractica) {
       cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
     }
-    if (!cleanPracticaNombre) cleanPracticaNombre = 'Nueva Cirugía / Procedimiento'
+    if (!cleanPracticaNombre || cleanPracticaNombre === 'Nueva Cirugía / Procedimiento' || cleanPracticaNombre === 'Práctica Quirúrgica a Determinar' || cleanPracticaNombre === 'Cirugía / Procedimiento sin determinar') {
+      setAvisoValidacion('⛔ Campo Obligatorio: Debe seleccionar una Práctica Quirúrgica del Nomenclador antes de guardar el expediente.')
+      setTimeout(() => setAvisoValidacion(null), 6000)
+      practicaCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      practicaInputRef.current?.focus()
+      setMostrarDropdownPractica(true)
+      buscarPracticasNomenclador(busquedaPractica)
+      return
+    }
 
     const derivNombre = (medicoDerivador.nombre || busquedaDerivador || '').trim() || null
     const cirujNombre = (medicoCirujano.nombre || busquedaCirujano || '').trim() || null
@@ -1450,25 +1491,53 @@ export default function CasoFormularioActivo({
         {/* ================================================================== */}
         <div className="space-y-4">
           
-          {/* Card: Práctica Quirúrgica / Nomenclador */}
-          <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
+          {/* Card: Práctica Quirúrgica / Nomenclador (Resaltado Reactivo con Alerta Visual) */}
+          <div
+            ref={practicaCardRef}
+            className={`p-3.5 rounded-xl transition-all relative ${
+              esPracticaInvalida
+                ? 'border-2 border-amber-500/80 bg-gradient-to-br from-amber-950/30 via-neutral-900 to-neutral-900 shadow-lg shadow-amber-500/10 ring-2 ring-amber-500/20'
+                : 'border border-indigo-500/40 bg-neutral-900/60 shadow-sm'
+            } space-y-2.5`}
+          >
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <ClipboardList size={14} className="text-indigo-400" />
-                Práctica Quirúrgica (Nomenclador CRM)
+              <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                <ClipboardList size={15} className={esPracticaInvalida ? "text-amber-400 animate-pulse" : "text-indigo-400"} />
+                <span>Práctica Quirúrgica (Nomenclador CRM)</span>
+                {esPracticaInvalida && (
+                  <span className="text-[11px] text-amber-400 font-extrabold">*</span>
+                )}
               </label>
-              {practicaCodigo && (
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-semibold">
-                  Cód. {practicaCodigo}
+              {esPracticaInvalida ? (
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/50 flex items-center gap-1 animate-pulse">
+                  <AlertTriangle size={11} className="text-amber-400" />
+                  <span>Campo Obligatorio • Pendiente</span>
                 </span>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                    <CheckCircle2 size={11} className="text-emerald-400" />
+                    <span>Práctica Oficial</span>
+                  </span>
+                  {practicaCodigo && (
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                      Cód. {practicaCodigo}
+                    </span>
+                  )}
+                </div>
               )}
             </div>
 
             <div className="relative">
               <input
+                ref={practicaInputRef}
                 type="text"
                 disabled={guardando}
-                placeholder="Buscar código o nombre en el Nomenclador..."
+                placeholder={
+                  esPracticaInvalida
+                    ? "🔍 Ingrese o busque la práctica en el Nomenclador (ej. Catarata, Vitrectomía, Inyección...)"
+                    : "Buscar código o nombre en el Nomenclador..."
+                }
                 value={busquedaPractica}
                 onChange={(e) => {
                   const val = e.target.value
@@ -1490,7 +1559,11 @@ export default function CasoFormularioActivo({
                     }
                   }, 250)
                 }}
-                className="w-full pl-3 pr-14 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
+                className={`w-full pl-3 pr-14 py-2 text-xs rounded-xl font-medium focus:outline-none transition-all ${
+                  esPracticaInvalida
+                    ? 'bg-neutral-950 border-2 border-amber-400/90 text-amber-100 placeholder-amber-400/70 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 shadow-inner'
+                    : 'bg-neutral-900 border border-[var(--border)] focus:border-indigo-500 text-white placeholder-gray-500'
+                }`}
               />
               <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
                 {busquedaPractica && (

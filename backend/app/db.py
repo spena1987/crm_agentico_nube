@@ -3171,7 +3171,12 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
         for k in campos_permitidos:
             if k in payload:
                 val = payload[k]
-                if k in ["medico_derivador_id", "medico_cirujano_id"]:
+                if k == "practica_nombre":
+                    nom_p = str(val or "").strip()
+                    if not nom_p or nom_p in ("Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar"):
+                        raise ValueError("La práctica quirúrgica es obligatoria para guardar el caso quirúrgico.")
+                    datos[k] = nom_p
+                elif k in ["medico_derivador_id", "medico_cirujano_id"]:
                     datos[k] = int(val) if val else None
                 elif k in ["monto_extra", "monto_sena"]:
                     datos[k] = float(val) if val is not None and val != "" else 0.0
