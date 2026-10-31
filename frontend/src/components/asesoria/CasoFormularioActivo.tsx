@@ -264,13 +264,27 @@ export default function CasoFormularioActivo({
     metaBilateralInicial.fecha_definitiva_2do_ojo || (caso as any).fecha_definitiva_2do_ojo || ''
   )
   // Selección de LIO Comercial / Genérico en Lateralidad
-  const lioSeleccionInicial = ((caso.checklist_prequirurgico as any)?._lio_seleccion) || {
-    estado: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo) ? 'confirmado' : 'a_definir',
-    lente_nombre: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
-    modalidad_bilateral: 'mismo_lente',
-    lente_od: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
-    lente_oi: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
-    observaciones: ''
+  const lioSelPrev = (caso.checklist_prequirurgico as any)?._lio_seleccion
+  const lioNombrePrev = lioSelPrev?.lente_nombre || (caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''
+  const lioSeleccionInicial = {
+    estado: lioSelPrev?.estado || (lioNombrePrev ? 'confirmado' : 'a_definir'),
+    lente_id: lioSelPrev?.lente_id || null,
+    lente_codigo: lioSelPrev?.lente_codigo || null,
+    lente_nombre: lioSelPrev?.lente_nombre || lioNombrePrev || '',
+    precio: lioSelPrev?.precio || null,
+    moneda: lioSelPrev?.moneda || null,
+    modalidad_bilateral: lioSelPrev?.modalidad_bilateral || 'mismo_lente',
+    lente_od: lioSelPrev?.lente_od || lioNombrePrev || '',
+    lente_od_id: lioSelPrev?.lente_od_id || lioSelPrev?.lente_id || null,
+    lente_od_codigo: lioSelPrev?.lente_od_codigo || lioSelPrev?.lente_codigo || null,
+    lente_od_precio: lioSelPrev?.lente_od_precio ?? lioSelPrev?.precio ?? null,
+    lente_od_moneda: lioSelPrev?.lente_od_moneda || lioSelPrev?.moneda || null,
+    lente_oi: lioSelPrev?.lente_oi || lioNombrePrev || '',
+    lente_oi_id: lioSelPrev?.lente_oi_id || lioSelPrev?.lente_id || null,
+    lente_oi_codigo: lioSelPrev?.lente_oi_codigo || lioSelPrev?.lente_codigo || null,
+    lente_oi_precio: lioSelPrev?.lente_oi_precio ?? lioSelPrev?.precio ?? null,
+    lente_oi_moneda: lioSelPrev?.lente_oi_moneda || lioSelPrev?.moneda || null,
+    observaciones: lioSelPrev?.observaciones || ''
   }
   const [lioSeleccion, setLioSeleccion] = useState<any>(lioSeleccionInicial)
   const [catalogoLios, setCatalogoLios] = useState<any[]>([])
@@ -1017,13 +1031,27 @@ export default function CasoFormularioActivo({
       setProximaAccionFecha(caso.proxima_accion_fecha || '')
       setProximaAccionTexto(caso.proxima_accion_texto || '')
       setSituacionPaciente(caso.situacion_paciente || '')
-      const lioSync = ((caso.checklist_prequirurgico as any)?._lio_seleccion) || {
-        estado: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo) ? 'confirmado' : 'a_definir',
-        lente_nombre: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
-        modalidad_bilateral: 'mismo_lente',
-        lente_od: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
-        lente_oi: ((caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''),
-        observaciones: ''
+      const lioSyncRaw = ((caso.checklist_prequirurgico as any)?._lio_seleccion)
+      const lioSyncNombre = lioSyncRaw?.lente_nombre || (caso.checklist_prequirurgico as any)?.lente_tipo || (caso as any).lente_tipo || ''
+      const lioSync = {
+        estado: lioSyncRaw?.estado || (lioSyncNombre ? 'confirmado' : 'a_definir'),
+        lente_id: lioSyncRaw?.lente_id || null,
+        lente_codigo: lioSyncRaw?.lente_codigo || null,
+        lente_nombre: lioSyncRaw?.lente_nombre || lioSyncNombre || '',
+        precio: lioSyncRaw?.precio || null,
+        moneda: lioSyncRaw?.moneda || null,
+        modalidad_bilateral: lioSyncRaw?.modalidad_bilateral || 'mismo_lente',
+        lente_od: lioSyncRaw?.lente_od || lioSyncNombre || '',
+        lente_od_id: lioSyncRaw?.lente_od_id || lioSyncRaw?.lente_id || null,
+        lente_od_codigo: lioSyncRaw?.lente_od_codigo || lioSyncRaw?.lente_codigo || null,
+        lente_od_precio: lioSyncRaw?.lente_od_precio ?? lioSyncRaw?.precio ?? null,
+        lente_od_moneda: lioSyncRaw?.lente_od_moneda || lioSyncRaw?.moneda || null,
+        lente_oi: lioSyncRaw?.lente_oi || lioSyncNombre || '',
+        lente_oi_id: lioSyncRaw?.lente_oi_id || lioSyncRaw?.lente_id || null,
+        lente_oi_codigo: lioSyncRaw?.lente_oi_codigo || lioSyncRaw?.lente_codigo || null,
+        lente_oi_precio: lioSyncRaw?.lente_oi_precio ?? lioSyncRaw?.precio ?? null,
+        lente_oi_moneda: lioSyncRaw?.lente_oi_moneda || lioSyncRaw?.moneda || null,
+        observaciones: lioSyncRaw?.observaciones || ''
       }
       setLioSeleccion(lioSync)
     } else {
@@ -1153,7 +1181,7 @@ export default function CasoFormularioActivo({
       }
 
       if (presData && presData.items) {
-        const itemLio = presData.items.find((it: any) => {
+        const itemsLio = presData.items.filter((it: any) => {
           const n = (it.nombre || '').toLowerCase()
           const c = (it.codigo || '').toLowerCase()
           return (
@@ -1166,19 +1194,39 @@ export default function CasoFormularioActivo({
           )
         })
 
-        if (itemLio) {
-          setLioSeleccion((prev: any) => ({
-            ...prev,
-            estado: presData.estado === 'aprobado' ? 'confirmado' : 'tentativo',
-            lente_id: itemLio.servicio_id || prev.lente_id,
-            lente_nombre: itemLio.nombre,
-            lente_codigo: itemLio.codigo,
-            precio: itemLio.precio_unitario,
-            moneda: itemLio.moneda,
-            lente_od: itemLio.nombre,
-            lente_oi: itemLio.nombre
-          }))
-          setAvisoValidacion(`✓ Se adoptó "${itemLio.nombre}" desde el Presupuesto #${presData.numero_presupuesto || ''} (${presData.estado === 'aprobado' ? 'Confirmado' : 'Tentativo'}).`)
+        if (itemsLio.length > 0) {
+          const primerLio = itemsLio[0]
+          const segundoLio = itemsLio.length > 1 ? itemsLio[1] : primerLio
+          const esDiferenciadoPresupuesto = itemsLio.length > 1 && primerLio.nombre !== segundoLio.nombre
+
+          setLioSeleccion((prev: any) => {
+            const esBilateral = ojo === 'AO'
+            const modalidad = esBilateral && esDiferenciadoPresupuesto ? 'diferenciado' : (prev.modalidad_bilateral || 'mismo_lente')
+            return {
+              ...prev,
+              estado: presData.estado === 'aprobado' ? 'confirmado' : 'tentativo',
+              lente_id: primerLio.servicio_id || prev.lente_id,
+              lente_nombre: primerLio.nombre,
+              lente_codigo: primerLio.codigo,
+              precio: primerLio.precio_unitario,
+              moneda: primerLio.moneda,
+              modalidad_bilateral: modalidad,
+              lente_od: primerLio.nombre,
+              lente_od_id: primerLio.servicio_id,
+              lente_od_codigo: primerLio.codigo,
+              lente_od_precio: primerLio.precio_unitario,
+              lente_od_moneda: primerLio.moneda,
+              lente_oi: segundoLio.nombre,
+              lente_oi_id: segundoLio.servicio_id,
+              lente_oi_codigo: segundoLio.codigo,
+              lente_oi_precio: segundoLio.precio_unitario,
+              lente_oi_moneda: segundoLio.moneda
+            }
+          })
+          const descMsg = itemsLio.length > 1 && esDiferenciadoPresupuesto
+            ? `OD: "${primerLio.nombre}" y OI: "${segundoLio.nombre}"`
+            : `"${primerLio.nombre}"`
+          setAvisoValidacion(`✓ Se adoptó ${descMsg} desde el Presupuesto #${presData.numero_presupuesto || ''} (${presData.estado === 'aprobado' ? 'Confirmado' : 'Tentativo'}).`)
           setTimeout(() => setAvisoValidacion(null), 4500)
           return
         }
@@ -1267,16 +1315,28 @@ export default function CasoFormularioActivo({
         _lio_seleccion: {
           estado: lioSeleccion.estado || 'a_definir',
           lente_id: lioSeleccion.lente_id || null,
-          lente_nombre: lioSeleccion.lente_nombre || null,
+          lente_nombre: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
+            ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
+            : (lioSeleccion.lente_nombre || null),
           lente_codigo: lioSeleccion.lente_codigo || null,
           precio: lioSeleccion.precio || null,
           moneda: lioSeleccion.moneda || null,
           modalidad_bilateral: ojo === 'AO' ? lioSeleccion.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
           lente_od: lioSeleccion.lente_od || lioSeleccion.lente_nombre || null,
+          lente_od_id: lioSeleccion.lente_od_id || lioSeleccion.lente_id || null,
+          lente_od_codigo: lioSeleccion.lente_od_codigo || lioSeleccion.lente_codigo || null,
+          lente_od_precio: lioSeleccion.lente_od_precio ?? lioSeleccion.precio ?? null,
+          lente_od_moneda: lioSeleccion.lente_od_moneda || lioSeleccion.moneda || null,
           lente_oi: lioSeleccion.lente_oi || lioSeleccion.lente_nombre || null,
+          lente_oi_id: lioSeleccion.lente_oi_id || lioSeleccion.lente_id || null,
+          lente_oi_codigo: lioSeleccion.lente_oi_codigo || lioSeleccion.lente_codigo || null,
+          lente_oi_precio: lioSeleccion.lente_oi_precio ?? lioSeleccion.precio ?? null,
+          lente_oi_moneda: lioSeleccion.lente_oi_moneda || lioSeleccion.moneda || null,
           observaciones: lioSeleccion.observaciones || null
         },
-        lente_tipo: lioSeleccion.lente_nombre || null
+        lente_tipo: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
+          ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
+          : (lioSeleccion.lente_nombre || null)
       },
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
@@ -1383,16 +1443,28 @@ export default function CasoFormularioActivo({
         _lio_seleccion: {
           estado: lioSeleccion.estado || 'a_definir',
           lente_id: lioSeleccion.lente_id || null,
-          lente_nombre: lioSeleccion.lente_nombre || null,
+          lente_nombre: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
+            ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
+            : (lioSeleccion.lente_nombre || null),
           lente_codigo: lioSeleccion.lente_codigo || null,
           precio: lioSeleccion.precio || null,
           moneda: lioSeleccion.moneda || null,
           modalidad_bilateral: ojo === 'AO' ? lioSeleccion.modalidad_bilateral || 'mismo_lente' : 'mismo_lente',
           lente_od: lioSeleccion.lente_od || lioSeleccion.lente_nombre || null,
+          lente_od_id: lioSeleccion.lente_od_id || lioSeleccion.lente_id || null,
+          lente_od_codigo: lioSeleccion.lente_od_codigo || lioSeleccion.lente_codigo || null,
+          lente_od_precio: lioSeleccion.lente_od_precio ?? lioSeleccion.precio ?? null,
+          lente_od_moneda: lioSeleccion.lente_od_moneda || lioSeleccion.moneda || null,
           lente_oi: lioSeleccion.lente_oi || lioSeleccion.lente_nombre || null,
+          lente_oi_id: lioSeleccion.lente_oi_id || lioSeleccion.lente_id || null,
+          lente_oi_codigo: lioSeleccion.lente_oi_codigo || lioSeleccion.lente_codigo || null,
+          lente_oi_precio: lioSeleccion.lente_oi_precio ?? lioSeleccion.precio ?? null,
+          lente_oi_moneda: lioSeleccion.lente_oi_moneda || lioSeleccion.moneda || null,
           observaciones: lioSeleccion.observaciones || null
         },
-        lente_tipo: lioSeleccion.lente_nombre || null
+        lente_tipo: (ojo === 'AO' && lioSeleccion.modalidad_bilateral === 'diferenciado')
+          ? `OD: ${lioSeleccion.lente_od || '—'} | OI: ${lioSeleccion.lente_oi || '—'}`
+          : (lioSeleccion.lente_nombre || null)
       },
       proxima_accion_fecha: proximaAccionFecha || null,
       proxima_accion_texto: proximaAccionTexto || null,
@@ -2685,95 +2757,268 @@ export default function CasoFormularioActivo({
                     </div>
                   </div>
 
-                  {/* Selector del Lente */}
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
-                      Lente Intraocular Acordado:
-                    </label>
-                    <select
-                      value={lioSeleccion.lente_nombre || ''}
-                      onChange={(e) => {
-                        const lioNom = e.target.value
-                        const lioEncontrado = catalogoLios.find((l) => l.nombre === lioNom)
-                        setLioSeleccion((prev: any) => ({
-                          ...prev,
-                          lente_nombre: lioNom,
-                          lente_id: lioEncontrado?.id || prev.lente_id,
-                          lente_codigo: lioEncontrado?.codigo || prev.lente_codigo,
-                          precio: lioEncontrado?.precio ?? prev.precio,
-                          moneda: lioEncontrado?.moneda ?? prev.moneda,
-                          lente_od: lioNom,
-                          lente_oi: lioNom
-                        }))
-                      }}
-                      className="w-full p-2.5 rounded-xl bg-neutral-900 border border-amber-500/30 text-xs text-amber-200 font-bold outline-none focus:border-amber-400"
-                    >
-                      <option value="">-- Seleccionar Lente Comercial --</option>
-                      {catalogoLios
-                        .filter((lio) => lio.habilitado_en_practica !== false || lio.nombre === lioSeleccion.lente_nombre)
-                        .map((lio) => (
-                          <option key={lio.id || lio.codigo} value={lio.nombre}>
-                            {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-
-                  {/* Si es AO (Ambos Ojos), permitir diferenciar por ojo si es Monovisión / Blend */}
-                  {ojo === 'AO' && lioSeleccion.lente_nombre && (
-                    <div className="p-2.5 rounded-xl bg-purple-950/20 border border-purple-500/20 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-purple-300">
-                          Modalidad para Ambos Ojos:
-                        </span>
-                        <div className="flex gap-1.5 text-[10px]">
-                          <button
-                            type="button"
-                            onClick={() => setLioSeleccion((prev: any) => ({ ...prev, modalidad_bilateral: 'mismo_lente', lente_oi: prev.lente_od || prev.lente_nombre }))}
-                            className={`px-2 py-0.5 rounded font-bold transition ${
-                              lioSeleccion.modalidad_bilateral !== 'diferenciado'
-                                ? 'bg-purple-600 text-white'
-                                : 'bg-neutral-900 text-gray-400 border border-purple-500/30'
-                            }`}
-                          >
-                            Mismo LIO en AO
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setLioSeleccion((prev: any) => ({ ...prev, modalidad_bilateral: 'diferenciado' }))}
-                            className={`px-2 py-0.5 rounded font-bold transition ${
-                              lioSeleccion.modalidad_bilateral === 'diferenciado'
-                                ? 'bg-purple-600 text-white'
-                                : 'bg-neutral-900 text-gray-400 border border-purple-500/30'
-                            }`}
-                          >
-                            Monovisión / Blend
-                          </button>
+                  {/* Selector del Lente según Lateralidad */}
+                  {ojo === 'AO' ? (
+                    <div className="space-y-3 pt-1">
+                      {/* Modalidad Bilateral: Mismo Lente vs Diferenciado */}
+                      <div className="p-2.5 rounded-xl bg-neutral-900/90 border border-purple-500/30 space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-purple-300 flex items-center gap-1.5">
+                            <Sparkles size={13} className="text-purple-400" />
+                            Modalidad Bilateral de LIO (Ambos Ojos):
+                          </span>
+                          <div className="flex gap-1.5 text-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const baseNom = lioSeleccion.lente_od || lioSeleccion.lente_nombre || ''
+                                const lioEncontrado = catalogoLios.find((l) => l.nombre === baseNom)
+                                setLioSeleccion((prev: any) => ({
+                                  ...prev,
+                                  modalidad_bilateral: 'mismo_lente',
+                                  lente_nombre: baseNom,
+                                  lente_id: lioEncontrado?.id || prev.lente_id,
+                                  lente_codigo: lioEncontrado?.codigo || prev.lente_codigo,
+                                  precio: lioEncontrado?.precio ?? prev.precio,
+                                  moneda: lioEncontrado?.moneda ?? prev.moneda,
+                                  lente_od: baseNom,
+                                  lente_od_id: lioEncontrado?.id || prev.lente_od_id,
+                                  lente_od_codigo: lioEncontrado?.codigo || prev.lente_od_codigo,
+                                  lente_od_precio: lioEncontrado?.precio ?? prev.lente_od_precio,
+                                  lente_od_moneda: lioEncontrado?.moneda || prev.lente_od_moneda,
+                                  lente_oi: baseNom,
+                                  lente_oi_id: lioEncontrado?.id || prev.lente_oi_id,
+                                  lente_oi_codigo: lioEncontrado?.codigo || prev.lente_oi_codigo,
+                                  lente_oi_precio: lioEncontrado?.precio ?? prev.lente_oi_precio,
+                                  lente_oi_moneda: lioEncontrado?.moneda || prev.lente_oi_moneda
+                                }))
+                              }}
+                              className={`px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 ${
+                                lioSeleccion.modalidad_bilateral !== 'diferenciado'
+                                  ? 'bg-purple-600 text-white shadow-sm'
+                                  : 'bg-neutral-900 text-gray-400 border border-purple-500/30 hover:text-white'
+                              }`}
+                            >
+                              <span>🟣 Mismo Lente en Ambos Ojos</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLioSeleccion((prev: any) => ({
+                                ...prev,
+                                modalidad_bilateral: 'diferenciado',
+                                lente_od: prev.lente_od || prev.lente_nombre || '',
+                                lente_oi: prev.lente_oi || prev.lente_nombre || ''
+                              }))}
+                              className={`px-3 py-1 rounded-lg font-bold transition flex items-center gap-1.5 ${
+                                lioSeleccion.modalidad_bilateral === 'diferenciado'
+                                  ? 'bg-purple-600 text-white shadow-sm'
+                                  : 'bg-neutral-900 text-gray-400 border border-purple-500/30 hover:text-white'
+                              }`}
+                            >
+                              <span>✨ Lentes Diferenciados (OD / OI)</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
 
-                      {lioSeleccion.modalidad_bilateral === 'diferenciado' && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
-                          <div>
-                            <span className="text-[10px] text-blue-300 font-bold block mb-1">LIO Ojo Derecho (OD):</span>
-                            <input
-                              type="text"
-                              value={lioSeleccion.lente_od || ''}
-                              onChange={(e) => setLioSeleccion((prev: any) => ({ ...prev, lente_od: e.target.value }))}
-                              placeholder="ej: Monofocal Plus"
-                              className="w-full p-1.5 rounded-lg bg-neutral-900 border border-blue-500/40 text-xs text-white outline-none"
-                            />
+                        {lioSeleccion.modalidad_bilateral === 'diferenciado' ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                            {/* Ojo Derecho (OD) */}
+                            <div className="p-2.5 rounded-xl bg-blue-950/20 border border-blue-500/30 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-bold text-blue-300 uppercase tracking-wide flex items-center gap-1">
+                                  <span>👁️ Ojo Derecho (OD):</span>
+                                </label>
+                                {lioSeleccion.lente_od && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold">
+                                    Seleccionado
+                                  </span>
+                                )}
+                              </div>
+                              <select
+                                value={lioSeleccion.lente_od || ''}
+                                onChange={(e) => {
+                                  const lioNom = e.target.value
+                                  const lioEncontrado = catalogoLios.find((l) => l.nombre === lioNom)
+                                  setLioSeleccion((prev: any) => ({
+                                    ...prev,
+                                    lente_od: lioNom,
+                                    lente_od_id: lioEncontrado?.id || null,
+                                    lente_od_codigo: lioEncontrado?.codigo || null,
+                                    lente_od_precio: lioEncontrado?.precio ?? null,
+                                    lente_od_moneda: lioEncontrado?.moneda || null,
+                                    lente_nombre: lioNom && prev.lente_oi ? `OD: ${lioNom} | OI: ${prev.lente_oi}` : (lioNom || prev.lente_oi || '')
+                                  }))
+                                }}
+                                className="w-full p-2 rounded-xl bg-neutral-900 border border-blue-500/40 text-xs text-blue-200 font-bold outline-none focus:border-blue-400"
+                              >
+                                <option value="">-- Seleccionar Lente OD --</option>
+                                {catalogoLios
+                                  .filter((lio) => lio.habilitado_en_practica !== false || lio.nombre === lioSeleccion.lente_od)
+                                  .map((lio) => (
+                                    <option key={lio.id || lio.codigo} value={lio.nombre}>
+                                      {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
+                                    </option>
+                                  ))}
+                              </select>
+                              {lioSeleccion.lente_od && (
+                                <div className="text-[10px] text-gray-400 flex items-center justify-between px-1">
+                                  <span>{catalogoLios.find((l) => l.nombre === lioSeleccion.lente_od)?.tipo_vision || 'Tecnología intraocular'}</span>
+                                  {lioSeleccion.lente_od_precio !== undefined && lioSeleccion.lente_od_precio !== null && (
+                                    <span className="text-blue-300 font-bold">
+                                      {lioSeleccion.lente_od_moneda === 'USD' ? 'USD ' : '$'}{lioSeleccion.lente_od_precio?.toLocaleString('es-AR')}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Ojo Izquierdo (OI) */}
+                            <div className="p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-bold text-emerald-300 uppercase tracking-wide flex items-center gap-1">
+                                  <span>👁️ Ojo Izquierdo (OI):</span>
+                                </label>
+                                {lioSeleccion.lente_oi && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                                    Seleccionado
+                                  </span>
+                                )}
+                              </div>
+                              <select
+                                value={lioSeleccion.lente_oi || ''}
+                                onChange={(e) => {
+                                  const lioNom = e.target.value
+                                  const lioEncontrado = catalogoLios.find((l) => l.nombre === lioNom)
+                                  setLioSeleccion((prev: any) => ({
+                                    ...prev,
+                                    lente_oi: lioNom,
+                                    lente_oi_id: lioEncontrado?.id || null,
+                                    lente_oi_codigo: lioEncontrado?.codigo || null,
+                                    lente_oi_precio: lioEncontrado?.precio ?? null,
+                                    lente_oi_moneda: lioEncontrado?.moneda || null,
+                                    lente_nombre: prev.lente_od && lioNom ? `OD: ${prev.lente_od} | OI: ${lioNom}` : (lioNom || prev.lente_od || '')
+                                  }))
+                                }}
+                                className="w-full p-2 rounded-xl bg-neutral-900 border border-emerald-500/40 text-xs text-emerald-200 font-bold outline-none focus:border-emerald-400"
+                              >
+                                <option value="">-- Seleccionar Lente OI --</option>
+                                {catalogoLios
+                                  .filter((lio) => lio.habilitado_en_practica !== false || lio.nombre === lioSeleccion.lente_oi)
+                                  .map((lio) => (
+                                    <option key={lio.id || lio.codigo} value={lio.nombre}>
+                                      {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
+                                    </option>
+                                  ))}
+                              </select>
+                              {lioSeleccion.lente_oi && (
+                                <div className="text-[10px] text-gray-400 flex items-center justify-between px-1">
+                                  <span>{catalogoLios.find((l) => l.nombre === lioSeleccion.lente_oi)?.tipo_vision || 'Tecnología intraocular'}</span>
+                                  {lioSeleccion.lente_oi_precio !== undefined && lioSeleccion.lente_oi_precio !== null && (
+                                    <span className="text-emerald-300 font-bold">
+                                      {lioSeleccion.lente_oi_moneda === 'USD' ? 'USD ' : '$'}{lioSeleccion.lente_oi_precio?.toLocaleString('es-AR')}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            <span className="text-[10px] text-emerald-300 font-bold block mb-1">LIO Ojo Izquierdo (OI):</span>
-                            <input
-                              type="text"
-                              value={lioSeleccion.lente_oi || ''}
-                              onChange={(e) => setLioSeleccion((prev: any) => ({ ...prev, lente_oi: e.target.value }))}
-                              placeholder="ej: Monofocal Estándar"
-                              className="w-full p-1.5 rounded-lg bg-neutral-900 border border-emerald-500/40 text-xs text-white outline-none"
-                            />
+                        ) : (
+                          <div className="space-y-1.5 pt-1">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                              Lente Intraocular Acordado (Aplica a Ambos Ojos):
+                            </label>
+                            <select
+                              value={lioSeleccion.lente_nombre || ''}
+                              onChange={(e) => {
+                                const lioNom = e.target.value
+                                const lioEncontrado = catalogoLios.find((l) => l.nombre === lioNom)
+                                setLioSeleccion((prev: any) => ({
+                                  ...prev,
+                                  lente_nombre: lioNom,
+                                  lente_id: lioEncontrado?.id || prev.lente_id,
+                                  lente_codigo: lioEncontrado?.codigo || prev.lente_codigo,
+                                  precio: lioEncontrado?.precio ?? prev.precio,
+                                  moneda: lioEncontrado?.moneda ?? prev.moneda,
+                                  lente_od: lioNom,
+                                  lente_od_id: lioEncontrado?.id || prev.lente_id,
+                                  lente_od_codigo: lioEncontrado?.codigo || prev.lente_codigo,
+                                  lente_od_precio: lioEncontrado?.precio ?? prev.precio,
+                                  lente_od_moneda: lioEncontrado?.moneda ?? prev.moneda,
+                                  lente_oi: lioNom,
+                                  lente_oi_id: lioEncontrado?.id || prev.lente_id,
+                                  lente_oi_codigo: lioEncontrado?.codigo || prev.lente_codigo,
+                                  lente_oi_precio: lioEncontrado?.precio ?? prev.precio,
+                                  lente_oi_moneda: lioEncontrado?.moneda ?? prev.moneda
+                                }))
+                              }}
+                              className="w-full p-2.5 rounded-xl bg-neutral-900 border border-amber-500/30 text-xs text-amber-200 font-bold outline-none focus:border-amber-400"
+                            >
+                              <option value="">-- Seleccionar Lente Comercial --</option>
+                              {catalogoLios
+                                .filter((lio) => lio.habilitado_en_practica !== false || lio.nombre === lioSeleccion.lente_nombre)
+                                .map((lio) => (
+                                  <option key={lio.id || lio.codigo} value={lio.nombre}>
+                                    {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
+                                  </option>
+                                ))}
+                            </select>
+                            <p className="text-[10px] text-purple-300/80 px-1 pt-0.5">
+                              ℹ Se aplicará este mismo lente en ambos ojos (OD y OI). Si requiere modelos distintos (ej: Blend o Monovisión), elija la opción "Lentes Diferenciados".
+                            </p>
                           </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Cirugía Unilateral: OD o OI */
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">
+                        Lente Intraocular Acordado ({ojo === 'OD' ? 'Ojo Derecho - OD' : ojo === 'OI' ? 'Ojo Izquierdo - OI' : 'Ojo Único'}):
+                      </label>
+                      <select
+                        value={lioSeleccion.lente_nombre || ''}
+                        onChange={(e) => {
+                          const lioNom = e.target.value
+                          const lioEncontrado = catalogoLios.find((l) => l.nombre === lioNom)
+                          setLioSeleccion((prev: any) => ({
+                            ...prev,
+                            lente_nombre: lioNom,
+                            lente_id: lioEncontrado?.id || prev.lente_id,
+                            lente_codigo: lioEncontrado?.codigo || prev.lente_codigo,
+                            precio: lioEncontrado?.precio ?? prev.precio,
+                            moneda: lioEncontrado?.moneda ?? prev.moneda,
+                            modalidad_bilateral: 'mismo_lente',
+                            lente_od: ojo === 'OD' ? lioNom : (prev.lente_od || lioNom),
+                            lente_od_id: ojo === 'OD' ? (lioEncontrado?.id || null) : prev.lente_od_id,
+                            lente_od_codigo: ojo === 'OD' ? (lioEncontrado?.codigo || null) : prev.lente_od_codigo,
+                            lente_od_precio: ojo === 'OD' ? (lioEncontrado?.precio ?? null) : prev.lente_od_precio,
+                            lente_od_moneda: ojo === 'OD' ? (lioEncontrado?.moneda || null) : prev.lente_od_moneda,
+                            lente_oi: ojo === 'OI' ? lioNom : (prev.lente_oi || lioNom),
+                            lente_oi_id: ojo === 'OI' ? (lioEncontrado?.id || null) : prev.lente_oi_id,
+                            lente_oi_codigo: ojo === 'OI' ? (lioEncontrado?.codigo || null) : prev.lente_oi_codigo,
+                            lente_oi_precio: ojo === 'OI' ? (lioEncontrado?.precio ?? null) : prev.lente_oi_precio,
+                            lente_oi_moneda: ojo === 'OI' ? (lioEncontrado?.moneda || null) : prev.lente_oi_moneda
+                          }))
+                        }}
+                        className="w-full p-2.5 rounded-xl bg-neutral-900 border border-amber-500/30 text-xs text-amber-200 font-bold outline-none focus:border-amber-400"
+                      >
+                        <option value="">-- Seleccionar Lente Comercial --</option>
+                        {catalogoLios
+                          .filter((lio) => lio.habilitado_en_practica !== false || lio.nombre === lioSeleccion.lente_nombre)
+                          .map((lio) => (
+                            <option key={lio.id || lio.codigo} value={lio.nombre}>
+                              {lio.nombre} ({lio.moneda === 'USD' ? 'USD ' : '$'}{lio.precio?.toLocaleString('es-AR')}) - {lio.tipo_vision}
+                            </option>
+                          ))}
+                      </select>
+                      {lioSeleccion.lente_nombre && (
+                        <div className="text-[10px] text-gray-400 flex items-center justify-between px-1">
+                          <span>{catalogoLios.find((l) => l.nombre === lioSeleccion.lente_nombre)?.tipo_vision || 'Tecnología intraocular'}</span>
+                          {lioSeleccion.precio !== undefined && lioSeleccion.precio !== null && (
+                            <span className="text-amber-300 font-bold">
+                              {lioSeleccion.moneda === 'USD' ? 'USD ' : '$'}{lioSeleccion.precio?.toLocaleString('es-AR')}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>

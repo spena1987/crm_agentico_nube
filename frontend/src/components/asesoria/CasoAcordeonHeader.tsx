@@ -171,7 +171,10 @@ export default function CasoAcordeonHeader({
             {/* Badge de LIO Seleccionado / Propuesto */}
             {(() => {
               const lioSel = (caso.checklist_prequirurgico as any)?._lio_seleccion
-              const lioNombre = lioSel?.lente_nombre || (caso as any).lente_tipo || (caso.checklist_prequirurgico as any)?.lente_tipo
+              const esDiferenciado = lioSel?.modalidad_bilateral === 'diferenciado' && (lioSel?.lente_od || lioSel?.lente_oi)
+              const lioNombre = esDiferenciado
+                ? `OD: ${lioSel?.lente_od || '—'} • OI: ${lioSel?.lente_oi || '—'}`
+                : (lioSel?.lente_nombre || (caso as any).lente_tipo || (caso.checklist_prequirurgico as any)?.lente_tipo)
               if (!lioNombre) return null
 
               const esConfirmado = lioSel?.estado === 'confirmado'
@@ -186,7 +189,7 @@ export default function CasoAcordeonHeader({
                   title={esConfirmado ? `LIO Confirmado por el paciente: ${lioNombre}` : `LIO Tentativo en evaluación: ${lioNombre}`}
                 >
                   <span>{esConfirmado ? '💎 LIO:' : '⏳ LIO:'}</span>
-                  <span className="truncate max-w-[150px]">{lioNombre}</span>
+                  <span className="truncate max-w-[280px]">{lioNombre}</span>
                   <span className="text-[9px] opacity-75">({esConfirmado ? 'Confirmado' : 'Tentativo'})</span>
                 </span>
               )
