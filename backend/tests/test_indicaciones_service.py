@@ -88,3 +88,66 @@ def test_resolver_sugerencia_sin_fallback_arbitrario(monkeypatch):
     assert res["success"] is True
     assert res["sugerencia"] is None
     assert res["requiere_seleccion_manual"] is True
+
+
+def test_emitir_indicacion_con_texto_override_sin_error_sug_data(monkeypatch):
+    """
+    Verifica que al emitir una indicación con texto personalizado (texto_override)
+    NO ocurra UnboundLocalError por 'sug_data'.
+    """
+    from unittest.mock import MagicMock
+    from app.services.indicaciones_service import emitir_indicaciones_expediente
+    import uuid
+
+    fake_id = str(uuid.uuid4())
+    mock_sb = MagicMock()
+    mock_table = MagicMock()
+    mock_select = MagicMock()
+    mock_eq = MagicMock()
+    mock_limit = MagicMock()
+
+    mock_asesoria = {
+        "id": fake_id,
+        "paciente_id": "pac-123",
+        "practica_nombre": "REFRACTIVA LASER BILATERAL",
+        "practica_codigo": "34031",
+        "medico_cirujano_id": 10,
+        "medico_cirujano_nombre": "BONANNO, PABLO ANTONIO",
+        "medico_cirujano_matricula": "12345",
+        "pacientes": {
+            "id": "pac-123",
+            "nombre": "ARRIETA DAVILA, KAREN YEMINA",
+            "dni": "35123456",
+            "telefono": "",
+            "geclisa_ficha_id": 9999
+        }
+    }
+
+    mock_limit.execute.return_value = MagicMock(data=[mock_asesoria])
+    mock_eq.limit.return_value = mock_limit
+    mock_select.eq.return_value = mock_eq
+    mock_table.select.return_value = mock_select
+    mock_table.insert.return_value.execute.return_value = MagicMock(data=[{"id": "emi-1"}])
+    mock_table.update.return_value.eq.return_value.execute.return_value = MagicMock(data=[{"id": fake_id}])
+    mock_sb.table.return_value = mock_table
+
+    monkeypatch.setattr("app.services.indicaciones_service.supabase", mock_sb)
+    monkeypatch.setattr(
+        "app.services.indicaciones_service.generar_pdf_indicacion_medica",
+        lambda *args, **kwargs: {"url": "/api/pdf/1", "file_path": "/tmp/1.pdf", "emision_id": "emi-1"}
+    )
+    monkeypatch.setattr(
+        "app.services.indicaciones_service.geclisa_client.emitir_indicacion_medica_geclisa",
+        lambda *args, **kwargs: {"success": True, "im_id": 777}
+    )
+
+    resultado = emitir_indicaciones_expediente(
+        asesoria_id=fake_id,
+        enviar_whatsapp=False,
+        texto_override="Orden médica para refractiva láser bilateral.",
+        tipo_documento="orden_medica"
+    )
+
+    assert resultado["success"] is True
+    assert resultado["emision_id"] == "emi-1"
+    assert resultado["geclisa_im_id"] == 777

@@ -176,9 +176,13 @@ export default function CasoFormularioActivo({
   const [buscandoCirujano, setBuscandoCirujano] = useState(false)
   const [mostrarDropdownCirujano, setMostrarDropdownCirujano] = useState(false)
 
-  // Práctica / Nomenclador (Con refs y estado reactivo de obligatoriedad)
+  // Práctica / Nomenclador y Médicos (Con refs y estado reactivo de obligatoriedad)
   const practicaInputRef = useRef<HTMLInputElement>(null)
   const practicaCardRef = useRef<HTMLDivElement>(null)
+  const derivadorInputRef = useRef<HTMLInputElement>(null)
+  const derivadorCardRef = useRef<HTMLDivElement>(null)
+  const cirujanoInputRef = useRef<HTMLInputElement>(null)
+  const cirujanoCardRef = useRef<HTMLDivElement>(null)
 
   const esPlaceholderInicial = !caso.practica_nombre || caso.practica_nombre === 'Nueva Cirugía / Procedimiento' || caso.practica_nombre === 'Práctica Quirúrgica a Determinar' || caso.practica_nombre === 'Cirugía / Procedimiento sin determinar'
   const [practicaCodigo, setPracticaCodigo] = useState(caso.practica_codigo || '')
@@ -193,6 +197,16 @@ export default function CasoFormularioActivo({
     const effNom = nom || (busq.replace(/^\[.*?\]\s*/, '').trim())
     return !effNom || effNom === 'Nueva Cirugía / Procedimiento' || effNom === 'Práctica Quirúrgica a Determinar' || effNom === 'Cirugía / Procedimiento sin determinar'
   }, [practicaNombre, busquedaPractica])
+
+  const esDerivadorInvalido = useMemo(() => {
+    const nom = (medicoDerivador.nombre || busquedaDerivador || '').trim().toLowerCase()
+    return !nom || nom === 'sin asignar' || nom === 'a designar' || nom === 'derivador sin asignar'
+  }, [medicoDerivador.nombre, busquedaDerivador])
+
+  const esCirujanoInvalido = useMemo(() => {
+    const nom = (medicoCirujano.nombre || busquedaCirujano || '').trim().toLowerCase()
+    return !nom || nom === 'sin asignar' || nom === 'cirujano sin asignar' || nom === 'a designar'
+  }, [medicoCirujano.nombre, busquedaCirujano])
 
   // Auto-enfoque y apertura del Nomenclador al crear o ingresar a una cirugía sin práctica
   useEffect(() => {
@@ -1186,13 +1200,29 @@ export default function CasoFormularioActivo({
     if (!cleanPracticaNombre && busquedaPractica) {
       cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
     }
-    if (!cleanPracticaNombre || cleanPracticaNombre === 'Nueva Cirugía / Procedimiento' || cleanPracticaNombre === 'Práctica Quirúrgica a Determinar' || cleanPracticaNombre === 'Cirugía / Procedimiento sin determinar') {
-      setAvisoValidacion('⛔ Campo Obligatorio: Debe seleccionar una Práctica Quirúrgica del Nomenclador antes de emitir presupuesto.')
+
+    const faltantes: string[] = []
+    if (esPracticaInvalida) faltantes.push('Práctica Quirúrgica (Nomenclador)')
+    if (esDerivadorInvalido) faltantes.push('Médico Derivador')
+    if (esCirujanoInvalido) faltantes.push('Médico Cirujano (Qx)')
+
+    if (faltantes.length > 0) {
+      setAvisoValidacion(`⛔ Campos Obligatorios Pendientes: Debe registrar ${faltantes.join(', ')} antes de emitir presupuesto.`)
       setTimeout(() => setAvisoValidacion(null), 6000)
-      practicaCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      practicaInputRef.current?.focus()
-      setMostrarDropdownPractica(true)
-      buscarPracticasNomenclador(busquedaPractica)
+      if (esPracticaInvalida) {
+        practicaCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        practicaInputRef.current?.focus()
+        setMostrarDropdownPractica(true)
+        buscarPracticasNomenclador(busquedaPractica)
+      } else if (esDerivadorInvalido) {
+        derivadorCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        derivadorInputRef.current?.focus()
+        setMostrarDropdownDerivador(true)
+      } else if (esCirujanoInvalido) {
+        cirujanoCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        cirujanoInputRef.current?.focus()
+        setMostrarDropdownCirujano(true)
+      }
       return
     }
 
@@ -1268,13 +1298,29 @@ export default function CasoFormularioActivo({
     if (!cleanPracticaNombre && busquedaPractica) {
       cleanPracticaNombre = busquedaPractica.replace(/^\[.*?\]\s*/, '').trim()
     }
-    if (!cleanPracticaNombre || cleanPracticaNombre === 'Nueva Cirugía / Procedimiento' || cleanPracticaNombre === 'Práctica Quirúrgica a Determinar' || cleanPracticaNombre === 'Cirugía / Procedimiento sin determinar') {
-      setAvisoValidacion('⛔ Campo Obligatorio: Debe seleccionar una Práctica Quirúrgica del Nomenclador antes de guardar el expediente.')
+
+    const faltantes: string[] = []
+    if (esPracticaInvalida) faltantes.push('Práctica Quirúrgica (Nomenclador)')
+    if (esDerivadorInvalido) faltantes.push('Médico Derivador')
+    if (esCirujanoInvalido) faltantes.push('Médico Cirujano (Qx)')
+
+    if (faltantes.length > 0) {
+      setAvisoValidacion(`⛔ Campos Obligatorios Pendientes: Debe registrar ${faltantes.join(', ')} antes de guardar el expediente.`)
       setTimeout(() => setAvisoValidacion(null), 6000)
-      practicaCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      practicaInputRef.current?.focus()
-      setMostrarDropdownPractica(true)
-      buscarPracticasNomenclador(busquedaPractica)
+      if (esPracticaInvalida) {
+        practicaCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        practicaInputRef.current?.focus()
+        setMostrarDropdownPractica(true)
+        buscarPracticasNomenclador(busquedaPractica)
+      } else if (esDerivadorInvalido) {
+        derivadorCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        derivadorInputRef.current?.focus()
+        setMostrarDropdownDerivador(true)
+      } else if (esCirujanoInvalido) {
+        cirujanoCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        cirujanoInputRef.current?.focus()
+        setMostrarDropdownCirujano(true)
+      }
       return
     }
 
@@ -1660,10 +1706,225 @@ export default function CasoFormularioActivo({
                 <strong className="text-gray-300 font-semibold">Presupuestos Oficiales del Caso</strong>.
               </span>
             </div>
-            {/* ========================================================================================= */}
-            {/* 1. MÓDULO UNIFICADO: LATERALIDAD & PROGRAMACIÓN QUIRÚRGICA                                 */}
-            {/*    La lateralidad define la estructura médica y la programación de fechas y quirófanos.   */}
-            {/* ========================================================================================= */}
+          </div>
+
+          {/* Card: Equipo Médico (Derivador & Cirujano) - Ambos Obligatorios con Alerta Reactiva Ámbar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Médico Derivador */}
+            <div
+              ref={derivadorCardRef}
+              className={`p-3.5 rounded-xl transition-all relative space-y-2 ${
+                esDerivadorInvalido
+                  ? 'border-2 border-amber-500/80 bg-gradient-to-br from-amber-950/30 via-neutral-900 to-neutral-900 shadow-lg shadow-amber-500/10 ring-2 ring-amber-500/20'
+                  : 'border border-blue-500/30 bg-neutral-900/60 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                  <UserCheck size={14} className={esDerivadorInvalido ? "text-amber-400 animate-pulse" : "text-blue-400"} />
+                  <span>Médico Derivador</span>
+                  {esDerivadorInvalido && (
+                    <span className="text-[11px] text-amber-400 font-extrabold">*</span>
+                  )}
+                </label>
+                {esDerivadorInvalido ? (
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/50 flex items-center gap-1 animate-pulse">
+                    <AlertTriangle size={11} className="text-amber-400" />
+                    <span>Obligatorio</span>
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 border border-blue-500/30 flex items-center gap-1">
+                      <CheckCircle2 size={11} className="text-blue-400" />
+                      <span>Asignado</span>
+                    </span>
+                    {medicoDerivador.matricula && (
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                        Mat: {medicoDerivador.matricula}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <input
+                  ref={derivadorInputRef}
+                  type="text"
+                  disabled={guardando}
+                  placeholder={esDerivadorInvalido ? "⚠️ Buscar Médico Derivador en Geclisa..." : "Buscar en Geclisa..."}
+                  value={busquedaDerivador}
+                  onChange={(e) => {
+                    setBusquedaDerivador(e.target.value)
+                    setMedicoDerivador({ nombre: e.target.value })
+                    buscarPrestador('derivador', e.target.value)
+                    setMostrarDropdownDerivador(true)
+                  }}
+                  onFocus={() => {
+                    buscarPrestador('derivador', busquedaDerivador)
+                    setMostrarDropdownDerivador(true)
+                  }}
+                  className={`w-full px-3 py-2 text-xs rounded-xl font-medium focus:outline-none transition-all ${
+                    esDerivadorInvalido
+                      ? 'bg-neutral-950 border-2 border-amber-400/90 text-amber-100 placeholder-amber-400/70 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 shadow-inner'
+                      : 'bg-neutral-900 border border-[var(--border)] focus:border-blue-500 text-white placeholder-gray-500'
+                  }`}
+                />
+                {buscandoDerivador && (
+                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
+                )}
+
+                {mostrarDropdownDerivador && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                    {derivadoresFiltrados.length > 0 ? (
+                      derivadoresFiltrados.map((p) => (
+                        <button
+                          key={p.pre_id}
+                          type="button"
+                          onClick={() => {
+                            setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                            setBusquedaDerivador(p.nombre)
+                            setMostrarDropdownDerivador(false)
+                          }}
+                          className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-bold text-white group-hover:text-blue-300">{p.nombre}</span>
+                            {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
+                          </div>
+                          <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
+                        <p className="text-[11px]">No se encontró &quot;{busquedaDerivador}&quot; en Geclisa.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMedicoDerivador({ nombre: busquedaDerivador })
+                            setMostrarDropdownDerivador(false)
+                          }}
+                          className="px-2.5 py-1 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-lg text-[10px] font-bold"
+                        >
+                          Usar médico externo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Médico Cirujano (Qx) */}
+            <div
+              ref={cirujanoCardRef}
+              className={`p-3.5 rounded-xl transition-all relative space-y-2 ${
+                esCirujanoInvalido
+                  ? 'border-2 border-amber-500/80 bg-gradient-to-br from-amber-950/30 via-neutral-900 to-neutral-900 shadow-lg shadow-amber-500/10 ring-2 ring-amber-500/20'
+                  : 'border border-emerald-500/30 bg-neutral-900/60 shadow-sm'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+                  <Stethoscope size={14} className={esCirujanoInvalido ? "text-amber-400 animate-pulse" : "text-emerald-400"} />
+                  <span>Médico Cirujano (Qx)</span>
+                  {esCirujanoInvalido && (
+                    <span className="text-[11px] text-amber-400 font-extrabold">*</span>
+                  )}
+                </label>
+                {esCirujanoInvalido ? (
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/50 flex items-center gap-1 animate-pulse">
+                    <AlertTriangle size={11} className="text-amber-400" />
+                    <span>Obligatorio</span>
+                  </span>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                      <CheckCircle2 size={11} className="text-emerald-400" />
+                      <span>Cirujano Asignado</span>
+                    </span>
+                    {medicoCirujano.matricula && (
+                      <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Mat: {medicoCirujano.matricula}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="relative">
+                <input
+                  ref={cirujanoInputRef}
+                  type="text"
+                  disabled={guardando}
+                  placeholder={esCirujanoInvalido ? "⚠️ Buscar Médico Cirujano en Geclisa..." : "Buscar en Geclisa..."}
+                  value={busquedaCirujano}
+                  onChange={(e) => {
+                    setBusquedaCirujano(e.target.value)
+                    setMedicoCirujano({ nombre: e.target.value })
+                    buscarPrestador('cirujano', e.target.value)
+                    setMostrarDropdownCirujano(true)
+                  }}
+                  onFocus={() => {
+                    buscarPrestador('cirujano', busquedaCirujano)
+                    setMostrarDropdownCirujano(true)
+                  }}
+                  className={`w-full px-3 py-2 text-xs rounded-xl font-medium focus:outline-none transition-all ${
+                    esCirujanoInvalido
+                      ? 'bg-neutral-950 border-2 border-amber-400/90 text-amber-100 placeholder-amber-400/70 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30 shadow-inner'
+                      : 'bg-neutral-900 border border-[var(--border)] focus:border-emerald-500 text-white placeholder-gray-500'
+                  }`}
+                />
+                {buscandoCirujano && (
+                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
+                )}
+
+                {mostrarDropdownCirujano && (
+                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
+                    {cirujanosFiltrados.length > 0 ? (
+                      cirujanosFiltrados.map((p) => (
+                        <button
+                          key={p.pre_id}
+                          type="button"
+                          onClick={() => {
+                            setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
+                            setBusquedaCirujano(p.nombre)
+                            setMostrarDropdownCirujano(false)
+                          }}
+                          className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
+                        >
+                          <div className="flex flex-col">
+                            <span className="font-bold text-white group-hover:text-emerald-300">{p.nombre}</span>
+                            {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
+                          </div>
+                          <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
+                        <p className="text-[11px]">No se encontró &quot;{busquedaCirujano}&quot; en Geclisa.</p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMedicoCirujano({ nombre: busquedaCirujano })
+                            setMostrarDropdownCirujano(false)
+                          }}
+                          className="px-2.5 py-1 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold"
+                        >
+                          Usar cirujano externo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ========================================================================================= */}
+          {/* 1. MÓDULO UNIFICADO: LATERALIDAD & PROGRAMACIÓN QUIRÚRGICA                                 */}
+          {/*    La lateralidad define la estructura médica y la programación de fechas y quirófanos.   */}
+          {/* ========================================================================================= */}
             <div className="p-3 bg-neutral-950/70 border border-indigo-500/30 rounded-xl space-y-3 shadow-sm">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
@@ -2521,247 +2782,78 @@ export default function CasoFormularioActivo({
               )}
             </div>
 
-            {/* 3. Tarjeta de Cálculo Biométrico de LIO & Acceso Directo */}
-            <div className={`p-3 rounded-xl border space-y-2 transition-all ${
-              tieneLioCalculado
-                ? 'bg-emerald-950/40 border-emerald-500/40'
-                : 'bg-neutral-950/60 border-[var(--border)]'
-            }`}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold">
-                  <Sparkles size={14} className={tieneLioCalculado ? 'text-emerald-400' : 'text-blue-400'} />
-                  <span className={tieneLioCalculado ? 'text-emerald-300' : 'text-gray-300'}>
-                    {tieneLioCalculado ? 'Cálculo Biométrico de LIO Sellado' : 'Mesa Biométrica & Cálculo de LIO'}
-                  </span>
-                </div>
-                <a
-                  href="/calculo-lio"
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shadow-sm ${
-                    tieneLioCalculado
-                      ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
-                      : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40'
-                  }`}
-                >
-                  <span>{tieneLioCalculado ? 'Ver Mesa Biométrica' : 'Abrir Cálculo LIO ➔'}</span>
-                  <ExternalLink size={11} />
-                </a>
+          {/* 3. Tarjeta de Cálculo Biométrico de LIO & Acceso Directo (Módulo Técnico Desacoplado) */}
+          <div className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+            tieneLioCalculado
+              ? 'bg-emerald-950/40 border-emerald-500/40 shadow-sm'
+              : 'bg-neutral-950/60 border-[var(--border)] shadow-sm'
+          }`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <Sparkles size={14} className={tieneLioCalculado ? 'text-emerald-400' : 'text-blue-400'} />
+                <span className={tieneLioCalculado ? 'text-emerald-300' : 'text-gray-300'}>
+                  {tieneLioCalculado ? 'Cálculo Biométrico de LIO Sellado' : 'Mesa Biométrica & Cálculo de LIO'}
+                </span>
               </div>
-
-              {tieneLioCalculado ? (
-                <div className="space-y-1 text-xs text-gray-300 font-mono">
-                  {lioOD && (
-                    <div className="flex items-center gap-2">
-                      <span className="px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold">OD</span>
-                      <span className="text-white font-bold">{lioOD.opciones?.[0]?.modelo || 'Lente OD'}</span>
-                      <span className="text-cyan-400 font-extrabold">+{lioOD.opciones?.[0]?.dioptria || '20.00'} D</span>
-                      {lioOD.opciones?.[0]?.es_torico && (
-                        <span className="text-[10px] text-purple-300">T{lioOD.opciones?.[0]?.torico_valor} @ {lioOD.opciones?.[0]?.torico_eje}°</span>
-                      )}
-                    </div>
-                  )}
-                  {lioOI && (
-                    <div className="flex items-center gap-2">
-                      <span className="px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 text-[10px] font-bold">OI</span>
-                      <span className="text-white font-bold">{lioOI.opciones?.[0]?.modelo || 'Lente OI'}</span>
-                      <span className="text-cyan-400 font-extrabold">+{lioOI.opciones?.[0]?.dioptria || '20.00'} D</span>
-                      {lioOI.opciones?.[0]?.es_torico && (
-                        <span className="text-[10px] text-purple-300">T{lioOI.opciones?.[0]?.torico_valor} @ {lioOI.opciones?.[0]?.torico_eje}°</span>
-                      )}
-                    </div>
-                  )}
-                  {(!lioOD && !lioOI && caso.lente_tipo) && (
-                    <div className="text-white font-bold">
-                      {caso.lente_tipo} (+{caso.lente_dioptria || '21.50'} D)
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-[11px] text-gray-400">
-                  Define la biometría y selección de lente intraocular para esta práctica en la mesa de cálculo.
-                </p>
-              )}
+              <a
+                href="/calculo-lio"
+                target="_blank"
+                rel="noreferrer"
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition shadow-sm ${
+                  tieneLioCalculado
+                    ? 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40'
+                }`}
+              >
+                <span>{tieneLioCalculado ? 'Ver Mesa Biométrica' : 'Abrir Cálculo LIO ➔'}</span>
+                <ExternalLink size={11} />
+              </a>
             </div>
 
-            {/* 4. Cobertura */}
-            <div className="flex items-center gap-2 pt-1">
-              <span className="text-[11px] text-gray-400">Cobertura:</span>
-              <input
-                type="text"
-                value={cobertura}
-                placeholder="Particular / Obra Social"
-                onChange={(e) => setCobertura(e.target.value)}
-                className="flex-1 px-2 py-1 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-gray-300 focus:outline-none focus:border-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Card: Equipo Médico (Derivador & Cirujano) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Médico Derivador */}
-            <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <UserCheck size={14} className="text-blue-400" />
-                Médico Derivador
-              </label>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={guardando}
-                  placeholder="Buscar en Geclisa..."
-                  value={busquedaDerivador}
-                  onChange={(e) => {
-                    setBusquedaDerivador(e.target.value)
-                    setMedicoDerivador({ nombre: e.target.value })
-                    buscarPrestador('derivador', e.target.value)
-                    setMostrarDropdownDerivador(true)
-                  }}
-                  onFocus={() => {
-                    buscarPrestador('derivador', busquedaDerivador)
-                    setMostrarDropdownDerivador(true)
-                  }}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-blue-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
-                />
-                {buscandoDerivador && (
-                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-blue-400" />
-                )}
-
-                {mostrarDropdownDerivador && (
-                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-blue-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                    {derivadoresFiltrados.length > 0 ? (
-                      derivadoresFiltrados.map((p) => (
-                        <button
-                          key={p.pre_id}
-                          type="button"
-                          onClick={() => {
-                            setMedicoDerivador({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                            setBusquedaDerivador(p.nombre)
-                            setMostrarDropdownDerivador(false)
-                          }}
-                          className="w-full text-left p-2.5 hover:bg-blue-600/15 text-xs transition-colors group flex items-center justify-between"
-                        >
-                          <div className="flex flex-col">
-                            <span className="font-bold text-white group-hover:text-blue-300">{p.nombre}</span>
-                            {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
-                          </div>
-                          <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
-                        <p className="text-[11px]">No se encontró &quot;{busquedaDerivador}&quot; en Geclisa.</p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMedicoDerivador({ nombre: busquedaDerivador })
-                            setMostrarDropdownDerivador(false)
-                          }}
-                          className="px-2.5 py-1 bg-blue-600/20 text-blue-300 border border-blue-500/30 rounded-lg text-[10px] font-bold"
-                        >
-                          Usar médico externo
-                        </button>
-                      </div>
+            {tieneLioCalculado ? (
+              <div className="space-y-1 text-xs text-gray-300 font-mono">
+                {lioOD && (
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold">OD</span>
+                    <span className="text-white font-bold">{lioOD.opciones?.[0]?.modelo || 'Lente OD'}</span>
+                    <span className="text-cyan-400 font-extrabold">+{lioOD.opciones?.[0]?.dioptria || '20.00'} D</span>
+                    {lioOD.opciones?.[0]?.es_torico && (
+                      <span className="text-[10px] text-purple-300">T{lioOD.opciones?.[0]?.torico_valor} @ {lioOD.opciones?.[0]?.torico_eje}°</span>
                     )}
                   </div>
                 )}
-              </div>
-            </div>
-
-            {/* Médico Cirujano */}
-            <div className="p-3.5 rounded-xl bg-neutral-900/60 border border-[var(--border)] space-y-2 relative">
-              <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
-                <Stethoscope size={14} className="text-emerald-400" />
-                Médico Cirujano (Qx)
-              </label>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  disabled={guardando}
-                  placeholder="Buscar en Geclisa..."
-                  value={busquedaCirujano}
-                  onChange={(e) => {
-                    setBusquedaCirujano(e.target.value)
-                    setMedicoCirujano({ nombre: e.target.value })
-                    buscarPrestador('cirujano', e.target.value)
-                    setMostrarDropdownCirujano(true)
-                  }}
-                  onFocus={() => {
-                    buscarPrestador('cirujano', busquedaCirujano)
-                    setMostrarDropdownCirujano(true)
-                  }}
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] focus:border-emerald-500 rounded-xl text-white placeholder-gray-500 focus:outline-none"
-                />
-                {buscandoCirujano && (
-                  <Loader2 size={14} className="animate-spin absolute right-3 top-1/2 -translate-y-1/2 text-emerald-400" />
-                )}
-
-                {mostrarDropdownCirujano && (
-                  <div className="absolute top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto bg-neutral-900 border border-emerald-500/30 rounded-xl shadow-2xl z-30 divide-y divide-[var(--border)]">
-                    {cirujanosFiltrados.length > 0 ? (
-                      cirujanosFiltrados.map((p) => (
-                        <button
-                          key={p.pre_id}
-                          type="button"
-                          onClick={() => {
-                            setMedicoCirujano({ id: p.pre_id, nombre: p.nombre, matricula: p.matricula })
-                            setBusquedaCirujano(p.nombre)
-                            setMostrarDropdownCirujano(false)
-                          }}
-                          className="w-full text-left p-2.5 hover:bg-emerald-600/15 text-xs transition-colors group flex items-center justify-between"
-                        >
-                          <div className="flex flex-col">
-                            <span className="font-bold text-white group-hover:text-emerald-300">{p.nombre}</span>
-                            {p.especialidad && <span className="text-[10px] text-gray-500">{p.especialidad}</span>}
-                          </div>
-                          <span className="text-[10px] text-gray-400 font-mono shrink-0">Mat: {p.matricula || 'S/M'}</span>
-                        </button>
-                      ))
-                    ) : (
-                      <div className="p-3 text-center text-xs text-gray-400 space-y-1.5">
-                        <p className="text-[11px]">No se encontró &quot;{busquedaCirujano}&quot; en Geclisa.</p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMedicoCirujano({ nombre: busquedaCirujano })
-                            setMostrarDropdownCirujano(false)
-                          }}
-                          className="px-2.5 py-1 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[10px] font-bold"
-                        >
-                          Usar cirujano externo
-                        </button>
-                      </div>
+                {lioOI && (
+                  <div className="flex items-center gap-2">
+                    <span className="px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-300 text-[10px] font-bold">OI</span>
+                    <span className="text-white font-bold">{lioOI.opciones?.[0]?.modelo || 'Lente OI'}</span>
+                    <span className="text-cyan-400 font-extrabold">+{lioOI.opciones?.[0]?.dioptria || '20.00'} D</span>
+                    {lioOI.opciones?.[0]?.es_torico && (
+                      <span className="text-[10px] text-purple-300">T{lioOI.opciones?.[0]?.torico_valor} @ {lioOI.opciones?.[0]?.torico_eje}°</span>
                     )}
                   </div>
                 )}
+                {(!lioOD && !lioOI && caso.lente_tipo) && (
+                  <div className="text-white font-bold">
+                    {caso.lente_tipo} (+{caso.lente_dioptria || '21.50'} D)
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <p className="text-[11px] text-gray-400">
+                Define la biometría y selección de lente intraocular para esta práctica en la mesa de cálculo.
+              </p>
+            )}
           </div>
 
-          {/* SECCIÓN OFICIAL: INDICACIONES MÉDICAS QUIRÚRGICAS (GECLISA + WHATSAPP) */}
-          <div className="pt-2">
-            <SeccionIndicacionesExpediente
-              asesoriaId={caso.id}
-              practicaId={(caso as any).practica_id}
-              practicaNombre={practicaNombre || caso.practica_nombre}
-              practicaCodigo={practicaCodigo || caso.practica_codigo}
-              medicoNombre={medicoCirujano.nombre || caso.medico_cirujano_nombre}
-              medicoId={medicoCirujano.id || caso.medico_cirujano_id}
-              pacienteNombre={pacienteNombre}
-              pacienteTelefono={pacienteTelefono}
-              pacienteDni={pacienteDni || (caso.pacientes as any)?.dni}
-              pacienteObraSocial={caso.cobertura_obra_social || (caso.pacientes as any)?.obra_social}
-              pacienteAfiliado={(caso.pacientes as any)?.nro_afiliado || (caso.pacientes as any)?.numero_afiliado}
-              pacienteDomicilio={(caso.pacientes as any)?.direccion || (caso.pacientes as any)?.domicilio}
-              indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
-              indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
-              indicacionesPdfUrl={caso.indicaciones_pdf_url}
-              fechaCirugia={fechaDefinitiva || fechaProbable || caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || (caso as any)?.turnos_quirofano?.fecha_cirugia || null}
-              onIndicacionEmitida={() => {
-                onGuardar({})
-              }}
+          {/* 4. Cobertura Médica */}
+          <div className="p-3 rounded-xl bg-neutral-900/60 border border-[var(--border)] flex items-center gap-2 shadow-sm">
+            <span className="text-xs font-semibold text-gray-300 shrink-0">Cobertura:</span>
+            <input
+              type="text"
+              value={cobertura}
+              placeholder="Particular / Obra Social"
+              onChange={(e) => setCobertura(e.target.value)}
+              className="flex-1 px-2.5 py-1.5 text-xs bg-neutral-950 border border-[var(--border)] rounded-lg text-white focus:outline-none focus:border-indigo-500"
             />
           </div>
 
@@ -3083,6 +3175,32 @@ export default function CasoFormularioActivo({
                 setMontoSena(data.montoSenaTotal)
                 setEstadoPago(data.estadoPago)
                 setMedioPago(data.medioPago || null)
+              }}
+            />
+          </div>
+
+          {/* SECCIÓN OFICIAL: INDICACIONES MÉDICAS QUIRÚRGICAS (GECLISA + WHATSAPP) - CONTRAÍDO POR DEFECTO */}
+          <div className="pt-1">
+            <SeccionIndicacionesExpediente
+              asesoriaId={caso.id}
+              practicaId={(caso as any).practica_id}
+              practicaNombre={practicaNombre || caso.practica_nombre}
+              practicaCodigo={practicaCodigo || caso.practica_codigo}
+              medicoNombre={medicoCirujano.nombre || caso.medico_cirujano_nombre}
+              medicoId={medicoCirujano.id || caso.medico_cirujano_id}
+              pacienteNombre={pacienteNombre}
+              pacienteTelefono={pacienteTelefono}
+              pacienteDni={pacienteDni || (caso.pacientes as any)?.dni}
+              pacienteObraSocial={caso.cobertura_obra_social || (caso.pacientes as any)?.obra_social}
+              pacienteAfiliado={(caso.pacientes as any)?.nro_afiliado || (caso.pacientes as any)?.numero_afiliado}
+              pacienteDomicilio={(caso.pacientes as any)?.direccion || (caso.pacientes as any)?.domicilio}
+              indicacionGeclisaImId={caso.indicacion_geclisa_im_id}
+              indicacionesEmitidasAt={caso.indicaciones_emitidas_at}
+              indicacionesPdfUrl={caso.indicaciones_pdf_url}
+              fechaCirugia={fechaDefinitiva || fechaProbable || caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || (caso as any)?.turnos_quirofano?.fecha_cirugia || null}
+              desplegadoInicial={false}
+              onIndicacionEmitida={() => {
+                onGuardar({})
               }}
             />
           </div>

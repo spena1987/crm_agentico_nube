@@ -49,6 +49,7 @@ interface SeccionIndicacionesExpedienteProps {
   indicacionesEmitidasAt?: string | null
   indicacionesPdfUrl?: string | null
   fechaCirugia?: string | null
+  desplegadoInicial?: boolean
   onIndicacionEmitida?: (resultado: any) => void
 }
 
@@ -69,9 +70,10 @@ export default function SeccionIndicacionesExpediente({
   indicacionesEmitidasAt,
   indicacionesPdfUrl,
   fechaCirugia,
+  desplegadoInicial = false,
   onIndicacionEmitida
 }: SeccionIndicacionesExpedienteProps) {
-  const [desplegado, setDesplegado] = useState<boolean>(true)
+  const [desplegado, setDesplegado] = useState<boolean>(desplegadoInicial)
   const [resolviendo, setResolviendo] = useState<boolean>(false)
   const [emitiendo, setEmitiendo] = useState<boolean>(false)
   

@@ -107,6 +107,19 @@ def test_actualizar_asesoria_rechaza_practica_vacia_o_placeholder():
     Verifica que no se permita persistir casos quirúrgicos sin práctica válida o con placeholders temporales.
     """
     with patch("app.db.supabase"):
-        for placeholder in ["", "   ", "Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar"]:
+        for placeholder in ["", "   ", "Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar", "Cirugía / Procedimiento sin determinar"]:
             with pytest.raises(ValueError, match="La práctica quirúrgica es obligatoria"):
                 actualizar_asesoria_quirurgica("qx-test", {"practica_nombre": placeholder})
+
+def test_actualizar_asesoria_rechaza_medicos_vacios_o_placeholders():
+    """
+    Verifica que no se permita persistir casos quirúrgicos sin Médico Derivador ni Médico Cirujano válidos.
+    """
+    with patch("app.db.supabase"):
+        for placeholder in ["", "   ", "Sin asignar", "a designar", "derivador sin asignar"]:
+            with pytest.raises(ValueError, match="El Médico Derivador es obligatorio"):
+                actualizar_asesoria_quirurgica("qx-test", {"medico_derivador_nombre": placeholder})
+
+        for placeholder in ["", "   ", "Sin asignar", "Cirujano sin asignar", "a designar"]:
+            with pytest.raises(ValueError, match="El Médico Cirujano \\(Qx\\) es obligatorio"):
+                actualizar_asesoria_quirurgica("qx-test", {"medico_cirujano_nombre": placeholder})

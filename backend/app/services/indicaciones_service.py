@@ -452,6 +452,7 @@ def emitir_indicaciones_expediente(
     cuidados_final = cuidados_override
     alarmas_final = pautas_alarma_override
 
+    sug_data: Dict[str, Any] = {}
     if not texto_final:
         sug = resolver_plantilla_sugerida(
             practica_nombre=practica_nombre,

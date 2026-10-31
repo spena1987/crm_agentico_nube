@@ -3173,9 +3173,19 @@ def actualizar_asesoria_quirurgica(asesoria_id: str, payload: dict) -> Dict[str,
                 val = payload[k]
                 if k == "practica_nombre":
                     nom_p = str(val or "").strip()
-                    if not nom_p or nom_p in ("Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar"):
+                    if not nom_p or nom_p in ("Nueva Cirugía / Procedimiento", "Práctica Quirúrgica a Determinar", "Cirugía / Procedimiento sin determinar"):
                         raise ValueError("La práctica quirúrgica es obligatoria para guardar el caso quirúrgico.")
                     datos[k] = nom_p
+                elif k == "medico_derivador_nombre":
+                    nom_d = str(val or "").strip()
+                    if not nom_d or nom_d.lower() in ("sin asignar", "a designar", "derivador sin asignar"):
+                        raise ValueError("El Médico Derivador es obligatorio para guardar el caso quirúrgico.")
+                    datos[k] = nom_d
+                elif k == "medico_cirujano_nombre":
+                    nom_c = str(val or "").strip()
+                    if not nom_c or nom_c.lower() in ("sin asignar", "cirujano sin asignar", "a designar"):
+                        raise ValueError("El Médico Cirujano (Qx) es obligatorio para guardar el caso quirúrgico.")
+                    datos[k] = nom_c
                 elif k in ["medico_derivador_id", "medico_cirujano_id"]:
                     datos[k] = int(val) if val else None
                 elif k in ["monto_extra", "monto_sena"]:
