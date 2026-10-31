@@ -32,7 +32,9 @@ import {
   Edit3,
   Trash2,
   Ban,
-  Info
+  Info,
+  ClipboardList,
+  Stethoscope
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -192,6 +194,81 @@ export default function EstudiosTecnicosPage() {
 
   // Estado de ejecución de envío
   const [enviandoEstudio, setEnviandoEstudio] = useState(false)
+  // Worklist de Pedidos Médicos (Fase 3 HCE CRM)
+  const [worklistPedidos, setWorklistPedidos] = useState<any[]>([])
+  const [cargandoWorklist, setCargandoWorklist] = useState<boolean>(false)
+  const [mostrarWorklist, setMostrarWorklist] = useState<boolean>(true)
+  const [pedidoSeleccionado, setPedidoSeleccionado] = useState<any | null>(null)
+
+  const cargarWorklist = useCallback(async () => {
+    setCargandoWorklist(true)
+    try {
+      const res = await apiFetch('/api/oftalmo/worklist-estudios?estado=PENDIENTE')
+      const data = await res.json()
+      if (res.ok && data?.pedidos) {
+        setWorklistPedidos(data.pedidos)
+      }
+    } catch (err) {
+      console.warn('Aviso cargando worklist de estudios:', err)
+    } finally {
+      setCargandoWorklist(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    cargarWorklist()
+  }, [cargarWorklist])
+
+  const handleSeleccionarPedidoWorklist = (pedido: any) => {
+    setPedidoSeleccionado(pedido)
+    const dniPac = pedido.pacientes?.dni || ''
+    if (dniPac) {
+      setDniInput(dniPac)
+      // Disparar búsqueda automática
+      const cleanDni = dniPac.replace(/\D/g, '')
+      if (cleanDni.length >= 6) {
+        setBuscandoPaciente(true)
+        setErrorBusqueda(null)
+        setFeedback(null)
+        apiFetch(`/api/estudios-tecnicos/buscar-paciente?dni=${cleanDni}`)
+          .then(async r => {
+            const data = await r.json()
+            if (r.ok && data) {
+              setPaciente(data.paciente)
+              setArchivosGeclisa(data.archivos_geclisa || [])
+              if (data.paciente.telefono_geclisa) {
+                setTelefonoLocal(extractLocalArgentineNumber(data.paciente.telefono_geclisa))
+              }
+            }
+          })
+          .catch(err => console.warn(err))
+          .finally(() => setBuscandoPaciente(false))
+      }
+    }
+    const listaEstudios: string[] = Array.isArray(pedido.estudios)
+      ? pedido.estudios
+      : Array.isArray(pedido.items)
+      ? pedido.items
+      : []
+
+    if (
+      listaEstudios.length > 0 &&
+      (!pedido.titulo || pedido.titulo === 'Solicitud de Estudios Complementarios' || pedido.titulo === 'Pedido de estudios')
+    ) {
+      setTipoEstudio(listaEstudios.join(' + '))
+    } else if (pedido.titulo) {
+      setTipoEstudio(pedido.titulo)
+    } else if (listaEstudios.length > 0) {
+      setTipoEstudio(listaEstudios[0])
+    }
+    if (pedido.ojo) {
+      setOjo(pedido.ojo)
+    }
+    if (pedido.observaciones) {
+      setObservaciones(pedido.observaciones)
+    }
+  }
+
   const [enviandoExistenteId, setEnviandoExistenteId] = useState<number | null>(null)
   const [reintentandoId, setReintentandoId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{
@@ -592,6 +669,24 @@ export default function EstudiosTecnicosPage() {
           title: 'No se pudo guardar en Geclisa',
           detail: data.geclisa_error || 'Ocurrió un error al guardar el estudio en la Historia Clínica.'
         })
+      }
+
+      // Si proviene de un pedido médico del worklist, completarlo automáticamente
+      const estudioCreadoId = data.estudio_id || data.id || data.estudio?.id
+      if (pedidoSeleccionado?.id && estudioCreadoId) {
+        try {
+          await apiFetch(`/api/oftalmo/worklist-estudios/${pedidoSeleccionado.id}/completar`, {
+            method: 'POST',
+            body: JSON.stringify({
+              estudio_id: estudioCreadoId,
+              notificar_whatsapp: false
+            })
+          })
+          setPedidoSeleccionado(null)
+          cargarWorklist()
+        } catch (exCompl) {
+          console.warn('Aviso completando pedido worklist:', exCompl)
+        }
       }
 
       // Refrescar archivos de Geclisa del paciente e historial
@@ -1004,6 +1099,144 @@ export default function EstudiosTecnicosPage() {
         </div>
       )}
 
+      {/* WORKLIST DE PEDIDOS MÉDICOS PENDIENTES (Fase 3 Integración Consultorio -> Técnicos) */}
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-2xl p-4 shadow-lg border border-slate-700 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-cyan-500/20 rounded-xl text-cyan-400">
+              <ClipboardList size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-extrabold text-sm tracking-wide">
+                  Worklist de Órdenes Médicas Solicitadas
+                </h2>
+                <span className="bg-cyan-500/30 text-cyan-300 text-[10px] font-black px-2 py-0.5 rounded-full border border-cyan-400/40">
+                  {worklistPedidos.length} {worklistPedidos.length === 1 ? 'pendiente' : 'pendientes'}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                Estudios indicados por los oftalmólogos desde Historia Clínica en consultorio
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={cargarWorklist}
+              disabled={cargandoWorklist}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors text-xs flex items-center gap-1"
+              title="Actualizar pedidos"
+            >
+              <RefreshCw size={14} className={cargandoWorklist ? 'animate-spin' : ''} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setMostrarWorklist(!mostrarWorklist)}
+              className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            >
+              {mostrarWorklist ? 'Ocultar' : 'Ver pedidos'}
+            </button>
+          </div>
+        </div>
+
+        {mostrarWorklist && (
+          <div className="pt-2">
+            {worklistPedidos.length === 0 ? (
+              <div className="text-center py-4 text-xs text-slate-400 italic bg-slate-800/40 rounded-xl border border-slate-700/50">
+                No hay pedidos médicos pendientes en este momento. Todas las órdenes están completadas.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                {worklistPedidos.map(pedido => {
+                  const isSelected = pedidoSeleccionado?.id === pedido.id
+                  const isUrgente = pedido.prioridad === 'URGENTE' || pedido.prioridad === 'PREQUIRURGICO'
+                  return (
+                    <div
+                      key={pedido.id}
+                      className={`p-3 rounded-xl border text-xs space-y-2 transition-all ${
+                        isSelected
+                          ? 'bg-cyan-950/40 border-cyan-400 ring-2 ring-cyan-500/20'
+                          : 'bg-slate-800/60 border-slate-700 hover:border-slate-600'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-slate-200 truncate">
+                          {pedido.pacientes?.nombre || 'Paciente'}
+                        </span>
+                        <span
+                          className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                            isUrgente
+                              ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                              : 'bg-slate-700 text-slate-300 border-slate-600'
+                          }`}
+                        >
+                          {pedido.prioridad || 'NORMAL'}
+                        </span>
+                      </div>
+
+                      <div className="space-y-1.5 text-[11px] text-slate-300">
+                        <div className="font-bold text-cyan-300 flex items-center justify-between gap-2">
+                          <span className="truncate">{pedido.titulo}</span>
+                          <span className="text-[10px] bg-slate-700/80 px-1.5 py-0.2 rounded font-mono shrink-0">
+                            {pedido.ojo || 'AO'}
+                          </span>
+                        </div>
+                        {Array.isArray(pedido.estudios || pedido.items) && (pedido.estudios || pedido.items).length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-0.5">
+                            {(pedido.estudios || pedido.items).map((est: string, idx: number) => (
+                              <button
+                                key={`${est}-${idx}`}
+                                type="button"
+                                onClick={() => {
+                                  if (!isSelected) {
+                                    handleSeleccionarPedidoWorklist(pedido)
+                                  }
+                                  setTipoEstudio(est)
+                                }}
+                                title="Clic para seleccionar este estudio específico"
+                                className={`text-[10px] font-semibold px-2 py-0.5 rounded-md border transition-colors ${
+                                  isSelected && tipoEstudio === est
+                                    ? 'bg-cyan-500 text-slate-950 border-cyan-300 font-bold'
+                                    : 'bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-200 border-cyan-500/30'
+                                }`}
+                              >
+                                {est}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="text-slate-400 text-[10px]">
+                          DNI: {pedido.pacientes?.dni || '-'} · Fecha: {pedido.fecha ? pedido.fecha.slice(0, 10) : '-'}
+                        </div>
+                      </div>
+
+                      <div className="pt-1 flex items-center justify-between border-t border-slate-700/50">
+                        <span className="text-[10px] text-slate-400">
+                          {pedido.diagnostico ? `Dx: ${pedido.diagnostico}` : 'Orden de consultorio'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleSeleccionarPedidoWorklist(pedido)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                            isSelected
+                              ? 'bg-cyan-500 text-slate-900 shadow-sm'
+                              : 'bg-cyan-600/80 hover:bg-cyan-500 text-white'
+                          }`}
+                        >
+                          <Sparkles size={12} />
+                          <span>{isSelected ? 'Cargando orden...' : 'Atender Pedido'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* FLUJO DE 3 PASOS: BUSCAR PACIENTE -> CONFIGURAR ESTUDIO -> ADJUNTAR Y ENVIAR */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* COLUMNA IZQUIERDA (5 cols): PASO 1 - BUSCADOR DE PACIENTE EN GECLISA */}
@@ -1228,6 +1461,64 @@ export default function EstudiosTecnicosPage() {
                   </h2>
                 </div>
               </div>
+
+              {/* Banner de Pedido Médico Seleccionado con Chips Rápidos */}
+              {pedidoSeleccionado && (
+                <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-bold text-cyan-700 dark:text-cyan-300 flex items-center gap-1.5">
+                      <Sparkles size={14} className="shrink-0" />
+                      <span>
+                        Atendiendo orden médica de {pedidoSeleccionado.pacientes?.nombre || 'Paciente'} ({pedidoSeleccionado.ojo || 'AO'})
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPedidoSeleccionado(null)}
+                      className="text-[11px] text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 font-semibold"
+                    >
+                      Desvincular
+                    </button>
+                  </div>
+                  {Array.isArray(pedidoSeleccionado.estudios || pedidoSeleccionado.items) &&
+                    (pedidoSeleccionado.estudios || pedidoSeleccionado.items).length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-[var(--secondary)] font-medium">
+                          Estudios solicitados (clic para asignar):
+                        </span>
+                        {(pedidoSeleccionado.estudios || pedidoSeleccionado.items).map((est: string, i: number) => (
+                          <button
+                            key={`${est}-${i}`}
+                            type="button"
+                            onClick={() => setTipoEstudio(est)}
+                            className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold border transition-all ${
+                              tipoEstudio === est
+                                ? 'bg-cyan-600 text-white border-cyan-600'
+                                : 'bg-white dark:bg-slate-800 text-cyan-700 dark:text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/20'
+                            }`}
+                          >
+                            {est}
+                          </button>
+                        ))}
+                        {(pedidoSeleccionado.estudios || pedidoSeleccionado.items).length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setTipoEstudio((pedidoSeleccionado.estudios || pedidoSeleccionado.items).join(' + '))
+                            }
+                            className={`px-2.5 py-0.5 rounded-lg text-[11px] font-bold border transition-all ${
+                              tipoEstudio === (pedidoSeleccionado.estudios || pedidoSeleccionado.items).join(' + ')
+                                ? 'bg-cyan-600 text-white border-cyan-600'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-400/40 hover:bg-slate-500/20'
+                            }`}
+                          >
+                            Todos juntos
+                          </button>
+                        )}
+                      </div>
+                    )}
+                </div>
+              )}
 
               {/* Chips de 1 Clic */}
               <div className="flex flex-wrap gap-1.5">

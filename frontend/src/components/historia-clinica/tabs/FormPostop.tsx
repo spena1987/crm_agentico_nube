@@ -4,7 +4,7 @@ import React, { useMemo } from 'react'
 import { ConsultaOftalmo } from '../types'
 import TagSelectorPopover from '../TagSelectorPopover'
 import { CIRUGIAS } from '../catalogos'
-import { Video } from 'lucide-react'
+import { Video, Lock, ShieldCheck } from 'lucide-react'
 
 interface FormPostopProps {
   consulta: ConsultaOftalmo
@@ -78,8 +78,39 @@ export default function FormPostop({
   const modoBmc = consulta.biomicroscopia?.modo || 'ao'
   const modoFo = consulta.fondo_ojo?.modo || 'ao'
 
+  const isReadOnly = consulta.estado_legal === 'SIGNED' || consulta.estado_legal === 'AMENDED'
+
   return (
     <div className="space-y-3 text-[#16323f]">
+      {/* Banner de Consulta Firmada e Inmutable (Ley 26.529) */}
+      {isReadOnly && (
+        <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-800">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-extrabold text-emerald-900 flex items-center gap-2">
+                <span>Control Postoperatorio Firmado y Cerrado</span>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.2 bg-emerald-200/60 text-emerald-800 rounded">
+                  Inmutable · Ley 26.529
+                </span>
+              </div>
+              <div className="text-[11px] text-emerald-700 mt-0.5">
+                Firmado {consulta.signed_at ? new Date(consulta.signed_at).toLocaleString('es-AR') : 'recientemente'} por <strong>{consulta.profesional_nombre}</strong> {consulta.profesional_matricula ? `(M.P. ${consulta.profesional_matricula})` : ''}.
+              </div>
+            </div>
+          </div>
+          {consulta.signature_sha256 && (
+            <div className="flex items-center gap-1.5 bg-white/90 border border-emerald-200 px-2.5 py-1 rounded-md text-[10px] font-mono text-emerald-800" title={`Hash canónico SHA-256:\n${consulta.signature_sha256}`}>
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>SHA: {consulta.signature_sha256.slice(0, 16)}...</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <fieldset disabled={isReadOnly} className="contents">
       {/* 1. Header de Postoperatorio */}
       <div className="bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm text-xs">
         <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#eef3f6]">
@@ -633,7 +664,7 @@ export default function FormPostop({
               className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs"
             />
           </div>
-          <div className="md:col-span-2">
+          <div className="md:col-span-4">
             <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Próximo control</label>
             <input
               type="text"
@@ -643,18 +674,22 @@ export default function FormPostop({
               className="w-full border border-[#dde6ec] rounded px-2 py-1 text-xs"
             />
           </div>
-          <div className="md:col-span-2">
-            <button
-              type="button"
-              onClick={() => onOpenVideosWA(false)}
-              className="w-full py-1.5 px-2 bg-[#0e7c86] text-white rounded text-xs font-bold hover:bg-[#0a636b] flex items-center justify-center gap-1"
-            >
-              <Video className="w-3.5 h-3.5" />
-              Enviar video
-            </button>
-          </div>
         </div>
       </div>
+      </fieldset>
+
+      {onOpenVideosWA && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => onOpenVideosWA(false)}
+            className="py-1.5 px-3 bg-[#0e7c86] text-white rounded text-xs font-bold hover:bg-[#0a636b] flex items-center justify-center gap-1.5 shadow-sm"
+          >
+            <Video className="w-3.5 h-3.5" />
+            Enviar video explicativo por WhatsApp
+          </button>
+        </div>
+      )}
     </div>
   )
 }

@@ -9,23 +9,56 @@ import {
   CATARATA, 
   CONDUCTAS 
 } from '../catalogos'
-import { MessageSquare, Video, Sparkles, Glasses, Copy, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { 
+  MessageSquare, 
+  Video, 
+  Sparkles, 
+  Glasses, 
+  Copy, 
+  AlertTriangle, 
+  CheckCircle2,
+  RotateCcw,
+  Pill,
+  ClipboardList,
+  FileText,
+  UserCheck,
+  Lock,
+  ShieldCheck
+} from 'lucide-react'
+import { useAuth } from '@/context/AuthContext'
+import { usePermissions } from '@/hooks/usePermissions'
 
 interface FormConsultaProps {
   consulta: ConsultaOftalmo
+  consultaPrevia?: ConsultaOftalmo | null
   onChange: (fields: Partial<ConsultaOftalmo>) => void
   onOpenResumenWA: () => void
   onOpenVideosWA: (esp?: boolean) => void
   onGenerarRecetaAnteojos?: (receta: Omit<RecetaAnteojos, 'id' | 'paciente_id'>) => Promise<void>
+  onOpenDrawer?: (tab: 'farmacos' | 'pedidos' | 'estudios') => void
 }
 
 export default function FormConsulta({
   consulta,
+  consultaPrevia,
   onChange,
   onOpenResumenWA,
   onOpenVideosWA,
-  onGenerarRecetaAnteojos
+  onGenerarRecetaAnteojos,
+  onOpenDrawer
 }: FormConsultaProps) {
+  const { user } = useAuth()
+  const { profile } = usePermissions()
+
+  const isReadOnly = consulta.estado_legal === 'SIGNED' || consulta.estado_legal === 'AMENDED'
+
+  // Autocompletar profesional si viene vacio (solo en borradores editables)
+  useEffect(() => {
+    const currentUserName = profile?.geclisa_prestador_nombre || profile?.nombre_completo || user?.email?.split('@')[0] || ''
+    if (!isReadOnly && currentUserName && !consulta.profesional_nombre) {
+      onChange({ profesional_nombre: currentUserName })
+    }
+  }, [profile, user, consulta.profesional_nombre, isReadOnly])
   const [generandoReceta, setGenerandoReceta] = useState(false)
   const [recetaGeneradaOk, setRecetaGeneradaOk] = useState(false)
 
@@ -136,6 +169,20 @@ export default function FormConsulta({
         od: { ...prevOd, add: val },
         oi: debeSincronizarOi ? { ...prevOi, add: val } : prevOi
       }
+    })
+  }
+
+
+  // Traer Refraccion de la visita previa
+  const handleTraerRefraccionPrevia = () => {
+    if (!consultaPrevia?.refraccion) return
+    const prevRx = consultaPrevia.refraccion
+    onChange({
+      refraccion: {
+        od: { ...(prevRx.od || {}) },
+        oi: { ...(prevRx.oi || {}) }
+      },
+      lentes_anteriores: consultaPrevia.lentes_anteriores ? { ...consultaPrevia.lentes_anteriores } : consulta.lentes_anteriores
     })
   }
 
@@ -282,6 +329,35 @@ export default function FormConsulta({
 
   return (
     <div className="space-y-3 text-[#16323f]">
+      {/* Banner de Consulta Firmada e Inmutable (Ley 26.529) */}
+      {isReadOnly && (
+        <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-950 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <div className="p-1.5 bg-emerald-100 rounded-lg text-emerald-800">
+              <Lock className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-extrabold text-emerald-900 flex items-center gap-2">
+                <span>Consulta Médica Firmada y Cerrada</span>
+                <span className="text-[10px] uppercase font-bold px-2 py-0.2 bg-emerald-200/60 text-emerald-800 rounded">
+                  Inmutable · Ley 26.529
+                </span>
+              </div>
+              <div className="text-[11px] text-emerald-700 mt-0.5">
+                Firmada {consulta.signed_at ? new Date(consulta.signed_at).toLocaleString('es-AR') : 'recientemente'} por <strong>{consulta.profesional_nombre}</strong> {consulta.profesional_matricula ? `(M.P. ${consulta.profesional_matricula})` : ''}.
+              </div>
+            </div>
+          </div>
+          {consulta.signature_sha256 && (
+            <div className="flex items-center gap-1.5 bg-white/90 border border-emerald-200 px-2.5 py-1 rounded-md text-[10px] font-mono text-emerald-800" title={`Hash canónico SHA-256:\n${consulta.signature_sha256}`}>
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <span>SHA: {consulta.signature_sha256.slice(0, 16)}...</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <fieldset disabled={isReadOnly} className="contents">
       {/* 1. Datos de la consulta (Compacto y Ergonómico) */}
       <div className="bg-white border border-[#dde6ec] rounded-lg p-2.5 shadow-xs space-y-1.5">
         <div className="flex items-center justify-between">
@@ -350,9 +426,10 @@ export default function FormConsulta({
         </div>
       </div>
 
-      {/* Grid de 2 columnas para AV y Refracción */}
+
+      {/* 2. MEDICIONES OBJETIVAS Y AGUDEZA VISUAL */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
-        {/* Agudeza Visual */}
+                {/* Agudeza Visual */}
         <div className="lg:col-span-5 bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm text-xs">
           <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider pb-1.5 mb-2 border-b border-[#eef3f6]">
             Agudeza Visual
@@ -477,189 +554,9 @@ export default function FormConsulta({
           </div>
         </div>
 
-        {/* Refracción Subjetiva y Lentes Anteriores */}
-        <div className="lg:col-span-7 bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm text-xs">
-          <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#eef3f6]">
-            <div className="flex items-center gap-2">
-              <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
-                Refracción Subjetiva
-              </h2>
-              <button
-                type="button"
-                onClick={handleCopiarOdAOi}
-                className="text-[10px] text-[#0e7c86] hover:text-[#095f67] font-bold flex items-center gap-1 bg-[#e4f3f4] hover:bg-[#c3e2e4] px-2 py-0.5 rounded transition-colors"
-                title="Copiar datos refractivos de Ojo Derecho a Ojo Izquierdo"
-              >
-                <Copy className="w-3 h-3" />
-                Copiar OD ➔ OI
-              </button>
-            </div>
-            <span className="text-[10px] font-bold text-[#0e7c86] bg-[#e4f3f4] px-2 py-0.5 rounded border border-[#c3e2e4]">
-              EE se calcula solo
-            </span>
-          </div>
-
-          <table className="w-full border-collapse text-center text-xs mb-2">
-            <thead>
-              <tr className="bg-[#f7fafb] text-[9px] uppercase text-[#728a99] font-bold">
-                <th className="p-1 w-8"></th>
-                <th className="p-1">Esfera</th>
-                <th className="p-1">Cilindro</th>
-                <th className="p-1">Eje</th>
-                <th className="p-1">EE</th>
-                <th className="p-1">Adición</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#eef3f6]">
-              {(['od', 'oi'] as const).map(eye => {
-                const curRx = eye === 'od' ? rxOd : rxOi
-                const curEE = eye === 'od' ? eeOd : eeOi
-                return (
-                  <tr key={eye}>
-                    <td className="p-1 font-extrabold text-[#0e7c86] bg-[#f7fafb] rounded">{eye.toUpperCase()}</td>
-                    <td className="p-0.5">
-                      <input
-                        type="text"
-                        value={curRx.esf || ''}
-                        onChange={e => updateEyeNested('refraccion', eye, 'esf', e.target.value)}
-                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
-                      />
-                    </td>
-                    <td className="p-0.5">
-                      <input
-                        type="text"
-                        value={curRx.cil || ''}
-                        onChange={e => updateEyeNested('refraccion', eye, 'cil', e.target.value)}
-                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
-                      />
-                    </td>
-                    <td className="p-0.5">
-                      <input
-                        type="text"
-                        value={curRx.eje || ''}
-                        onChange={e => updateEyeNested('refraccion', eye, 'eje', e.target.value)}
-                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
-                      />
-                    </td>
-                    <td className="p-0.5">
-                      <input
-                        type="text"
-                        value={curEE || ''}
-                        readOnly
-                        className="w-full border border-[#c3e2e4] bg-[#e4f3f4] text-[#0e7c86] rounded py-1 px-1 text-center font-extrabold text-xs cursor-default outline-none"
-                      />
-                    </td>
-                    <td className="p-0.5">
-                      <input
-                        type="text"
-                        value={curRx.add || ''}
-                        onChange={e => {
-                          if (eye === 'od') {
-                            handleUpdateAddOd(e.target.value)
-                          } else {
-                            updateEyeNested('refraccion', eye, 'add', e.target.value)
-                          }
-                        }}
-                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
-                      />
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-
-          {/* Botón Prescripción Óptica 1-Clic */}
-          <div className="flex items-center justify-between mb-3 pt-2 border-t border-[#eef3f6]">
-            <button
-              type="button"
-              onClick={handleGenerarReceta1Clic}
-              disabled={generandoReceta || (!rxOd.esf && !rxOi.esf && !rxOd.cil && !rxOi.cil)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded shadow-sm transition-all ${
-                recetaGeneradaOk
-                  ? 'bg-emerald-600 text-white'
-                  : 'bg-[#0e7c86] hover:bg-[#095f67] text-white disabled:opacity-40 disabled:cursor-not-allowed'
-              }`}
-              title="Genera la receta de anteojos calculando cerca automáticamente e imprime de inmediato sin salir de esta pestaña"
-            >
-              {recetaGeneradaOk ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  ¡Receta Generada e Impresa!
-                </>
-              ) : (
-                <>
-                  <Glasses className="w-3.5 h-3.5" />
-                  {generandoReceta ? 'Generando receta...' : 'Generar e Imprimir Receta de Anteojos (1-Clic)'}
-                </>
-              )}
-            </button>
-            <span className="text-[10px] text-[#728a99]">
-              {rxOd.add || rxOi.add ? 'Auto-cálculo: Multifocal / Cerca' : 'Monofocales Lejos'}
-            </span>
-          </div>
-
-          {/* Lentes anteriores y Estabilidad */}
-          <div className="pt-2 border-t border-[#eef3f6]">
-            <div className="text-[9.5px] uppercase font-extrabold text-[#728a99] mb-1">
-              Lentes Anteriores y Estabilidad
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-              <div>
-                <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Tipo de lentes</label>
-                <select
-                  value={consulta.lentes_anteriores?.tipo || ''}
-                  onChange={e => updateNested('lentes_anteriores', 'tipo', e.target.value)}
-                  className="w-full border border-[#dde6ec] rounded px-2 py-1 bg-white text-xs"
-                >
-                  <option value=""></option>
-                  <option>Monofocales</option>
-                  <option>Multifocales / progresivos</option>
-                  <option>Bifocales</option>
-                  <option>Ocupacionales</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Cuánto los usa</label>
-                <select
-                  value={consulta.lentes_anteriores?.uso || ''}
-                  onChange={e => updateNested('lentes_anteriores', 'uso', e.target.value)}
-                  className="w-full border border-[#dde6ec] rounded px-2 py-1 bg-white text-xs"
-                >
-                  <option value=""></option>
-                  {USO_LENTES.map(u => (
-                    <option key={u}>{u}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Estabilidad refractiva</label>
-                <select
-                  value={consulta.estabilidad_refractiva || ''}
-                  onChange={e => onChange({ estabilidad_refractiva: e.target.value })}
-                  className={`w-full border rounded px-2 py-1 font-bold text-xs bg-white ${
-                    consulta.estabilidad_refractiva?.includes('Estable')
-                      ? 'bg-[#e6f5ec] text-[#1a7f4b] border-[#1a7f4b]'
-                      : consulta.estabilidad_refractiva?.includes('Progresión') || consulta.estabilidad_refractiva?.includes('Cambio')
-                      ? 'bg-[#fdf1e7] text-[#b4531a] border-[#b4531a]'
-                      : 'border-[#dde6ec]'
-                  }`}
-                >
-                  <option value=""></option>
-                  <option>Estable (&lt;0.50 D en 12 meses)</option>
-                  <option>Cambio 0.50–1.00 D</option>
-                  <option>Progresión &gt;1.00 D</option>
-                  <option>Sin datos previos</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Grid de mediciones: ARM, Queratometría, PIO */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
-        {/* ARM y Cicloplejia */}
+        <div className="lg:col-span-7 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+                    {/* ARM y Cicloplejia */}
         <div className="md:col-span-5 bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm">
           <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider pb-1 mb-2 border-b border-[#eef3f6]">
             ARM y Cicloplejia
@@ -853,8 +750,210 @@ export default function FormConsulta({
             />
           </div>
         </div>
+
+          </div>
+        </div>
+      </div>
+      </fieldset>
+
+      {/* 3. REFRACCION SUBJETIVA */}
+      <div className="grid grid-cols-1 gap-3">
+        <div className="w-full bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm text-xs">
+          <fieldset disabled={isReadOnly} className="contents">
+          <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#eef3f6]">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
+                Refracción Subjetiva
+              </h2>
+              {consultaPrevia?.refraccion && (
+                <button
+                  type="button"
+                  onClick={handleTraerRefraccionPrevia}
+                  className="text-[10px] text-[#0e7c86] hover:text-[#095f67] font-bold flex items-center gap-1 bg-[#e4f3f4] hover:bg-[#c3e2e4] px-2 py-0.5 rounded transition-colors"
+                  title="Copiar graduacion de la ultima visita"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Traer Previa ({consultaPrevia.fecha ? consultaPrevia.fecha.slice(0, 10) : ''})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleCopiarOdAOi}
+                className="text-[10px] text-[#0e7c86] hover:text-[#095f67] font-bold flex items-center gap-1 bg-[#e4f3f4] hover:bg-[#c3e2e4] px-2 py-0.5 rounded transition-colors"
+                title="Copiar datos refractivos de Ojo Derecho a Ojo Izquierdo"
+              >
+                <Copy className="w-3 h-3" />
+                Copiar OD ➔ OI
+              </button>
+            </div>
+            <span className="text-[10px] font-bold text-[#0e7c86] bg-[#e4f3f4] px-2 py-0.5 rounded border border-[#c3e2e4]">
+              EE se calcula solo
+            </span>
+          </div>
+
+          <table className="w-full border-collapse text-center text-xs mb-2">
+            <thead>
+              <tr className="bg-[#f7fafb] text-[9px] uppercase text-[#728a99] font-bold">
+                <th className="p-1 w-8"></th>
+                <th className="p-1">Esfera</th>
+                <th className="p-1">Cilindro</th>
+                <th className="p-1">Eje</th>
+                <th className="p-1">EE</th>
+                <th className="p-1">Adición</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#eef3f6]">
+              {(['od', 'oi'] as const).map(eye => {
+                const curRx = eye === 'od' ? rxOd : rxOi
+                const curEE = eye === 'od' ? eeOd : eeOi
+                return (
+                  <tr key={eye}>
+                    <td className="p-1 font-extrabold text-[#0e7c86] bg-[#f7fafb] rounded">{eye.toUpperCase()}</td>
+                    <td className="p-0.5">
+                      <input
+                        type="text"
+                        value={curRx.esf || ''}
+                        onChange={e => updateEyeNested('refraccion', eye, 'esf', e.target.value)}
+                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
+                      />
+                    </td>
+                    <td className="p-0.5">
+                      <input
+                        type="text"
+                        value={curRx.cil || ''}
+                        onChange={e => updateEyeNested('refraccion', eye, 'cil', e.target.value)}
+                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
+                      />
+                    </td>
+                    <td className="p-0.5">
+                      <input
+                        type="text"
+                        value={curRx.eje || ''}
+                        onChange={e => updateEyeNested('refraccion', eye, 'eje', e.target.value)}
+                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
+                      />
+                    </td>
+                    <td className="p-0.5">
+                      <input
+                        type="text"
+                        value={curEE || ''}
+                        readOnly
+                        className="w-full border border-[#c3e2e4] bg-[#e4f3f4] text-[#0e7c86] rounded py-1 px-1 text-center font-extrabold text-xs cursor-default outline-none"
+                      />
+                    </td>
+                    <td className="p-0.5">
+                      <input
+                        type="text"
+                        value={curRx.add || ''}
+                        onChange={e => {
+                          if (eye === 'od') {
+                            handleUpdateAddOd(e.target.value)
+                          } else {
+                            updateEyeNested('refraccion', eye, 'add', e.target.value)
+                          }
+                        }}
+                        className="w-full border border-[#dde6ec] rounded py-1 px-1 text-center font-bold text-xs focus:border-[#0e7c86] outline-none"
+                      />
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          </fieldset>
+
+          {/* Botón Prescripción Óptica 1-Clic (disponible también en consultas firmadas) */}
+          <div className="flex items-center justify-between mb-3 pt-2 border-t border-[#eef3f6]">
+            <button
+              type="button"
+              onClick={handleGenerarReceta1Clic}
+              disabled={generandoReceta || (!rxOd.esf && !rxOi.esf && !rxOd.cil && !rxOi.cil)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded shadow-sm transition-all ${
+                recetaGeneradaOk
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-[#0e7c86] hover:bg-[#095f67] text-white disabled:opacity-40 disabled:cursor-not-allowed'
+              }`}
+              title="Genera la receta de anteojos calculando cerca automáticamente e imprime de inmediato sin salir de esta pestaña"
+            >
+              {recetaGeneradaOk ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  ¡Receta Generada e Impresa!
+                </>
+              ) : (
+                <>
+                  <Glasses className="w-3.5 h-3.5" />
+                  {generandoReceta ? 'Generando receta...' : 'Generar e Imprimir Receta de Anteojos (1-Clic)'}
+                </>
+              )}
+            </button>
+            <span className="text-[10px] text-[#728a99]">
+              {rxOd.add || rxOi.add ? 'Auto-cálculo: Multifocal / Cerca' : 'Monofocales Lejos'}
+            </span>
+          </div>
+
+          <fieldset disabled={isReadOnly} className="contents">
+          {/* Lentes anteriores y Estabilidad */}
+          <div className="pt-2 border-t border-[#eef3f6]">
+            <div className="text-[9.5px] uppercase font-extrabold text-[#728a99] mb-1">
+              Lentes Anteriores y Estabilidad
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div>
+                <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Tipo de lentes</label>
+                <select
+                  value={consulta.lentes_anteriores?.tipo || ''}
+                  onChange={e => updateNested('lentes_anteriores', 'tipo', e.target.value)}
+                  className="w-full border border-[#dde6ec] rounded px-2 py-1 bg-white text-xs"
+                >
+                  <option value=""></option>
+                  <option>Monofocales</option>
+                  <option>Multifocales / progresivos</option>
+                  <option>Bifocales</option>
+                  <option>Ocupacionales</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Cuánto los usa</label>
+                <select
+                  value={consulta.lentes_anteriores?.uso || ''}
+                  onChange={e => updateNested('lentes_anteriores', 'uso', e.target.value)}
+                  className="w-full border border-[#dde6ec] rounded px-2 py-1 bg-white text-xs"
+                >
+                  <option value=""></option>
+                  {USO_LENTES.map(u => (
+                    <option key={u}>{u}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">Estabilidad refractiva</label>
+                <select
+                  value={consulta.estabilidad_refractiva || ''}
+                  onChange={e => onChange({ estabilidad_refractiva: e.target.value })}
+                  className={`w-full border rounded px-2 py-1 font-bold text-xs bg-white ${
+                    consulta.estabilidad_refractiva?.includes('Estable')
+                      ? 'bg-[#e6f5ec] text-[#1a7f4b] border-[#1a7f4b]'
+                      : consulta.estabilidad_refractiva?.includes('Progresión') || consulta.estabilidad_refractiva?.includes('Cambio')
+                      ? 'bg-[#fdf1e7] text-[#b4531a] border-[#b4531a]'
+                      : 'border-[#dde6ec]'
+                  }`}
+                >
+                  <option value=""></option>
+                  <option>Estable (&lt;0.50 D en 12 meses)</option>
+                  <option>Cambio 0.50–1.00 D</option>
+                  <option>Progresión &gt;1.00 D</option>
+                  <option>Sin datos previos</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          </fieldset>
+        </div>
+
       </div>
 
+      <fieldset disabled={isReadOnly} className="contents">
       {/* Barra de Cabecera Examen Físico Ocular + Macro Normal AO */}
       <div className="bg-white border border-[#dde6ec] rounded-lg px-3 py-2 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -1142,9 +1241,11 @@ export default function FormConsulta({
           )}
         </div>
       </div>
+      </fieldset>
 
       {/* 4. Conducta, Plan, Comunicación al Paciente y Asesoramiento */}
       <div className="bg-white border border-[#dde6ec] rounded-lg p-3 shadow-sm text-xs">
+        <fieldset disabled={isReadOnly} className="contents">
         <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-[#eef3f6]">
           <h2 className="text-xs font-black uppercase text-[#0e7c86] tracking-wider">
             Conducta Médica y Quirúrgica
@@ -1157,8 +1258,10 @@ export default function FormConsulta({
             {modoPlan === 'ao' ? 'separar conducta OD/OI' : 'unificar conducta AO'}
           </button>
         </div>
+        </fieldset>
 
         <div className="space-y-3">
+          <fieldset disabled={isReadOnly} className="contents">
           <div>
             <label className="text-[9px] uppercase font-bold text-[#728a99] block mb-0.5">
               Diagnóstico Presuntivo
@@ -1278,38 +1381,69 @@ export default function FormConsulta({
               label="Valores a pasar"
             />
           </div>
+          </fieldset>
 
-          <div className="pt-2 border-t border-[#eef3f6] flex flex-wrap items-center gap-2">
-            <span className="text-[10px] uppercase font-bold text-[#728a99] mr-1">
-              Enviar al paciente:
-            </span>
-            <button
-              type="button"
-              onClick={onOpenResumenWA}
-              className="px-3 py-1.5 bg-[#0e7c86] text-white rounded text-xs font-bold hover:bg-[#0a636b] flex items-center gap-1.5 shadow-sm"
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              Resumen de la consulta por WhatsApp
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenVideosWA(false)}
-              className="px-3 py-1.5 bg-white border border-[#dde6ec] rounded text-xs font-bold hover:bg-[#e4f3f4] text-[#16323f] flex items-center gap-1.5"
-            >
-              <Video className="w-3.5 h-3.5 text-[#0e7c86]" />
-              Enviar video explicativo
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenVideosWA(true)}
-              className="px-3 py-1.5 bg-white border border-[#dde6ec] rounded text-xs font-bold hover:bg-[#e4f3f4] text-[#16323f] flex items-center gap-1.5"
-            >
-              Casos especiales
-            </button>
+          {/* ACCIONES FINALES DE LA CONSULTA */}
+          <div className="pt-2 border-t border-[#eef3f6] flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] uppercase font-bold text-[#728a99] mr-1">
+                Enviar al paciente:
+              </span>
+              <button
+                type="button"
+                onClick={onOpenResumenWA}
+                className="px-3 py-1.5 bg-[#0e7c86] text-white rounded text-xs font-bold hover:bg-[#0a636b] flex items-center gap-1.5 shadow-sm"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                Resumen WA
+              </button>
+              <button
+                type="button"
+                onClick={() => onOpenVideosWA(false)}
+                className="px-2.5 py-1.5 bg-white border border-[#dde6ec] rounded text-xs font-bold hover:bg-[#e4f3f4] text-[#16323f] flex items-center gap-1.5"
+              >
+                <Video className="w-3.5 h-3.5 text-[#0e7c86]" />
+                Video explicativo
+              </button>
+            </div>
+
+            {onOpenDrawer && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase font-bold text-[#728a99] mr-1 hidden sm:inline">
+                  Acciones Rapidas:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onOpenDrawer('farmacos')}
+                  className="px-2.5 py-1.5 bg-[#e4f3f4] hover:bg-[#c3e2e4] text-[#0e7c86] font-extrabold rounded text-xs flex items-center gap-1 transition-colors"
+                  title="Prescribir colirios y farmacos sin salir de la consulta"
+                >
+                  <Pill className="w-3.5 h-3.5" />
+                  <span>+ Receta Rp</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenDrawer('pedidos')}
+                  className="px-2.5 py-1.5 bg-[#e4f3f4] hover:bg-[#c3e2e4] text-[#0e7c86] font-extrabold rounded text-xs flex items-center gap-1 transition-colors"
+                  title="Solicitar estudios diagnosticos sin salir de la consulta"
+                >
+                  <ClipboardList className="w-3.5 h-3.5" />
+                  <span>+ Pedido Estudios</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onOpenDrawer('estudios')}
+                  className="px-2.5 py-1.5 bg-white border border-[#dde6ec] hover:border-[#0e7c86] text-[#526b7a] font-bold rounded text-xs flex items-center gap-1 transition-colors"
+                  title="Ver estudios realizados lado a lado"
+                >
+                  <FileText className="w-3.5 h-3.5 text-[#0e7c86]" />
+                  <span>Ver Estudios</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
     </div>
   )
 }
-

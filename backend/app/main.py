@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
-from fastapi.responses import Response, StreamingResponse, FileResponse, RedirectResponse
+from fastapi.responses import Response, StreamingResponse, FileResponse, RedirectResponse, HTMLResponse
 import io
 import csv
 import openpyxl
@@ -392,7 +392,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-from app.auth import AuthSecurityMiddleware, verify_webhook_secret
+from app.auth import AuthSecurityMiddleware, verify_webhook_secret, get_optional_user, get_current_user
 
 # Configuración de CORS estricta y compatible con credenciales W3C (evita el error 'Failed to fetch')
 default_origins = [
@@ -8764,17 +8764,262 @@ def save_consulta_oftalmo_endpoint(paciente_id: str, payload: Dict[str, Any] = B
     """Guarda o actualiza una consulta o control postoperatorio con cálculos automáticos."""
     try:
         return HistoriaOftalmoService.save_consulta(paciente_id, payload)
+    except ValueError as ve:
+        raise HTTPException(status_code=403, detail=str(ve))
     except Exception as e:
         logger.error(f"Error guardando consulta oftalmológica para {paciente_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/oftalmo/consultas/{consulta_id}")
-def delete_consulta_oftalmo_endpoint(consulta_id: str):
-    """Elimina una consulta oftalmológica."""
+def delete_consulta_oftalmo_endpoint(
+    consulta_id: str,
+    request: Request,
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """Elimina una consulta oftalmológica (solo si está en borrador DRAFT)."""
     try:
-        return HistoriaOftalmoService.delete_consulta(consulta_id)
+        ip = request.client.host if request.client else None
+        ua = request.headers.get("user-agent")
+        return HistoriaOftalmoService.delete_consulta(consulta_id, user_payload=current_user, ip_address=ip, user_agent=ua)
+    except ValueError as ve:
+        raise HTTPException(status_code=403, detail=str(ve))
     except Exception as e:
         logger.error(f"Error eliminando consulta oftalmológica {consulta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/consultas/{consulta_id}/firmar")
+async def firmar_consulta_oftalmo_endpoint(
+    consulta_id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(default={}),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Firma electrónicamente y bloquea de forma inmutable una consulta médica (Leyes 26.529 y 27.553).
+    Genera un hash SHA-256 canónico e inyecta sincrónicamente en Geclisa en 1 solo clic.
+    """
+    try:
+        ip = request.client.host if request.client else None
+        ua = request.headers.get("user-agent")
+        prof_override = payload.get("profesional")
+        return HistoriaOftalmoService.sign_consulta(
+            consulta_id=consulta_id,
+            user_payload=current_user,
+            profesional_override=prof_override,
+            ip_address=ip,
+            user_agent=ua
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error firmando consulta {consulta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/consultas/{consulta_id}/enmiendas")
+async def agregar_enmienda_consulta_endpoint(
+    consulta_id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Registra una adenda/enmienda formal foliada según Ley 26.529 Art. 15 (Salvado de Errores).
+    """
+    try:
+        motivo = payload.get("motivo_enmienda") or payload.get("motivo") or ""
+        texto = payload.get("texto_adenda") or payload.get("texto") or ""
+        if not motivo or not texto:
+            raise HTTPException(status_code=400, detail="El motivo de enmienda y el texto de la adenda son obligatorios.")
+
+        ip = request.client.host if request.client else None
+        ua = request.headers.get("user-agent")
+        return HistoriaOftalmoService.add_enmienda(
+            consulta_id=consulta_id,
+            motivo_enmienda=motivo,
+            texto_adenda=texto,
+            user_payload=current_user,
+            ip_address=ip,
+            user_agent=ua
+        )
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error registrando enmienda para consulta {consulta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/oftalmo/consultas/{consulta_id}/enmiendas")
+def get_enmiendas_consulta_endpoint(consulta_id: str):
+    """Obtiene el historial de enmiendas/adendas foliadas de una consulta."""
+    try:
+        return HistoriaOftalmoService.get_enmiendas(consulta_id)
+    except Exception as e:
+        logger.error(f"Error obteniendo enmiendas para consulta {consulta_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/oftalmo/audit-logs/{paciente_id}")
+def get_hce_audit_logs_endpoint(paciente_id: str, limit: int = 50):
+    """Obtiene el historial inmutable de auditoría de HCE para un paciente (Ley 25.326)."""
+    try:
+        return HistoriaOftalmoService.get_audit_logs(paciente_id, limit=limit)
+    except Exception as e:
+        logger.error(f"Error obteniendo audit logs para paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ====================================================================
+# FASE 3: ENDPOINTS WHATSAPP TRANSACCIONAL, WORKLIST Y LINKS EFÍMEROS
+# ====================================================================
+
+@app.post("/api/oftalmo/consultas/{consulta_id}/despachar-whatsapp")
+async def despachar_resumen_whatsapp_endpoint(
+    consulta_id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Despacha el resumen de la consulta directamente al WhatsApp del paciente vía Meta Cloud API
+    y lo registra automáticamente en el historial de la conversación en CRM.
+    """
+    try:
+        paciente_id = payload.get("paciente_id")
+        texto = payload.get("texto") or payload.get("mensaje") or ""
+        if not paciente_id or not texto:
+            raise HTTPException(status_code=400, detail="Se requiere paciente_id y el texto del resumen.")
+
+        ip = request.client.host if request.client else None
+        ua = request.headers.get("user-agent")
+        return HistoriaOftalmoService.despachar_resumen_whatsapp(
+            paciente_id=paciente_id,
+            consulta_id=consulta_id,
+            texto_mensaje=texto,
+            user_payload=current_user,
+            ip_address=ip,
+            user_agent=ua
+        )
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error despachando resumen WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/estudios/{estudio_id}/crear-token-descarga")
+async def crear_token_descarga_estudio_endpoint(
+    estudio_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Genera un token de descarga efímero (TTL 72 hs) con validación de DNI para un estudio médico.
+    """
+    try:
+        ttl = int(payload.get("ttl_horas", 72))
+        return HistoriaOftalmoService.crear_token_descarga_estudio(estudio_id=estudio_id, ttl_horas=ttl, user_payload=current_user)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error generando token de descarga para estudio {estudio_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/oftalmo/estudios/descargar/{token}")
+async def descargar_estudio_token_endpoint(token: str, dni: Optional[str] = None):
+    """
+    Descarga segura de estudio médico mediante token efímero y validación de últimos 4 dígitos de DNI (Ley 25.326).
+    """
+    try:
+        if dni:
+            data = HistoriaOftalmoService.validar_y_obtener_estudio_token(token_hash=token, dni_last4_input=dni)
+            archivo_url = data.get("archivo_url")
+            if not archivo_url:
+                raise HTTPException(status_code=404, detail="Archivo no encontrado.")
+            return RedirectResponse(url=archivo_url)
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="es">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Descarga Segura de Estudio Oftalmológico</title>
+          <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-slate-50 min-h-screen flex items-center justify-center p-4 font-sans text-slate-800">
+          <div class="bg-white max-w-md w-full rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+            <div class="bg-gradient-to-r from-teal-700 to-cyan-800 text-white p-6 text-center">
+              <h1 class="text-xl font-bold tracking-wide">Centro Oftalmológico</h1>
+              <p class="text-xs text-teal-100 mt-1">Portal de Entrega Segura de Estudios Médicos</p>
+            </div>
+            <div class="p-6 space-y-4">
+              <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 leading-relaxed">
+                Por disposiciones de la Ley de Protección de Datos Personales (Ley 25.326), ingrese los <strong>últimos 4 dígitos de su DNI</strong> para acceder al informe.
+              </div>
+              <form method="GET" action="" class="space-y-4">
+                <div>
+                  <label class="block text-xs font-bold text-slate-700 mb-1">Últimos 4 dígitos del DNI</label>
+                  <input type="text" name="dni" maxlength="4" pattern="[0-9]{{4}}" required autofocus placeholder="Ej: 6799"
+                    class="w-full text-center tracking-widest text-lg font-bold border border-slate-300 rounded-lg py-2.5 focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-500/20" />
+                </div>
+                <button type="submit" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-2.5 rounded-lg text-sm shadow-md transition-colors">
+                  Validar y Descargar Estudio
+                </button>
+              </form>
+              <div class="text-[10px] text-center text-slate-400">
+                Enlace seguro con cifrado y expiración a las 72 hs de su emisión.
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+    except ValueError as ve:
+        return HTMLResponse(content=f"""
+        <!DOCTYPE html>
+        <html lang="es"><head><meta charset="UTF-8"><title>Acceso no disponible</title><script src="https://cdn.tailwindcss.com"></script></head>
+        <body class="bg-slate-50 min-h-screen flex items-center justify-center p-4 font-sans text-slate-800">
+          <div class="bg-white max-w-md w-full rounded-2xl shadow-xl border border-red-200 p-6 text-center space-y-3">
+            <div class="text-red-600 font-bold text-lg">Aviso de Seguridad</div>
+            <p class="text-xs text-slate-600">{str(ve)}</p>
+            <a href="javascript:history.back()" class="inline-block px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold">Volver a intentar</a>
+          </div>
+        </body></html>
+        """, status_code=400)
+    except Exception as e:
+        logger.error(f"Error descargando estudio con token {token}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/oftalmo/worklist-estudios")
+def get_worklist_estudios_endpoint(estado: str = "PENDIENTE", limit: int = 50):
+    """Obtiene la lista de trabajo (Worklist) de estudios complementarios solicitados."""
+    try:
+        return HistoriaOftalmoService.get_worklist_estudios(estado=estado, limit=limit)
+    except Exception as e:
+        logger.error(f"Error obteniendo worklist de estudios: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/oftalmo/worklist-estudios/{pedido_id}/completar")
+def completar_pedido_worklist_endpoint(
+    pedido_id: str,
+    payload: Dict[str, Any] = Body(...),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """Marca un pedido de estudio como completado y opcionalmente notifica al paciente con link seguro."""
+    try:
+        estudio_id = payload.get("estudio_id")
+        if not estudio_id:
+            raise HTTPException(status_code=400, detail="Se requiere el ID del estudio generado.")
+        notif = payload.get("notificar_whatsapp", True)
+        return HistoriaOftalmoService.completar_pedido_worklist(
+            pedido_id=pedido_id,
+            estudio_id=estudio_id,
+            user_payload=current_user,
+            notificar_whatsapp=notif
+        )
+    except Exception as e:
+        logger.error(f"Error completando pedido en worklist: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/oftalmo/consultas/{consulta_id}/sincronizar-geclisa")
@@ -8934,6 +9179,12 @@ def delete_pedidos_estudios_endpoint(lote_o_id: str):
     except Exception as e:
         logger.error(f"Error eliminando pedidos de estudios {lote_o_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/oftalmo/{paciente_id}")
+def get_historia_oftalmo_alias_endpoint(paciente_id: str):
+    """Alias compatible para obtener la historia clínica oftalmológica completa por paciente_id."""
+    return get_historia_oftalmo_endpoint(paciente_id)
 
 
 # =========================================================================

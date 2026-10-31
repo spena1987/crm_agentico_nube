@@ -28,6 +28,7 @@ import ModalTicketOCR from './historia-clinica/ocr/ModalTicketOCR'
 import ModalResumenWhatsApp from './historia-clinica/whatsapp/ModalResumenWhatsApp'
 import ModalVideosWhatsApp from './historia-clinica/whatsapp/ModalVideosWhatsApp'
 import PrintContainer from './historia-clinica/print/PrintTemplates'
+import DrawerAccionesRapidas, { DrawerTab } from './historia-clinica/DrawerAccionesRapidas'
 import { 
   PacienteData, 
   HistoriaClinicaOftalmo, 
@@ -72,6 +73,7 @@ interface ModalHistoriaClinicaProps {
     sexo?: string | null
     obra_social?: string | null
     plan_cobertura?: string | null
+    nro_afiliado?: string | null
     direccion?: string | null
   } | null
 }
@@ -96,11 +98,19 @@ export default function ModalHistoriaClinica({
   const [guardando, setGuardando] = useState<boolean>(false)
   const [ultimoGuardado, setUltimoGuardado] = useState<string | null>(null)
   const [sincronizandoGeclisa, setSincronizandoGeclisa] = useState<boolean>(false)
+  const [firmandoConsulta, setFirmandoConsulta] = useState<boolean>(false)
 
   const [modalOcrOpen, setModalOcrOpen] = useState(false)
   const [modalWaResumenOpen, setModalWaResumenOpen] = useState(false)
   const [modalWaVideosOpen, setModalWaVideosOpen] = useState(false)
   const [videosEspeciales, setVideosEspeciales] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [drawerTab, setDrawerTab] = useState<DrawerTab>('farmacos')
+
+  const handleOpenDrawer = (tab: DrawerTab) => {
+    setDrawerTab(tab)
+    setDrawerOpen(true)
+  }
 
   const [printConfig, setPrintConfig] = useState<{
     tipo: 'ficha' | 'receta_anteojos' | 'receta_farmacos' | 'pedido_estudios' | 'indicaciones' | 'evolucion'
@@ -136,7 +146,9 @@ export default function ModalHistoriaClinica({
     try {
       let data: any = null
       try {
-        const res = await fetch(`${BACKEND_URL}/api/oftalmo/${pacienteId}`)
+        const res = await fetch(`${BACKEND_URL}/api/oftalmo/historia/${pacienteId}`, {
+          headers: await getAuthHeaders()
+        })
         if (res.ok) {
           data = await res.json()
         }
@@ -146,20 +158,34 @@ export default function ModalHistoriaClinica({
 
       if (!data) {
         // Fallback directo a Supabase
-        const [pRes, hRes, cRes, eRes, raRes, rfRes, peRes] = await Promise.all([
+        const [pRes, hRes, cRes, enmRes, eRes, raRes, rfRes, peRes] = await Promise.all([
           supabase.from('pacientes').select('*').eq('id', pacienteId).maybeSingle(),
           (supabase as any).from('historias_clinicas_oftalmo').select('*').eq('paciente_id', pacienteId).maybeSingle(),
           (supabase as any).from('consultas_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
+          (supabase as any).from('consultas_oftalmo_enmiendas').select('*').eq('paciente_id', pacienteId).order('created_at', { ascending: true }),
           (supabase as any).from('estudios_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
           (supabase as any).from('recetas_anteojos_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
           (supabase as any).from('recetas_farmacos_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false }),
           (supabase as any).from('pedidos_estudios_oftalmo').select('*').eq('paciente_id', pacienteId).order('fecha', { ascending: false })
         ])
 
+        const enmiendasPorConsulta: Record<string, any[]> = {}
+        for (const enm of (enmRes?.data || [])) {
+          if (!enmiendasPorConsulta[enm.consulta_id]) {
+            enmiendasPorConsulta[enm.consulta_id] = []
+          }
+          enmiendasPorConsulta[enm.consulta_id].push(enm)
+        }
+
+        const consultasConEnmiendas = (cRes.data || []).map((c: any) => ({
+          ...c,
+          enmiendas: enmiendasPorConsulta[c.id] || c.enmiendas || []
+        }))
+
         data = {
           paciente: pRes.data || null,
           historia: hRes.data || null,
-          consultas: cRes.data || [],
+          consultas: consultasConEnmiendas,
           estudios: eRes.data || [],
           recetas_anteojos: raRes.data || [],
           recetas_farmacos: rfRes.data || [],
@@ -179,6 +205,7 @@ export default function ModalHistoriaClinica({
         sexo: data.paciente?.sexo || paciente?.sexo || '',
         obra_social: data.paciente?.obra_social || paciente?.obra_social || '',
         plan_cobertura: data.paciente?.plan_cobertura || paciente?.plan_cobertura || '',
+        nro_afiliado: data.paciente?.nro_afiliado || (paciente as any)?.nro_afiliado || '',
         direccion: data.paciente?.direccion || paciente?.direccion || ''
       }
       setPacienteData(p)
@@ -250,25 +277,40 @@ export default function ModalHistoriaClinica({
     saveTimeoutRef.current = setTimeout(async () => {
       try {
         let guardadoBackend = false
+        const isConsultaInmutable = currentConsulta?.estado_legal === 'SIGNED' || currentConsulta?.estado_legal === 'AMENDED'
         try {
           const authHeaders = await getAuthHeaders()
           const resAntecedentes = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/antecedentes`, {
             method: 'PUT',
             headers: authHeaders,
             body: JSON.stringify({
+              ...newHistoria,
+              ...(newPaciente ? {
+                nombre_completo: (newPaciente as any).nombre_completo || newPaciente.nombre,
+                nombre: newPaciente.nombre,
+                dni: newPaciente.dni,
+                fecha_nacimiento: newPaciente.fecha_nacimiento,
+                telefono: newPaciente.telefono,
+                email: newPaciente.email,
+                obra_social: newPaciente.obra_social,
+                plan_cobertura: newPaciente.plan_cobertura,
+                nro_afiliado: newPaciente.nro_afiliado,
+                direccion: newPaciente.direccion,
+              } : {}),
               paciente: newPaciente,
               historia: newHistoria
             })
           })
 
-          if (currentConsulta) {
+          if (currentConsulta && !isConsultaInmutable) {
             const resCons = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
               method: 'POST',
               headers: authHeaders,
               body: JSON.stringify(currentConsulta)
             })
             if (resCons.ok) {
-              const saved = await resCons.json()
+              const raw = await resCons.json()
+              const saved = raw?.consulta || raw
               if (saved?.id && saved.id !== currentConsulta.id) {
                 setConsultas(prev => prev.map(c => c.id === currentConsulta.id ? { ...c, id: saved.id } : c))
                 setConsultaActivaId(prev => prev === currentConsulta.id ? saved.id : prev)
@@ -294,7 +336,7 @@ export default function ModalHistoriaClinica({
             observaciones_permanentes: newHistoria.observaciones_permanentes || ''
           }, { onConflict: 'paciente_id' })
 
-          if (currentConsulta) {
+          if (currentConsulta && !isConsultaInmutable) {
             await (supabase as any).from('consultas_oftalmo').upsert(currentConsulta)
           }
         }
@@ -329,8 +371,15 @@ export default function ModalHistoriaClinica({
 
   const handleUpdateConsultaActiva = (fields: Partial<ConsultaOftalmo>) => {
     if (!consultaActivaId) return
+    const currentActive = consultas.find(c => c.id === consultaActivaId)
+    if (currentActive?.estado_legal === 'SIGNED' || currentActive?.estado_legal === 'AMENDED') {
+      return
+    }
     setConsultas(prev => prev.map(c => {
       if (c.id === consultaActivaId) {
+        if (c.estado_legal === 'SIGNED' || c.estado_legal === 'AMENDED') {
+          return c
+        }
         const updated = { ...c, ...fields }
         if (pacienteData && historiaData) {
           triggerAutoSave(pacienteData, historiaData, updated)
@@ -367,13 +416,16 @@ export default function ModalHistoriaClinica({
     try {
       const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify(baseConsulta)
       })
       if (res.ok) {
-        const saved = await res.json()
-        setConsultas(prev => [saved, ...prev])
-        setConsultaActivaId(saved.id)
+        const raw = await res.json()
+        const saved = raw?.consulta || raw
+        if (saved?.id) {
+          setConsultas(prev => [saved, ...prev])
+          setConsultaActivaId(saved.id)
+        }
       }
     } catch (err) {
       console.error('Error creando consulta:', err)
@@ -382,7 +434,10 @@ export default function ModalHistoriaClinica({
 
   const handleEliminarConsulta = async (consultaId: string) => {
     try {
-      await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${consultaId}`, { method: 'DELETE' })
+      await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${consultaId}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      })
       const filtered = consultas.filter(c => c.id !== consultaId)
       setConsultas(filtered)
       if (consultaActivaId === consultaId) {
@@ -397,10 +452,11 @@ export default function ModalHistoriaClinica({
     setSincronizandoGeclisa(true)
     try {
       const authHeaders = await getAuthHeaders()
-      // 1. Asegurar que la consulta activa esté guardada en el backend antes de sincronizar
+      // 1. Asegurar que la consulta activa esté guardada en el backend antes de sincronizar (solo si no está firmada/enmendada)
       const activeCons = consultas.find(c => c.id === consultaId)
       let targetId = consultaId
-      if (activeCons && paciente?.id) {
+      const isSignedOrAmended = activeCons?.estado_legal === 'SIGNED' || activeCons?.estado_legal === 'AMENDED'
+      if (activeCons && paciente?.id && !isSignedOrAmended) {
         try {
           const saveRes = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
             method: 'POST',
@@ -408,7 +464,8 @@ export default function ModalHistoriaClinica({
             body: JSON.stringify(activeCons)
           })
           if (saveRes.ok) {
-            const saved = await saveRes.json()
+            const raw = await saveRes.json()
+            const saved = raw?.consulta || raw
             if (saved?.id && saved.id !== consultaId) {
               targetId = saved.id
               setConsultas(prev => prev.map(c => c.id === activeCons.id ? { ...c, id: saved.id } : c))
@@ -452,17 +509,109 @@ export default function ModalHistoriaClinica({
     }
   }
 
+  const handleFirmarConsulta = async (consultaId: string) => {
+    setFirmandoConsulta(true)
+    try {
+      const authHeaders = await getAuthHeaders()
+      // 1. Guardar primero si es borrador y hubo cambios
+      const activeCons = consultas.find(c => c.id === consultaId)
+      let targetId = consultaId
+      if (activeCons && paciente?.id && activeCons.estado_legal !== 'SIGNED' && activeCons.estado_legal !== 'AMENDED') {
+        try {
+          const saveRes = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/consultas`, {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(activeCons)
+          })
+          if (saveRes.ok) {
+            const saved = await saveRes.json()
+            const sData = saved?.consulta || saved
+            if (sData?.id && sData.id !== consultaId) {
+              targetId = sData.id
+              setConsultas(prev => prev.map(c => c.id === activeCons.id ? { ...c, id: sData.id } : c))
+              setConsultaActivaId(sData.id)
+            }
+          }
+        } catch (e) {
+          console.warn('Aviso guardado previo al firmado:', e)
+        }
+      }
+
+      // 2. Ejecutar firmado electrónico e inyección unificada en Geclisa
+      const signRes = await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${targetId}/firmar`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          profesional: {
+            nombre: activeCons?.profesional_nombre,
+            matricula: activeCons?.profesional_matricula
+          }
+        })
+      })
+      const signData = await signRes.json()
+      if (signRes.ok && signData.success) {
+        const signedCons = signData.consulta
+        setConsultas(prev => prev.map(c => (c.id === targetId || c.id === consultaId) ? { ...c, ...signedCons, estado_legal: 'SIGNED' } : c))
+        alert('Consulta médica firmada y cerrada exitosamente con firma electrónica (Leyes 26.529 y 27.553). El registro es ahora inmutable.')
+      } else {
+        const errDetail = signData.detail || signData.error || 'No se pudo firmar la consulta.'
+        alert(`Error al firmar consulta: ${errDetail}`)
+      }
+    } catch (err: any) {
+      console.error('Error al firmar consulta:', err)
+      alert(`Error al conectar con el servidor: ${err.message}`)
+    } finally {
+      setFirmandoConsulta(false)
+    }
+  }
+
+  const handleAgregarEnmienda = async (consultaId: string, motivo: string, texto: string): Promise<boolean> => {
+    try {
+      const authHeaders = await getAuthHeaders()
+      const res = await fetch(`${BACKEND_URL}/api/oftalmo/consultas/${consultaId}/enmiendas`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ motivo_enmienda: motivo, texto_adenda: texto })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        const newEnm = data.enmienda
+        setConsultas(prev => prev.map(c => {
+          if (c.id === consultaId) {
+            const currentEnms = c.enmiendas || []
+            return {
+              ...c,
+              estado_legal: 'AMENDED',
+              enmiendas: [...currentEnms, newEnm]
+            }
+          }
+          return c
+        }))
+        alert('Adenda legal registrada con éxito según Ley 26.529 Art. 15.')
+        return true
+      } else {
+        alert(data.detail || data.error || 'No se pudo registrar la adenda.')
+        return false
+      }
+    } catch (err: any) {
+      console.error('Error al agregar enmienda:', err)
+      alert(err.message || 'Error al agregar enmienda')
+      return false
+    }
+  }
+
   const handleAddEstudio = async (estudioData: Omit<EstudioOftalmo, 'id' | 'paciente_id'>) => {
     if (!paciente?.id) return
     let saved: EstudioOftalmo | null = null
     try {
       const res = await fetch(`${BACKEND_URL}/api/oftalmo/${paciente.id}/estudios`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify(estudioData)
       })
       if (res.ok) {
-        saved = await res.json()
+        const raw = await res.json()
+        saved = raw?.estudio || raw
       }
     } catch (e) {
       console.warn('Backend no disponible para estudio, guardando en Supabase')
@@ -484,7 +633,10 @@ export default function ModalHistoriaClinica({
 
   const handleDeleteEstudio = async (id: string) => {
     try {
-      await fetch(`${BACKEND_URL}/api/oftalmo/estudios/${id}`, { method: 'DELETE' })
+      await fetch(`${BACKEND_URL}/api/oftalmo/estudios/${id}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      })
     } catch (e) {
       // ignore
     }
@@ -569,7 +721,10 @@ export default function ModalHistoriaClinica({
 
   const handleDeleteRecetaAnteojos = async (id: string) => {
     try {
-      await fetch(`${BACKEND_URL}/api/oftalmo/recetas-anteojos/${id}`, { method: 'DELETE' })
+      await fetch(`${BACKEND_URL}/api/oftalmo/recetas-anteojos/${id}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      })
     } catch (e) {
       // ignore
     }
@@ -633,7 +788,10 @@ export default function ModalHistoriaClinica({
 
   const handleDeleteRecetaFarmacos = async (id: string) => {
     try {
-      await fetch(`${BACKEND_URL}/api/oftalmo/recetas-farmacos/${id}`, { method: 'DELETE' })
+      await fetch(`${BACKEND_URL}/api/oftalmo/recetas-farmacos/${id}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      })
     } catch (e) {
       // ignore
     }
@@ -703,7 +861,10 @@ export default function ModalHistoriaClinica({
 
   const handleDeletePedidoEstudios = async (id: string) => {
     try {
-      await fetch(`${BACKEND_URL}/api/oftalmo/pedidos-estudios/${id}`, { method: 'DELETE' })
+      await fetch(`${BACKEND_URL}/api/oftalmo/pedidos-estudios/${id}`, {
+        method: 'DELETE',
+        headers: await getAuthHeaders()
+      })
     } catch (e) {
       // ignore
     }
@@ -888,6 +1049,10 @@ export default function ModalHistoriaClinica({
                   }}
                   onImprimirEvolucion={() => handleImprimir({ tipo: 'evolucion' })}
                   onGenerarRecetaAnteojos={handleAddRecetaAnteojos}
+                  onOpenDrawer={handleOpenDrawer}
+                  onFirmarConsulta={handleFirmarConsulta}
+                  firmandoConsulta={firmandoConsulta}
+                  onAgregarEnmienda={handleAgregarEnmienda}
                 />
               )}
 
@@ -976,6 +1141,28 @@ export default function ModalHistoriaClinica({
             onClose={() => setModalWaVideosOpen(false)}
             paciente={pacienteData}
             especialesInicial={videosEspeciales}
+          />
+        )}
+
+        {pacienteData && (
+          <DrawerAccionesRapidas
+            isOpen={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            activeDrawerTab={drawerTab}
+            setActiveDrawerTab={setDrawerTab}
+            paciente={pacienteData}
+            consultaActiva={consultaActiva || undefined}
+            recetasFarmacos={recetasFarmacos}
+            pedidosEstudios={pedidosEstudios}
+            estudios={estudios}
+            onAddRecetaFarmacos={handleAddRecetaFarmacos}
+            onDeleteRecetaFarmacos={handleDeleteRecetaFarmacos}
+            onImprimirRecetaFarmacos={receta => handleImprimir({ tipo: 'receta_farmacos', recetaFarmacos: receta })}
+            onAddPedidoEstudios={handleAddPedidoEstudios}
+            onDeletePedidoEstudios={handleDeletePedidoEstudios}
+            onImprimirPedidoEstudios={pedido => handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: pedido })}
+            onAddEstudio={handleAddEstudio}
+            onDeleteEstudio={handleDeleteEstudio}
           />
         )}
 

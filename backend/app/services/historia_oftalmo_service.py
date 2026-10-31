@@ -1,8 +1,12 @@
 import logging
+import os
 import math
 import uuid
 import time
-from datetime import datetime, date, timezone
+import hashlib
+import json
+import secrets
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, Any, List, Optional, Union
 from app.db import supabase
 from app.services.logger_service import log_event
@@ -235,6 +239,22 @@ def formatear_evolucion_texto_geclisa(consulta: Dict[str, Any], paciente: Dict[s
     if prox:
         lineas.append(f"Próximo control: {prox}")
 
+    # 10. Adendas / Enmiendas Foliadas (Ley 26.529 Art. 15)
+    enmiendas = consulta.get("enmiendas") or []
+    if enmiendas and isinstance(enmiendas, list):
+        lineas.append("\n--- ADENDAS / ENMIENDAS FOLIADAS (Ley 26.529 Art. 15) ---")
+        for idx, enm in enumerate(enmiendas, start=1):
+            enm_fecha = str(enm.get("created_at") or "")[:19].replace("T", " ")
+            enm_prof = enm.get("profesional_nombre") or "Profesional Médico"
+            enm_mat = f" (Mat. {enm.get('profesional_matricula')})" if enm.get("profesional_matricula") else ""
+            enm_motivo = (enm.get("motivo_enmienda") or "").strip()
+            enm_texto = (enm.get("texto_adenda") or "").strip()
+            lineas.append(f"  [{idx}] Fecha: {enm_fecha} | Profesional: {enm_prof}{enm_mat}")
+            if enm_motivo:
+                lineas.append(f"      Motivo: {enm_motivo}")
+            if enm_texto:
+                lineas.append(f"      Adenda: {enm_texto}")
+
     lineas.append("\n------------------------------------------------------------")
     lineas.append("[Registrado digitalmente vía CRM Oftalmológico]")
     return "\n".join(lineas)
@@ -281,6 +301,29 @@ class HistoriaOftalmoService:
 
             consultas_res = supabase.table("consultas_oftalmo").select("*").eq("paciente_id", paciente_id).order("fecha", desc=True).order("created_at", desc=True).execute()
             consultas = consultas_res.data or []
+
+            # Obtener enmiendas / adendas foliadas asociadas (Ley 26.529 Art. 15)
+            try:
+                enm_res = supabase.table("consultas_oftalmo_enmiendas").select("*").eq("paciente_id", paciente_id).order("created_at", desc=False).execute()
+                enm_map = {}
+                for e in (enm_res.data or []):
+                    enm_map.setdefault(e.get("consulta_id"), []).append(e)
+                for c in consultas:
+                    c["enmiendas"] = enm_map.get(c.get("id"), [])
+                    if c["enmiendas"] and c.get("estado_legal") != "AMENDED":
+                        c["estado_legal"] = "AMENDED"
+                    elif c.get("geclisa_hc_id") and c.get("estado_legal") in (None, "", "DRAFT"):
+                        c["estado_legal"] = "SIGNED"
+                    elif not c.get("estado_legal"):
+                        c["estado_legal"] = "DRAFT"
+            except Exception as enm_err:
+                logger.debug(f"Aviso al cargar enmiendas para paciente {paciente_id}: {enm_err}")
+                for c in consultas:
+                    c["enmiendas"] = []
+                    if c.get("geclisa_hc_id") and c.get("estado_legal") in (None, "", "DRAFT"):
+                        c["estado_legal"] = "SIGNED"
+                    elif not c.get("estado_legal"):
+                        c["estado_legal"] = "DRAFT"
 
             # Auto-vincular estudios oftalmológicos enviados por técnicos cuando el paciente aún no existía en public.pacientes
             try:
@@ -341,24 +384,43 @@ class HistoriaOftalmoService:
     @staticmethod
     def save_antecedentes(paciente_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         try:
-            hc_update = {
-                "antecedentes_oculares": data.get("antecedentes_oculares", []),
-                "antecedentes_generales": data.get("antecedentes_generales", []),
-                "medicacion_habitual": data.get("medicacion_habitual", []),
-                "medicacion_otra": data.get("medicacion_otra", ""),
-                "alergias": data.get("alergias", ""),
-                "observaciones_permanentes": data.get("observaciones_permanentes", ""),
-                "extra_catalogos": data.get("extra_catalogos", {}),
-                "updated_at": "now()"
-            }
+            historia_src = data.get("historia") if isinstance(data.get("historia"), dict) else data
+            paciente_src = data.get("paciente") if isinstance(data.get("paciente"), dict) else data
+
+            hc_keys = [
+                "antecedentes_oculares",
+                "antecedentes_generales",
+                "medicacion_habitual",
+                "medicacion_otra",
+                "alergias",
+                "observaciones_permanentes",
+                "extra_catalogos"
+            ]
+            hc_update: Dict[str, Any] = {"updated_at": "now()"}
+            for hk in hc_keys:
+                if hk in historia_src and historia_src[hk] is not None:
+                    hc_update[hk] = historia_src[hk]
+
             res = supabase.table("historias_clinicas_oftalmo").update(hc_update).eq("paciente_id", paciente_id).execute()
 
-            paciente_fields = {}
-            for k in ["nombre", "dni", "nro_hc", "fecha_nacimiento", "sexo", "telefono", "obra_social", "plan_cobertura"]:
-                if k in data and data[k] is not None:
-                    paciente_fields[k] = data[k]
+            paciente_fields: Dict[str, Any] = {}
+            for k in ["nombre", "dni", "nro_hc", "fecha_nacimiento", "sexo", "telefono", "email", "obra_social", "plan_cobertura", "nro_afiliado", "direccion"]:
+                if k in paciente_src and paciente_src[k] is not None:
+                    paciente_fields[k] = paciente_src[k]
+            if "nombre_completo" in paciente_src and paciente_src["nombre_completo"] and "nombre" not in paciente_fields:
+                paciente_fields["nombre"] = paciente_src["nombre_completo"]
+
             if paciente_fields:
-                supabase.table("pacientes").update(paciente_fields).eq("id", paciente_id).execute()
+                try:
+                    supabase.table("pacientes").update(paciente_fields).eq("id", paciente_id).execute()
+                except Exception as pac_err:
+                    logger.warning(f"Aviso actualizando paciente {paciente_id} (reintentando sin nro_afiliado): {pac_err}")
+                    fallback_fields = {k: v for k, v in paciente_fields.items() if k != "nro_afiliado"}
+                    if fallback_fields:
+                        try:
+                            supabase.table("pacientes").update(fallback_fields).eq("id", paciente_id).execute()
+                        except Exception as pac_err2:
+                            logger.warning(f"No se pudo actualizar paciente {paciente_id}: {pac_err2}")
 
             log_event(
                 nivel="INFO",
@@ -450,15 +512,20 @@ class HistoriaOftalmoService:
                     is_valid_uuid = False
 
             if consulta_id and is_valid_uuid:
-                exists_res = supabase.table("consultas_oftalmo").select("id").eq("id", consulta_id).limit(1).execute()
+                exists_res = supabase.table("consultas_oftalmo").select("id, estado_legal, geclisa_hc_id").eq("id", consulta_id).limit(1).execute()
                 if exists_res.data:
+                    curr_estado = exists_res.data[0].get("estado_legal")
+                    if curr_estado in ["SIGNED", "AMENDED"]:
+                        raise ValueError("Operación denegada: La consulta médica se encuentra firmada e inmutable (Ley 26.529). Confeccione una adenda.")
                     res = supabase.table("consultas_oftalmo").update(registro).eq("id", consulta_id).execute()
                 else:
                     registro["id"] = consulta_id
+                    registro["estado_legal"] = "DRAFT"
                     registro["created_at"] = "now()"
                     res = supabase.table("consultas_oftalmo").insert(registro).execute()
                 saved_consulta = res.data[0] if res.data else {**registro, "id": consulta_id}
             else:
+                registro["estado_legal"] = "DRAFT"
                 registro["created_at"] = "now()"
                 res = supabase.table("consultas_oftalmo").insert(registro).execute()
                 saved_consulta = res.data[0] if res.data else registro
@@ -478,31 +545,65 @@ class HistoriaOftalmoService:
                 except Exception as ases_err:
                     logger.warning(f"No se pudo vincular asesoría quirúrgica: {ases_err}")
 
+            HistoriaOftalmoService.registrar_audit_log(
+                paciente_id=paciente_id,
+                entidad="CONSULTA",
+                entidad_id=consulta_id,
+                accion="UPDATE_DRAFT" if (exists_res.data if consulta_id and is_valid_uuid else False) else "CREATE_DRAFT",
+                detalles={"tipo": registro.get("tipo"), "fecha": registro.get("fecha")}
+            )
+
             return {"success": True, "consulta": saved_consulta}
         except Exception as e:
             logger.error(f"Error en save_consulta: {e}")
             raise
 
     @staticmethod
-    def delete_consulta(consulta_id: str) -> Dict[str, Any]:
+    def delete_consulta(
+        consulta_id: str,
+        user_payload: Optional[Dict[str, Any]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
         try:
+            # 1. Verificar inmutabilidad legal (Ley 26.529 Art. 15)
+            c_res = supabase.table("consultas_oftalmo").select("id, paciente_id, estado_legal, geclisa_hc_id").eq("id", consulta_id).limit(1).execute()
+            if not c_res.data:
+                return {"success": True, "deleted_id": consulta_id}
+
+            c_row = c_res.data[0]
+            if c_row.get("estado_legal") in ["SIGNED", "AMENDED"]:
+                raise ValueError("Operación denegada: No es legalmente admisible eliminar una consulta médica firmada o cerrada (Ley 26.529). Debe registrar una adenda o enmienda foliada.")
+
             # Coexistencia: Verificar si tiene un hcId en Geclisa para darlo de baja si está permitido
-            c_res = supabase.table("consultas_oftalmo").select("id, geclisa_hc_id").eq("id", consulta_id).limit(1).execute()
-            if c_res.data:
-                ghc_id = c_res.data[0].get("geclisa_hc_id")
-                if ghc_id and int(ghc_id) > 0:
-                    try:
-                        geclisa = GeclisaClient()
-                        val = geclisa.validar_editar_eliminar_hc(int(ghc_id))
-                        if val.get("permitido", True):
-                            geclisa.eliminar_hc(int(ghc_id))
-                            logger.info(f"Evolución hcId {ghc_id} eliminada en Geclisa correctamente.")
-                        else:
-                            logger.warning(f"Geclisa no permitió eliminar hcId {ghc_id}: {val.get('motivo')}")
-                    except Exception as ex_del_gec:
-                        logger.warning(f"Error intentando dar de baja en Geclisa hcId {ghc_id}: {ex_del_gec}")
+            ghc_id = c_row.get("geclisa_hc_id")
+            if ghc_id and int(ghc_id) > 0:
+                try:
+                    geclisa = GeclisaClient()
+                    val = geclisa.validar_editar_eliminar_hc(int(ghc_id))
+                    if val.get("permitido", True):
+                        geclisa.eliminar_hc(int(ghc_id))
+                        logger.info(f"Evolución hcId {ghc_id} eliminada en Geclisa correctamente.")
+                    else:
+                        logger.warning(f"Geclisa no permitió eliminar hcId {ghc_id}: {val.get('motivo')}")
+                except Exception as ex_del_gec:
+                    logger.warning(f"Error intentando dar de baja en Geclisa hcId {ghc_id}: {ex_del_gec}")
 
             supabase.table("consultas_oftalmo").delete().eq("id", consulta_id).execute()
+
+            paciente_id = c_row.get("paciente_id")
+            if paciente_id:
+                HistoriaOftalmoService.registrar_audit_log(
+                    paciente_id=paciente_id,
+                    entidad="CONSULTA",
+                    entidad_id=consulta_id,
+                    accion="DELETE_DRAFT",
+                    usuario_id=user_payload.get("sub") or user_payload.get("id") if user_payload else None,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    detalles={"geclisa_hc_id": ghc_id}
+                )
+
             return {"success": True, "deleted_id": consulta_id}
         except Exception as e:
             logger.error(f"Error eliminando consulta {consulta_id}: {e}")
@@ -551,6 +652,14 @@ class HistoriaOftalmoService:
                         "sincronizado": False,
                         "motivo": val.get("motivo") or "Geclisa no permite modificar esta evolución clínica según sus reglas de negocio."
                     }
+
+            # Cargar adendas / enmiendas foliadas para incluirlas en la evolución de Geclisa (Ley 26.529 Art. 15)
+            try:
+                enm_res = supabase.table("consultas_oftalmo_enmiendas").select("*").eq("consulta_id", consulta_id).order("created_at", desc=False).execute()
+                c["enmiendas"] = enm_res.data or []
+            except Exception as enm_err:
+                logger.debug(f"No se pudieron cargar enmiendas al sincronizar consulta {consulta_id} con Geclisa: {enm_err}")
+                c["enmiendas"] = []
 
             # Compilar evolución en texto clínico estructurado y legible
             texto_evolucion = formatear_evolucion_texto_geclisa(consulta=c, paciente=paciente)
@@ -762,3 +871,584 @@ class HistoriaOftalmoService:
     def delete_pedidos_estudios(lote_o_id: str) -> Dict[str, Any]:
         supabase.table("pedidos_estudios_oftalmo").delete().or_(f"id.eq.{lote_o_id},lote_id.eq.{lote_o_id}").execute()
         return {"success": True, "deleted": lote_o_id}
+
+    # ====================================================================
+    # MÉTODOS DE TRAZABILIDAD LEGAL, FIRMA ELECTRÓNICA Y ENMIENDAS (Leyes 26.529, 25.326, 27.553)
+    # ====================================================================
+
+    @staticmethod
+    def registrar_audit_log(
+        paciente_id: str,
+        entidad: str,
+        entidad_id: Optional[str],
+        accion: str,
+        usuario_id: Optional[str] = None,
+        usuario_nombre: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        detalles: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Registra un evento inmutable de auditoría para trazabilidad de HCE según Ley 25.326 (Habeas Data).
+        """
+        try:
+            log_item = {
+                "paciente_id": paciente_id,
+                "entidad": entidad,
+                "entidad_id": entidad_id,
+                "accion": accion,
+                "usuario_id": usuario_id,
+                "usuario_nombre": usuario_nombre,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+                "detalles": detalles or {},
+                "created_at": "now()"
+            }
+            supabase.table("hce_audit_logs").insert(log_item).execute()
+        except Exception as audit_err:
+            logger.warning(f"No se pudo registrar HCE audit log: {audit_err}")
+
+    @staticmethod
+    def sign_consulta(
+        consulta_id: str,
+        user_payload: Optional[Dict[str, Any]] = None,
+        profesional_override: Optional[Dict[str, str]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Firma electrónicamente una consulta médica cerrándola de forma inmutable.
+        Genera un hash SHA-256 canónico de los datos clínicos e inyecta la evolución en Geclisa (1-clic).
+        Cumple con Ley 26.529 (Inmutabilidad), Ley 25.326 (Habeas Data) y Ley 27.553 (Firma/Identificación).
+        """
+        try:
+            c_res = supabase.table("consultas_oftalmo").select("*").eq("id", consulta_id).limit(1).execute()
+            if not c_res.data:
+                raise ValueError(f"Consulta {consulta_id} no encontrada.")
+
+            c_data = c_res.data[0]
+            if c_data.get("estado_legal") in ["SIGNED", "AMENDED"]:
+                return {"success": True, "already_signed": True, "consulta": c_data}
+
+            paciente_id = c_data.get("paciente_id")
+
+            # 1. Determinar datos del profesional actuante
+            user_id = user_payload.get("sub") or user_payload.get("id") if user_payload else None
+            profesional_nombre = c_data.get("profesional_nombre") or ""
+            profesional_matricula = c_data.get("profesional_matricula") or ""
+
+            if user_id:
+                try:
+                    u_res = supabase.table("usuarios_perfil").select("id, nombre_completo, geclisa_matricula").eq("id", user_id).limit(1).execute()
+                    if u_res.data:
+                        u = u_res.data[0]
+                        profesional_nombre = u.get("nombre_completo") or profesional_nombre
+                        profesional_matricula = u.get("geclisa_matricula") or profesional_matricula
+                except Exception as u_err:
+                    logger.debug(f"No se pudo resolver usuario_perfil para {user_id}: {u_err}")
+
+            if profesional_override:
+                if profesional_override.get("nombre"):
+                    profesional_nombre = profesional_override["nombre"]
+                if profesional_override.get("matricula"):
+                    profesional_matricula = profesional_override["matricula"]
+
+            if not profesional_nombre:
+                profesional_nombre = "Médico Oftalmólogo Responsable"
+
+            # 2. Generar Hash Criptográfico SHA-256 canónico (Inviolabilidad Ley 26.529 Art. 15)
+            now_iso = datetime.now(timezone.utc).isoformat()
+            canonical_record = {
+                "consulta_id": str(consulta_id),
+                "paciente_id": str(paciente_id),
+                "fecha": str(c_data.get("fecha")),
+                "profesional_nombre": profesional_nombre,
+                "profesional_matricula": profesional_matricula,
+                "motivo_consulta": c_data.get("motivo_consulta") or "",
+                "agudeza_visual": c_data.get("agudeza_visual") or {},
+                "refraccion": c_data.get("refraccion") or {},
+                "biomicroscopia": c_data.get("biomicroscopia") or {},
+                "fondo_ojo": c_data.get("fondo_ojo") or {},
+                "presion_intraocular": c_data.get("presion_intraocular") or {},
+                "conducta": c_data.get("conducta") or {},
+                "signed_at": now_iso
+            }
+            canonical_json = json.dumps(canonical_record, sort_keys=True, default=str)
+            signature_sha256 = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+            # 3. Guardar estado legal firmado
+            update_fields = {
+                "estado_legal": "SIGNED",
+                "signed_at": now_iso,
+                "profesional_user_id": user_id,
+                "profesional_nombre": profesional_nombre,
+                "profesional_matricula": profesional_matricula,
+                "signature_sha256": signature_sha256,
+                "geclisa_sync_status": "SYNCING",
+                "updated_at": "now()"
+            }
+            res_upd = supabase.table("consultas_oftalmo").update(update_fields).eq("id", consulta_id).execute()
+            signed_consulta = res_upd.data[0] if res_upd.data else {**c_data, **update_fields}
+
+            # 4. Sincronización automática unificada con Geclisa (1-Clic)
+            sync_result = {}
+            try:
+                sync_result = HistoriaOftalmoService.sincronizar_con_geclisa(consulta_id)
+                status_sync = "SYNCED" if sync_result.get("success") else "ERROR"
+                supabase.table("consultas_oftalmo").update({"geclisa_sync_status": status_sync}).eq("id", consulta_id).execute()
+                signed_consulta["geclisa_sync_status"] = status_sync
+                if sync_result.get("hc_id"):
+                    signed_consulta["geclisa_hc_id"] = sync_result["hc_id"]
+            except Exception as sync_ex:
+                logger.warning(f"Aviso: Falló sincronización con Geclisa al firmar consulta {consulta_id}: {sync_ex}")
+                supabase.table("consultas_oftalmo").update({"geclisa_sync_status": "ERROR"}).eq("id", consulta_id).execute()
+                signed_consulta["geclisa_sync_status"] = "ERROR"
+
+            # 5. Registro inmutable en HCE Audit Log (Ley 25.326)
+            HistoriaOftalmoService.registrar_audit_log(
+                paciente_id=paciente_id,
+                entidad="CONSULTA",
+                entidad_id=consulta_id,
+                accion="SIGN",
+                usuario_id=user_id,
+                usuario_nombre=profesional_nombre,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                detalles={
+                    "signature_sha256": signature_sha256,
+                    "signed_at": now_iso,
+                    "profesional_matricula": profesional_matricula,
+                    "geclisa_sync": sync_result.get("success", False)
+                }
+            )
+
+            return {
+                "success": True,
+                "consulta": signed_consulta,
+                "signature_sha256": signature_sha256,
+                "geclisa_result": sync_result
+            }
+        except Exception as e:
+            logger.error(f"Error firmando consulta {consulta_id}: {e}")
+            raise
+
+    @staticmethod
+    def add_enmienda(
+        consulta_id: str,
+        motivo_enmienda: str,
+        texto_adenda: str,
+        user_payload: Optional[Dict[str, Any]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Registra una adenda/enmienda formal foliada a una consulta médica firmada (Ley 26.529 Art. 15).
+        No altera los datos clínicos originales del asiento médico.
+        """
+        try:
+            c_res = supabase.table("consultas_oftalmo").select("id, paciente_id, estado_legal, profesional_nombre, profesional_matricula, geclisa_hc_id, geclisa_sync_status").eq("id", consulta_id).limit(1).execute()
+            if not c_res.data:
+                raise ValueError(f"Consulta {consulta_id} no encontrada.")
+
+            c_data = c_res.data[0]
+            paciente_id = c_data.get("paciente_id")
+
+            user_id = user_payload.get("sub") or user_payload.get("id") if user_payload else None
+            prof_nombre = c_data.get("profesional_nombre") or "Profesional Médico"
+            prof_mat = c_data.get("profesional_matricula") or ""
+
+            if user_id:
+                try:
+                    u_res = supabase.table("usuarios_perfil").select("id, nombre_completo, geclisa_matricula").eq("id", user_id).limit(1).execute()
+                    if u_res.data:
+                        u = u_res.data[0]
+                        prof_nombre = u.get("nombre_completo") or prof_nombre
+                        prof_mat = u.get("geclisa_matricula") or prof_mat
+                except Exception:
+                    pass
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            hash_raw = f"{consulta_id}:{paciente_id}:{motivo_enmienda}:{texto_adenda}:{now_iso}"
+            enm_sha256 = hashlib.sha256(hash_raw.encode("utf-8")).hexdigest()
+
+            enmienda_record = {
+                "consulta_id": consulta_id,
+                "paciente_id": paciente_id,
+                "profesional_user_id": user_id,
+                "profesional_nombre": prof_nombre,
+                "profesional_matricula": prof_mat,
+                "motivo_enmienda": motivo_enmienda,
+                "texto_adenda": texto_adenda,
+                "signature_sha256": enm_sha256,
+                "created_at": now_iso
+            }
+
+            res = supabase.table("consultas_oftalmo_enmiendas").insert(enmienda_record).execute()
+            saved_enmienda = res.data[0] if res.data else enmienda_record
+
+            # Actualizar estado de la consulta a AMENDED
+            supabase.table("consultas_oftalmo").update({"estado_legal": "AMENDED"}).eq("id", consulta_id).execute()
+
+            # Re-sincronizar con Geclisa si la consulta ya estaba sincronizada para reflejar la adenda foliada
+            geclisa_sync_res = None
+            if c_data.get("geclisa_hc_id") or c_data.get("geclisa_sync_status") == "SYNCED":
+                try:
+                    geclisa_sync_res = HistoriaOftalmoService.sincronizar_con_geclisa(consulta_id, usuario_actual=user_payload)
+                except Exception as gec_sync_err:
+                    logger.warning(f"Aviso al re-sincronizar adenda con Geclisa para consulta {consulta_id}: {gec_sync_err}")
+
+            # Registrar audit log
+            HistoriaOftalmoService.registrar_audit_log(
+                paciente_id=paciente_id,
+                entidad="ENMIENDA",
+                entidad_id=saved_enmienda.get("id"),
+                accion="AMEND",
+                usuario_id=user_id,
+                usuario_nombre=prof_nombre,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                detalles={
+                    "consulta_id": consulta_id,
+                    "motivo_enmienda": motivo_enmienda,
+                    "signature_sha256": enm_sha256,
+                    "geclisa_resync": bool(geclisa_sync_res and geclisa_sync_res.get("success"))
+                }
+            )
+
+            return {"success": True, "enmienda": saved_enmienda, "geclisa_sync": geclisa_sync_res}
+        except Exception as e:
+            logger.error(f"Error agregando enmienda a consulta {consulta_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_enmiendas(consulta_id: str) -> Dict[str, Any]:
+        """Obtiene las adendas/enmiendas foliadas cronológicas de una consulta."""
+        try:
+            res = supabase.table("consultas_oftalmo_enmiendas").select("*").eq("consulta_id", consulta_id).order("created_at", desc=False).execute()
+            return {"success": True, "enmiendas": res.data or []}
+        except Exception as e:
+            logger.error(f"Error obteniendo enmiendas para consulta {consulta_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_audit_logs(paciente_id: str, limit: int = 50) -> Dict[str, Any]:
+        """Obtiene el historial de auditoría de HCE para un paciente (Ley 25.326)."""
+        try:
+            res = supabase.table("hce_audit_logs").select("*").eq("paciente_id", paciente_id).order("created_at", desc=True).limit(limit).execute()
+            return {"success": True, "logs": res.data or []}
+        except Exception as e:
+            logger.error(f"Error obteniendo audit logs para paciente {paciente_id}: {e}")
+            raise
+
+    # ====================================================================
+    # FASE 3: CONECTORES TRANSACCIONALES WHATSAPP, WORKLIST Y LINKS EFÍMEROS
+    # ====================================================================
+
+    @staticmethod
+    def despachar_resumen_whatsapp(
+        paciente_id: str,
+        consulta_id: str,
+        texto_mensaje: str,
+        user_payload: Optional[Dict[str, Any]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Despacha directamente el resumen/epicrisis de la consulta médica al WhatsApp del paciente
+        utilizando Meta WhatsApp Cloud API e inyectándolo en el hilo conversacional del CRM.
+        """
+        try:
+            # 1. Obtener datos del paciente
+            p_res = supabase.table("pacientes").select("id, nombre, telefono, dni").eq("id", paciente_id).limit(1).execute()
+            if not p_res.data:
+                raise ValueError(f"Paciente {paciente_id} no encontrado.")
+            pac = p_res.data[0]
+            telefono = pac.get("telefono")
+            if not telefono:
+                raise ValueError("El paciente no tiene un número de celular configurado.")
+
+            user_id = user_payload.get("sub") or user_payload.get("id") if user_payload else None
+            user_name = "Médico Oftalmólogo"
+            if user_id:
+                try:
+                    u_res = supabase.table("usuarios_perfil").select("nombre_completo").eq("id", user_id).limit(1).execute()
+                    if u_res.data and u_res.data[0].get("nombre_completo"):
+                        user_name = u_res.data[0]["nombre_completo"]
+                except Exception:
+                    pass
+
+            # 2. Despachar mensaje vía Meta WhatsApp Cloud API
+            from app.whatsapp import whatsapp_manager
+            res_wa = whatsapp_manager.enviar_mensaje(
+                telefono_o_jid=telefono,
+                texto=texto_mensaje,
+                emisor="medico",
+                usuario_id=user_id,
+                usuario_nombre=user_name
+            )
+
+            wamid = res_wa.get("wamid") or res_wa.get("id") or ""
+            error_wa = res_wa.get("error")
+
+            # 3. Registrar timestamp en la consulta
+            now_iso = datetime.now(timezone.utc).isoformat()
+            supabase.table("consultas_oftalmo").update({
+                "resumen_enviado_at": now_iso
+            }).eq("id", consulta_id).execute()
+
+            # 4. Programar Triggers de Seguimiento Clínico si aplica
+            try:
+                c_res = supabase.table("consultas_oftalmo").select("tipo, datos_postop, conducta").eq("id", consulta_id).limit(1).execute()
+                if c_res.data:
+                    c_data = c_res.data[0]
+                    tipo = c_data.get("tipo")
+                    datos_postop = c_data.get("datos_postop") or {}
+                    conducta = c_data.get("conducta") or {}
+                    
+                    # Si es postop o tiene cirugía programada, programar seguimiento a las 24 hs
+                    if tipo == "postop" or datos_postop.get("fecha_cx") or conducta.get("plan_cx"):
+                        fecha_24h = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+                        supabase.table("hce_scheduled_triggers").insert({
+                            "paciente_id": paciente_id,
+                            "consulta_id": consulta_id,
+                            "tipo_trigger": "CONTROL_POSTOP_24H",
+                            "fecha_programada": fecha_24h,
+                            "estado": "PENDING",
+                            "payload_mensaje": {
+                                "tipo": "postop_24h",
+                                "paciente_nombre": pac.get("nombre"),
+                                "telefono": telefono
+                            }
+                        }).execute()
+            except Exception as trig_err:
+                logger.warning(f"Aviso programando triggers automáticos: {trig_err}")
+
+            # 5. Registrar en audit log
+            HistoriaOftalmoService.registrar_audit_log(
+                paciente_id=paciente_id,
+                entidad="CONSULTA",
+                entidad_id=consulta_id,
+                accion="SHARE_WA",
+                usuario_id=user_id,
+                usuario_nombre=user_name,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                detalles={
+                    "telefono": telefono,
+                    "wamid": wamid,
+                    "error": error_wa,
+                    "enviado_real": res_wa.get("enviado_real", True)
+                }
+            )
+
+            if error_wa and not res_wa.get("enviado_real", False):
+                return {
+                    "success": False,
+                    "error": error_wa,
+                    "telefono": telefono,
+                    "requiere_wa_me": "window" in str(error_wa).lower() or "template" in str(error_wa).lower()
+                }
+
+            return {
+                "success": True,
+                "wamid": wamid,
+                "telefono": telefono,
+                "resumen_enviado_at": now_iso
+            }
+        except Exception as e:
+            logger.error(f"Error despachando resumen WhatsApp para paciente {paciente_id}: {e}")
+            raise
+
+    @staticmethod
+    def crear_token_descarga_estudio(
+        estudio_id: str,
+        ttl_horas: int = 72,
+        user_payload: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Genera un token efímero seguro (con TTL) para descarga de estudios médicos según Ley 25.326.
+        Requiere validación de factor DNI para acceso del paciente sin login.
+        """
+        try:
+            est_res = supabase.table("estudios_oftalmo").select("*").eq("id", estudio_id).limit(1).execute()
+            if not est_res.data:
+                raise ValueError(f"Estudio {estudio_id} no encontrado.")
+            est = est_res.data[0]
+            paciente_id = est.get("paciente_id")
+            if not paciente_id:
+                raise ValueError("El estudio no tiene un paciente asociado.")
+
+            # Obtener últimos 4 dígitos de DNI del paciente (o últimos 4 dígitos del teléfono si carece de DNI)
+            p_res = supabase.table("pacientes").select("id, dni, nombre, telefono").eq("id", paciente_id).limit(1).execute()
+            p_row = p_res.data[0] if p_res.data else {}
+            dni_raw = str(p_row.get("dni") or est.get("dni_paciente") or "")
+            dni_digits = "".join(filter(str.isdigit, dni_raw))
+            tel_raw = str(p_row.get("telefono") or est.get("telefono_destino") or "")
+            tel_digits = "".join(filter(str.isdigit, tel_raw))
+
+            if len(dni_digits) >= 4:
+                dni_last4 = dni_digits[-4:]
+                dni_last4_hint = " últimos 4 dígitos de su DNI"
+            elif len(tel_digits) >= 4:
+                dni_last4 = tel_digits[-4:]
+                dni_last4_hint = " últimos 4 dígitos de su teléfono celular (sin DNI registrado)"
+            else:
+                dni_last4 = "1234"
+                dni_last4_hint = " código temporal 1234 (sin DNI ni teléfono registrado)"
+
+            token_hash = secrets.token_urlsafe(32)
+            now = datetime.now(timezone.utc)
+            expires_at = (now + timedelta(hours=ttl_horas)).isoformat()
+
+            share_item = {
+                "token_hash": token_hash,
+                "paciente_id": paciente_id,
+                "estudio_id": estudio_id,
+                "consulta_id": est.get("consulta_id"),
+                "archivo_url": est.get("archivo_url") or "",
+                "archivo_nombre": est.get("archivo_nombre") or est.get("nombre_archivo") or "informe_estudio.pdf",
+                "mime_type": est.get("mime_type") or "application/pdf",
+                "dni_last4": dni_last4,
+                "expires_at": expires_at,
+                "accesos_count": 0,
+                "max_accesos": 10,
+                "created_at": "now()"
+            }
+            ins_res = supabase.table("hce_document_share_tokens").insert(share_item).execute()
+
+            return {
+                "success": True,
+                "token": token_hash,
+                "expires_at": expires_at,
+                "dni_last4": dni_last4,
+                "dni_last4_hint": dni_last4_hint.strip(),
+                "archivo_nombre": share_item["archivo_nombre"],
+                "paciente_nombre": p_row.get("nombre") or "",
+                "telefono": p_row.get("telefono") or ""
+            }
+        except Exception as e:
+            logger.error(f"Error creando token de descarga de estudio {estudio_id}: {e}")
+            raise
+
+    @staticmethod
+    def validar_y_obtener_estudio_token(token_hash: str, dni_last4_input: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Valida el token efímero y el 2do factor (últimos 4 dígitos del DNI).
+        """
+        try:
+            tok_res = supabase.table("hce_document_share_tokens").select("*").eq("token_hash", token_hash).limit(1).execute()
+            if not tok_res.data:
+                raise ValueError("El enlace de descarga es inválido o ha sido revocado.")
+
+            token_data = tok_res.data[0]
+            expires_at_str = token_data.get("expires_at")
+            if expires_at_str:
+                exp_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) > exp_dt:
+                    raise ValueError("El enlace seguro ha expirado por motivos de privacidad (Ley 25.326). Solicite uno nuevo a la clínica.")
+
+            if token_data.get("accesos_count", 0) >= token_data.get("max_accesos", 10):
+                raise ValueError("Se ha alcanzado el límite máximo de descargas para este enlace.")
+
+            # Validación de DNI de 4 dígitos
+            if dni_last4_input:
+                clean_in = "".join(filter(str.isdigit, str(dni_last4_input)))[-4:]
+                if clean_in != token_data.get("dni_last4"):
+                    raise ValueError("Los últimos 4 dígitos del DNI ingresados no son correctos.")
+
+            # Registrar acceso
+            supabase.table("hce_document_share_tokens").update({
+                "accesos_count": token_data.get("accesos_count", 0) + 1,
+                "ultimo_acceso_at": "now()"
+            }).eq("id", token_data["id"]).execute()
+
+            return {
+                "success": True,
+                "archivo_url": token_data["archivo_url"],
+                "archivo_nombre": token_data["archivo_nombre"],
+                "mime_type": token_data["mime_type"],
+                "paciente_id": token_data["paciente_id"]
+            }
+        except Exception as e:
+            logger.error(f"Error validando token de descarga {token_hash}: {e}")
+            raise
+
+    @staticmethod
+    def get_worklist_estudios(estado: str = "PENDIENTE", limit: int = 50) -> Dict[str, Any]:
+        """
+        Obtiene la lista de trabajo (Worklist) de estudios complementarios solicitados en consultorio
+        para los técnicos de diagnóstico.
+        """
+        try:
+            q = supabase.table("pedidos_estudios_oftalmo").select("*, pacientes(id, nombre, dni, telefono, obra_social, plan_cobertura)")
+            if estado and estado != "TODOS":
+                q = q.eq("estado", estado)
+            res = q.order("fecha", desc=True).order("created_at", desc=True).limit(limit).execute()
+            return {"success": True, "pedidos": res.data or []}
+        except Exception as e:
+            logger.error(f"Error obteniendo worklist de estudios: {e}")
+            raise
+
+    @staticmethod
+    def completar_pedido_worklist(
+        pedido_id: str,
+        estudio_id: str,
+        user_payload: Optional[Dict[str, Any]] = None,
+        notificar_whatsapp: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Marca un pedido de estudio como COMPLETADO en la Worklist del técnico,
+        lo vincula al estudio digitalizado y opcionalmente notifica al paciente con link efímero.
+        """
+        try:
+            user_id = user_payload.get("sub") or user_payload.get("id") if user_payload else None
+            user_name = "Técnico de Estudios"
+            if user_id:
+                try:
+                    u_res = supabase.table("usuarios_perfil").select("nombre_completo").eq("id", user_id).limit(1).execute()
+                    if u_res.data and u_res.data[0].get("nombre_completo"):
+                        user_name = u_res.data[0]["nombre_completo"]
+                except Exception:
+                    pass
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            upd = {
+                "estado": "COMPLETADO",
+                "estudio_oftalmo_id": estudio_id,
+                "completado_at": now_iso,
+                "tecnico_usuario_id": user_id,
+                "tecnico_nombre": user_name
+            }
+            res = supabase.table("pedidos_estudios_oftalmo").update(upd).eq("id", pedido_id).execute()
+            pedido = res.data[0] if res.data else upd
+
+            # Si se solicita notificación por WhatsApp
+            notif_res = {}
+            if notificar_whatsapp and pedido.get("paciente_id"):
+                try:
+                    tok_data = HistoriaOftalmoService.crear_token_descarga_estudio(estudio_id=estudio_id, ttl_horas=72)
+                    tel = tok_data.get("telefono")
+                    if tel:
+                        p_nom = tok_data.get("paciente_nombre") or "Paciente"
+                        doc_nom = tok_data.get("archivo_nombre") or "informe de estudio"
+                        token = tok_data.get("token")
+                        base_url = (
+                            os.getenv("FRONTEND_URL")
+                            or os.getenv("NEXT_PUBLIC_API_URL")
+                            or "https://crm-agentico-nube.vercel.app"
+                        ).rstrip("/")
+                        msg = (
+                            f"Hola *{p_nom}*, tu estudio oftalmológico (*{doc_nom}*) ya se encuentra disponible.\n\n"
+                            f"Puedes acceder al informe seguro en el siguiente enlace:\n"
+                            f"{base_url}/api/oftalmo/estudios/descargar/{token}\n\n"
+                            f"*(Por tu seguridad, el sistema te solicitará los últimos 4 dígitos de tu DNI para validar tu identidad - Enlace válido por 72 hs).*"
+                        )
+                        from app.whatsapp import whatsapp_manager
+                        notif_res = whatsapp_manager.enviar_mensaje(telefono_o_jid=tel, texto=msg, emisor="tecnico")
+                except Exception as ex_notif:
+                    logger.warning(f"Aviso notificando al paciente sobre estudio completado: {ex_notif}")
+
+            return {"success": True, "pedido": pedido, "notificacion": notif_res}
+        except Exception as e:
+            logger.error(f"Error completando pedido worklist {pedido_id}: {e}")
+            raise

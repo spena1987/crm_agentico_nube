@@ -57,7 +57,7 @@ export default function PrintContainer({
           <div><strong>Teléfono:</strong> {paciente.telefono || '—'}</div>
           <div><strong>Obra Social:</strong> {paciente.obra_social || 'Particular'}</div>
           <div><strong>Plan:</strong> {paciente.plan_cobertura || '—'}</div>
-          <div><strong>Afiliado:</strong> {paciente.direccion || '—'}</div>
+          <div><strong>Afiliado:</strong> {paciente.nro_afiliado || '—'}</div>
           <div><strong>Fecha Nac.:</strong> {paciente.fecha_nacimiento ? paciente.fecha_nacimiento.slice(0, 10) : '—'}</div>
         </div>
       </div>
@@ -151,6 +151,36 @@ export default function PrintContainer({
               <div><strong>Próximo control:</strong> {consulta.proximo_control}</div>
             )}
           </div>
+
+          {/* Adendas / Enmiendas Foliadas (Ley 26.529 Art. 15) */}
+          {consulta.enmiendas && consulta.enmiendas.length > 0 && (
+            <div className="border border-gray-500 rounded p-2.5 space-y-2 bg-gray-50/40">
+              <div className="font-black uppercase text-[11px] border-b border-gray-400 pb-1">
+                ADENDAS / ENMIENDAS FOLIADAS (Ley 26.529 Art. 15)
+              </div>
+              <div className="space-y-2">
+                {consulta.enmiendas.map((enm, idx) => (
+                  <div key={enm.id || idx} className="border-b border-gray-200 last:border-b-0 pb-1.5 last:pb-0 text-[10.5px]">
+                    <div className="flex items-center justify-between text-gray-700">
+                      <span>
+                        <strong>Folio #{idx + 1}</strong> · {enm.created_at ? new Date(enm.created_at).toLocaleString('es-AR') : ''}
+                      </span>
+                      <span>
+                        <strong>Prof.:</strong> {enm.profesional_nombre || '—'}
+                        {enm.profesional_matricula ? ` (M.P. ${enm.profesional_matricula})` : ''}
+                      </span>
+                    </div>
+                    <div>
+                      <strong>Motivo:</strong> {enm.motivo_enmienda}
+                    </div>
+                    <div className="whitespace-pre-wrap mt-0.5">
+                      <strong>Adenda:</strong> {enm.texto_adenda}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -322,11 +352,34 @@ export default function PrintContainer({
         </div>
       )}
 
-      {/* Firma y sello al pie */}
-      <div className="mt-16 pt-8 flex justify-end">
-        <div className="text-center border-t border-black w-56 pt-1">
-          <div className="font-bold text-xs">Firma y Sello Médico</div>
-          <div className="text-[10px] text-gray-500">M.P. / Especialista en Oftalmología</div>
+            {/* Firma y sello legal al pie (Leyes 26.529, 25.326, 27.553) */}
+      <div className="mt-12 pt-4 border-t border-gray-300 flex items-end justify-between">
+        <div className="max-w-[60%] space-y-1 text-[9px] text-gray-600">
+          <div className="font-bold text-gray-800 uppercase flex items-center gap-1">
+            <span>Documento Clínico con Firma Electrónica</span>
+            <span>· Leyes 26.529 / 27.553</span>
+          </div>
+          {consulta?.signature_sha256 ? (
+            <div>
+              <div><strong>Firma SHA-256:</strong> <span className="font-mono">{consulta.signature_sha256}</span></div>
+              <div><strong>Fecha de Firma:</strong> {consulta.signed_at ? new Date(consulta.signed_at).toLocaleString('es-AR') : 'Registrada'}</div>
+            </div>
+          ) : (
+            <div>Documento emitido conforme a normas vigentes de ejercicio profesional.</div>
+          )}
+          <div className="text-[8px] text-gray-500">
+            La integridad de este instrumento puede verificarse en la sede médica mediante su identificador digital.
+          </div>
+        </div>
+
+        <div className="text-center border-t border-black w-60 pt-1.5">
+          <div className="font-bold text-xs">
+            {consulta?.profesional_nombre || 'Firma y Sello Médico'}
+          </div>
+          <div className="text-[10px] text-gray-600">
+            {consulta?.profesional_matricula ? `M.P. ${consulta.profesional_matricula}` : 'M.P. / Especialista en Oftalmología'}
+          </div>
+          <div className="text-[9px] text-gray-500">Centro Oftalmológico de Alta Complejidad</div>
         </div>
       </div>
       </div>

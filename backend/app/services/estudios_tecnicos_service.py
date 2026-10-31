@@ -1502,6 +1502,7 @@ async def enviar_y_archivar_estudio_oftalmologico(
 
     return {
         "success": True,
+        "estudio_id": saved_record.get("id") if isinstance(saved_record, dict) else None,
         "geclisa_ok": geclisa_ok,
         "geclisa_as_id": geclisa_as_id,
         "geclisa_error": geclisa_err,
@@ -1629,6 +1630,7 @@ async def enviar_archivo_existente_geclisa_por_whatsapp(
 
     return {
         "success": True,
+        "estudio_id": saved.get("id") if isinstance(saved, dict) else None,
         "wamid": wa_res.get("wamid"),
         "estudio": saved
     }

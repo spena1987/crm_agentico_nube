@@ -8,6 +8,7 @@ export interface PacienteData {
   nro_hc?: string | null
   obra_social?: string | null
   plan_cobertura?: string | null
+  nro_afiliado?: string | null
   fecha_nacimiento?: string | null
   sexo?: string | null
   direccion?: string | null
@@ -165,7 +166,41 @@ export interface ConsultaOftalmo {
   geclisa_sincronizado_en?: string
   geclisa_as_id?: number
   geclisa_hc_id?: number | null
+  estado_legal?: 'DRAFT' | 'SIGNED' | 'AMENDED'
+  profesional_user_id?: string | null
+  profesional_matricula?: string | null
+  signed_at?: string | null
+  signature_sha256?: string | null
+  geclisa_sync_status?: string | null
+  enmiendas?: EnmiendaConsulta[]
   created_at?: string
+}
+
+export interface EnmiendaConsulta {
+  id: string
+  consulta_id: string
+  paciente_id: string
+  profesional_user_id?: string | null
+  profesional_nombre: string
+  profesional_matricula?: string | null
+  motivo_enmienda: string
+  texto_adenda: string
+  signature_sha256: string
+  created_at: string
+}
+
+export interface HceAuditLog {
+  id: string
+  entidad: string
+  entidad_id?: string | null
+  paciente_id: string
+  usuario_id?: string | null
+  usuario_nombre?: string | null
+  accion: string
+  ip_address?: string | null
+  user_agent?: string | null
+  detalles?: Record<string, any>
+  created_at: string
 }
 
 

@@ -24,6 +24,7 @@ create table public.pacientes (
     nro_hc varchar,
     obra_social varchar,
     plan_cobertura varchar,
+    nro_afiliado varchar(100),
     fecha_nacimiento date,
     sexo varchar,
     direccion text,
@@ -914,6 +915,12 @@ CREATE TABLE IF NOT EXISTS public.consultas_oftalmo (
     geclisa_archivo_id INTEGER,
     geclisa_as_id INTEGER,
     geclisa_hc_id INTEGER,
+    estado_legal VARCHAR(20) DEFAULT 'DRAFT' NOT NULL CHECK (estado_legal IN ('DRAFT', 'SIGNED', 'AMENDED')),
+    profesional_user_id UUID REFERENCES public.usuarios_perfil(id) ON DELETE SET NULL,
+    profesional_matricula VARCHAR(50),
+    signed_at TIMESTAMP WITH TIME ZONE,
+    signature_sha256 VARCHAR(64),
+    geclisa_sync_status VARCHAR(20) DEFAULT 'PENDING',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -922,6 +929,46 @@ CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_historia ON public.consultas_of
 CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_paciente ON public.consultas_oftalmo(paciente_id);
 CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_fecha ON public.consultas_oftalmo(fecha DESC);
 CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_geclisa_hc_id ON public.consultas_oftalmo(geclisa_hc_id);
+CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_estado_legal ON public.consultas_oftalmo(estado_legal);
+CREATE INDEX IF NOT EXISTS idx_consultas_oftalmo_profesional ON public.consultas_oftalmo(profesional_user_id);
+
+-- Enmiendas / Adendas a Consultas Oftalmológicas (Ley 26.529 Art. 15)
+CREATE TABLE IF NOT EXISTS public.consultas_oftalmo_enmiendas (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    consulta_id UUID NOT NULL REFERENCES public.consultas_oftalmo(id) ON DELETE RESTRICT,
+    paciente_id UUID NOT NULL REFERENCES public.pacientes(id) ON DELETE RESTRICT,
+    profesional_user_id UUID REFERENCES public.usuarios_perfil(id) ON DELETE SET NULL,
+    profesional_nombre VARCHAR(150) NOT NULL,
+    profesional_matricula VARCHAR(50),
+    motivo_enmienda TEXT NOT NULL,
+    texto_adenda TEXT NOT NULL,
+    signature_sha256 VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_consultas_enmiendas_consulta ON public.consultas_oftalmo_enmiendas(consulta_id);
+CREATE INDEX IF NOT EXISTS idx_consultas_enmiendas_paciente ON public.consultas_oftalmo_enmiendas(paciente_id);
+CREATE INDEX IF NOT EXISTS idx_consultas_enmiendas_created_at ON public.consultas_oftalmo_enmiendas(created_at DESC);
+
+-- Registro de Auditoría Inmutable de Historia Clínica (Ley 25.326 - Habeas Data)
+CREATE TABLE IF NOT EXISTS public.hce_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entidad VARCHAR(50) NOT NULL,
+    entidad_id UUID,
+    paciente_id UUID NOT NULL REFERENCES public.pacientes(id) ON DELETE CASCADE,
+    usuario_id UUID REFERENCES public.usuarios_perfil(id) ON DELETE SET NULL,
+    usuario_nombre VARCHAR(150),
+    accion VARCHAR(30) NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    detalles JSONB DEFAULT '{}'::jsonb NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hce_audit_paciente ON public.hce_audit_logs(paciente_id);
+CREATE INDEX IF NOT EXISTS idx_hce_audit_entidad ON public.hce_audit_logs(entidad, entidad_id);
+CREATE INDEX IF NOT EXISTS idx_hce_audit_usuario ON public.hce_audit_logs(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_hce_audit_created ON public.hce_audit_logs(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.estudios_oftalmo (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -1014,11 +1061,153 @@ CREATE TABLE IF NOT EXISTS public.pedidos_estudios_oftalmo (
     ojo VARCHAR(10) DEFAULT 'AO',
     diagnostico TEXT,
     observaciones TEXT,
+    estado VARCHAR(20) DEFAULT 'PENDIENTE' NOT NULL CHECK (estado IN ('PENDIENTE', 'EN_PROCESO', 'COMPLETADO', 'CANCELADO')),
+    prioridad VARCHAR(20) DEFAULT 'NORMAL' NOT NULL CHECK (prioridad IN ('NORMAL', 'URGENTE', 'PREQUIRURGICO')),
+    estudio_oftalmo_id UUID REFERENCES public.estudios_oftalmo(id) ON DELETE SET NULL,
+    completado_at TIMESTAMP WITH TIME ZONE,
+    tecnico_usuario_id UUID REFERENCES public.usuarios_perfil(id) ON DELETE SET NULL,
+    tecnico_nombre VARCHAR(150),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_paciente ON public.pedidos_estudios_oftalmo(paciente_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_lote ON public.pedidos_estudios_oftalmo(lote_id);
+CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_estado ON public.pedidos_estudios_oftalmo(estado);
+CREATE INDEX IF NOT EXISTS idx_pedidos_estudios_prioridad ON public.pedidos_estudios_oftalmo(prioridad);
+
+-- Tokens Efímeros Cifrados para Descarga Segura de Documentos Médicos (Ley 25.326)
+CREATE TABLE IF NOT EXISTS public.hce_document_share_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    paciente_id UUID NOT NULL REFERENCES public.pacientes(id) ON DELETE CASCADE,
+    estudio_id UUID REFERENCES public.estudios_oftalmo(id) ON DELETE CASCADE,
+    consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE SET NULL,
+    archivo_url TEXT NOT NULL,
+    archivo_nombre VARCHAR(255),
+    mime_type VARCHAR(100),
+    dni_last4 VARCHAR(4) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    accesos_count INTEGER DEFAULT 0 NOT NULL,
+    max_accesos INTEGER DEFAULT 10,
+    ultimo_acceso_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_share_tokens_hash ON public.hce_document_share_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_share_tokens_paciente ON public.hce_document_share_tokens(paciente_id);
+CREATE INDEX IF NOT EXISTS idx_share_tokens_expires ON public.hce_document_share_tokens(expires_at);
+
+-- Triggers Clínicos Programados (Seguimiento Postop 24h / 7d y Preventivo)
+CREATE TABLE IF NOT EXISTS public.hce_scheduled_triggers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    paciente_id UUID NOT NULL REFERENCES public.pacientes(id) ON DELETE CASCADE,
+    consulta_id UUID REFERENCES public.consultas_oftalmo(id) ON DELETE CASCADE,
+    tipo_trigger VARCHAR(50) NOT NULL,
+    fecha_programada TIMESTAMP WITH TIME ZONE NOT NULL,
+    estado VARCHAR(20) DEFAULT 'PENDING' NOT NULL CHECK (estado IN ('PENDING', 'SENT', 'CANCELLED', 'FAILED')),
+    payload_mensaje JSONB DEFAULT '{}'::jsonb NOT NULL,
+    ejecutado_at TIMESTAMP WITH TIME ZONE,
+    wamid TEXT,
+    error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_triggers_pending ON public.hce_scheduled_triggers(estado, fecha_programada);
+CREATE INDEX IF NOT EXISTS idx_scheduled_triggers_paciente ON public.hce_scheduled_triggers(paciente_id);
+
+-- Trigger de Protección e Inmutabilidad de Consultas Oftalmológicas (Ley 26.529 Art. 15)
+CREATE OR REPLACE FUNCTION public.fn_consultas_oftalmo_inmutabilidad()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.estado_legal IN ('SIGNED', 'AMENDED') THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'Operación denegada: No es legalmente admisible eliminar una consulta médica firmada o cerrada (Ley 26.529). Debe registrar una adenda o enmienda foliada.';
+        END IF;
+
+        IF TG_OP = 'UPDATE' THEN
+            IF OLD.fecha IS DISTINCT FROM NEW.fecha OR
+               OLD.tipo IS DISTINCT FROM NEW.tipo OR
+               OLD.motivo_consulta IS DISTINCT FROM NEW.motivo_consulta OR
+               OLD.derivado_por IS DISTINCT FROM NEW.derivado_por OR
+               OLD.ocupacion IS DISTINCT FROM NEW.ocupacion OR
+               OLD.observaciones_consulta IS DISTINCT FROM NEW.observaciones_consulta OR
+               OLD.agudeza_visual IS DISTINCT FROM NEW.agudeza_visual OR
+               OLD.refraccion IS DISTINCT FROM NEW.refraccion OR
+               OLD.lentes_anteriores IS DISTINCT FROM NEW.lentes_anteriores OR
+               OLD.estabilidad_refractiva IS DISTINCT FROM NEW.estabilidad_refractiva OR
+               OLD.arm_cicloplejia IS DISTINCT FROM NEW.arm_cicloplejia OR
+               OLD.queratometria IS DISTINCT FROM NEW.queratometria OR
+               OLD.presion_intraocular IS DISTINCT FROM NEW.presion_intraocular OR
+               OLD.lentes_contacto IS DISTINCT FROM NEW.lentes_contacto OR
+               OLD.examen_sensoriomotor IS DISTINCT FROM NEW.examen_sensoriomotor OR
+               OLD.superficie_ocular IS DISTINCT FROM NEW.superficie_ocular OR
+               OLD.biomicroscopia IS DISTINCT FROM NEW.biomicroscopia OR
+               OLD.fondo_ojo IS DISTINCT FROM NEW.fondo_ojo OR
+               OLD.conducta IS DISTINCT FROM NEW.conducta OR
+               OLD.datos_postop IS DISTINCT FROM NEW.datos_postop OR
+               OLD.indicaciones_texto IS DISTINCT FROM NEW.indicaciones_texto OR
+               OLD.proximo_control IS DISTINCT FROM NEW.proximo_control OR
+               OLD.profesional_user_id IS DISTINCT FROM NEW.profesional_user_id OR
+               OLD.signed_at IS DISTINCT FROM NEW.signed_at OR
+               OLD.signature_sha256 IS DISTINCT FROM NEW.signature_sha256 THEN
+                RAISE EXCEPTION 'Operación denegada: La consulta médica se encuentra firmada y bloqueada. Los datos clínicos son inmutables (Ley 26.529). Confeccione una adenda.';
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_consultas_oftalmo_inmutabilidad ON public.consultas_oftalmo;
+CREATE TRIGGER trg_consultas_oftalmo_inmutabilidad
+    BEFORE UPDATE OR DELETE ON public.consultas_oftalmo
+    FOR EACH ROW
+    EXECUTE FUNCTION public.fn_consultas_oftalmo_inmutabilidad();
+
+-- Políticas RLS para Tablas de Trazabilidad, Enmiendas, Tokens Efímeros y Triggers de HCE
+ALTER TABLE public.consultas_oftalmo_enmiendas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hce_audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hce_document_share_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.hce_scheduled_triggers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Permitir lectura enmiendas para usuarios autenticados" ON public.consultas_oftalmo_enmiendas;
+CREATE POLICY "Permitir lectura enmiendas para usuarios autenticados"
+    ON public.consultas_oftalmo_enmiendas FOR SELECT
+    TO authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Permitir insertar enmiendas para usuarios autenticados" ON public.consultas_oftalmo_enmiendas;
+CREATE POLICY "Permitir insertar enmiendas para usuarios autenticados"
+    ON public.consultas_oftalmo_enmiendas FOR INSERT
+    TO authenticated
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir lectura audit logs para usuarios autenticados" ON public.hce_audit_logs;
+CREATE POLICY "Permitir lectura audit logs para usuarios autenticados"
+    ON public.hce_audit_logs FOR SELECT
+    TO authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Permitir insertar audit logs para usuarios autenticados" ON public.hce_audit_logs;
+CREATE POLICY "Permitir insertar audit logs para usuarios autenticados"
+    ON public.hce_audit_logs FOR INSERT
+    TO authenticated
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir lectura share tokens para autenticados" ON public.hce_document_share_tokens;
+CREATE POLICY "Permitir lectura share tokens para autenticados"
+    ON public.hce_document_share_tokens FOR SELECT
+    TO authenticated
+    USING (true);
+
+DROP POLICY IF EXISTS "Permitir gestionar triggers para autenticados" ON public.hce_scheduled_triggers;
+CREATE POLICY "Permitir gestionar triggers para autenticados"
+    ON public.hce_scheduled_triggers FOR ALL
+    TO authenticated
+    USING (true);
 
 -- =========================================================================
 -- TABLA: urgencias_tokens_acceso (Tokens de Acceso Rápido Seguro / OTET)
