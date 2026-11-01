@@ -114,7 +114,7 @@ export const PLANTILLA_PREQUIRURGICO_VIDEO_DEF: TemplateDinamicaHCE = {
   grupo_crm: 'Seguimiento Quirúrgico',
   category: 'UTILITY',
   status: 'APPROVED',
-  body_text: 'Hola {{1}} \nMañana es tu cirugía y la Dra/Dr. {{2}} te dejó un mensaje para que llegues tranquilo/a y sepas cómo va a ser todo:\n👉 {{3}}\n{{4}}',
+  body_text: 'Hola {{1}},\nMañana es tu cirugía y la Dra/Dr. {{2}} te dejó un mensaje para que llegues tranquilo/a y sepas cómo va a ser todo:\n👉 {{3}}\n\n{{4}}\n\nCentrovisión - Cirugía Oftalmológica',
   footer_text: '',
   variable_mappings: {
     '1': 'paciente_nombre',

@@ -1654,7 +1654,7 @@ PREQUIRURGICO_INDICACIONES_VIDEO_SPEC: Dict[str, Any] = {
     "category": "UTILITY",
     "header_type": "NONE",
     "header_content": None,
-    "body_text": "Hola {{1}} \nMañana es tu cirugía y la Dra/Dr. {{2}} te dejó un mensaje para que llegues tranquilo/a y sepas cómo va a ser todo:\n👉 {{3}}\n{{4}}",
+    "body_text": "Hola {{1}},\nMañana es tu cirugía y la Dra/Dr. {{2}} te dejó un mensaje para que llegues tranquilo/a y sepas cómo va a ser todo:\n👉 {{3}}\n\n{{4}}\n\nCentrovisión - Cirugía Oftalmológica",
     "footer_text": None,
     "buttons": [],
     "variable_mappings": {
