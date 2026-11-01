@@ -89,8 +89,10 @@ const VIDEO_URLS_DEFAULT: Record<string, string> = {
   ind_prk: 'https://centrovision.com.ar/videos/indicaciones-prk',
   querato: 'https://centrovision.com.ar/videos/queratocono',
   ind_cxl: 'https://centrovision.com.ar/videos/crosslinking',
+  ind_cxlp: 'https://centrovision.com.ar/videos/crosslinking-plus',
   ind_faco: 'https://centrovision.com.ar/videos/facoemulsificacion',
   ind_anillos: 'https://centrovision.com.ar/videos/anillos-corneales',
+  ind_lc: 'https://centrovision.com.ar/videos/indicaciones-lentes-contacto',
   postop: 'https://centrovision.com.ar/videos/postoperatorio-inmediato',
   esp_miopia40: 'https://centrovision.com.ar/videos/refractiva-miopia-40',
   esp_fuchs: 'https://centrovision.com.ar/videos/cataratas-distrofia-fuchs',
@@ -459,15 +461,30 @@ export default function TabConversacionHCE({
     return matches.map(m => m.replace(/\D/g, '')).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
   }, [plantillaSeleccionada])
 
-  // Determinar si la plantilla seleccionada tiene un parámetro asignado a video
+  // Determinar si la plantilla seleccionada tiene un parámetro asignado a video y cuál es su clave
+  const variableVideoKey = useMemo(() => {
+    if (!plantillaSeleccionada) return null
+    if (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1') return '3'
+    const mappings = plantillaSeleccionada.variable_mappings || {}
+    for (const [key, field] of Object.entries(mappings)) {
+      if (field.includes('video')) return key
+    }
+    if (plantillaSeleccionada.name.includes('video')) {
+      const match = Object.keys(mappings).find(k => mappings[k].includes('video'))
+      if (match) return match
+      if (variablesEnPlantilla.includes('3')) return '3'
+      if (variablesEnPlantilla.includes('4')) return '4'
+    }
+    return null
+  }, [plantillaSeleccionada, variablesEnPlantilla])
+
   const tieneVariableVideo = useMemo(() => {
     if (!plantillaSeleccionada) return false
     if (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1') return true
+    if (variableVideoKey) return true
     const mappings = plantillaSeleccionada.variable_mappings || {}
-    const hasMapped = Object.values(mappings).some(v => v.includes('video'))
-    const hasInName = plantillaSeleccionada.name.includes('video')
-    return hasMapped || hasInName
-  }, [plantillaSeleccionada])
+    return Object.values(mappings).some(v => v.includes('video')) || plantillaSeleccionada.name.includes('video')
+  }, [plantillaSeleccionada, variableVideoKey])
 
   // Determinar si la plantilla tiene una variable abierta para texto libre (ej: mensaje_asistencial o preparacion_texto)
   const variableTextoLibreKey = useMemo(() => {
@@ -490,6 +507,50 @@ export default function TabConversacionHCE({
     return null
   }, [plantillaSeleccionada])
 
+  // Variables regulares que se renderizan en la grilla estándar (excluyendo video y texto libre que tienen bloques destacados)
+  const variablesRegulares = useMemo(() => {
+    return variablesEnPlantilla.filter(
+      k => k !== variableVideoKey && k !== variableTextoLibreKey
+    )
+  }, [variablesEnPlantilla, variableVideoKey, variableTextoLibreKey])
+
+  // Handlers para selección y edición del video
+  const handleSelectVideo = (k: string) => {
+    setVideoSeleccionadoKey(k)
+    if (k !== 'custom') {
+      const url = VIDEO_URLS_DEFAULT[k] || `https://centrovision.com.ar/videos/${k}`
+      setVideoUrlPersonalizada(url)
+      const vKey = variableVideoKey || '3'
+      setValoresVariables(prev => ({
+        ...prev,
+        [vKey]: url
+      }))
+    }
+  }
+
+  const handleChangeVideoUrl = (nuevaUrl: string) => {
+    setVideoUrlPersonalizada(nuevaUrl)
+    if (videoSeleccionadoKey !== 'custom' && VIDEO_URLS_DEFAULT[videoSeleccionadoKey] !== nuevaUrl) {
+      setVideoSeleccionadoKey('custom')
+    }
+    const vKey = variableVideoKey || '3'
+    setValoresVariables(prev => ({
+      ...prev,
+      [vKey]: nuevaUrl
+    }))
+  }
+
+  // Handler para edición de texto libre / consejos
+  const handleChangeTextoLibre = (nuevoTexto: string) => {
+    setTextoLibreConsejos(nuevoTexto)
+    if (variableTextoLibreKey) {
+      setValoresVariables(prev => ({
+        ...prev,
+        [variableTextoLibreKey]: nuevoTexto
+      }))
+    }
+  }
+
   // Inicializar valores inteligentes al cambiar de plantilla seleccionada o datos del paciente
   useEffect(() => {
     if (!plantillaSeleccionada) return
@@ -503,7 +564,7 @@ export default function TabConversacionHCE({
     const horaTurno = '08:30 hs'
     const motivoPractica = consultaActiva?.conducta?.plan_cx || consultaActiva?.motivo_consulta || 'Cirugía Oftalmológica'
     const quirofano = 'Sede Central - Quirófano 1'
-    const videoUrl = videoUrlPersonalizada || 'https://centrovision.com.ar/videos/cataratas'
+    const videoUrlInicial = videoUrlPersonalizada || VIDEO_URLS_DEFAULT[videoSeleccionadoKey] || 'https://centrovision.com.ar/videos/cataratas'
     const linkConsentimiento = 'https://crm-agentico-nube.vercel.app/consentimiento'
 
     variablesEnPlantilla.forEach(varKey => {
@@ -514,7 +575,7 @@ export default function TabConversacionHCE({
       } else if (fieldId === 'medico_nombre' || fieldId === 'cirujano_nombre' || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '2')) {
         nuevosValores[varKey] = profesional
       } else if (fieldId.includes('video') || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '3')) {
-        nuevosValores[varKey] = videoUrl
+        nuevosValores[varKey] = videoUrlInicial
       } else if (fieldId === 'texto_libre_adicional' || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '4')) {
         nuevosValores[varKey] = textoLibreConsejos || TEXTO_MODELO_PREQUIRURGICO
       } else if (fieldId === 'turno_fecha' || fieldId === 'fecha_cirugia') {
@@ -543,45 +604,11 @@ export default function TabConversacionHCE({
 
     setValoresVariables(nuevosValores)
   }, [
-    plantillaSeleccionada,
-    variablesEnPlantilla,
-    paciente?.nombre,
+    plantillaSeleccionada?.name,
+    paciente?.id,
     profesionalActuante,
-    consultaActiva?.conducta?.plan_cx,
-    consultaActiva?.motivo_consulta,
-    videoUrlPersonalizada,
-    textoLibreConsejos
+    variablesEnPlantilla
   ])
-
-  // Si cambia el texto libre de consejos y la plantilla tiene una variable asignada para ello, sincronizar
-  useEffect(() => {
-    if (variableTextoLibreKey) {
-      setValoresVariables(prev => {
-        if (prev[variableTextoLibreKey] === textoLibreConsejos) return prev
-        return {
-          ...prev,
-          [variableTextoLibreKey]: textoLibreConsejos
-        }
-      })
-    }
-  }, [textoLibreConsejos, variableTextoLibreKey])
-
-  // Sincronizar videoUrlPersonalizada con la variable correspondiente
-  useEffect(() => {
-    if (plantillaSeleccionada) {
-      const vKey = Object.entries(plantillaSeleccionada.variable_mappings || {}).find(([_, v]) => v.includes('video'))?.[0] || 
-        (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' ? '3' : null)
-      if (vKey && videoUrlPersonalizada) {
-        setValoresVariables(prev => {
-          if (prev[vKey] === videoUrlPersonalizada) return prev
-          return {
-            ...prev,
-            [vKey]: videoUrlPersonalizada
-          }
-        })
-      }
-    }
-  }, [videoUrlPersonalizada, plantillaSeleccionada])
 
   // Compilar el mensaje final en tiempo real (Cuerpo con variables reemplazadas + Consejos Libres Adicionales)
   useEffect(() => {
@@ -727,7 +754,7 @@ export default function TabConversacionHCE({
       medico_nombre: varsFinal['2'] || medicoEmisor,
       cirujano_nombre: varsFinal['2'] || medicoEmisor,
       fecha_cirugia: 'Mañana',
-      video_url: varsFinal['3'] || videoUrlPersonalizada || null,
+      video_url: (variableVideoKey ? varsFinal[variableVideoKey] : null) || videoUrlPersonalizada || null,
       texto_adicional: textoLibreConsejos.trim() || null,
       texto_libre_adicional: (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' ? (varsFinal['4'] || textoLibreConsejos.trim()) : textoLibreConsejos.trim()) || null,
       variables: varsFinal,
@@ -1107,10 +1134,10 @@ export default function TabConversacionHCE({
       {/* ========================================================================= */}
       {/* PANEL DERECHO (55%): CENTRO DE EMISIÓN RÁPIDA CON FORMULARIO DINÁMICO     */}
       {/* ========================================================================= */}
-      <div className="w-full lg:w-7/12 flex flex-col bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+      <div className="w-full lg:w-7/12 flex flex-col bg-white rounded-xl border border-slate-200 shadow-xs overflow-y-auto max-h-[88vh]">
         
         {/* Cabecera del Panel Derecho */}
-        <div className="px-4 py-3 bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-900 text-white flex items-center justify-between">
+        <div className="px-4 py-3 bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-900 text-white flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-2.5">
             <div className="p-1.5 bg-white/10 rounded-lg">
               <Send className="w-4 h-4 text-emerald-200" />
@@ -1193,136 +1220,180 @@ export default function TabConversacionHCE({
           </div>
         </div>
 
-        {/* 2. FORMULARIO INTELIGENTE DE PARÁMETROS DINÁMICOS */}
-        <div className="p-3.5 border-b border-slate-200 bg-white space-y-3 overflow-y-auto max-h-[300px]">
+        {/* 2. FORMULARIO INTELIGENTE DE PARÁMETROS DINÁMICOS (SIN MICRO-SCROLL RECORTADO) */}
+        <div className="p-3.5 border-b border-slate-200 bg-white space-y-3.5">
           <div className="flex items-center justify-between">
-            <span className="text-[10.5px] font-black text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+            <span className="text-[10.5px] font-black text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5 text-emerald-600" />
-              Parámetros Clínicos de la Plantilla:
+              Parámetros de la Plantilla ({variablesEnPlantilla.length} variables):
             </span>
-            <span className="text-[10px] text-slate-400">
-              {variablesEnPlantilla.length} variable(s) detectada(s)
+            <span className="text-[10px] font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+              Sincronización en Vivo
             </span>
           </div>
 
-          {variablesEnPlantilla.length === 0 ? (
-            <div className="p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-xs text-slate-500 italic">
-              Esta plantilla es de formato fijo y no requiere parámetros posicionales.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {variablesEnPlantilla.map((varKey) => {
+          {/* Grilla para Variables Principales (ej: {{1}} Paciente, {{2}} Profesional / Médico) */}
+          {variablesRegulares.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {variablesRegulares.map((varKey) => {
                 const fieldId = plantillaSeleccionada?.variable_mappings?.[varKey]
                 const { label, icon: IconComponent } = getEtiquetaVariable(varKey, fieldId)
-                const val = valoresVariables[varKey] || ''
-
-                // Si esta variable es la asignada para el texto libre, advertir que se alimenta del campo inferior
-                const esVariableLibre = varKey === variableTextoLibreKey
+                const val = valoresVariables[varKey] !== undefined ? valoresVariables[varKey] : ''
 
                 return (
-                  <div key={varKey} className={esVariableLibre ? 'sm:col-span-2' : ''}>
-                    <label className="text-[10.5px] font-bold text-slate-600 uppercase flex items-center justify-between mb-1">
-                      <span className="flex items-center gap-1">
-                        <IconComponent className="w-3 h-3 text-slate-400" />
+                  <div key={varKey} className="space-y-1">
+                    <label className="text-[10.5px] font-bold text-slate-700 uppercase flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <IconComponent className="w-3.5 h-3.5 text-emerald-600" />
                         {label}
                       </span>
-                      <span className="text-[9.5px] font-mono text-slate-400">
+                      <span className="text-[9.5px] font-mono font-bold bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200">
                         {'{{' + varKey + '}}'}
                       </span>
                     </label>
 
-                    {esVariableLibre ? (
-                      <div className="p-2 bg-amber-50/70 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-center gap-2">
-                        <Info className="w-4 h-4 text-amber-600 shrink-0" />
-                        <span>Este parámetro se sincroniza automáticamente con el campo de <strong>Escritura Libre</strong> a continuación.</span>
-                      </div>
-                    ) : (
-                      <input
-                        type="text"
-                        value={val}
-                        onChange={(e) => {
-                          setValoresVariables(prev => ({
-                            ...prev,
-                            [varKey]: e.target.value
-                          }))
-                        }}
-                        placeholder={`Ingrese ${label.toLowerCase()}...`}
-                        className="w-full text-xs font-medium px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800"
-                      />
-                    )}
+                    <input
+                      type="text"
+                      value={val}
+                      onChange={(e) => {
+                        const nuevoVal = e.target.value
+                        setValoresVariables(prev => ({
+                          ...prev,
+                          [varKey]: nuevoVal
+                        }))
+                      }}
+                      placeholder={`Ingrese ${label.toLowerCase()}...`}
+                      className="w-full text-xs font-semibold px-3 py-2 bg-slate-50 hover:bg-white focus:bg-white border border-slate-200 focus:border-emerald-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 text-slate-800 transition-colors shadow-2xs"
+                    />
                   </div>
                 )
               })}
             </div>
           )}
 
-          {/* Selector de Video si la plantilla es o contiene video */}
+          {/* BLOQUE PROMINENTE DEDICADO: VARIABLE {{3}} (LINK DEL VIDEO EXPLICATIVO) */}
           {tieneVariableVideo && (
-            <div className="p-2.5 bg-cyan-50/60 border border-cyan-200 rounded-lg space-y-2 mt-2">
-              <label className="text-[10px] font-bold text-cyan-900 uppercase flex items-center gap-1">
-                <Video className="w-3.5 h-3.5 text-cyan-700" />
-                Seleccionar Video Educativo Oficial:
-              </label>
-              <select
-                value={videoSeleccionadoKey}
-                onChange={(e) => setVideoSeleccionadoKey(e.target.value)}
-                className="w-full text-xs font-semibold px-2.5 py-1.5 bg-white border border-cyan-300 rounded-md focus:outline-none focus:ring-1 focus:ring-cyan-500 text-cyan-900"
-              >
-                {ALL_VIDEOS.map((vid) => (
-                  <option key={vid.k} value={vid.k}>
-                    {vid.t}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={videoUrlPersonalizada}
-                onChange={(e) => {
-                  setVideoUrlPersonalizada(e.target.value)
-                  // Actualizar también la variable correspondiente si existe
-                  const vKey = Object.entries(plantillaSeleccionada?.variable_mappings || {}).find(([_, v]) => v.includes('video'))?.[0]
-                  if (vKey) {
-                    setValoresVariables(prev => ({ ...prev, [vKey]: e.target.value }))
-                  }
-                }}
-                placeholder="URL del video explicativo"
-                className="w-full text-[11px] font-mono px-2 py-1 bg-white border border-cyan-200 rounded focus:outline-none text-slate-700"
-              />
+            <div className="p-3.5 bg-gradient-to-br from-cyan-50/90 via-sky-50/50 to-teal-50/70 border-2 border-cyan-300 rounded-xl space-y-3 shadow-xs mt-2">
+              <div className="flex items-center justify-between flex-wrap gap-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 bg-cyan-600 text-white rounded-lg shadow-xs">
+                    <Video className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-black text-cyan-950 flex items-center gap-1.5">
+                      👉 Link del Video Explicativo
+                    </span>
+                    <p className="text-[10px] text-cyan-800 font-medium">
+                      Parámetro oficial visible para el paciente en el mensaje
+                    </p>
+                  </div>
+                </div>
+                <span className="text-[10.5px] font-mono font-black bg-cyan-100 text-cyan-900 px-2.5 py-0.5 rounded-full border border-cyan-300 shadow-2xs flex items-center gap-1">
+                  Variable {'{{' + (variableVideoKey || '3') + '}}'}
+                </span>
+              </div>
+
+              {/* Fila con Selector y Botón de Prueba Externa */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                <div className="sm:col-span-2">
+                  <label className="text-[10px] font-bold text-cyan-950 uppercase block mb-1">
+                    Seleccionar Video del Catálogo Oficial:
+                  </label>
+                  <select
+                    value={videoSeleccionadoKey}
+                    onChange={(e) => handleSelectVideo(e.target.value)}
+                    className="w-full text-xs font-semibold px-2.5 py-2 bg-white border border-cyan-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 text-cyan-950 shadow-2xs"
+                  >
+                    <optgroup label="Videos Educativos Disponibles">
+                      {ALL_VIDEOS.map((vid) => (
+                        <option key={vid.k} value={vid.k}>
+                          🎥 {vid.t}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Opciones Adicionales">
+                      <option value="custom">✏️ Personalizado / Otro enlace de video</option>
+                    </optgroup>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-1">
+                  <a
+                    href={videoUrlPersonalizada && videoUrlPersonalizada.startsWith('http') ? videoUrlPersonalizada : '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all shadow-xs ${
+                      videoUrlPersonalizada && videoUrlPersonalizada.startsWith('http')
+                        ? 'bg-cyan-700 hover:bg-cyan-800 text-white cursor-pointer active:scale-[0.98]'
+                        : 'bg-slate-200 text-slate-400 pointer-events-none cursor-not-allowed'
+                    }`}
+                    title="Probar y abrir el enlace del video en una pestaña nueva"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+                    <span>Probar Enlace</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Input de la URL Editable Sincronizada en Tiempo Real */}
+              <div>
+                <label className="text-[10px] font-bold text-cyan-950 uppercase flex items-center justify-between mb-1">
+                  <span>URL del Video (Editable y sincronizada en tiempo real):</span>
+                  <span className="text-[9.5px] font-semibold text-cyan-700">Se despacha en el cuerpo del WhatsApp</span>
+                </label>
+                <div className="relative flex items-center">
+                  <LinkIcon className="w-3.5 h-3.5 text-cyan-600 absolute left-2.5 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={videoUrlPersonalizada}
+                    onChange={(e) => handleChangeVideoUrl(e.target.value)}
+                    placeholder="https://centrovision.com.ar/videos/..."
+                    className="w-full text-xs font-mono font-medium pl-8 pr-3 py-1.5 bg-white border border-cyan-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cyan-500 text-slate-800 shadow-inner"
+                  />
+                </div>
+              </div>
             </div>
           )}
         </div>
 
-        {/* 3. REQUERIMIENTO CLAVE: CAMPO DE ESCRITURA LIBRE PARA INFORMACIÓN ADICIONAL / CONSEJOS */}
-        <div className="p-3.5 bg-gradient-to-br from-amber-50/50 via-white to-amber-50/20 border-b border-amber-200/80">
-          <div className="flex items-center justify-between mb-1.5">
+        {/* 3. REQUERIMIENTO CLAVE: CAMPO DE ESCRITURA LIBRE PARA INFORMACIÓN ADICIONAL / CONSEJOS (VARIABLE {{4}}) */}
+        <div className="p-3.5 bg-gradient-to-br from-amber-50/60 via-white to-amber-50/30 border-b border-amber-200/90 space-y-2">
+          <div className="flex items-center justify-between flex-wrap gap-1 mb-1">
             <label className="text-xs font-black text-amber-950 flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-              <span>Información Adicional / Consejos del Profesional (Texto Libre)</span>
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Indicaciones y Consejos del Profesional (Escritura Libre)</span>
             </label>
-            <span className="text-[9.5px] font-extrabold uppercase tracking-wide bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300">
-              Escritura Libre
-            </span>
+            <div className="flex items-center gap-1.5">
+              {variableTextoLibreKey && (
+                <span className="text-[10px] font-mono font-black bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full border border-amber-300">
+                  Variable {'{{' + variableTextoLibreKey + '}}'}
+                </span>
+              )}
+              <span className="text-[9.5px] font-extrabold uppercase tracking-wide bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300">
+                Pautas Personalizadas
+              </span>
+            </div>
           </div>
 
-          <p className="text-[11px] text-slate-500 mb-2 leading-tight">
-            Escriba aquí indicaciones particulares, consejos postoperatorios, pautas personalizadas o cualquier aclaración adicional para el paciente.
+          <p className="text-[11px] text-slate-600 leading-tight">
+            Escriba aquí indicaciones particulares, cuidados especiales, pautas personalizadas o cualquier aclaración adicional para el paciente.
           </p>
 
           <textarea
-            rows={3}
+            rows={4}
             value={textoLibreConsejos}
-            onChange={(e) => setTextoLibreConsejos(e.target.value)}
+            onChange={(e) => handleChangeTextoLibre(e.target.value)}
             placeholder="Escriba aquí indicaciones particulares, cuidados especiales, pautas personalizadas o cualquier aclaración adicional para el paciente..."
-            className="w-full text-xs font-medium p-2.5 bg-white border border-amber-300/80 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner placeholder:text-slate-400 placeholder:italic leading-relaxed resize-y"
+            className="w-full text-xs font-medium p-2.5 bg-white border border-amber-300/90 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500/50 shadow-inner placeholder:text-slate-400 placeholder:italic leading-relaxed resize-y"
           />
 
-          <div className="flex items-center justify-between mt-1 text-[10.5px] text-slate-400">
+          <div className="flex items-center justify-between text-[10.5px] text-slate-500 pt-0.5">
             <span>
               {variableTextoLibreKey 
-                ? '✓ Se inyecta en el parámetro {{' + variableTextoLibreKey + '}} de la plantilla.'
+                ? '✓ Se inyecta en el parámetro {{' + variableTextoLibreKey + '}} de la plantilla y se compila en vivo.'
                 : '✓ Se añadirá automáticamente como sección complementaria en la vista previa y mensaje final.'}
             </span>
-            <span>{textoLibreConsejos.length} caracteres</span>
+            <span className="font-mono text-slate-400">{textoLibreConsejos.length} caracteres</span>
           </div>
         </div>
 
