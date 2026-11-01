@@ -137,11 +137,22 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     ],
   },
   {
+    code: 'historias-clinicas',
+    name: 'Historias Clínicas',
+    description: 'Búsqueda por DNI/Geclisa, expedientes oftalmológicos, evoluciones, recetas y diagnósticos.',
+    icon: 'ClipboardPlus',
+    order: 10,
+    actions: [
+      { code: 'ver', label: 'Ver Historias Clínicas', description: 'Consultar historias clínicas y expedientes oftalmológicos' },
+      { code: 'buscar', label: 'Buscar por DNI o Geclisa', description: 'Buscar pacientes en CRM y Geclisa por DNI o ficha' },
+    ],
+  },
+  {
     code: 'pacientes',
     name: 'Expedientes de Pacientes',
     description: 'Fichas clínicas, antecedentes oftalmológicos, recetas y órdenes de estudios.',
     icon: 'Users',
-    order: 10,
+    order: 11,
     actions: [
       { code: 'ver', label: 'Ver Pacientes', description: 'Consultar listado y expedientes de pacientes' },
       { code: 'crear', label: 'Crear Paciente', description: 'Dar de alta nuevos pacientes manualmente' },
@@ -157,7 +168,7 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     name: 'Envío de Estudios (Técnicos)',
     description: 'Consola para técnicos oftalmólogos: archivo automático en Geclisa y envío digital por WhatsApp (2da línea exclusiva).',
     icon: 'Eye',
-    order: 11,
+    order: 12,
     actions: [
       { code: 'ver', label: 'Acceder al Módulo de Estudios', description: 'Buscar pacientes en Geclisa y consultar historial de estudios enviados' },
       { code: 'enviar', label: 'Archivar en Geclisa y Enviar por WhatsApp', description: 'Subir estudios diagnósticos (PDF/JPG/PNG) a Geclisa y despacharlos por WhatsApp' },
@@ -169,7 +180,7 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     name: 'Logs & Auditoría',
     description: 'Monitor de eventos del sistema, llamadas a APIs externas e incidencias de IA.',
     icon: 'ScrollText',
-    order: 12,
+    order: 13,
     actions: [
       { code: 'ver', label: 'Ver Logs', description: 'Consultar eventos y trazas del sistema' },
       { code: 'exportar', label: 'Exportar Auditoría', description: 'Descargar registros estructurados de eventos' },
@@ -180,7 +191,7 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     name: 'Ajustes & Administración',
     description: 'Gestión de usuarios del staff, perfiles de roles, permisos y configuraciones.',
     icon: 'Settings',
-    order: 13,
+    order: 14,
     actions: [
       { code: 'ver', label: 'Ver Ajustes General', description: 'Acceso básico a la sección de Ajustes' },
       { code: 'ver_lios', label: 'Ver Lentes Intraoculares (LIO)', description: 'Consultar catálogo de marcas, modelos y ópticas Alcon' },
@@ -206,7 +217,7 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
     name: 'Centro de Ayuda & Base de Conocimientos',
     description: 'Manual interactivo de usuario, guías operativas, diccionario de campos y resolución de incidencias.',
     icon: 'HelpCircle',
-    order: 14,
+    order: 15,
     actions: [
       { code: 'ver', label: 'Ver Centro de Ayuda', description: 'Consultar manuales, cómo hacer y preguntas frecuentes' },
     ],
@@ -222,6 +233,7 @@ export interface LandingPageOption {
 export const LANDING_PAGE_OPTIONS: LandingPageOption[] = [
   { route: '/', label: 'Dashboard General', moduleCode: 'dashboard' },
   { route: '/agenda-geclisa', label: 'Agenda Geclisa', moduleCode: 'agenda-geclisa' },
+  { route: '/historias-clinicas', label: 'Historias Clínicas', moduleCode: 'historias-clinicas' },
   { route: '/chat', label: 'Chats / WhatsApp', moduleCode: 'chat' },
   { route: '/pipeline-quirurgico', label: 'Asesoramiento / Pipeline', moduleCode: 'pipeline-quirurgico' },
   { route: '/asesoramiento-recepcion', label: 'Recepción del Día (Asesoría)', moduleCode: 'asesoramiento-recepcion' },

@@ -29,6 +29,7 @@ import {
   ScrollText,
   Compass,
   HelpCircle,
+  ClipboardPlus,
 } from 'lucide-react'
 
 // Mapa de iconos dinámicos
@@ -43,6 +44,7 @@ const ICON_MAP: Record<string, any> = {
   Eye,
   FileText,
   Users,
+  ClipboardPlus,
   ScrollText,
   Settings,
   HelpCircle,

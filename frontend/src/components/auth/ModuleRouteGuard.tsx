@@ -11,6 +11,7 @@ import { SYSTEM_MODULES } from '@/config/modules'
 const ROUTE_TO_MODULE: Record<string, string> = {
   '/': 'dashboard',
   '/agenda-geclisa': 'agenda-geclisa',
+  '/historias-clinicas': 'historias-clinicas',
   '/chat': 'chat',
   '/pipeline-quirurgico': 'pipeline-quirurgico',
   '/asesoramiento-recepcion': 'asesoramiento-recepcion',

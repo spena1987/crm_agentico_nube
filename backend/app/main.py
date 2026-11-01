@@ -3127,6 +3127,190 @@ def obtener_indicaciones_paciente(paciente_id: str):
             "detail": str(e)
         }
 
+@app.get("/api/pacientes/buscar-clinico")
+def buscar_paciente_clinico(
+    q: str = Query(..., description="Término de búsqueda: DNI, nombre o ficha Geclisa"),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Búsqueda clínica inteligente y unificada de pacientes para el módulo de Historias Clínicas.
+    Busca por DNI (exacto, con/sin ceros, zfill o ilike), por geclisa_ficha_id o por Nombre en el CRM (Supabase).
+    Si no encuentra resultados en el CRM y el término contiene dígitos (>= 5), consulta en vivo a Geclisa.
+    """
+    termino = (q or "").strip()
+    if not termino:
+        return {"query": "", "total": 0, "resultados": []}
+
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos Supabase no conectada.")
+
+    dni_limpio = "".join(filter(str.isdigit, termino))
+    resultados = []
+    ids_encontrados = set()
+
+    def formatear_paciente_crm(p: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": p.get("id"),
+            "nombre": p.get("nombre") or "Sin Nombre",
+            "dni": p.get("dni"),
+            "telefono": p.get("telefono"),
+            "telefono_fijo": p.get("telefono_fijo"),
+            "email": p.get("email"),
+            "obra_social": p.get("obra_social"),
+            "plan_cobertura": p.get("plan_cobertura"),
+            "nro_afiliado": p.get("nro_afiliado"),
+            "nro_hc": p.get("nro_hc"),
+            "geclisa_ficha_id": p.get("geclisa_ficha_id"),
+            "fecha_nacimiento": p.get("fecha_nacimiento"),
+            "sexo": p.get("sexo"),
+            "direccion": p.get("direccion"),
+            "medico_cabecera": p.get("medico_cabecera") or p.get("medico_cabecera_nombre"),
+            "origen": "crm",
+            "ya_en_crm": True,
+            "created_at": p.get("created_at")
+        }
+
+    try:
+        # 1. Búsqueda por dígitos (DNI, Ficha Geclisa o Teléfono)
+        if dni_limpio:
+            # A. Coincidencia exacta de DNI
+            res_dni = supabase.table("pacientes").select("*").eq("dni", dni_limpio).execute()
+            if res_dni.data:
+                for row in res_dni.data:
+                    if row.get("id") not in ids_encontrados:
+                        ids_encontrados.add(row["id"])
+                        resultados.append(formatear_paciente_crm(row))
+
+            # B. Variantes de ceros a la izquierda (ej: 033516799 vs 33516799 o zfill(8) / zfill(9))
+            dni_sin_ceros = dni_limpio.lstrip("0")
+            variantes = set()
+            if dni_sin_ceros and dni_sin_ceros != dni_limpio:
+                variantes.add(dni_sin_ceros)
+            if dni_sin_ceros:
+                variantes.add(dni_sin_ceros.zfill(8))
+                variantes.add(dni_sin_ceros.zfill(9))
+            variantes.discard(dni_limpio)
+
+            for v in variantes:
+                res_v = supabase.table("pacientes").select("*").eq("dni", v).execute()
+                if res_v.data:
+                    for row in res_v.data:
+                        if row.get("id") not in ids_encontrados:
+                            ids_encontrados.add(row["id"])
+                            resultados.append(formatear_paciente_crm(row))
+
+            # C. Búsqueda por geclisa_ficha_id si el término es un entero válido
+            try:
+                ficha_num = int(dni_limpio)
+                res_ficha = supabase.table("pacientes").select("*").eq("geclisa_ficha_id", ficha_num).execute()
+                if res_ficha.data:
+                    for row in res_ficha.data:
+                        if row.get("id") not in ids_encontrados:
+                            ids_encontrados.add(row["id"])
+                            resultados.append(formatear_paciente_crm(row))
+            except (ValueError, OverflowError):
+                pass
+
+            # D. Búsqueda parcial por ilike en DNI si no encontramos nada y tiene al menos 5 dígitos
+            if not resultados and len(dni_limpio) >= 5:
+                res_ilike_dni = supabase.table("pacientes").select("*").ilike("dni", f"%{dni_limpio}%").limit(10).execute()
+                if res_ilike_dni.data:
+                    for row in res_ilike_dni.data:
+                        if row.get("id") not in ids_encontrados:
+                            ids_encontrados.add(row["id"])
+                            resultados.append(formatear_paciente_crm(row))
+
+        # 2. Si no hay resultados por DNI/ficha, o si el término de búsqueda incluye letras, buscar por nombre
+        if not resultados or not dni_limpio or any(c.isalpha() for c in termino):
+            termino_nombre = termino.strip()
+            if len(termino_nombre) >= 2:
+                res_nombre = (
+                    supabase.table("pacientes")
+                    .select("*")
+                    .ilike("nombre", f"%{termino_nombre}%")
+                    .order("created_at", desc=True)
+                    .limit(20)
+                    .execute()
+                )
+                if res_nombre.data:
+                    for row in res_nombre.data:
+                        if row.get("id") not in ids_encontrados:
+                            ids_encontrados.add(row["id"])
+                            resultados.append(formatear_paciente_crm(row))
+
+        # 3. Si NO se encontró en Supabase y dni_limpio tiene al menos 5 dígitos:
+        #    Consultar en vivo al cliente de Geclisa
+        if not resultados and len(dni_limpio) >= 5:
+            try:
+                # Intento 1: DNI directo
+                res_geclisa = geclisa_client.buscar_paciente_por_dni(dni_limpio)
+                
+                # Intento 2: si no encuentra y tenía ceros a la izquierda, probar sin ceros
+                if not res_geclisa.get("encontrado") and dni_limpio.startswith("0"):
+                    res_geclisa = geclisa_client.buscar_paciente_por_dni(dni_limpio.lstrip("0"))
+                
+                # Intento 3: si no encuentra y longitud es típica de ficha (4-7 dígitos), probar por fichaId
+                if not res_geclisa.get("encontrado") and 4 <= len(dni_limpio) <= 7:
+                    try:
+                        res_geclisa = geclisa_client.buscar_paciente_por_ficha(int(dni_limpio))
+                    except Exception:
+                        pass
+
+                if res_geclisa and res_geclisa.get("encontrado"):
+                    ficha_id = res_geclisa.get("ficha_id")
+                    dni_geclisa = res_geclisa.get("dni") or dni_limpio
+                    
+                    # Verificar si por casualidad ya está en el CRM por ficha o DNI
+                    paciente_crm = None
+                    if ficha_id:
+                        paciente_crm = get_paciente_by_geclisa_id(ficha_id)
+                    if not paciente_crm and dni_geclisa:
+                        paciente_crm = get_paciente_by_dni(dni_geclisa)
+
+                    if paciente_crm:
+                        resultados.append(formatear_paciente_crm(paciente_crm))
+                    else:
+                        # Paciente existe en Geclisa pero aún no en CRM
+                        nombre_geclisa = (
+                            res_geclisa.get("nombre_completo")
+                            or f"{res_geclisa.get('apellido', '')}, {res_geclisa.get('nombre', '')}".strip(" ,")
+                            or "Paciente Geclisa"
+                        )
+                        resultados.append({
+                            "id": None,
+                            "nombre": nombre_geclisa,
+                            "dni": dni_geclisa,
+                            "telefono": res_geclisa.get("celular") or res_geclisa.get("telefono") or "",
+                            "telefono_fijo": res_geclisa.get("telefono_fijo") or res_geclisa.get("telefono") or "",
+                            "email": res_geclisa.get("email") or "",
+                            "obra_social": res_geclisa.get("obra_social") or "",
+                            "plan_cobertura": res_geclisa.get("plan_cobertura") or "",
+                            "nro_afiliado": res_geclisa.get("nro_afiliado") or "",
+                            "nro_hc": res_geclisa.get("nro_hc") or "",
+                            "geclisa_ficha_id": ficha_id,
+                            "fecha_nacimiento": res_geclisa.get("fecha_nacimiento"),
+                            "sexo": res_geclisa.get("sexo"),
+                            "direccion": res_geclisa.get("direccion") or "",
+                            "medico_cabecera": res_geclisa.get("medico_cabecera") or "",
+                            "origen": "geclisa",
+                            "ya_en_crm": False,
+                            "datos_geclisa": res_geclisa
+                        })
+            except Exception as geclisa_err:
+                logger.warning(f"Error consultando Geclisa en búsqueda clínica para '{termino}': {geclisa_err}")
+
+        return {
+            "query": termino,
+            "total": len(resultados),
+            "resultados": resultados
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error inesperado en búsqueda clínica de pacientes: {e}")
+        raise HTTPException(status_code=500, detail=f"Error en búsqueda clínica: {str(e)}")
+
 @app.put("/api/pacientes/{paciente_id}")
 def actualizar_paciente_crm(paciente_id: str, payload: Dict[str, Any] = Body(...)):
     """

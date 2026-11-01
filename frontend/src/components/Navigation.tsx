@@ -21,6 +21,7 @@ import {
   X,
   TrendingUp,
   Stethoscope,
+  ClipboardPlus,
   CalendarCheck2,
   Calendar,
   Building2,
@@ -55,6 +56,7 @@ interface NavItem {
 const allNavItems: NavItem[] = [
   { code: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { code: 'agenda-geclisa', label: 'Agenda Geclisa', href: '/agenda-geclisa', icon: Calendar },
+  { code: 'historias-clinicas', label: 'Historias Clínicas', href: '/historias-clinicas', icon: ClipboardPlus },
   { code: 'chat', label: 'Chats / WhatsApp', href: '/chat', icon: MessageSquare },
   {
     code: 'pipeline-quirurgico',
