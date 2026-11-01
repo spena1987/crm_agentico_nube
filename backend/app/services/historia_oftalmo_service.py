@@ -1732,7 +1732,7 @@ class HistoriaOftalmoService:
 
             es_caso_prequirurgico = (
                 tipo_comunicacion in ["prequirurgico", "prequirurgico_video"]
-                or template_name == "indicaciones_prequirurgicas_video_v1"
+                or template_name in ["indicaciones_prequirurgicas_video_v1", "prequirurgico_video_indicaciones_v1"]
                 or (texto and "prequirurg" in str(texto).lower())
             )
 
@@ -1756,34 +1756,39 @@ class HistoriaOftalmoService:
                     body_text_tpl = (tpl_row.get("body_text") if tpl_row else "") or ""
                     vars_dict = dict(variables_personalizadas or {})
 
-                    # Inyectar texto libre adicional en plantillas asistenciales específicas
-                    if texto_libre_adicional:
-                        clean_tl = texto_libre_adicional.strip()
-                        if template_name == "recordatorio_cirugia_preparacion_v1":
+                    # Inyectar texto libre adicional / observaciones en plantillas asistenciales específicas
+                    clean_tl = (texto_libre_adicional or "").strip()
+                    txt_efectivo = clean_tl or (texto or "").strip()
+
+                    if txt_efectivo:
+                        if template_name == "prequirurgico_video_indicaciones_v1":
+                            vars_dict["4"] = txt_efectivo
+                            vars_dict["observaciones_texto_libre"] = txt_efectivo
+                        elif template_name == "recordatorio_cirugia_preparacion_v1":
                             cur_v5 = vars_dict.get("5") or vars_dict.get("preparacion_texto") or ""
-                            if cur_v5 and clean_tl not in cur_v5:
-                                vars_dict["5"] = f"{cur_v5} - Consejos: {clean_tl}"
+                            if cur_v5 and txt_efectivo not in cur_v5:
+                                vars_dict["5"] = f"{cur_v5} - Consejos: {txt_efectivo}"
                                 vars_dict["preparacion_texto"] = vars_dict["5"]
                             elif not cur_v5:
-                                vars_dict["5"] = clean_tl
-                                vars_dict["preparacion_texto"] = clean_tl
+                                vars_dict["5"] = txt_efectivo
+                                vars_dict["preparacion_texto"] = txt_efectivo
                         elif template_name == "comunicacion_asistencial_paciente_v1":
                             cur_v2 = vars_dict.get("2") or vars_dict.get("mensaje_asistencial") or ""
-                            if cur_v2 and clean_tl not in cur_v2:
-                                vars_dict["2"] = f"{cur_v2}\n{clean_tl}"
+                            if cur_v2 and txt_efectivo not in cur_v2:
+                                vars_dict["2"] = f"{cur_v2}\n{txt_efectivo}"
                                 vars_dict["mensaje_asistencial"] = vars_dict["2"]
                             elif not cur_v2:
-                                vars_dict["2"] = clean_tl or texto or ""
+                                vars_dict["2"] = txt_efectivo
                                 vars_dict["mensaje_asistencial"] = vars_dict["2"]
                         else:
                             # Mapear a variable libre si existe
                             for k, v in mappings.items():
-                                if v in ("preparacion_texto", "mensaje_asistencial", "texto_libre", "notas_adicionales", "consejos"):
+                                if v in ("preparacion_texto", "mensaje_asistencial", "texto_libre", "notas_adicionales", "consejos", "observaciones_texto_libre"):
                                     cur_val = vars_dict.get(k) or ""
-                                    if cur_val and clean_tl not in cur_val:
-                                        vars_dict[k] = f"{cur_val} • {clean_tl}"
+                                    if cur_val and txt_efectivo not in cur_val:
+                                        vars_dict[k] = f"{cur_val} • {txt_efectivo}"
                                     else:
-                                        vars_dict[k] = clean_tl
+                                        vars_dict[k] = txt_efectivo
                                     break
 
                     # Resolver componentes
@@ -1792,29 +1797,46 @@ class HistoriaOftalmoService:
                             c_dict = dict(comp)
                             if c_dict.get("type", "").lower() == "body" and "parameters" in c_dict:
                                 params = list(c_dict["parameters"])
-                                if texto_libre_adicional:
+                                if template_name == "prequirurgico_video_indicaciones_v1":
+                                    while len(params) < 4:
+                                        params.append({"type": "text", "text": ""})
+                                    p1_txt = str(params[0].get("text") or "").strip()
+                                    if not p1_txt or p1_txt.startswith("{{"):
+                                        params[0]["text"] = pac_nom_param
+                                    p2_txt = str(params[1].get("text") or "").strip()
+                                    if not p2_txt or p2_txt.startswith("{{"):
+                                        params[1]["text"] = cirujano_param
+                                    p3_txt = str(params[2].get("text") or "").strip()
+                                    if not p3_txt or p3_txt.startswith("{{"):
+                                        params[2]["text"] = video_param
+                                    p4_txt = str(params[3].get("text") or "").strip()
+                                    if not p4_txt or p4_txt.startswith("{{"):
+                                        params[3]["text"] = _sanitizar_texto_asistencial_meta(txt_efectivo or "Para mañana: Venir con acompañante y ropa cómoda. Esta noche cená tranquilo/a y dormí bien.", max_chars=950)
+                                    else:
+                                        params[3]["text"] = _sanitizar_texto_asistencial_meta(p4_txt, max_chars=950)
+                                elif clean_tl:
                                     if template_name == "recordatorio_cirugia_preparacion_v1":
                                         while len(params) < 5:
                                             params.append({"type": "text", "text": ""})
                                         p5_txt = str(params[4].get("text") or "").strip()
-                                        if p5_txt and texto_libre_adicional not in p5_txt:
-                                            params[4]["text"] = f"{p5_txt} - Consejos: {texto_libre_adicional}"
+                                        if p5_txt and clean_tl not in p5_txt:
+                                            params[4]["text"] = f"{p5_txt} - Consejos: {clean_tl}"
                                         elif not p5_txt:
-                                            params[4]["text"] = texto_libre_adicional
+                                            params[4]["text"] = clean_tl
                                     elif template_name == "comunicacion_asistencial_paciente_v1":
                                         while len(params) < 2:
                                             params.append({"type": "text", "text": ""})
                                         p2_txt = str(params[1].get("text") or "").strip()
-                                        if p2_txt and texto_libre_adicional not in p2_txt:
-                                            params[1]["text"] = f"{p2_txt}\n{texto_libre_adicional}"
+                                        if p2_txt and clean_tl not in p2_txt:
+                                            params[1]["text"] = f"{p2_txt}\n{clean_tl}"
                                         elif not p2_txt:
-                                            params[1]["text"] = texto_libre_adicional or texto or ""
+                                            params[1]["text"] = clean_tl or texto or ""
                                 c_dict["parameters"] = params
                             final_components.append(c_dict)
                     else:
                         # Construir components dinámicamente a partir de variables detectadas
                         detected_vars = sorted(list(set(re.findall(r"\{\{(\d+)\}\}", body_text_tpl))), key=lambda x: int(x))
-                        if not detected_vars and template_name == "indicaciones_prequirurgicas_video_v1":
+                        if not detected_vars and template_name in ("indicaciones_prequirurgicas_video_v1", "prequirurgico_video_indicaciones_v1"):
                             detected_vars = ["1", "2", "3", "4"]
                         elif not detected_vars and template_name == "comunicacion_asistencial_paciente_v1":
                             detected_vars = ["1", "2"]
@@ -1827,7 +1849,7 @@ class HistoriaOftalmoService:
                             if not val:
                                 if mapped_field == "paciente_nombre" or v_idx == "1":
                                     val = pac_nom_param
-                                elif mapped_field in ("medico_nombre", "cirujano_nombre"):
+                                elif mapped_field in ("medico_nombre", "cirujano_nombre") or (template_name == "prequirurgico_video_indicaciones_v1" and v_idx == "2"):
                                     val = cirujano_param
                                 elif mapped_field in ("turno_fecha", "fecha_cirugia"):
                                     val = fecha_param
@@ -1838,15 +1860,20 @@ class HistoriaOftalmoService:
                                 elif mapped_field == "enlace_consentimiento":
                                     val = "https://centrovision.com.ar"
                                 elif mapped_field == "preparacion_texto":
-                                    val = texto_libre_adicional or "Concurrir con 6 horas de ayuno y acompañante."
+                                    val = clean_tl or "Concurrir con 6 horas de ayuno y acompañante."
                                 elif mapped_field == "mensaje_asistencial":
-                                    val = texto_libre_adicional or texto or "Indicaciones asistenciales del profesional."
-                                elif mapped_field in ("video_url", "enlace_video"):
+                                    val = clean_tl or texto or "Indicaciones asistenciales del profesional."
+                                elif mapped_field in ("video_url", "enlace_video") or (template_name == "prequirurgico_video_indicaciones_v1" and v_idx == "3"):
                                     val = video_param
+                                elif mapped_field in ("observaciones_texto_libre", "observaciones") or (template_name == "prequirurgico_video_indicaciones_v1" and v_idx == "4"):
+                                    val = txt_efectivo or "Para mañana: Venir con acompañante y ropa cómoda. Esta noche cená tranquilo/a y dormí bien."
                                 else:
-                                    val = texto_libre_adicional if (v_idx == detected_vars[-1] and texto_libre_adicional) else f"Dato {v_idx}"
+                                    val = txt_efectivo if (v_idx == detected_vars[-1] and txt_efectivo) else f"Dato {v_idx}"
 
-                            clean_p = _sanitizar_texto_asistencial_meta(str(val), max_chars=950) if mapped_field in ("preparacion_texto", "mensaje_asistencial") else _sanitizar_parametro_lineal(str(val), default="", max_chars=120)
+                            if mapped_field in ("preparacion_texto", "mensaje_asistencial", "observaciones_texto_libre", "observaciones") or (template_name == "prequirurgico_video_indicaciones_v1" and v_idx == "4"):
+                                clean_p = _sanitizar_texto_asistencial_meta(str(val), max_chars=950)
+                            else:
+                                clean_p = _sanitizar_parametro_lineal(str(val), default="", max_chars=120)
                             body_params.append({"type": "text", "text": clean_p})
 
                         final_components.append({
@@ -1865,16 +1892,16 @@ class HistoriaOftalmoService:
 
                     # Si se proveyó texto libre adicional y la plantilla no tenía slot para contenerlo,
                     # intentar despacho coordinado dentro de la ventana de conversación si está activa
-                    if texto_libre_adicional:
+                    if clean_tl:
                         ya_inyectado = (
-                            (template_name in ("recordatorio_cirugia_preparacion_v1", "comunicacion_asistencial_paciente_v1"))
-                            or any(texto_libre_adicional in str(p.get("text", "")) for c in final_components for p in c.get("parameters", []))
+                            (template_name in ("recordatorio_cirugia_preparacion_v1", "comunicacion_asistencial_paciente_v1", "prequirurgico_video_indicaciones_v1"))
+                            or any(clean_tl in str(p.get("text", "")) for c in final_components for p in c.get("parameters", []))
                         )
                         if not ya_inyectado:
                             try:
                                 await wa_client.send_free_text(
                                     to_phone=meta_phone,
-                                    text=f"📌 *Información y Consejos Adicionales:*\n{texto_libre_adicional}"
+                                    text=f"📌 *Información y Consejos Adicionales:*\n{clean_tl}"
                                 )
                             except Exception as ex_free:
                                 logger.info(f"[HCE WhatsApp] Texto libre adicional coordinado no enviado (ventana de 24h no activa): {ex_free}")
@@ -1893,27 +1920,49 @@ class HistoriaOftalmoService:
                         modo_envio = "texto_libre_24h"
                     except ConversationWindowClosedError:
                         if es_caso_prequirurgico:
-                            logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando plantilla prequirúrgica homologada 'indicaciones_prequirurgicas_video_v1'...")
+                            logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando plantilla prequirúrgica homologada 'prequirurgico_video_indicaciones_v1'...")
                             modo_envio = "fallback_plantilla_prequirurgica_24h"
-                            used_template = "indicaciones_prequirurgicas_video_v1"
+                            used_template = "prequirurgico_video_indicaciones_v1"
                             fb_comp = [
                                 {
                                     "type": "body",
                                     "parameters": [
                                         {"type": "text", "text": pac_nom_param},
                                         {"type": "text", "text": cirujano_param},
-                                        {"type": "text", "text": fecha_param},
-                                        {"type": "text", "text": video_param}
+                                        {"type": "text", "text": video_param},
+                                        {"type": "text", "text": _sanitizar_texto_asistencial_meta(texto or clean_tl or "Para mañana: Venir con acompañante y ropa cómoda. Esta noche cená tranquilo/a y dormí bien.", max_chars=950)}
                                     ]
                                 }
                             ]
-                            res_tpl = await wa_client.send_template(
-                                to_phone=meta_phone,
-                                template_name=used_template,
-                                language_code="es_AR",
-                                components=fb_comp
-                            )
-                            wamid = res_tpl.get("wamid")
+                            try:
+                                res_tpl = await wa_client.send_template(
+                                    to_phone=meta_phone,
+                                    template_name=used_template,
+                                    language_code="es_AR",
+                                    components=fb_comp
+                                )
+                                wamid = res_tpl.get("wamid")
+                            except Exception as ex_fb_1:
+                                logger.warning(f"[HCE WhatsApp] Fallback primario '{used_template}' falló: {ex_fb_1}. Intentando fallback alternativo...")
+                                used_template = "indicaciones_prequirurgicas_video_v1"
+                                fb_comp_alt = [
+                                    {
+                                        "type": "body",
+                                        "parameters": [
+                                            {"type": "text", "text": pac_nom_param},
+                                            {"type": "text", "text": cirujano_param},
+                                            {"type": "text", "text": fecha_param},
+                                            {"type": "text", "text": video_param}
+                                        ]
+                                    }
+                                ]
+                                res_tpl = await wa_client.send_template(
+                                    to_phone=meta_phone,
+                                    template_name=used_template,
+                                    language_code="es_AR",
+                                    components=fb_comp_alt
+                                )
+                                wamid = res_tpl.get("wamid")
                         else:
                             logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando fallback a 'comunicacion_asistencial_paciente_v1'...")
                             modo_envio = "fallback_plantilla_24h"

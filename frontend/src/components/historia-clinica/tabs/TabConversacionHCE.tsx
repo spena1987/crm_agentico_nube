@@ -99,8 +99,35 @@ const VIDEO_URLS_DEFAULT: Record<string, string> = {
   esp_trifocal: 'https://centrovision.com.ar/videos/lentes-trifocales'
 }
 
+// Texto modelo predeterminado para el parámetro de escritura libre de la plantilla prequirúrgica
+export const TEXTO_MODELO_PREQUIRURGICO = `Para mañana:
+* Vení con un acompañante
+* Ropa cómoda, sin maquillaje, cremas ni perfume
+* Tomá tu medicación habitual, salvo que te hayamos indicado otra cosa
+
+Esta noche, cená tranquilo/a y dormí bien. Ya hiciste todo lo necesario, ahora nos toca a nosotros. 😊`
+
+// Plantilla oficial prequirúrgica con video e indicaciones (sin botones interactivos)
+export const PLANTILLA_PREQUIRURGICO_VIDEO_DEF: TemplateDinamicaHCE = {
+  name: 'prequirurgico_video_indicaciones_v1',
+  titulo_amigable: 'Prequirúrgico + Video con Indicaciones',
+  grupo_crm: 'Seguimiento Quirúrgico',
+  category: 'UTILITY',
+  status: 'APPROVED',
+  body_text: 'Hola {{1}} \nMañana es tu cirugía y la Dra/Dr. {{2}} te dejó un mensaje para que llegues tranquilo/a y sepas cómo va a ser todo:\n👉 {{3}}\n{{4}}',
+  footer_text: '',
+  variable_mappings: {
+    '1': 'paciente_nombre',
+    '2': 'medico_nombre',
+    '3': 'video_url',
+    '4': 'texto_libre_adicional'
+  },
+  buttons: []
+}
+
 // Plantillas predeterminadas de contingencia homologadas
 const PLANTILLAS_CLINICAS_DEFAULT: TemplateDinamicaHCE[] = [
+  PLANTILLA_PREQUIRURGICO_VIDEO_DEF,
   {
     name: 'recordatorio_cirugia_preparacion_v1',
     titulo_amigable: 'Recordatorio Quirúrgico con Pautas',
@@ -246,9 +273,20 @@ export default function TabConversacionHCE({
       user?.user_metadata?.nombre_completo ||
       user?.user_metadata?.full_name ||
       user?.email?.split('@')[0] ||
-      'Médico en Sesión'
+      null
     )
   }, [currentUserNameProp, user])
+
+  // Nombre del profesional / cirujano actuante para la variable {{2}}
+  const profesionalActuante = useMemo(() => {
+    if (consultaActiva?.profesional_nombre && consultaActiva.profesional_nombre.trim()) {
+      return consultaActiva.profesional_nombre.trim()
+    }
+    if (currentUserName && currentUserName !== 'Médico en Sesión' && currentUserName.trim()) {
+      return currentUserName.trim()
+    }
+    return 'Dra. Malena'
+  }, [consultaActiva?.profesional_nombre, currentUserName])
 
   // Estado del timeline de mensajes (Panel Izquierdo)
   const [mensajes, setMensajes] = useState<MensajeClinicoHCE[]>([])
@@ -267,7 +305,14 @@ export default function TabConversacionHCE({
   const [valoresVariables, setValoresVariables] = useState<Record<string, string>>({})
   
   // REQUERIMIENTO CLAVE DEL USUARIO: Campo de Escritura Libre para Consejos / Info Adicional
-  const [textoLibreConsejos, setTextoLibreConsejos] = useState<string>('')
+  const [textoLibreConsejos, setTextoLibreConsejos] = useState<string>(TEXTO_MODELO_PREQUIRURGICO)
+
+  // Sincronizar texto modelo predeterminado si se selecciona la plantilla prequirúrgica y está vacío
+  useEffect(() => {
+    if (plantillaSeleccionada?.name === 'prequirurgico_video_indicaciones_v1') {
+      setTextoLibreConsejos(prev => (!prev?.trim() ? TEXTO_MODELO_PREQUIRURGICO : prev))
+    }
+  }, [plantillaSeleccionada?.name])
 
   // Video opcional si la plantilla involucra video
   const [videoSeleccionadoKey, setVideoSeleccionadoKey] = useState<string>('catarata')
@@ -348,14 +393,39 @@ export default function TabConversacionHCE({
 
       // 1.4 Fallback con catálogo predeterminado homologado si no hay conexión
       if (obtenidas.length === 0) {
-        obtenidas = PLANTILLAS_CLINICAS_DEFAULT
+        obtenidas = [...PLANTILLAS_CLINICAS_DEFAULT]
+      }
+
+      // Asegurar que la plantilla prequirúrgica oficial siempre esté presente con formato exacto sin botones
+      const idxExistente = obtenidas.findIndex(t => t.name === 'prequirurgico_video_indicaciones_v1')
+      if (idxExistente >= 0) {
+        obtenidas[idxExistente] = {
+          ...obtenidas[idxExistente],
+          body_text: PLANTILLA_PREQUIRURGICO_VIDEO_DEF.body_text,
+          buttons: [],
+          variable_mappings: {
+            ...PLANTILLA_PREQUIRURGICO_VIDEO_DEF.variable_mappings,
+            ...(obtenidas[idxExistente].variable_mappings || {})
+          }
+        }
+      } else {
+        obtenidas.unshift(PLANTILLA_PREQUIRURGICO_VIDEO_DEF)
       }
 
       setPlantillas(obtenidas)
 
-      // Seleccionar la primera por defecto si no hay ninguna seleccionada
+      // Seleccionar la primera por defecto (priorizando la prequirúrgica) si no hay ninguna seleccionada
       if (obtenidas.length > 0) {
-        setPlantillaSeleccionada(prev => prev || obtenidas[0])
+        setPlantillaSeleccionada(prev => {
+          if (prev) {
+            if (prev.name === 'prequirurgico_video_indicaciones_v1') {
+              return obtenidas.find(t => t.name === 'prequirurgico_video_indicaciones_v1') || prev
+            }
+            return prev
+          }
+          const preq = obtenidas.find(t => t.name === 'prequirurgico_video_indicaciones_v1')
+          return preq || obtenidas[0]
+        })
       }
     } catch (err) {
       console.error('Error cargando plantillas para HCE:', err)
@@ -392,6 +462,7 @@ export default function TabConversacionHCE({
   // Determinar si la plantilla seleccionada tiene un parámetro asignado a video
   const tieneVariableVideo = useMemo(() => {
     if (!plantillaSeleccionada) return false
+    if (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1') return true
     const mappings = plantillaSeleccionada.variable_mappings || {}
     const hasMapped = Object.values(mappings).some(v => v.includes('video'))
     const hasInName = plantillaSeleccionada.name.includes('video')
@@ -400,9 +471,19 @@ export default function TabConversacionHCE({
 
   // Determinar si la plantilla tiene una variable abierta para texto libre (ej: mensaje_asistencial o preparacion_texto)
   const variableTextoLibreKey = useMemo(() => {
-    if (!plantillaSeleccionada?.variable_mappings) return null
-    for (const [key, field] of Object.entries(plantillaSeleccionada.variable_mappings)) {
-      if (field === 'mensaje_asistencial' || field === 'preparacion_texto' || field.includes('texto') || field.includes('mensaje')) {
+    if (!plantillaSeleccionada) return null
+    if (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1') {
+      return '4'
+    }
+    const mappings = plantillaSeleccionada.variable_mappings || {}
+    for (const [key, field] of Object.entries(mappings)) {
+      if (
+        field === 'texto_libre_adicional' ||
+        field === 'mensaje_asistencial' ||
+        field === 'preparacion_texto' ||
+        field.includes('texto') ||
+        field.includes('mensaje')
+      ) {
         return key
       }
     }
@@ -417,7 +498,7 @@ export default function TabConversacionHCE({
     const nuevosValores: Record<string, string> = {}
 
     const nombrePac = paciente?.nombre || 'Paciente'
-    const profesional = consultaActiva?.profesional_nombre || currentUserName || 'Equipo Médico'
+    const profesional = profesionalActuante
     const fechaTurno = 'Mañana'
     const horaTurno = '08:30 hs'
     const motivoPractica = consultaActiva?.conducta?.plan_cx || consultaActiva?.motivo_consulta || 'Cirugía Oftalmológica'
@@ -428,10 +509,14 @@ export default function TabConversacionHCE({
     variablesEnPlantilla.forEach(varKey => {
       const fieldId = mappings[varKey] || ''
 
-      if (fieldId === 'paciente_nombre') {
+      if (fieldId === 'paciente_nombre' || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '1')) {
         nuevosValores[varKey] = nombrePac
-      } else if (fieldId === 'medico_nombre' || fieldId === 'cirujano_nombre') {
+      } else if (fieldId === 'medico_nombre' || fieldId === 'cirujano_nombre' || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '2')) {
         nuevosValores[varKey] = profesional
+      } else if (fieldId.includes('video') || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '3')) {
+        nuevosValores[varKey] = videoUrl
+      } else if (fieldId === 'texto_libre_adicional' || (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' && varKey === '4')) {
+        nuevosValores[varKey] = textoLibreConsejos || TEXTO_MODELO_PREQUIRURGICO
       } else if (fieldId === 'turno_fecha' || fieldId === 'fecha_cirugia') {
         nuevosValores[varKey] = fechaTurno
       } else if (fieldId === 'turno_hora') {
@@ -444,8 +529,6 @@ export default function TabConversacionHCE({
         nuevosValores[varKey] = '$ 45.000'
       } else if (fieldId === 'enlace_consentimiento') {
         nuevosValores[varKey] = linkConsentimiento
-      } else if (fieldId.includes('video')) {
-        nuevosValores[varKey] = videoUrl
       } else if (fieldId === 'preparacion_texto') {
         nuevosValores[varKey] = textoLibreConsejos || 'Ayuno de 6 hs de sólidos y líquidos. Concurrir con adulto acompañante y ropa cómoda.'
       } else if (fieldId === 'mensaje_asistencial') {
@@ -463,22 +546,42 @@ export default function TabConversacionHCE({
     plantillaSeleccionada,
     variablesEnPlantilla,
     paciente?.nombre,
-    consultaActiva?.profesional_nombre,
+    profesionalActuante,
     consultaActiva?.conducta?.plan_cx,
     consultaActiva?.motivo_consulta,
-    currentUserName,
-    videoUrlPersonalizada
+    videoUrlPersonalizada,
+    textoLibreConsejos
   ])
 
   // Si cambia el texto libre de consejos y la plantilla tiene una variable asignada para ello, sincronizar
   useEffect(() => {
-    if (variableTextoLibreKey && textoLibreConsejos.trim()) {
-      setValoresVariables(prev => ({
-        ...prev,
-        [variableTextoLibreKey]: textoLibreConsejos
-      }))
+    if (variableTextoLibreKey) {
+      setValoresVariables(prev => {
+        if (prev[variableTextoLibreKey] === textoLibreConsejos) return prev
+        return {
+          ...prev,
+          [variableTextoLibreKey]: textoLibreConsejos
+        }
+      })
     }
   }, [textoLibreConsejos, variableTextoLibreKey])
+
+  // Sincronizar videoUrlPersonalizada con la variable correspondiente
+  useEffect(() => {
+    if (plantillaSeleccionada) {
+      const vKey = Object.entries(plantillaSeleccionada.variable_mappings || {}).find(([_, v]) => v.includes('video'))?.[0] || 
+        (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' ? '3' : null)
+      if (vKey && videoUrlPersonalizada) {
+        setValoresVariables(prev => {
+          if (prev[vKey] === videoUrlPersonalizada) return prev
+          return {
+            ...prev,
+            [vKey]: videoUrlPersonalizada
+          }
+        })
+      }
+    }
+  }, [videoUrlPersonalizada, plantillaSeleccionada])
 
   // Compilar el mensaje final en tiempo real (Cuerpo con variables reemplazadas + Consejos Libres Adicionales)
   useEffect(() => {
@@ -491,7 +594,7 @@ export default function TabConversacionHCE({
 
     // Reemplazar cada variable {{1}}, {{2}} con su valor
     variablesEnPlantilla.forEach(varKey => {
-      const val = valoresVariables[varKey] || `{{${varKey}}}`
+      const val = valoresVariables[varKey] !== undefined ? valoresVariables[varKey] : `{{${varKey}}}`
       texto = texto.replaceAll(`{{${varKey}}}`, val)
     })
 
@@ -597,8 +700,23 @@ export default function TabConversacionHCE({
     setErrorEnvio(null)
     setEnviadoExito(false)
 
-    const medicoEmisor = consultaActiva?.profesional_nombre || currentUserName || 'Equipo Médico'
+    const medicoEmisor = profesionalActuante
     const esPrequirurgico = plantillaSeleccionada.name.includes('prequirurg') || plantillaSeleccionada.grupo_crm === 'Seguimiento Quirúrgico'
+
+    const varsFinal: Record<string, string> = { ...valoresVariables }
+    if (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1') {
+      varsFinal['1'] = varsFinal['1'] || paciente.nombre || 'Paciente'
+      varsFinal['2'] = varsFinal['2'] || medicoEmisor
+      varsFinal['3'] = varsFinal['3'] || videoUrlPersonalizada || 'https://centrovision.com.ar/videos/cataratas'
+      varsFinal['4'] = varsFinal['4'] || textoLibreConsejos.trim() || TEXTO_MODELO_PREQUIRURGICO
+    }
+
+    const bodyParameters = Object.keys(varsFinal)
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10))
+      .map(k => ({
+        type: 'text',
+        text: varsFinal[k]
+      }))
 
     const payload: Record<string, any> = {
       paciente_id: paciente.id,
@@ -606,12 +724,20 @@ export default function TabConversacionHCE({
       template_name: plantillaSeleccionada.name,
       tipo_comunicacion: esPrequirurgico ? 'prequirurgico_video' : 'aviso_asistencial',
       consulta_id: consultaActiva?.id || null,
-      medico_nombre: medicoEmisor,
-      cirujano_nombre: medicoEmisor,
-      fecha_cirugia: valoresVariables['3'] || valoresVariables['2'] || 'Mañana',
-      video_url: videoUrlPersonalizada || null,
+      medico_nombre: varsFinal['2'] || medicoEmisor,
+      cirujano_nombre: varsFinal['2'] || medicoEmisor,
+      fecha_cirugia: 'Mañana',
+      video_url: varsFinal['3'] || videoUrlPersonalizada || null,
       texto_adicional: textoLibreConsejos.trim() || null,
-      variables: valoresVariables,
+      texto_libre_adicional: (plantillaSeleccionada.name === 'prequirurgico_video_indicaciones_v1' ? (varsFinal['4'] || textoLibreConsejos.trim()) : textoLibreConsejos.trim()) || null,
+      variables: varsFinal,
+      variables_personalizadas: varsFinal,
+      components: [
+        {
+          type: 'body',
+          parameters: bodyParameters
+        }
+      ],
       linea: 'estudios'
     }
 
@@ -696,15 +822,24 @@ export default function TabConversacionHCE({
 
   // Helper para etiquetas legibles de variables
   const getEtiquetaVariable = (varKey: string, fieldId?: string) => {
-    if (fieldId === 'paciente_nombre') return { label: 'Nombre Paciente', icon: User }
-    if (fieldId === 'medico_nombre' || fieldId === 'cirujano_nombre') return { label: 'Profesional / Médico', icon: Stethoscope }
+    if (fieldId === 'paciente_nombre' || (plantillaSeleccionada?.name === 'prequirurgico_video_indicaciones_v1' && varKey === '1')) {
+      return { label: 'Nombre Paciente', icon: User }
+    }
+    if (fieldId === 'medico_nombre' || fieldId === 'cirujano_nombre' || (plantillaSeleccionada?.name === 'prequirurgico_video_indicaciones_v1' && varKey === '2')) {
+      return { label: 'Profesional / Médico', icon: Stethoscope }
+    }
+    if (fieldId?.includes('video') || (plantillaSeleccionada?.name === 'prequirurgico_video_indicaciones_v1' && varKey === '3')) {
+      return { label: 'Video de la Clínica', icon: Video }
+    }
+    if (fieldId === 'texto_libre_adicional' || (plantillaSeleccionada?.name === 'prequirurgico_video_indicaciones_v1' && varKey === '4')) {
+      return { label: 'Consejos / Escritura Libre', icon: Sparkles }
+    }
     if (fieldId === 'turno_fecha' || fieldId === 'fecha_cirugia') return { label: 'Fecha Turno / Cirugía', icon: Calendar }
     if (fieldId === 'turno_hora') return { label: 'Hora Turno', icon: Clock }
     if (fieldId === 'practica_nombre') return { label: 'Práctica / Procedimiento', icon: FileText }
     if (fieldId === 'quirofano_nombre') return { label: 'Sede / Quirófano', icon: Building }
     if (fieldId === 'presupuesto_monto') return { label: 'Monto Cotizado', icon: DollarSign }
     if (fieldId === 'enlace_consentimiento') return { label: 'Enlace Consentimiento', icon: LinkIcon }
-    if (fieldId?.includes('video')) return { label: 'Video de la Clínica', icon: Video }
     if (fieldId === 'preparacion_texto') return { label: 'Indicaciones Prequirúrgicas', icon: ShieldCheck }
     if (fieldId === 'mensaje_asistencial') return { label: 'Mensaje Asistencial Libre', icon: MessageSquare }
     return { label: `Parámetro {{${varKey}}}`, icon: Sparkles }

@@ -1645,4 +1645,139 @@ async def registrar_plantilla_prequirurgica():
         )
 
 
+# ---------------------------------------------------------------------
+# Catálogo de Plantilla Oficial Prequirúrgica con Video e Indicaciones Libres
+# ---------------------------------------------------------------------
+PREQUIRURGICO_INDICACIONES_VIDEO_SPEC: Dict[str, Any] = {
+    "name": "prequirurgico_video_indicaciones_v1",
+    "titulo_amigable": "Prequirúrgico con Video e Indicaciones Libres",
+    "category": "UTILITY",
+    "header_type": "NONE",
+    "header_content": None,
+    "body_text": "Hola {{1}} \nMañana es tu cirugía y la Dra/Dr. {{2}} te dejó un mensaje para que llegues tranquilo/a y sepas cómo va a ser todo:\n👉 {{3}}\n{{4}}",
+    "footer_text": None,
+    "buttons": [],
+    "variable_mappings": {
+        "1": "paciente_nombre",
+        "2": "medico_nombre",
+        "3": "video_url",
+        "4": "observaciones_texto_libre"
+    },
+    "sample_values": [
+        "Juan Sebastián Peña",
+        "Dra. Malena",
+        "https://centrovision.com.ar/videos/catarata.mp4",
+        "Para mañana: Venir con acompañante y ropa cómoda. Esta noche cená tranquilo/a y dormí bien."
+    ],
+    "grupo_crm": "Seguimiento Quirúrgico",
+    "descripcion": "Plantilla asistencial prequirúrgica con video explicativo e indicaciones médicas personalizadas en texto libre.",
+    "visible_en_hce": True,
+    "visible_en_chat": True,
+    "activo": True
+}
+
+
+@templates_router.post("/registrar-prequirurgico-indicaciones-video")
+async def registrar_plantilla_prequirurgica_indicaciones_video():
+    """
+    Registra la plantilla prequirurgico_video_indicaciones_v1 en Meta WhatsApp Cloud API (Graph API v21+)
+    y la sincroniza y aprueba en Supabase (public.whatsapp_templates) con visible_en_hce=True, visible_en_chat=True y activo=True.
+    """
+    waba_id, token = get_waba_credentials()
+    tpl_spec = PREQUIRURGICO_INDICACIONES_VIDEO_SPEC
+    tpl_name = tpl_spec["name"]
+
+    meta_id = None
+    meta_status = "APPROVED"
+
+    if waba_id and token:
+        try:
+            components: List[Dict[str, Any]] = [
+                {
+                    "type": "BODY",
+                    "text": tpl_spec["body_text"],
+                    "example": {
+                        "body_text": [tpl_spec["sample_values"]]
+                    }
+                }
+            ]
+            if tpl_spec.get("footer_text"):
+                components.append({
+                    "type": "FOOTER",
+                    "text": tpl_spec["footer_text"]
+                })
+            if tpl_spec.get("buttons") and len(tpl_spec["buttons"]) > 0:
+                components.append({
+                    "type": "BUTTONS",
+                    "buttons": [
+                        {"type": b["type"], "text": b["text"]}
+                        for b in tpl_spec["buttons"]
+                    ]
+                })
+
+            meta_payload = {
+                "name": tpl_name,
+                "category": tpl_spec["category"],
+                "language": "es_AR",
+                "components": components
+            }
+
+            url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates"
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+
+            meta_data = res.json() if res.content else {}
+            if res.status_code in (200, 201):
+                meta_id = meta_data.get("id")
+                meta_status = meta_data.get("status", "APPROVED")
+                logger.info(f"[Templates] Plantilla '{tpl_name}' registrada exitosamente en Meta Graph API (ID: {meta_id}).")
+            else:
+                err_msg = meta_data.get("error", {}).get("message", res.text)
+                if "already exists" in err_msg.lower():
+                    logger.info(f"[Templates] Plantilla '{tpl_name}' ya existía en Meta Graph API.")
+                else:
+                    logger.warning(f"[Templates] Meta Graph API aviso al registrar '{tpl_name}': {meta_data.get('error', {}).get('error_user_msg', err_msg)}")
+        except Exception as ex_m:
+            logger.warning(f"[Templates] Error en llamada a Meta Graph API para '{tpl_name}': {ex_m}")
+
+    # Guardar / Sincronizar en Supabase garantizando visibilidad en HCE y estado APPROVED
+    now_iso = datetime.now(timezone.utc).isoformat()
+    db_record = {
+        "waba_id": waba_id or os.getenv("META_WA_WABA_ID"),
+        "meta_template_id": meta_id,
+        "name": tpl_name,
+        "category": tpl_spec["category"],
+        "language": "es_AR",
+        "status": "APPROVED",
+        "header_type": tpl_spec["header_type"],
+        "header_content": tpl_spec.get("header_content"),
+        "body_text": tpl_spec["body_text"],
+        "footer_text": tpl_spec.get("footer_text"),
+        "buttons": tpl_spec.get("buttons") or [],
+        "variable_mappings": tpl_spec["variable_mappings"],
+        "activo": True,
+        "visible_en_chat": True,
+        "visible_en_hce": True,
+        "grupo_crm": tpl_spec["grupo_crm"],
+        "titulo_amigable": tpl_spec["titulo_amigable"],
+        "descripcion": tpl_spec["descripcion"],
+        "orden": 1,
+        "updated_at": now_iso
+    }
+    supabase.table("whatsapp_templates").upsert(db_record, on_conflict="name").execute()
+
+    return {
+        "status": "success",
+        "action": "registrada_y_sincronizada",
+        "name": tpl_name,
+        "meta_id": meta_id,
+        "template_status": "APPROVED",
+        "visible_en_hce": True,
+        "visible_en_chat": True,
+        "activo": True,
+        "grupo_crm": tpl_spec["grupo_crm"]
+    }
+
+
+
 
