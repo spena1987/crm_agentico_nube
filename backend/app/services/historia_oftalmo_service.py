@@ -1614,9 +1614,12 @@ class HistoriaOftalmoService:
     @staticmethod
     async def despachar_comunicacion_hce(
         paciente_id: str,
-        tipo_comunicacion: str,
-        texto: str,
+        tipo_comunicacion: str = "aviso_asistencial",
+        texto: Optional[str] = None,
         template_name: Optional[str] = None,
+        components: Optional[List[Dict[str, Any]]] = None,
+        texto_libre_adicional: Optional[str] = None,
+        variables_personalizadas: Optional[Dict[str, str]] = None,
         video_url: Optional[str] = None,
         cirujano_nombre: Optional[str] = None,
         medico_nombre: Optional[str] = None,
@@ -1628,10 +1631,11 @@ class HistoriaOftalmoService:
         """
         Despacha una comunicación clínica asistencial desde la HCE hacia el paciente
         utilizando la Línea 2 de Estudios (Canal Transaccional Informativo no-reply).
-        Soporta envío directo de texto (ventana 24h) y fallback automático a la plantilla
-        oficial UTILITY homologada ('indicaciones_prequirurgicas_video_v1' o 'comunicacion_asistencial_paciente_v1')
+        Soporta despacho dinámico de cualquier plantilla homologada de Meta (UTILITY) con formulario
+        inteligente de variables, components oficiales de Meta y texto libre adicional para notas/consejos médicos.
+        Soporta también envío directo de texto (ventana 24h) y fallback automático a plantilla oficial
         si la ventana de 24h está cerrada.
-        Registra el mensaje en public.mensajes con metadata_json estructurada y en hce_audit_logs.
+        Registra el mensaje completo en public.mensajes con metadata_json enriquecida y en hce_audit_logs.
         """
         import re
         from app.db import get_or_create_conversacion, guardar_mensaje
@@ -1671,7 +1675,7 @@ class HistoriaOftalmoService:
             except Exception as e_c:
                 logger.warning(f"Aviso obteniendo conversación para paciente {paciente_id}: {e_c}")
 
-            # 3. Determinar datos del profesional actuante (compatibilidad cirujano_nombre <-> medico_nombre)
+            # 3. Determinar datos del profesional actuante
             profesional_nombre = cirujano_nombre or medico_nombre
             cirujano_nombre = profesional_nombre
             medico_nombre = profesional_nombre
@@ -1691,9 +1695,7 @@ class HistoriaOftalmoService:
             if not medico_nombre:
                 medico_nombre = user_name
 
-            # Helper sanitizador de texto asistencial (Meta Utility):
-            # Preserva saltos de línea simples (\n) sin aplastar todo a un renglón,
-            # previene secuencias de más de 4 espacios seguidos y eleva el límite a 950 caracteres.
+            # Helpers de sanitización
             def _sanitizar_texto_asistencial_meta(raw_text: str, max_chars: int = 950) -> str:
                 if not raw_text:
                     return ""
@@ -1702,41 +1704,17 @@ class HistoriaOftalmoService:
                 t = re.sub(r" {4,}", " ", t)
                 return t.strip()[:max_chars]
 
-            def _sanitizar_parametro_lineal(val: Optional[str], default: str = "", max_chars: int = 60) -> str:
-                s = str(val or default).strip()
+            def _sanitizar_parametro_lineal(val: Optional[str], default: str = "", max_chars: int = 120) -> str:
+                s = str(val if val is not None else default).strip()
                 s = re.sub(r"[\r\n\t]+", " ", s)
                 s = re.sub(r" {2,}", " ", s)
                 return s.strip()[:max_chars]
 
-            # Parámetros sanitizados para indicaciones_prequirurgicas_video_v1
+            # Parámetros sanitizados base
             pac_nom_param = _sanitizar_parametro_lineal(pac_nombre.title(), default="Estimado/a", max_chars=60)
             cirujano_param = _sanitizar_parametro_lineal(cirujano_nombre or user_name, default="Médico Oftalmólogo", max_chars=60)
             fecha_param = _sanitizar_parametro_lineal(fecha_cirugia, default="a coordinar", max_chars=30)
             video_param = _sanitizar_parametro_lineal(video_url, default="https://centrovision.com.ar", max_chars=200)
-
-            components_prequirurgico = [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": pac_nom_param},
-                        {"type": "text", "text": cirujano_param},
-                        {"type": "text", "text": fecha_param},
-                        {"type": "text", "text": video_param}
-                    ]
-                }
-            ]
-
-            # Parámetros sanitizados para comunicacion_asistencial_paciente_v1
-            texto_param = _sanitizar_texto_asistencial_meta(texto, max_chars=950)
-            components_asistencial = [
-                {
-                    "type": "body",
-                    "parameters": [
-                        {"type": "text", "text": pac_nom_param},
-                        {"type": "text", "text": texto_param}
-                    ]
-                }
-            ]
 
             # 4. Inicializar WhatsAppCloudClient en Línea 2 (Estudios / Transaccional Informativa)
             wa_client = WhatsAppCloudClient(line="estudios")
@@ -1749,39 +1727,167 @@ class HistoriaOftalmoService:
             wamid = None
             used_template = template_name
             modo_envio = "texto_libre"
+            final_components: List[Dict[str, Any]] = []
+            tpl_row: Optional[Dict[str, Any]] = None
 
             es_caso_prequirurgico = (
                 tipo_comunicacion in ["prequirurgico", "prequirurgico_video"]
                 or template_name == "indicaciones_prequirurgicas_video_v1"
-                or "prequirurg" in str(texto).lower()
+                or (texto and "prequirurg" in str(texto).lower())
             )
 
             try:
-                # Si se solicita plantilla específica
+                # -------------------------------------------------------------
+                # CASO 1: Despacho de Plantilla Oficial de Meta (Homologada HCE)
+                # -------------------------------------------------------------
                 if template_name:
-                    modo_envio = "plantilla_explicita"
-                    if template_name == "indicaciones_prequirurgicas_video_v1" or (es_caso_prequirurgico and template_name != "comunicacion_asistencial_paciente_v1"):
-                        used_template = "indicaciones_prequirurgicas_video_v1"
-                        components = components_prequirurgico
-                    else:
-                        used_template = template_name
-                        components = components_asistencial
+                    modo_envio = "plantilla_hce"
+                    used_template = template_name
 
+                    # Consultar metadatos y mappings de la plantilla en BD
+                    try:
+                        tpl_res = supabase.table("whatsapp_templates").select("*").eq("name", template_name).limit(1).execute()
+                        if tpl_res.data and len(tpl_res.data) > 0:
+                            tpl_row = tpl_res.data[0]
+                    except Exception as ex_t:
+                        logger.debug(f"[HCE WhatsApp] Aviso consultando plantilla '{template_name}': {ex_t}")
+
+                    mappings = (tpl_row.get("variable_mappings") if tpl_row else {}) or {}
+                    body_text_tpl = (tpl_row.get("body_text") if tpl_row else "") or ""
+                    vars_dict = dict(variables_personalizadas or {})
+
+                    # Inyectar texto libre adicional en plantillas asistenciales específicas
+                    if texto_libre_adicional:
+                        clean_tl = texto_libre_adicional.strip()
+                        if template_name == "recordatorio_cirugia_preparacion_v1":
+                            cur_v5 = vars_dict.get("5") or vars_dict.get("preparacion_texto") or ""
+                            if cur_v5 and clean_tl not in cur_v5:
+                                vars_dict["5"] = f"{cur_v5} - Consejos: {clean_tl}"
+                                vars_dict["preparacion_texto"] = vars_dict["5"]
+                            elif not cur_v5:
+                                vars_dict["5"] = clean_tl
+                                vars_dict["preparacion_texto"] = clean_tl
+                        elif template_name == "comunicacion_asistencial_paciente_v1":
+                            cur_v2 = vars_dict.get("2") or vars_dict.get("mensaje_asistencial") or ""
+                            if cur_v2 and clean_tl not in cur_v2:
+                                vars_dict["2"] = f"{cur_v2}\n{clean_tl}"
+                                vars_dict["mensaje_asistencial"] = vars_dict["2"]
+                            elif not cur_v2:
+                                vars_dict["2"] = clean_tl or texto or ""
+                                vars_dict["mensaje_asistencial"] = vars_dict["2"]
+                        else:
+                            # Mapear a variable libre si existe
+                            for k, v in mappings.items():
+                                if v in ("preparacion_texto", "mensaje_asistencial", "texto_libre", "notas_adicionales", "consejos"):
+                                    cur_val = vars_dict.get(k) or ""
+                                    if cur_val and clean_tl not in cur_val:
+                                        vars_dict[k] = f"{cur_val} • {clean_tl}"
+                                    else:
+                                        vars_dict[k] = clean_tl
+                                    break
+
+                    # Resolver componentes
+                    if components and len(components) > 0:
+                        for comp in components:
+                            c_dict = dict(comp)
+                            if c_dict.get("type", "").lower() == "body" and "parameters" in c_dict:
+                                params = list(c_dict["parameters"])
+                                if texto_libre_adicional:
+                                    if template_name == "recordatorio_cirugia_preparacion_v1":
+                                        while len(params) < 5:
+                                            params.append({"type": "text", "text": ""})
+                                        p5_txt = str(params[4].get("text") or "").strip()
+                                        if p5_txt and texto_libre_adicional not in p5_txt:
+                                            params[4]["text"] = f"{p5_txt} - Consejos: {texto_libre_adicional}"
+                                        elif not p5_txt:
+                                            params[4]["text"] = texto_libre_adicional
+                                    elif template_name == "comunicacion_asistencial_paciente_v1":
+                                        while len(params) < 2:
+                                            params.append({"type": "text", "text": ""})
+                                        p2_txt = str(params[1].get("text") or "").strip()
+                                        if p2_txt and texto_libre_adicional not in p2_txt:
+                                            params[1]["text"] = f"{p2_txt}\n{texto_libre_adicional}"
+                                        elif not p2_txt:
+                                            params[1]["text"] = texto_libre_adicional or texto or ""
+                                c_dict["parameters"] = params
+                            final_components.append(c_dict)
+                    else:
+                        # Construir components dinámicamente a partir de variables detectadas
+                        detected_vars = sorted(list(set(re.findall(r"\{\{(\d+)\}\}", body_text_tpl))), key=lambda x: int(x))
+                        if not detected_vars and template_name == "indicaciones_prequirurgicas_video_v1":
+                            detected_vars = ["1", "2", "3", "4"]
+                        elif not detected_vars and template_name == "comunicacion_asistencial_paciente_v1":
+                            detected_vars = ["1", "2"]
+
+                        body_params = []
+                        for v_idx in detected_vars:
+                            mapped_field = mappings.get(v_idx, "")
+                            val = vars_dict.get(v_idx) or (vars_dict.get(mapped_field) if mapped_field else None)
+
+                            if not val:
+                                if mapped_field == "paciente_nombre" or v_idx == "1":
+                                    val = pac_nom_param
+                                elif mapped_field in ("medico_nombre", "cirujano_nombre"):
+                                    val = cirujano_param
+                                elif mapped_field in ("turno_fecha", "fecha_cirugia"):
+                                    val = fecha_param
+                                elif mapped_field == "turno_hora":
+                                    val = "09:00"
+                                elif mapped_field == "practica_nombre":
+                                    val = "Consulta Oftalmológica"
+                                elif mapped_field == "enlace_consentimiento":
+                                    val = "https://centrovision.com.ar"
+                                elif mapped_field == "preparacion_texto":
+                                    val = texto_libre_adicional or "Concurrir con 6 horas de ayuno y acompañante."
+                                elif mapped_field == "mensaje_asistencial":
+                                    val = texto_libre_adicional or texto or "Indicaciones asistenciales del profesional."
+                                elif mapped_field in ("video_url", "enlace_video"):
+                                    val = video_param
+                                else:
+                                    val = texto_libre_adicional if (v_idx == detected_vars[-1] and texto_libre_adicional) else f"Dato {v_idx}"
+
+                            clean_p = _sanitizar_texto_asistencial_meta(str(val), max_chars=950) if mapped_field in ("preparacion_texto", "mensaje_asistencial") else _sanitizar_parametro_lineal(str(val), default="", max_chars=120)
+                            body_params.append({"type": "text", "text": clean_p})
+
+                        final_components.append({
+                            "type": "body",
+                            "parameters": body_params
+                        })
+
+                    # Despacho oficial por Meta Graph API
                     res_meta = await wa_client.send_template(
                         to_phone=meta_phone,
                         template_name=used_template,
                         language_code="es_AR",
-                        components=components
+                        components=final_components
                     )
                     wamid = res_meta.get("wamid")
 
+                    # Si se proveyó texto libre adicional y la plantilla no tenía slot para contenerlo,
+                    # intentar despacho coordinado dentro de la ventana de conversación si está activa
+                    if texto_libre_adicional:
+                        ya_inyectado = (
+                            (template_name in ("recordatorio_cirugia_preparacion_v1", "comunicacion_asistencial_paciente_v1"))
+                            or any(texto_libre_adicional in str(p.get("text", "")) for c in final_components for p in c.get("parameters", []))
+                        )
+                        if not ya_inyectado:
+                            try:
+                                await wa_client.send_free_text(
+                                    to_phone=meta_phone,
+                                    text=f"📌 *Información y Consejos Adicionales:*\n{texto_libre_adicional}"
+                                )
+                            except Exception as ex_free:
+                                logger.info(f"[HCE WhatsApp] Texto libre adicional coordinado no enviado (ventana de 24h no activa): {ex_free}")
+
+                # -------------------------------------------------------------
+                # CASO 2: Despacho de Texto Libre (Ventana 24h) + Fallback
+                # -------------------------------------------------------------
                 else:
-                    # Intento 1: Despacho de texto libre con preview de links/videos (dentro de ventana 24h)
                     try:
                         res_free = await wa_client.send_free_text(
                             to_phone=meta_phone,
-                            text=texto,
-                            preview_url=bool(video_url or "http" in texto)
+                            text=texto or "",
+                            preview_url=bool(video_url or (texto and "http" in texto))
                         )
                         wamid = res_free.get("wamid")
                         modo_envio = "texto_libre_24h"
@@ -1790,29 +1896,67 @@ class HistoriaOftalmoService:
                             logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando plantilla prequirúrgica homologada 'indicaciones_prequirurgicas_video_v1'...")
                             modo_envio = "fallback_plantilla_prequirurgica_24h"
                             used_template = "indicaciones_prequirurgicas_video_v1"
+                            fb_comp = [
+                                {
+                                    "type": "body",
+                                    "parameters": [
+                                        {"type": "text", "text": pac_nom_param},
+                                        {"type": "text", "text": cirujano_param},
+                                        {"type": "text", "text": fecha_param},
+                                        {"type": "text", "text": video_param}
+                                    ]
+                                }
+                            ]
                             res_tpl = await wa_client.send_template(
                                 to_phone=meta_phone,
-                                template_name="indicaciones_prequirurgicas_video_v1",
+                                template_name=used_template,
                                 language_code="es_AR",
-                                components=components_prequirurgico
+                                components=fb_comp
                             )
                             wamid = res_tpl.get("wamid")
                         else:
                             logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando fallback a 'comunicacion_asistencial_paciente_v1'...")
                             modo_envio = "fallback_plantilla_24h"
                             used_template = "comunicacion_asistencial_paciente_v1"
+                            fb_comp = [
+                                {
+                                    "type": "body",
+                                    "parameters": [
+                                        {"type": "text", "text": pac_nom_param},
+                                        {"type": "text", "text": _sanitizar_texto_asistencial_meta(texto or "", max_chars=950)}
+                                    ]
+                                }
+                            ]
                             res_tpl = await wa_client.send_template(
                                 to_phone=meta_phone,
-                                template_name="comunicacion_asistencial_paciente_v1",
+                                template_name=used_template,
                                 language_code="es_AR",
-                                components=components_asistencial
+                                components=fb_comp
                             )
                             wamid = res_tpl.get("wamid")
 
             finally:
                 await wa_client.close()
 
-            # 5. Auditar mensaje en tabla whatsapp_messages (Worker de WhatsApp Cloud)
+            # 5. Renderizar contenido textual final completo para guardar en public.mensajes
+            contenido_mensaje_final = texto or ""
+            if used_template and tpl_row and tpl_row.get("body_text"):
+                contenido_mensaje_final = tpl_row["body_text"]
+                b_params = []
+                for comp in (final_components if final_components else components or []):
+                    if comp.get("type", "").lower() == "body":
+                        b_params = [p.get("text", "") for p in comp.get("parameters", [])]
+                        break
+                for p_i, p_val in enumerate(b_params, start=1):
+                    contenido_mensaje_final = contenido_mensaje_final.replace(f"{{{{{p_i}}}}}", str(p_val))
+
+            if texto_libre_adicional and texto_libre_adicional not in contenido_mensaje_final:
+                contenido_mensaje_final = f"{contenido_mensaje_final}\n\n📌 *Información y Consejos Adicionales:*\n{texto_libre_adicional}".strip()
+
+            if not contenido_mensaje_final:
+                contenido_mensaje_final = texto or f"Plantilla enviada: {used_template}"
+
+            # 6. Auditar mensaje en tabla whatsapp_messages (Worker de WhatsApp Cloud)
             if wamid:
                 try:
                     from app.services.whatsapp_cloud.worker import record_outbound_audit_message
@@ -1820,11 +1964,13 @@ class HistoriaOftalmoService:
                         wamid=wamid,
                         to_phone=meta_phone,
                         message_type="template" if used_template else "text",
-                        content_text=texto,
+                        content_text=contenido_mensaje_final,
                         payload={
                             "to": meta_phone,
                             "tipo_comunicacion": tipo_comunicacion,
                             "template": used_template,
+                            "texto_libre_adicional": texto_libre_adicional,
+                            "variables": variables_personalizadas or {},
                             "video_url": video_url,
                             "cirujano_nombre": cirujano_nombre,
                             "medico_nombre": medico_nombre,
@@ -1834,19 +1980,22 @@ class HistoriaOftalmoService:
                 except Exception as ex_audit:
                     logger.debug(f"Aviso registrando auditoría outbound de whatsapp_messages: {ex_audit}")
 
-            # 6. Registrar en public.mensajes vinculado a la conversación del CRM
+            # 7. Registrar en public.mensajes vinculado a la conversación del CRM
             meta_json = {
                 "origen": "hce",
                 "modulo": "historia_oftalmo",
-                "tipo_comunicacion": tipo_comunicacion,
+                "tipo": "template" if used_template else "text",
+                "template_name": used_template,
+                "texto_libre_adicional": texto_libre_adicional,
+                "variables": variables_personalizadas or {},
                 "medico_nombre": medico_nombre,
+                "cirujano_nombre": cirujano_nombre,
                 "medico_usuario_id": user_id,
                 "linea_emision": linea_usada,
                 "wamid": wamid,
-                "template_name": used_template,
+                "tipo_comunicacion": tipo_comunicacion,
                 "modo_envio": modo_envio,
                 "video_url": video_url,
-                "cirujano_nombre": cirujano_nombre,
                 "fecha_cirugia": fecha_cirugia,
                 "delivery_status": "sent"
             }
@@ -1857,14 +2006,14 @@ class HistoriaOftalmoService:
                     saved_msg = guardar_mensaje(
                         conversacion_id=conv_id,
                         emisor="operador",
-                        contenido=texto,
+                        contenido=contenido_mensaje_final,
                         whatsapp_message_id=wamid,
                         metadata_json=meta_json
                     )
                 except Exception as ex_save:
                     logger.warning(f"Error guardando mensaje en public.mensajes: {ex_save}")
 
-            # 7. Registrar evento médico-legal en hce_audit_logs
+            # 8. Registrar evento médico-legal en hce_audit_logs
             HistoriaOftalmoService.registrar_audit_log(
                 paciente_id=paciente_id,
                 entidad="COMUNICACION_HCE",
@@ -1880,6 +2029,8 @@ class HistoriaOftalmoService:
                     "modo_envio": modo_envio,
                     "template_name": used_template,
                     "wamid": wamid,
+                    "texto_libre_adicional": texto_libre_adicional,
+                    "variables": variables_personalizadas or {},
                     "video_url": video_url,
                     "cirujano_nombre": cirujano_nombre,
                     "medico_nombre": medico_nombre,
@@ -1895,11 +2046,23 @@ class HistoriaOftalmoService:
                 "tipo_comunicacion": tipo_comunicacion,
                 "modo_envio": modo_envio,
                 "template_usada": used_template,
+                "template_name": used_template,
+                "texto_libre_adicional": texto_libre_adicional,
+                "variables": variables_personalizadas,
                 "cirujano_nombre": cirujano_nombre,
                 "medico_nombre": medico_nombre,
                 "linea_emision": linea_usada,
                 "mensaje_id": saved_msg.get("id") if isinstance(saved_msg, dict) else None
             }
+
+        except ValueError:
+            raise
+        except MetaAPIError as me:
+            logger.error(f"[HCE WhatsApp] Error de Meta API para paciente {paciente_id}: {me}")
+            raise ValueError(f"Meta WhatsApp API Error [{me.code}]: {me.message}")
+        except Exception as e:
+            logger.error(f"[HCE WhatsApp] Error despachando comunicación HCE para paciente {paciente_id}: {e}")
+            raise
 
         except ValueError:
             raise

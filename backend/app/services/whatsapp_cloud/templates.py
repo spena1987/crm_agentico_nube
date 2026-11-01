@@ -74,6 +74,7 @@ class RenderPreviewRequest(BaseModel):
 class TemplateGovernanceUpdate(BaseModel):
     activo: Optional[bool] = None
     visible_en_chat: Optional[bool] = None
+    visible_en_hce: Optional[bool] = None
     grupo_crm: Optional[str] = Field(None, max_length=60)
     titulo_amigable: Optional[str] = Field(None, max_length=120)
     descripcion: Optional[str] = None
@@ -142,6 +143,7 @@ async def list_templates(
     status_filter: Optional[str] = None,
     solo_activos: Optional[bool] = False,
     solo_chat: Optional[bool] = False,
+    solo_hce: Optional[bool] = False,
     grupo: Optional[str] = None
 ):
     """
@@ -150,7 +152,9 @@ async def list_templates(
     try:
         query = supabase.table("whatsapp_templates").select("*")
         
-        if solo_chat:
+        if solo_hce:
+            query = query.eq("status", "APPROVED").eq("activo", True).eq("visible_en_hce", True)
+        elif solo_chat:
             query = query.eq("status", "APPROVED").eq("activo", True).eq("visible_en_chat", True)
         else:
             if solo_activos:
@@ -308,6 +312,7 @@ async def sync_templates_from_meta():
                 tpl_record["variable_mappings"] = DEFAULT_MAPPINGS.get(tpl_name, {})
                 tpl_record["activo"] = True
                 tpl_record["visible_en_chat"] = True
+                tpl_record["visible_en_hce"] = True
                 tpl_record["grupo_crm"] = grupo_inicial
                 tpl_record["titulo_amigable"] = tpl_name.replace("_", " ").title()
                 tpl_record["orden"] = 0
@@ -551,6 +556,9 @@ async def create_template(req: TemplateCreateRequest):
         "footer_text": req.footer_text,
         "buttons": [b.model_dump() for b in req.buttons] if req.buttons else [],
         "variable_mappings": req.variable_mappings or {},
+        "activo": True,
+        "visible_en_chat": True,
+        "visible_en_hce": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
@@ -770,6 +778,8 @@ async def update_template_governance(name: str, payload: TemplateGovernanceUpdat
             update_data["activo"] = payload.activo
         if payload.visible_en_chat is not None:
             update_data["visible_en_chat"] = payload.visible_en_chat
+        if payload.visible_en_hce is not None:
+            update_data["visible_en_hce"] = payload.visible_en_hce
         if payload.grupo_crm is not None:
             update_data["grupo_crm"] = payload.grupo_crm.strip()
         if payload.titulo_amigable is not None:

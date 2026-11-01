@@ -51,6 +51,7 @@ interface TemplateItem {
   created_at?: string
   activo?: boolean
   visible_en_chat?: boolean
+  visible_en_hce?: boolean
   grupo_crm?: string
   titulo_amigable?: string
   descripcion?: string
@@ -409,7 +410,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const [searchFilter, setSearchFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL')
   const [groupFilter, setGroupFilter] = useState<string>('ALL')
-  const [statusUsageFilter, setStatusUsageFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE' | 'CHAT_ONLY'>('ALL')
+  const [statusUsageFilter, setStatusUsageFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE' | 'CHAT_ONLY' | 'HCE_ONLY'>('ALL')
   const [updatingGovernance, setUpdatingGovernance] = useState<string | null>(null)
 
   // Modal de Creación / Edición
@@ -720,10 +721,10 @@ export default function WhatsAppTemplatesSettingsCard() {
     }
   }
 
-  // Actualizar gobernanza (activo, visible_en_chat, grupo_crm)
+  // Actualizar gobernanza (activo, visible_en_chat, visible_en_hce, grupo_crm)
   const handleUpdateGovernance = async (
     tplName: string,
-    patch: { activo?: boolean; visible_en_chat?: boolean; grupo_crm?: string; titulo_amigable?: string }
+    patch: { activo?: boolean; visible_en_chat?: boolean; visible_en_hce?: boolean; grupo_crm?: string; titulo_amigable?: string }
   ) => {
     // Actualización optimista en memoria
     setTemplates(prev => prev.map(t => t.name === tplName ? { ...t, ...patch } : t))
@@ -779,7 +780,7 @@ export default function WhatsAppTemplatesSettingsCard() {
     // Filtro por Grupo CRM
     const matchesGroup = groupFilter === 'ALL' || (tpl.grupo_crm || 'Atención General') === groupFilter
 
-    // Filtro por Estado de Uso / Visibilidad en Chat
+    // Filtro por Estado de Uso / Visibilidad en Chat / Visibilidad en HCE
     let matchesStatusUsage = true
     if (statusUsageFilter === 'ACTIVE') {
       matchesStatusUsage = tpl.activo !== false
@@ -787,6 +788,8 @@ export default function WhatsAppTemplatesSettingsCard() {
       matchesStatusUsage = tpl.activo === false
     } else if (statusUsageFilter === 'CHAT_ONLY') {
       matchesStatusUsage = tpl.activo !== false && tpl.visible_en_chat !== false && tpl.status === 'APPROVED'
+    } else if (statusUsageFilter === 'HCE_ONLY') {
+      matchesStatusUsage = tpl.activo !== false && (tpl.visible_en_hce === true || (tpl.visible_en_hce !== false && tpl.status === 'APPROVED' && (tpl.grupo_crm === 'Seguimiento Quirúrgico' || tpl.grupo_crm === 'Atención General' || tpl.grupo_crm === 'Entrega de Estudios' || tpl.grupo_crm === 'Recordatorios de Turnos')))
     }
 
     return matchesSearch && matchesCategory && matchesGroup && matchesStatusUsage
@@ -799,6 +802,7 @@ export default function WhatsAppTemplatesSettingsCard() {
   const countActivas = templates.filter(t => t.activo !== false).length
   const countInactivas = templates.filter(t => t.activo === false).length
   const countChatVisible = templates.filter(t => t.activo !== false && t.visible_en_chat !== false && t.status === 'APPROVED').length
+  const countHceVisible = templates.filter(t => t.activo !== false && (t.visible_en_hce === true || (t.visible_en_hce !== false && t.status === 'APPROVED' && (t.grupo_crm === 'Seguimiento Quirúrgico' || t.grupo_crm === 'Atención General' || t.grupo_crm === 'Entrega de Estudios' || t.grupo_crm === 'Recordatorios de Turnos')))).length
 
   return (
     <div className="space-y-6">
@@ -879,7 +883,7 @@ export default function WhatsAppTemplatesSettingsCard() {
         )}
 
         {/* Estadísticas / KPIs de Gobernanza */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6 pt-6 border-t border-[#1e2d42]">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-6 pt-6 border-t border-[#1e2d42]">
           <div className="p-3 rounded-lg bg-[#162232] border border-[#233348]">
             <div className="text-xs font-medium text-slate-400">Total en Meta</div>
             <div className="text-xl font-bold text-white mt-0.5">{templates.length}</div>
@@ -902,9 +906,15 @@ export default function WhatsAppTemplatesSettingsCard() {
             </div>
             <div className="text-xl font-bold text-blue-300 mt-0.5">{countChatVisible}</div>
           </div>
+          <div className="p-3 rounded-lg bg-[#241738]/60 border border-[#48286a]">
+            <div className="text-xs font-medium text-purple-400 flex items-center gap-1">
+              <Stethoscope className="w-3.5 h-3.5" /> Activas en HCE
+            </div>
+            <div className="text-xl font-bold text-purple-300 mt-0.5">{countHceVisible}</div>
+          </div>
           <div className="p-3 rounded-lg bg-[#2a151b]/60 border border-[#581c25]">
             <div className="text-xs font-medium text-red-400 flex items-center gap-1">
-              <AlertCircle className="w-3.5 h-3.5" /> Inactivas / Fuera de uso
+              <AlertCircle className="w-3.5 h-3.5" /> Fuera de uso
             </div>
             <div className="text-xl font-bold text-red-300 mt-0.5">{countInactivas}</div>
           </div>
@@ -950,6 +960,14 @@ export default function WhatsAppTemplatesSettingsCard() {
               }`}
             >
               En Chat ({countChatVisible})
+            </button>
+            <button
+              onClick={() => setStatusUsageFilter('HCE_ONLY')}
+              className={`px-3 py-1.5 rounded-md font-medium transition-colors ${
+                statusUsageFilter === 'HCE_ONLY' ? 'bg-purple-950 text-purple-300 font-semibold border border-purple-800/50' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              En HCE ({countHceVisible})
             </button>
             <button
               onClick={() => setStatusUsageFilter('INACTIVE')}
@@ -1139,10 +1157,10 @@ export default function WhatsAppTemplatesSettingsCard() {
                       )}
                     </div>
 
-                    {/* Fila de Switches: Activo en CRM y Visible en Chat */}
-                    <div className="grid grid-cols-2 gap-2 pt-1">
+                    {/* Fila de Switches: Activo en CRM, Visible en Chat y Visible en HCE */}
+                    <div className="grid grid-cols-3 gap-1.5 pt-1">
                       {/* Switch: Activo */}
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Plantilla activa globalmente en el CRM">
                         <input
                           type="checkbox"
                           checked={tpl.activo !== false}
@@ -1150,16 +1168,16 @@ export default function WhatsAppTemplatesSettingsCard() {
                           onChange={(e) => handleUpdateGovernance(tpl.name, { activo: e.target.checked })}
                           className="sr-only"
                         />
-                        <div className={`w-7 h-4 rounded-full transition-colors relative ${tpl.activo !== false ? 'bg-emerald-600' : 'bg-slate-700'}`}>
+                        <div className={`w-7 h-4 rounded-full transition-colors relative shrink-0 ${tpl.activo !== false ? 'bg-emerald-600' : 'bg-slate-700'}`}>
                           <div className={`w-3 h-3 rounded-full bg-white transition-transform absolute top-0.5 ${tpl.activo !== false ? 'left-3.5' : 'left-0.5'}`} />
                         </div>
-                        <span className={`text-[11px] font-medium ${tpl.activo !== false ? 'text-emerald-300' : 'text-slate-400'}`}>
+                        <span className={`text-[10.5px] font-medium truncate ${tpl.activo !== false ? 'text-emerald-300' : 'text-slate-400'}`}>
                           {tpl.activo !== false ? 'En Uso' : 'Inactiva'}
                         </span>
                       </label>
 
                       {/* Switch: Visible en Chat */}
-                      <label className={`flex items-center gap-2 select-none ${isInactive ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                      <label className={`flex items-center gap-1.5 select-none ${isInactive ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`} title="Visible para operadores en la bandeja de chat en vivo">
                         <input
                           type="checkbox"
                           disabled={isInactive || isSaving}
@@ -1167,13 +1185,35 @@ export default function WhatsAppTemplatesSettingsCard() {
                           onChange={(e) => handleUpdateGovernance(tpl.name, { visible_en_chat: e.target.checked })}
                           className="sr-only"
                         />
-                        <div className={`w-7 h-4 rounded-full transition-colors relative ${tpl.visible_en_chat !== false && !isInactive ? 'bg-blue-600' : 'bg-slate-700'}`}>
+                        <div className={`w-7 h-4 rounded-full transition-colors relative shrink-0 ${tpl.visible_en_chat !== false && !isInactive ? 'bg-blue-600' : 'bg-slate-700'}`}>
                           <div className={`w-3 h-3 rounded-full bg-white transition-transform absolute top-0.5 ${tpl.visible_en_chat !== false && !isInactive ? 'left-3.5' : 'left-0.5'}`} />
                         </div>
-                        <span className={`text-[11px] font-medium ${tpl.visible_en_chat !== false && !isInactive ? 'text-blue-300' : 'text-slate-400'}`}>
+                        <span className={`text-[10.5px] font-medium truncate ${tpl.visible_en_chat !== false && !isInactive ? 'text-blue-300' : 'text-slate-400'}`}>
                           En Chat
                         </span>
                       </label>
+
+                      {/* Switch: Visible en HCE */}
+                      {(() => {
+                        const isHceActive = tpl.visible_en_hce === true || (tpl.visible_en_hce !== false && tpl.status === 'APPROVED' && (tpl.grupo_crm === 'Seguimiento Quirúrgico' || tpl.grupo_crm === 'Atención General' || tpl.grupo_crm === 'Entrega de Estudios' || tpl.grupo_crm === 'Recordatorios de Turnos'))
+                        return (
+                          <label className={`flex items-center gap-1.5 select-none ${isInactive ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`} title="Habilitar en el Centro de Emisión Rápida de la Historia Clínica (HCE)">
+                            <input
+                              type="checkbox"
+                              disabled={isInactive || isSaving}
+                              checked={isHceActive && !isInactive}
+                              onChange={(e) => handleUpdateGovernance(tpl.name, { visible_en_hce: e.target.checked })}
+                              className="sr-only"
+                            />
+                            <div className={`w-7 h-4 rounded-full transition-colors relative shrink-0 ${isHceActive && !isInactive ? 'bg-purple-600' : 'bg-slate-700'}`}>
+                              <div className={`w-3 h-3 rounded-full bg-white transition-transform absolute top-0.5 ${isHceActive && !isInactive ? 'left-3.5' : 'left-0.5'}`} />
+                            </div>
+                            <span className={`text-[10.5px] font-medium truncate ${isHceActive && !isInactive ? 'text-purple-300' : 'text-slate-400'}`}>
+                              En HCE
+                            </span>
+                          </label>
+                        )
+                      })()}
                     </div>
 
                     {/* Selector de Grupo CRM */}

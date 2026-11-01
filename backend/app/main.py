@@ -9122,15 +9122,20 @@ async def enviar_comunicacion_hce_endpoint(
     """
     Despacha una comunicación clínica asistencial desde la HCE (Línea 2 de Estudios / Transaccional Informativa).
     Permite enviar mensajes libres (dentro de ventana de 24h) o mediante plantillas oficiales UTILITY
-    (como 'comunicacion_asistencial_paciente_v1' o 'indicaciones_prequirurgicas_video_v1').
+    (como 'recordatorio_cirugia_preparacion_v1', 'comunicacion_asistencial_paciente_v1', 'confirmacion_consentimiento_quirurgico_v1', etc.).
+    Soporta components estructurados de Meta, variables_personalizadas y texto_libre_adicional para notas/consejos médicos.
     """
     try:
-        tipo_comunicacion = payload.get("tipo_comunicacion") or "aviso_asistencial"
-        texto = payload.get("texto") or payload.get("mensaje") or ""
-        if not texto:
-            raise HTTPException(status_code=400, detail="Se requiere el campo 'texto' de la comunicación asistencial.")
-
         template_name = payload.get("template_name")
+        tipo_comunicacion = payload.get("tipo_comunicacion") or ("template_hce" if template_name else "aviso_asistencial")
+        texto = payload.get("texto") or payload.get("mensaje") or ""
+        components = payload.get("components")
+        texto_libre_adicional = payload.get("texto_libre_adicional")
+        variables_personalizadas = payload.get("variables_personalizadas") or payload.get("variables")
+
+        if not texto and not template_name:
+            raise HTTPException(status_code=400, detail="Se requiere especificar el contenido de texto ('texto') o una plantilla ('template_name').")
+
         video_url = payload.get("video_url")
         cirujano_nombre = payload.get("cirujano_nombre") or payload.get("medico_nombre")
         medico_nombre = payload.get("medico_nombre") or payload.get("cirujano_nombre")
@@ -9144,6 +9149,9 @@ async def enviar_comunicacion_hce_endpoint(
             tipo_comunicacion=tipo_comunicacion,
             texto=texto,
             template_name=template_name,
+            components=components,
+            texto_libre_adicional=texto_libre_adicional,
+            variables_personalizadas=variables_personalizadas,
             video_url=video_url,
             cirujano_nombre=cirujano_nombre,
             medico_nombre=medico_nombre,

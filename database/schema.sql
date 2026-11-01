@@ -566,13 +566,43 @@ create table if not exists public.practicas_precios_override (
 );
 
 -- ====================================================================
--- 15. SESIONES DE WHATSAPP (PERSISTENCIA POSTGRES)
+-- 15. SESIONES Y PLANTILLAS DE WHATSAPP (META CLOUD API & CRM)
 -- ====================================================================
 create table if not exists public.whatsapp_sessions (
     key varchar primary key,
     value jsonb not null,
     updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+create table if not exists public.whatsapp_templates (
+    id uuid primary key default gen_random_uuid(),
+    waba_id text,
+    meta_template_id text,
+    name text not null unique,
+    category text,
+    language text default 'es_AR',
+    status text default 'PENDING',
+    header_type text,
+    header_content text,
+    body_text text,
+    footer_text text,
+    buttons jsonb default '[]'::jsonb,
+    variable_mappings jsonb default '{}'::jsonb,
+    rejection_reason text,
+    activo boolean default true,
+    visible_en_chat boolean default true,
+    visible_en_hce boolean default true,
+    grupo_crm varchar default 'Atención General',
+    titulo_amigable varchar,
+    descripcion text,
+    orden integer default 0,
+    created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_whatsapp_templates_name on public.whatsapp_templates(name);
+create index if not exists idx_whatsapp_templates_status on public.whatsapp_templates(status);
+create index if not exists idx_whatsapp_templates_hce on public.whatsapp_templates(visible_en_hce) where visible_en_hce = true;
 
 -- ====================================================================
 -- 16. MÓDULO DE QUIRÓFANOS & PROGRAMACIÓN QUIRÚRGICA
