@@ -9090,6 +9090,89 @@ async def despachar_resumen_whatsapp_endpoint(
         logger.error(f"Error despachando resumen WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ====================================================================
+# PESTAÑA CONVERSACIÓN HCE: WHATSAPP TRANSACCIONAL CLÍNICO & AUDITORÍA
+# ====================================================================
+
+@app.get("/api/oftalmo/pacientes/{paciente_id}/mensajes-hce")
+@app.get("/api/oftalmo/{paciente_id}/mensajes-hce")
+def get_mensajes_hce_endpoint(paciente_id: str):
+    """
+    Obtiene el historial de comunicaciones asistenciales transaccionales de la HCE para un paciente.
+    Filtra estrictamente los mensajes de origen clínico/asistencial (resúmenes, indicaciones, videos, avisos).
+    """
+    try:
+        return HistoriaOftalmoService.get_mensajes_hce(paciente_id=paciente_id)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error obteniendo mensajes HCE de paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/oftalmo/pacientes/{paciente_id}/enviar-comunicacion-hce")
+@app.post("/api/oftalmo/{paciente_id}/enviar-comunicacion-hce")
+@app.post("/api/oftalmo/pacientes/{paciente_id}/despachar-comunicacion")
+async def enviar_comunicacion_hce_endpoint(
+    paciente_id: str,
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+    current_user: Optional[Dict[str, Any]] = Depends(get_optional_user)
+):
+    """
+    Despacha una comunicación clínica asistencial desde la HCE (Línea 2 de Estudios / Transaccional Informativa).
+    Permite enviar mensajes libres (dentro de ventana de 24h) o mediante plantillas oficiales UTILITY
+    (como 'comunicacion_asistencial_paciente_v1' o 'indicaciones_prequirurgicas_video_v1').
+    """
+    try:
+        tipo_comunicacion = payload.get("tipo_comunicacion") or "aviso_asistencial"
+        texto = payload.get("texto") or payload.get("mensaje") or ""
+        if not texto:
+            raise HTTPException(status_code=400, detail="Se requiere el campo 'texto' de la comunicación asistencial.")
+
+        template_name = payload.get("template_name")
+        video_url = payload.get("video_url")
+        cirujano_nombre = payload.get("cirujano_nombre") or payload.get("medico_nombre")
+        medico_nombre = payload.get("medico_nombre") or payload.get("cirujano_nombre")
+        fecha_cirugia = payload.get("fecha_cirugia")
+
+        ip = request.client.host if request.client else None
+        ua = request.headers.get("user-agent")
+
+        return await HistoriaOftalmoService.despachar_comunicacion_hce(
+            paciente_id=paciente_id,
+            tipo_comunicacion=tipo_comunicacion,
+            texto=texto,
+            template_name=template_name,
+            video_url=video_url,
+            cirujano_nombre=cirujano_nombre,
+            medico_nombre=medico_nombre,
+            fecha_cirugia=fecha_cirugia,
+            user_payload=current_user,
+            ip_address=ip,
+            user_agent=ua
+        )
+    except HTTPException:
+        raise
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error despachando comunicación HCE para paciente {paciente_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/oftalmo/comunicacion-plantillas")
+def get_comunicacion_plantillas_endpoint():
+    """
+    Obtiene el catálogo de plantillas y modelos asistenciales rápidos para la pestaña Conversación HCE.
+    """
+    try:
+        return HistoriaOftalmoService.get_plantillas_comunicacion()
+    except Exception as e:
+        logger.error(f"Error obteniendo plantillas de comunicación asistencial: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/oftalmo/estudios/{estudio_id}/crear-token-descarga")
 async def crear_token_descarga_estudio_endpoint(
     estudio_id: str,

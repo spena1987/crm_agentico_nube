@@ -10,10 +10,12 @@ import {
   BookOpen, 
   ClipboardList, 
   FolderDown, 
-  Loader2
+  Loader2,
+  MessageSquare
 } from 'lucide-react'
 import { BACKEND_URL, getAuthHeaders } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
 
 
 import HeaderPacienteFijo from './historia-clinica/HeaderPacienteFijo'
@@ -23,6 +25,7 @@ import TabRecetasAnteojos from './historia-clinica/tabs/TabRecetasAnteojos'
 import TabRecetasMedicamentos from './historia-clinica/tabs/TabRecetasMedicamentos'
 import TabIndicaciones from './historia-clinica/tabs/TabIndicaciones'
 import TabPedidosEstudios from './historia-clinica/tabs/TabPedidosEstudios'
+import TabConversacionHCE from './historia-clinica/tabs/TabConversacionHCE'
 import TabGeclisaLegado from './historia-clinica/tabs/TabGeclisaLegado'
 import ModalTicketOCR from './historia-clinica/ocr/ModalTicketOCR'
 import ModalResumenWhatsApp from './historia-clinica/whatsapp/ModalResumenWhatsApp'
@@ -57,6 +60,7 @@ type TabTipo =
   | 'recetas_farmacos' 
   | 'indicaciones' 
   | 'pedidos_estudios' 
+  | 'conversacion'
   | 'geclisa'
 
 interface ModalHistoriaClinicaProps {
@@ -83,6 +87,8 @@ export default function ModalHistoriaClinica({
   onClose,
   paciente
 }: ModalHistoriaClinicaProps) {
+  const { user } = useAuth()
+  const currentUserName = user?.user_metadata?.nombre_completo || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Médico en Sesión'
   const [activeTab, setActiveTab] = useState<TabTipo>('evolucion')
 
   const [pacienteData, setPacienteData] = useState<PacienteData | null>(null)
@@ -993,6 +999,19 @@ export default function ModalHistoriaClinica({
 
             <button
               type="button"
+              onClick={() => setActiveTab('conversacion')}
+              className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
+                activeTab === 'conversacion'
+                  ? 'bg-white text-[#0e7c86] border-t-[3px] border-l border-r border-t-[#0e7c86] border-l-[#b8cdd6] border-r-[#b8cdd6] font-black px-3 py-1.5 -mb-[2px] shadow-xs z-10'
+                  : 'bg-[#cad9e2] hover:bg-white/70 text-[#4d6675] hover:text-[#16323f] border-t border-l border-r border-transparent hover:border-[#b8cdd6] px-2.5 py-1.5 font-bold mb-0'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+              Conversación
+            </button>
+
+            <button
+              type="button"
               onClick={() => setActiveTab('geclisa')}
               className={`transition-all flex items-center gap-1.5 whitespace-nowrap rounded-t-lg text-xs ${
                 activeTab === 'geclisa'
@@ -1099,6 +1118,14 @@ export default function ModalHistoriaClinica({
                   onAddPedido={handleAddPedidoEstudios}
                   onDeletePedido={handleDeletePedidoEstudios}
                   onImprimirPedido={pedido => handleImprimir({ tipo: 'pedido_estudios', pedidoEstudios: pedido })}
+                />
+              )}
+
+              {activeTab === 'conversacion' && (
+                <TabConversacionHCE
+                  paciente={pacienteData}
+                  consultaActiva={consultaActiva || null}
+                  currentUserName={currentUserName}
                 />
               )}
 

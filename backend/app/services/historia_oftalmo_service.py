@@ -1452,3 +1452,536 @@ class HistoriaOftalmoService:
         except Exception as e:
             logger.error(f"Error completando pedido worklist {pedido_id}: {e}")
             raise
+
+    @staticmethod
+    def get_mensajes_hce(paciente_id: str) -> List[Dict[str, Any]]:
+        """
+        Obtiene los mensajes del paciente donde se identifiquen comunicaciones clínicas de la HCE:
+        - Conversaciones vinculadas a paciente_id o a su teléfono.
+        - Filtra mensajes donde metadata_json->>'origen' = 'hce', o 'modulo' = 'historia_oftalmo',
+          o tipo_comunicacion no nulo, o enviados por médico/plantilla asistencial clínica/estudios.
+        - Retorna lista cronológica (antiguos a recientes) normalizada para el frontend.
+        """
+        try:
+            if not supabase:
+                return []
+
+            # 1. Obtener datos del paciente (para tener también su teléfono)
+            p_res = supabase.table("pacientes").select("id, nombre, telefono").eq("id", paciente_id).limit(1).execute()
+            telefono_pac = None
+            if p_res.data:
+                telefono_pac = p_res.data[0].get("telefono")
+
+            # 2. Buscar IDs de conversaciones vinculadas
+            conv_ids = set()
+            c_res = supabase.table("conversaciones").select("id").eq("paciente_id", paciente_id).execute()
+            if c_res.data:
+                for c in c_res.data:
+                    if c.get("id"):
+                        conv_ids.add(c["id"])
+
+            if telefono_pac:
+                try:
+                    from app.services.phone_normalizer import normalize_phone_number
+                    norm_tel = normalize_phone_number(telefono_pac)
+                    if norm_tel:
+                        ct_res = supabase.table("conversaciones").select("id").eq("telefono", norm_tel).execute()
+                        if ct_res.data:
+                            for c in ct_res.data:
+                                if c.get("id"):
+                                    conv_ids.add(c["id"])
+                except Exception as ex_t:
+                    logger.debug(f"Aviso buscando conversación por teléfono de paciente {paciente_id}: {ex_t}")
+
+            if not conv_ids:
+                return []
+
+            # 3. Consultar mensajes de las conversaciones encontradas (orden cronológico ascendente)
+            m_res = supabase.table("mensajes").select("*").in_("conversacion_id", list(conv_ids)).order("created_at", desc=False).limit(300).execute()
+            if not m_res.data:
+                return []
+
+            mensajes_hce = []
+            for msg in m_res.data:
+                meta = msg.get("metadata_json") or {}
+                if not isinstance(meta, dict):
+                    meta = {}
+
+                origen = meta.get("origen")
+                modulo = meta.get("modulo")
+                tipo_com = meta.get("tipo_comunicacion")
+                tpl_name = meta.get("template_name") or meta.get("template")
+                linea = meta.get("linea_emision")
+                emisor_raw = (msg.get("emisor") or "").lower()
+
+                tiene_campos_clinicos = bool(
+                    meta.get("emision_indicacion_id")
+                    or meta.get("estudio_id")
+                    or meta.get("receta_id")
+                    or meta.get("consulta_id")
+                    or meta.get("cirujano_nombre")
+                    or meta.get("fecha_cirugia")
+                    or meta.get("video_url")
+                )
+
+                # Severidad BAJA: emisor_raw in ['medico', 'doctor'] solo califica como mensaje HCE
+                # si viene de linea_emision asistencial, origen == 'hce', modulo == 'historia_oftalmo',
+                # o tiene campos clínicos explícitos en metadata_json.
+                es_hce = (
+                    origen == "hce"
+                    or modulo == "historia_oftalmo"
+                    or tipo_com is not None
+                    or linea in ["estudios_informativa", "estudios"]
+                    or tpl_name == "comunicacion_asistencial_paciente_v1"
+                    or "prequirurg" in str(tpl_name).lower()
+                    or tiene_campos_clinicos
+                    or (
+                        emisor_raw in ["medico", "doctor"]
+                        and (
+                            linea in ["estudios_informativa", "estudios"]
+                            or origen == "hce"
+                            or modulo == "historia_oftalmo"
+                            or tiene_campos_clinicos
+                        )
+                    )
+                )
+
+                if not es_hce:
+                    continue
+
+                estado = (
+                    meta.get("delivery_status")
+                    or meta.get("status")
+                    or ("read" if meta.get("read") else ("delivered" if meta.get("delivered") else "sent"))
+                )
+
+                if not tipo_com:
+                    if meta.get("consulta_id"):
+                        tipo_com = "resumen_consulta"
+                    elif meta.get("emision_indicacion_id"):
+                        tipo_com = "indicacion_medica"
+                    elif meta.get("estudio_id"):
+                        tipo_com = "estudio"
+                    elif meta.get("receta_id"):
+                        tipo_com = "receta"
+                    elif "prequirurg" in (msg.get("contenido") or "").lower() or "prequirurg" in str(tpl_name).lower():
+                        tipo_com = "prequirurgico"
+                    else:
+                        tipo_com = "aviso_asistencial"
+
+                # Severidad MEDIA: asegurar que tipo_comunicacion se propague también dentro de metadata_json
+                meta["tipo_comunicacion"] = tipo_com
+
+                cirujano_nom = meta.get("cirujano_nombre") or meta.get("medico_nombre")
+                medico_nom = (
+                    meta.get("medico_nombre")
+                    or cirujano_nom
+                    or meta.get("operador_nombre")
+                    or ("Médico Oftalmólogo" if emisor_raw in ["medico", "doctor"] else "Centrovisión Asistencial")
+                )
+                if not cirujano_nom and emisor_raw in ["medico", "doctor"]:
+                    cirujano_nom = medico_nom
+
+                meta["medico_nombre"] = medico_nom
+                meta["cirujano_nombre"] = cirujano_nom
+
+                item = {
+                    "id": str(msg.get("id")),
+                    "fecha": msg.get("created_at"),
+                    "created_at": msg.get("created_at"),
+                    "emisor": "medico" if emisor_raw in ["medico", "doctor", "operador"] else emisor_raw,
+                    "contenido": msg.get("contenido") or "",
+                    "estado": estado,
+                    "delivery_status": estado,
+                    "tipo_comunicacion": tipo_com,
+                    "medico_nombre": medico_nom,
+                    "medico_usuario_id": meta.get("medico_usuario_id") or meta.get("operador_id"),
+                    "linea_emision": linea or "estudios_informativa",
+                    "wamid": msg.get("whatsapp_message_id") or meta.get("wamid"),
+                    "video_url": meta.get("video_url"),
+                    "cirujano_nombre": cirujano_nom,
+                    "fecha_cirugia": meta.get("fecha_cirugia"),
+                    "template_name": tpl_name,
+                    "metadata_json": meta
+                }
+                mensajes_hce.append(item)
+
+            return mensajes_hce
+        except Exception as e:
+            logger.error(f"Error obteniendo mensajes HCE de paciente {paciente_id}: {e}")
+            raise
+
+    @staticmethod
+    async def despachar_comunicacion_hce(
+        paciente_id: str,
+        tipo_comunicacion: str,
+        texto: str,
+        template_name: Optional[str] = None,
+        video_url: Optional[str] = None,
+        cirujano_nombre: Optional[str] = None,
+        medico_nombre: Optional[str] = None,
+        fecha_cirugia: Optional[str] = None,
+        user_payload: Optional[Dict[str, Any]] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Despacha una comunicación clínica asistencial desde la HCE hacia el paciente
+        utilizando la Línea 2 de Estudios (Canal Transaccional Informativo no-reply).
+        Soporta envío directo de texto (ventana 24h) y fallback automático a la plantilla
+        oficial UTILITY homologada ('indicaciones_prequirurgicas_video_v1' o 'comunicacion_asistencial_paciente_v1')
+        si la ventana de 24h está cerrada.
+        Registra el mensaje en public.mensajes con metadata_json estructurada y en hce_audit_logs.
+        """
+        import re
+        from app.db import get_or_create_conversacion, guardar_mensaje
+        from app.services.phone_normalizer import normalize_phone_number
+        from app.services.whatsapp_cloud.normalizer import normalize_to_meta_e164
+        from app.services.whatsapp_cloud.client import (
+            WhatsAppCloudClient,
+            ConversationWindowClosedError,
+            MetaAPIError
+        )
+
+        try:
+            # 1. Validar y obtener datos del paciente
+            p_res = supabase.table("pacientes").select("id, nombre, telefono, dni").eq("id", paciente_id).limit(1).execute()
+            if not p_res.data:
+                raise ValueError(f"Paciente {paciente_id} no encontrado.")
+            pac = p_res.data[0]
+            pac_nombre = (pac.get("nombre") or "Estimado/a").strip()
+            raw_telefono = pac.get("telefono")
+            if not raw_telefono:
+                raise ValueError("El paciente no tiene un número de celular registrado.")
+
+            # Normalizar teléfono
+            tel_norm = normalize_phone_number(raw_telefono)
+            if not tel_norm:
+                raise ValueError(f"Número telefónico '{raw_telefono}' inválido para WhatsApp.")
+            meta_phone = normalize_to_meta_e164(tel_norm)
+            if not meta_phone:
+                raise ValueError(f"No se pudo convertir el teléfono '{tel_norm}' a formato internacional Meta E.164.")
+
+            # 2. Conversación en CRM
+            conv_id = None
+            try:
+                conv = get_or_create_conversacion(paciente_id)
+                if conv:
+                    conv_id = conv.get("id")
+            except Exception as e_c:
+                logger.warning(f"Aviso obteniendo conversación para paciente {paciente_id}: {e_c}")
+
+            # 3. Determinar datos del profesional actuante (compatibilidad cirujano_nombre <-> medico_nombre)
+            profesional_nombre = cirujano_nombre or medico_nombre
+            cirujano_nombre = profesional_nombre
+            medico_nombre = profesional_nombre
+
+            user_id = user_payload.get("sub") or user_payload.get("id") if user_payload else None
+            user_name = cirujano_nombre or medico_nombre or "Médico Oftalmólogo"
+            if user_id:
+                try:
+                    u_res = supabase.table("usuarios_perfil").select("nombre_completo").eq("id", user_id).limit(1).execute()
+                    if u_res.data and u_res.data[0].get("nombre_completo"):
+                        user_name = u_res.data[0]["nombre_completo"]
+                except Exception:
+                    pass
+
+            if not cirujano_nombre:
+                cirujano_nombre = user_name
+            if not medico_nombre:
+                medico_nombre = user_name
+
+            # Helper sanitizador de texto asistencial (Meta Utility):
+            # Preserva saltos de línea simples (\n) sin aplastar todo a un renglón,
+            # previene secuencias de más de 4 espacios seguidos y eleva el límite a 950 caracteres.
+            def _sanitizar_texto_asistencial_meta(raw_text: str, max_chars: int = 950) -> str:
+                if not raw_text:
+                    return ""
+                t = str(raw_text).replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
+                t = re.sub(r"\n{3,}", "\n\n", t)
+                t = re.sub(r" {4,}", " ", t)
+                return t.strip()[:max_chars]
+
+            def _sanitizar_parametro_lineal(val: Optional[str], default: str = "", max_chars: int = 60) -> str:
+                s = str(val or default).strip()
+                s = re.sub(r"[\r\n\t]+", " ", s)
+                s = re.sub(r" {2,}", " ", s)
+                return s.strip()[:max_chars]
+
+            # Parámetros sanitizados para indicaciones_prequirurgicas_video_v1
+            pac_nom_param = _sanitizar_parametro_lineal(pac_nombre.title(), default="Estimado/a", max_chars=60)
+            cirujano_param = _sanitizar_parametro_lineal(cirujano_nombre or user_name, default="Médico Oftalmólogo", max_chars=60)
+            fecha_param = _sanitizar_parametro_lineal(fecha_cirugia, default="a coordinar", max_chars=30)
+            video_param = _sanitizar_parametro_lineal(video_url, default="https://centrovision.com.ar", max_chars=200)
+
+            components_prequirurgico = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": pac_nom_param},
+                        {"type": "text", "text": cirujano_param},
+                        {"type": "text", "text": fecha_param},
+                        {"type": "text", "text": video_param}
+                    ]
+                }
+            ]
+
+            # Parámetros sanitizados para comunicacion_asistencial_paciente_v1
+            texto_param = _sanitizar_texto_asistencial_meta(texto, max_chars=950)
+            components_asistencial = [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": pac_nom_param},
+                        {"type": "text", "text": texto_param}
+                    ]
+                }
+            ]
+
+            # 4. Inicializar WhatsAppCloudClient en Línea 2 (Estudios / Transaccional Informativa)
+            wa_client = WhatsAppCloudClient(line="estudios")
+            linea_usada = "estudios_informativa"
+            if not wa_client.phone_number_id:
+                logger.warning("[HCE WhatsApp] Línea de estudios sin Phone ID configurado. Recurriendo a línea principal...")
+                wa_client = WhatsAppCloudClient(line="quirurgico")
+                linea_usada = "principal_fallback"
+
+            wamid = None
+            used_template = template_name
+            modo_envio = "texto_libre"
+
+            es_caso_prequirurgico = (
+                tipo_comunicacion in ["prequirurgico", "prequirurgico_video"]
+                or template_name == "indicaciones_prequirurgicas_video_v1"
+                or "prequirurg" in str(texto).lower()
+            )
+
+            try:
+                # Si se solicita plantilla específica
+                if template_name:
+                    modo_envio = "plantilla_explicita"
+                    if template_name == "indicaciones_prequirurgicas_video_v1" or (es_caso_prequirurgico and template_name != "comunicacion_asistencial_paciente_v1"):
+                        used_template = "indicaciones_prequirurgicas_video_v1"
+                        components = components_prequirurgico
+                    else:
+                        used_template = template_name
+                        components = components_asistencial
+
+                    res_meta = await wa_client.send_template(
+                        to_phone=meta_phone,
+                        template_name=used_template,
+                        language_code="es_AR",
+                        components=components
+                    )
+                    wamid = res_meta.get("wamid")
+
+                else:
+                    # Intento 1: Despacho de texto libre con preview de links/videos (dentro de ventana 24h)
+                    try:
+                        res_free = await wa_client.send_free_text(
+                            to_phone=meta_phone,
+                            text=texto,
+                            preview_url=bool(video_url or "http" in texto)
+                        )
+                        wamid = res_free.get("wamid")
+                        modo_envio = "texto_libre_24h"
+                    except ConversationWindowClosedError:
+                        if es_caso_prequirurgico:
+                            logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando plantilla prequirúrgica homologada 'indicaciones_prequirurgicas_video_v1'...")
+                            modo_envio = "fallback_plantilla_prequirurgica_24h"
+                            used_template = "indicaciones_prequirurgicas_video_v1"
+                            res_tpl = await wa_client.send_template(
+                                to_phone=meta_phone,
+                                template_name="indicaciones_prequirurgicas_video_v1",
+                                language_code="es_AR",
+                                components=components_prequirurgico
+                            )
+                            wamid = res_tpl.get("wamid")
+                        else:
+                            logger.info(f"[HCE WhatsApp] Ventana de 24h cerrada para {meta_phone}. Activando fallback a 'comunicacion_asistencial_paciente_v1'...")
+                            modo_envio = "fallback_plantilla_24h"
+                            used_template = "comunicacion_asistencial_paciente_v1"
+                            res_tpl = await wa_client.send_template(
+                                to_phone=meta_phone,
+                                template_name="comunicacion_asistencial_paciente_v1",
+                                language_code="es_AR",
+                                components=components_asistencial
+                            )
+                            wamid = res_tpl.get("wamid")
+
+            finally:
+                await wa_client.close()
+
+            # 5. Auditar mensaje en tabla whatsapp_messages (Worker de WhatsApp Cloud)
+            if wamid:
+                try:
+                    from app.services.whatsapp_cloud.worker import record_outbound_audit_message
+                    await record_outbound_audit_message(
+                        wamid=wamid,
+                        to_phone=meta_phone,
+                        message_type="template" if used_template else "text",
+                        content_text=texto,
+                        payload={
+                            "to": meta_phone,
+                            "tipo_comunicacion": tipo_comunicacion,
+                            "template": used_template,
+                            "video_url": video_url,
+                            "cirujano_nombre": cirujano_nombre,
+                            "medico_nombre": medico_nombre,
+                            "wamid": wamid
+                        }
+                    )
+                except Exception as ex_audit:
+                    logger.debug(f"Aviso registrando auditoría outbound de whatsapp_messages: {ex_audit}")
+
+            # 6. Registrar en public.mensajes vinculado a la conversación del CRM
+            meta_json = {
+                "origen": "hce",
+                "modulo": "historia_oftalmo",
+                "tipo_comunicacion": tipo_comunicacion,
+                "medico_nombre": medico_nombre,
+                "medico_usuario_id": user_id,
+                "linea_emision": linea_usada,
+                "wamid": wamid,
+                "template_name": used_template,
+                "modo_envio": modo_envio,
+                "video_url": video_url,
+                "cirujano_nombre": cirujano_nombre,
+                "fecha_cirugia": fecha_cirugia,
+                "delivery_status": "sent"
+            }
+
+            saved_msg = None
+            if conv_id:
+                try:
+                    saved_msg = guardar_mensaje(
+                        conversacion_id=conv_id,
+                        emisor="operador",
+                        contenido=texto,
+                        whatsapp_message_id=wamid,
+                        metadata_json=meta_json
+                    )
+                except Exception as ex_save:
+                    logger.warning(f"Error guardando mensaje en public.mensajes: {ex_save}")
+
+            # 7. Registrar evento médico-legal en hce_audit_logs
+            HistoriaOftalmoService.registrar_audit_log(
+                paciente_id=paciente_id,
+                entidad="COMUNICACION_HCE",
+                entidad_id=wamid or conv_id,
+                accion="SEND_WHATSAPP_HCE",
+                usuario_id=user_id,
+                usuario_nombre=user_name,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                detalles={
+                    "telefono": meta_phone,
+                    "tipo_comunicacion": tipo_comunicacion,
+                    "modo_envio": modo_envio,
+                    "template_name": used_template,
+                    "wamid": wamid,
+                    "video_url": video_url,
+                    "cirujano_nombre": cirujano_nombre,
+                    "medico_nombre": medico_nombre,
+                    "fecha_cirugia": fecha_cirugia,
+                    "linea_emision": linea_usada
+                }
+            )
+
+            return {
+                "success": True,
+                "wamid": wamid,
+                "telefono": meta_phone,
+                "tipo_comunicacion": tipo_comunicacion,
+                "modo_envio": modo_envio,
+                "template_usada": used_template,
+                "cirujano_nombre": cirujano_nombre,
+                "medico_nombre": medico_nombre,
+                "linea_emision": linea_usada,
+                "mensaje_id": saved_msg.get("id") if isinstance(saved_msg, dict) else None
+            }
+
+        except ValueError:
+            raise
+        except MetaAPIError as me:
+            logger.error(f"[HCE WhatsApp] Error de Meta API para paciente {paciente_id}: {me}")
+            raise ValueError(f"Meta WhatsApp API Error [{me.code}]: {me.message}")
+        except Exception as e:
+            logger.error(f"[HCE WhatsApp] Error despachando comunicación HCE para paciente {paciente_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_plantillas_comunicacion() -> List[Dict[str, Any]]:
+        """
+        Retorna el catálogo asistencial de acciones rápidas y plantillas de comunicación para la HCE.
+        """
+        return [
+            {
+                "id": "prequirurgico_video",
+                "nombre": "Recordatorio Prequirúrgico (con Video)",
+                "categoria": "prequirurgico",
+                "descripcion": "Indicaciones previas a cirugía con recomendaciones de ayuno, acompañamiento y enlace a video explicativo.",
+                "texto_base": (
+                    "🏥 *Centrovisión Oftalmología - Indicaciones Prequirúrgicas*\n\n"
+                    "Estimado/a {paciente_nombre},\n"
+                    "Le acercamos las pautas preparatorias para su procedimiento quirúrgico con {cirujano_nombre} programado para el día {fecha_cirugia}:\n\n"
+                    "📋 *Pautas Generales:*\n"
+                    "• Concurrir con 6 horas de ayuno total de sólidos y líquidos.\n"
+                    "• Asistir con un adulto acompañante responsable.\n"
+                    "• Ropa cómoda con botones o cierre frontal.\n"
+                    "• Rostro completamente limpio, sin maquillaje, cremas ni perfume.\n"
+                    "• Tomar su medicación habitual con un sorbo mínimo de agua (salvo suspensión indicada expresamente).\n\n"
+                    "🎥 *Video Explicativo de la Cirugía:*\n"
+                    "{video_url}\n\n"
+                    "Por favor, mire atentamente el video antes de concurrir."
+                ),
+                "variables_requeridas": ["paciente_nombre", "cirujano_nombre", "fecha_cirugia", "video_url"],
+                "video_sugerido": "https://centrovision.com.ar/videos/prequirurgico-catarata.mp4"
+            },
+            {
+                "id": "postoperatorio_inmediato",
+                "nombre": "Pautas Postoperatorias Inmediatas",
+                "categoria": "postoperatorio",
+                "descripcion": "Indicaciones de las primeras 24/48 horas posteriores a cirugía ocular.",
+                "texto_base": (
+                    "🏥 *Centrovisión Oftalmología - Pautas Postoperatorias*\n\n"
+                    "Estimado/a {paciente_nombre},\n"
+                    "Esperamos que se encuentre bien tras su cirugía. Le recordamos los cuidados clave para las primeras horas:\n\n"
+                    "🛡️ *Cuidados Esenciales:*\n"
+                    "• No frotarse ni tocarse el ojo operado bajo ninguna circunstancia.\n"
+                    "• Mantener el protector ocular oclusor para dormir.\n"
+                    "• Iniciar las gotas recetadas en el horario indicado respetando 5 minutos entre cada frasco.\n"
+                    "• Reposo relativo (no realizar esfuerzos físicos, agacharse de golpe ni levantar peso).\n\n"
+                    "Si presenta dolor intenso, disminución brusca de la visión o secreción purulenta, comuníquese de inmediato a nuestra guardia."
+                ),
+                "variables_requeridas": ["paciente_nombre"]
+            },
+            {
+                "id": "video_educativo",
+                "nombre": "Envío de Video Educativo",
+                "categoria": "video_educativo",
+                "descripcion": "Material audiovisual explicativo para comprensión de patología o tratamiento.",
+                "texto_base": (
+                    "👁️ *Centrovisión Oftalmología - Material Educativo*\n\n"
+                    "Estimado/a {paciente_nombre},\n"
+                    "El equipo médico ha preparado el siguiente video explicativo sobre su tratamiento de {procedimiento_nombre}:\n\n"
+                    "🎥 {video_url}\n\n"
+                    "Le recomendamos verlo detenidamente para comprender el procedimiento y evacuar dudas en su próximo control."
+                ),
+                "variables_requeridas": ["paciente_nombre", "procedimiento_nombre", "video_url"]
+            },
+            {
+                "id": "mensaje_asistencial",
+                "nombre": "Aviso Asistencial Personalizado",
+                "categoria": "mensaje_asistencial",
+                "descripcion": "Mensaje libre redactado ad-hoc por el profesional médico.",
+                "texto_base": (
+                    "Estimado/a {paciente_nombre},\n\n"
+                    "{mensaje_personalizado}\n\n"
+                    "Saludos cordiales,\n"
+                    "{cirujano_nombre} - Centrovisión Oftalmología"
+                ),
+                "variables_requeridas": ["paciente_nombre", "mensaje_personalizado", "cirujano_nombre"]
+            }
+        ]
+
