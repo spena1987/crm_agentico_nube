@@ -650,6 +650,34 @@ def servir_archivo_media(subfolder: str, filename: str):
         }
     )
 
+@app.get("/static/{subfolder}/{filename}")
+def servir_archivo_estatico_subcarpeta(subfolder: str, filename: str):
+    """
+    Sirve archivos estáticos ubicados en subcarpetas de static (firmas, branding, etc.).
+    """
+    safe_subfolder = os.path.basename(subfolder)
+    safe_filename = os.path.basename(filename)
+    if ".." in subfolder or ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Ruta de archivo no válida.")
+        
+    file_path = os.path.join(PDF_DIR, safe_subfolder, safe_filename)
+    if not os.path.exists(file_path):
+        # Fallback a Supabase Storage bucket 'branding'
+        supabase_url = f"https://ppbgmkxxpeuiutvuynaw.supabase.co/storage/v1/object/public/branding/{safe_subfolder}/{safe_filename}"
+        return RedirectResponse(url=supabase_url, status_code=307)
+        
+    import mimetypes
+    guessed_mime, _ = mimetypes.guess_type(file_path)
+    return FileResponse(
+        path=file_path,
+        media_type=guessed_mime or "application/octet-stream",
+        filename=safe_filename,
+        headers={
+            "Content-Disposition": f"inline; filename={safe_filename}",
+            "Cache-Control": "public, max-age=86400"
+        }
+    )
+
 # ====================================================================
 # ENDPOINTS GENERALES Y HEALTH
 # ====================================================================
@@ -3982,6 +4010,22 @@ def preview_pdf_indicacion_api(payload: Dict[str, Any] = Body(...)):
                 if not domicilio or str(domicilio).strip() == "-":
                     datos_emision["paciente_domicilio"] = p_rec.get("direccion") or p_rec.get("domicilio") or "-"
 
+        # Si viene asesoria_id, asegurar datos de cirujano si no vinieron completos
+        as_id = payload.get("asesoria_id") or datos_emision.get("asesoria_id")
+        if as_id and supabase and (not datos_emision.get("medico_nombre") or not datos_emision.get("medico_matricula")):
+            try:
+                r_as = supabase.table("asesorias_quirurgicas").select("medico_cirujano_id, medico_cirujano_nombre, medico_cirujano_matricula").eq("id", as_id).limit(1).execute()
+                if r_as.data and len(r_as.data) > 0:
+                    d_as = r_as.data[0]
+                    if not datos_emision.get("medico_nombre"):
+                        datos_emision["medico_nombre"] = d_as.get("medico_cirujano_nombre")
+                    if not datos_emision.get("medico_id"):
+                        datos_emision["medico_id"] = d_as.get("medico_cirujano_id")
+                    if not datos_emision.get("medico_matricula"):
+                        datos_emision["medico_matricula"] = d_as.get("medico_cirujano_matricula")
+            except Exception as e_as:
+                logger.warning(f"Aviso obteniendo cirujano de asesoría en preview: {e_as}")
+
         resultado = generar_pdf_indicacion_medica(datos_emision, config_diseno=config_diseno, guardar_en_disco=False)
         return Response(
             content=resultado["pdf_bytes"],
@@ -6622,6 +6666,162 @@ def eliminar_prestador_endpoint(prestador_id: str):
         return {"success": ok}
     except Exception as e:
         logger.error(f"Error eliminando prestador {prestador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/prestadores/{prestador_id}/firma")
+async def subir_firma_prestador_endpoint(prestador_id: str, file: UploadFile = File(...)):
+    """
+    Sube y procesa la imagen de la firma/sello de un prestador:
+    - Normaliza orientación EXIF.
+    - Remueve el fondo blanco de papel convirtiéndolo en canal alfa transparente.
+    - Realiza auto-crop de márgenes.
+    - Guarda en backend/app/static/firmas/firma_{prestador_id}.png.
+    - Actualiza firma_url en public.prestadores.
+    """
+    try:
+        from app.db import supabase, actualizar_prestador
+        from PIL import Image, ImageOps
+        import numpy as np
+        import io
+
+        if not file.content_type or not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="El archivo debe ser una imagen válida (PNG, JPG, JPEG, WebP).")
+
+        file_bytes = await file.read()
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="El archivo excede el tamaño máximo permitido (10 MB).")
+
+        with Image.open(io.BytesIO(file_bytes)) as pil_img:
+            # 1. Normalizar orientación EXIF
+            img = ImageOps.exif_transpose(pil_img).convert('RGBA')
+
+            # 2. Conversión a transparencia (eliminar fondo de papel)
+            data = np.array(img, dtype=np.float32)
+            r, g, b = data[:,:,0], data[:,:,1], data[:,:,2]
+            luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+            # Fondos claros (>215) se vuelven transparentes, trazos oscuros (<140) 100% opacos
+            alpha = np.clip((215 - luminance) / (215 - 140), 0.0, 1.0) * 255.0
+            data[:,:,3] = alpha
+            result = Image.fromarray(data.astype(np.uint8), mode='RGBA')
+
+            # 3. Auto-crop de márgenes
+            bbox = result.getbbox()
+            if bbox:
+                result = result.crop(bbox)
+                padded = Image.new('RGBA', (result.width + 20, result.height + 20), (255, 255, 255, 0))
+                padded.paste(result, (10, 10))
+                result = padded
+
+            # 4. Guardar archivo local
+            firmas_dir = os.path.join(PDF_DIR, "firmas")
+            os.makedirs(firmas_dir, exist_ok=True)
+            filename = f"firma_{prestador_id}.png"
+            local_path = os.path.join(firmas_dir, filename)
+            result.save(local_path, format="PNG")
+
+            firma_rel_url = f"/static/firmas/{filename}?t={int(time.time())}"
+
+            # 5. Opcional: Respaldo en Supabase Storage si está configurado
+            try:
+                out_buf = io.BytesIO()
+                result.save(out_buf, format="PNG")
+                png_bytes = out_buf.getvalue()
+                supabase.storage.from_("branding").upload(
+                    path=f"firmas/{filename}",
+                    file=png_bytes,
+                    file_options={"content-type": "image/png", "upsert": "true"}
+                )
+                pub_url = supabase.storage.from_("branding").get_public_url(f"firmas/{filename}")
+                if pub_url:
+                    firma_rel_url = pub_url
+            except Exception as e_st:
+                logger.warning(f"Aviso subiendo firma a Supabase Storage: {e_st}")
+
+            # 6. Actualizar prestador en BD
+            act = actualizar_prestador(prestador_id, {"firma_url": firma_rel_url})
+            return {"success": True, "firma_url": firma_rel_url, "prestador": act}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error procesando firma del prestador {prestador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/prestadores/{prestador_id}/firma")
+def eliminar_firma_prestador_endpoint(prestador_id: str):
+    try:
+        from app.db import actualizar_prestador
+        act = actualizar_prestador(prestador_id, {"firma_url": None})
+        return {"success": True, "prestador": act}
+    except Exception as e:
+        logger.error(f"Error eliminando firma del prestador {prestador_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/prestadores/sincronizar-geclisa")
+def sincronizar_prestadores_geclisa_endpoint():
+    """
+    Sincroniza y actualiza los prestadores médicos desde Geclisa hacia el CRM.
+    Si ya existen en CRM, actualiza geclisa_pre_id y matrícula. Si son nuevos, los registra.
+    """
+    try:
+        from app.services.geclisa_client import geclisa_client
+        from app.db import get_prestadores, crear_prestador, actualizar_prestador
+
+        geclisa_list = geclisa_client.buscar_prestadores("")
+        if not geclisa_list:
+            return {"success": False, "error": "No se obtuvieron prestadores desde Geclisa."}
+
+        crm_prestadores = get_prestadores()
+        por_pre_id = {p.get("geclisa_pre_id"): p for p in crm_prestadores if p.get("geclisa_pre_id")}
+        por_nombre = {p.get("nombre_apellido", "").strip().lower(): p for p in crm_prestadores if p.get("nombre_apellido")}
+
+        creados = 0
+        actualizados = 0
+
+        for g in geclisa_list:
+            pre_id = g.get("pre_id")
+            nombre = (g.get("nombre") or "").strip()
+            matricula = (g.get("matricula") or "").strip()
+            especialidad = g.get("especialidad") or "Médico Oftalmólogo"
+
+            if not pre_id or not nombre:
+                continue
+
+            # Buscar si ya existe
+            existente = por_pre_id.get(pre_id) or por_nombre.get(nombre.lower())
+
+            if existente:
+                upd = {}
+                if not existente.get("geclisa_pre_id"):
+                    upd["geclisa_pre_id"] = pre_id
+                if matricula and (not existente.get("matricula") or existente.get("matricula") != matricula):
+                    upd["matricula"] = matricula
+                if upd:
+                    actualizar_prestador(existente["id"], upd)
+                    actualizados += 1
+            else:
+                rol = "Cirujano"
+                payload = {
+                    "nombre_apellido": nombre,
+                    "matricula": matricula,
+                    "rol": rol,
+                    "geclisa_pre_id": pre_id,
+                    "especialidad": "Médico Oftalmólogo" if "MEDICO" in especialidad.upper() or "OFTALMO" in especialidad.upper() else especialidad,
+                    "activo": True
+                }
+                crear_prestador(payload)
+                creados += 1
+
+        return {
+            "success": True,
+            "creados": creados,
+            "actualizados": actualizados,
+            "total_geclisa": len(geclisa_list),
+            "mensaje": f"Sincronización completada: {creados} prestadores incorporados, {actualizados} actualizados."
+        }
+    except Exception as e:
+        logger.error(f"Error sincronizando prestadores desde Geclisa: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

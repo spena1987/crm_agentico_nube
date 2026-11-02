@@ -8327,6 +8327,82 @@ def eliminar_prestador(prestador_id: str) -> bool:
         return False
 
 
+def obtener_prestador_por_cirujano(medico_id: Optional[Any] = None, medico_nombre: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Resuelve el prestador en la base de datos de CRM buscando prioritariamente por
+    geclisa_pre_id o por coincidencia en nombre_apellido. Si no está en BD, consulta
+    el catálogo de Geclisa como fallback para obtener la matrícula oficial y especialidad.
+    """
+    if not supabase:
+        return None
+    try:
+        # 1. Búsqueda por geclisa_pre_id en BD Supabase
+        if medico_id:
+            try:
+                mid_int = int(medico_id)
+                res = supabase.table("prestadores").select("*").eq("geclisa_pre_id", mid_int).limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    return res.data[0]
+            except (ValueError, TypeError):
+                pass
+
+        # 2. Búsqueda por nombre_apellido en BD Supabase
+        if medico_nombre:
+            clean_nom = medico_nombre.replace("Dr.", "").replace("Dra.", "").replace("Dr", "").replace("Dra", "").strip()
+            if clean_nom:
+                res_nom = supabase.table("prestadores").select("*").ilike("nombre_apellido", f"%{clean_nom}%").limit(1).execute()
+                if res_nom.data and len(res_nom.data) > 0:
+                    return res_nom.data[0]
+                
+                # Probar coincidencia de palabras clave (ej: 'GRAS')
+                partes = [p.strip().rstrip(",") for p in clean_nom.split() if len(p.strip().rstrip(",")) >= 3]
+                for part in partes:
+                    res_part = supabase.table("prestadores").select("*").ilike("nombre_apellido", f"%{part}%").limit(1).execute()
+                    if res_part.data and len(res_part.data) > 0:
+                        return res_part.data[0]
+
+        # 3. Fallback: Consultar catálogo de Geclisa para recuperar matrícula oficial
+        if medico_nombre or medico_id:
+            try:
+                from app.services.geclisa_client import geclisa_client
+                query_gec = medico_nombre or str(medico_id)
+                partes_g = query_gec.replace("Dr.", "").replace("Dra.", "").strip().split()
+                q_term = partes_g[0].rstrip(",") if partes_g else query_gec
+                matches = geclisa_client.buscar_prestadores(q_term)
+                if matches:
+                    matched = None
+                    if medico_id:
+                        for m in matches:
+                            if m.get("pre_id") == int(medico_id):
+                                matched = m
+                                break
+                    if not matched and medico_nombre:
+                        c_lower = medico_nombre.lower()
+                        for m in matches:
+                            if m.get("nombre", "").lower() in c_lower or c_lower in m.get("nombre", "").lower():
+                                matched = m
+                                break
+                    if not matched and matches:
+                        matched = matches[0]
+
+                    if matched:
+                        return {
+                            "geclisa_pre_id": matched.get("pre_id"),
+                            "nombre_apellido": matched.get("nombre"),
+                            "matricula": matched.get("matricula"),
+                            "rol": "Cirujano",
+                            "especialidad": "Médico Oftalmólogo",
+                            "firma_url": None
+                        }
+            except Exception as e_gec:
+                logger.warning(f"Aviso en fallback Geclisa para prestador: {e_gec}")
+
+    except Exception as e:
+        logger.error(f"Error resolviendo prestador por cirujano ({medico_id}, {medico_nombre}): {e}")
+
+    return None
+
+
 # ====================================================================
 # MODELOS DE LENTES INTRAOCULARES (LIO) Y SKUS GECLISA (GTIN)
 # ====================================================================

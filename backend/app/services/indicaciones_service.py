@@ -443,6 +443,21 @@ def emitir_indicaciones_expediente(
     medico_id = asesoria.get("medico_cirujano_id")
     medico_nombre = asesoria.get("medico_cirujano_nombre") or "Médico Cirujano"
     medico_matricula = asesoria.get("medico_cirujano_matricula") or ""
+    medico_firma_url = None
+    medico_especialidad = "Especialista en Oftalmología"
+
+    # Auto-resolución de prestador (matrícula y firma digital)
+    try:
+        from app.db import obtener_prestador_por_cirujano
+        prest_info = obtener_prestador_por_cirujano(medico_id, medico_nombre)
+        if prest_info:
+            if not medico_matricula or str(medico_matricula).strip() in ("", "-", "None"):
+                medico_matricula = prest_info.get("matricula") or ""
+            medico_firma_url = prest_info.get("firma_url")
+            medico_especialidad = prest_info.get("especialidad") or "Especialista en Oftalmología"
+    except Exception as e_pr:
+        logger.warning(f"Aviso resolviendo prestador en emitir_indicaciones: {e_pr}")
+
     practica_nombre = asesoria.get("practica_nombre") or "Cirugía Oftalmológica"
     practica_codigo = asesoria.get("practica_codigo") or ""
     
@@ -589,6 +604,8 @@ def emitir_indicaciones_expediente(
         "ojo": asesoria.get("ojo") or "OD",
         "medico_nombre": medico_nombre,
         "medico_matricula": medico_matricula,
+        "medico_especialidad": medico_especialidad,
+        "firma_url": medico_firma_url,
         "cuerpo_indicaciones": texto_final,
         "medicamentos": meds_final or [],
         "cuidados_generales": cuidados_final or "",
@@ -789,6 +806,19 @@ def reeditar_emision_indicaciones(
     medico_matricula = emision.get("medico_matricula") or ""
     practica_nombre = emision.get("practica_nombre") or "Procedimiento Quirúrgico"
     ojo_intervenido = asesoria.get("ojo") or "OD"
+    medico_firma_url = None
+    medico_especialidad = "Especialista en Oftalmología"
+
+    try:
+        from app.db import obtener_prestador_por_cirujano
+        prest_info = obtener_prestador_por_cirujano(asesoria.get("medico_cirujano_id"), medico_nombre)
+        if prest_info:
+            if not medico_matricula or str(medico_matricula).strip() in ("", "-", "None"):
+                medico_matricula = prest_info.get("matricula") or ""
+            medico_firma_url = prest_info.get("firma_url")
+            medico_especialidad = prest_info.get("especialidad") or "Especialista en Oftalmología"
+    except Exception as e_pr:
+        logger.warning(f"Aviso resolviendo prestador en reedición: {e_pr}")
 
     # Resolver fecha de emisión si viene provista
     fecha_pdf = None
@@ -829,6 +859,8 @@ def reeditar_emision_indicaciones(
         "ojo": ojo_intervenido,
         "medico_nombre": medico_nombre,
         "medico_matricula": medico_matricula,
+        "medico_especialidad": medico_especialidad,
+        "firma_url": medico_firma_url,
         "cuerpo_indicaciones": texto_indicaciones,
         "medicamentos": medicamentos or [],
         "cuidados_generales": cuidados_generales or "",

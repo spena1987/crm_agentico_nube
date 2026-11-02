@@ -400,6 +400,7 @@ export default function SeccionIndicacionesExpediente({
         paciente_domicilio: localDomicilio || pacienteDomicilio || '',
         practica_nombre: practicaNombre || 'Cirugía Oftalmológica',
         medico_nombre: medicoNombre || 'Médico Cirujano',
+        medico_id: medicoId,
         cuerpo_indicaciones: textoIndicaciones,
         medicamentos: medicamentos,
         cuidados_generales: cuidadosGenerales,

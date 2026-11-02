@@ -14,7 +14,7 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-from app.services.config_service import load_settings, obtener_o_cachear_logo_local
+from app.services.config_service import load_settings, obtener_o_cachear_logo_local, obtener_o_cachear_firma_local
 
 logger = logging.getLogger("indicaciones_pdf_service")
 
@@ -111,8 +111,28 @@ def generar_pdf_indicacion_medica(
     paciente_afiliado = str(datos_emision.get("paciente_afiliado") or datos_emision.get("paciente_nro_afiliado") or "-").strip()
     paciente_domicilio = str(datos_emision.get("paciente_domicilio") or datos_emision.get("paciente_direccion") or "-").strip()
 
-    medico_nombre = datos_emision.get("medico_nombre") or "Médico Cirujano"
-    medico_matricula = datos_emision.get("medico_matricula") or ""
+    medico_id = datos_emision.get("medico_id") or datos_emision.get("medico_cirujano_id")
+    medico_nombre = datos_emision.get("medico_nombre") or datos_emision.get("medico_cirujano_nombre") or "Médico Cirujano"
+    medico_matricula = datos_emision.get("medico_matricula") or datos_emision.get("medico_cirujano_matricula") or ""
+    firma_url = datos_emision.get("firma_url") or datos_emision.get("medico_firma_url") or cfg.get("firma_url")
+    medico_especialidad = datos_emision.get("medico_especialidad") or "Especialista en Oftalmología"
+
+    # Auto-resolución dinámica con el catálogo de prestadores si falta matrícula o firma
+    if (not medico_matricula or str(medico_matricula).strip() in ("", "-", "None") or not firma_url) and (medico_id or medico_nombre):
+        try:
+            from app.db import obtener_prestador_por_cirujano
+            prest_info = obtener_prestador_por_cirujano(medico_id, medico_nombre)
+            if prest_info:
+                if not medico_matricula or str(medico_matricula).strip() in ("", "-", "None"):
+                    medico_matricula = prest_info.get("matricula") or ""
+                if not firma_url:
+                    firma_url = prest_info.get("firma_url")
+                if not datos_emision.get("medico_especialidad") and prest_info.get("especialidad"):
+                    medico_especialidad = prest_info["especialidad"]
+        except Exception as e_p:
+            logger.warning(f"Aviso resolviendo prestador en indicaciones_pdf_service: {e_p}")
+
+    firma_local_path = obtener_o_cachear_firma_local(firma_url) if mostrar_firma else None
     fecha_emision = datos_emision.get("fecha") or datetime.now().strftime("%d/%m/%Y")
     hora_emision = datos_emision.get("hora") or datetime.now().strftime("%H:%M")
     geclisa_im_id = datos_emision.get("geclisa_im_id")
@@ -537,14 +557,31 @@ def generar_pdf_indicacion_medica(
 
         # 7. FIRMA Y SELLO DEL CIRUJANO (DESPLAZADA HACIA ABAJO Y A LA DERECHA)
         if mostrar_firma:
-            story.append(Spacer(1, 4 if es_alta_densidad else (16 if is_compact else 24)))
-            firma_content = [
-                HRFlowable(width="85%", thickness=0.8, color=colors.HexColor("#94A3B8"), spaceBefore=2, spaceAfter=2),
-                Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle(f'FirmaMed_{page_idx}', parent=subtitle_style, fontSize=8.0 if is_compact else 9, leading=10.0 if is_compact else 12, alignment=1)),
-                Paragraph(f"Especialista en Oftalmología • MP {medico_matricula or '-'}", ParagraphStyle(f'FirmaMP_{page_idx}', parent=subtitle_style, fontSize=7.0 if is_compact else 8, leading=9.0 if is_compact else 11, alignment=1))
-            ]
+            firma_img = None
+            if firma_local_path and os.path.exists(firma_local_path):
+                try:
+                    f_w = 110 if es_alta_densidad else (120 if is_compact else 140)
+                    f_h = 38 if es_alta_densidad else (42 if is_compact else 50)
+                    firma_img = RLImage(firma_local_path, width=f_w, height=f_h)
+                except Exception as e_f:
+                    logger.warning(f"Error cargando imagen de firma: {e_f}")
+
+            spacer_h = 2 if es_alta_densidad else (4 if is_compact and firma_img else (10 if is_compact else 16))
+            story.append(Spacer(1, spacer_h))
+
+            firma_content = []
+            if firma_img:
+                firma_content.append(firma_img)
+                firma_content.append(Spacer(1, 1))
+            else:
+                firma_content.append(HRFlowable(width="85%", thickness=0.8, color=colors.HexColor("#94A3B8"), spaceBefore=2, spaceAfter=2))
+
+            firma_content.append(Paragraph(f"<b>{medico_nombre}</b>", ParagraphStyle(f'FirmaMed_{page_idx}', parent=subtitle_style, fontSize=7.8 if is_compact else 8.5, leading=9.5 if is_compact else 11, alignment=1)))
+            firma_content.append(Paragraph(f"{medico_especialidad} • MP {medico_matricula or '-'}", ParagraphStyle(f'FirmaMP_{page_idx}', parent=subtitle_style, fontSize=6.8 if is_compact else 7.5, leading=8.5 if is_compact else 10, alignment=1)))
+
             firma_table = Table([[Paragraph("", body_style), firma_content]], colWidths=[content_width * 0.58, content_width * 0.42])
             firma_table.setStyle(TableStyle([
+                ('ALIGN', (1,0), (1,-1), 'CENTER'),
                 ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
                 ('LEFTPADDING', (0,0), (-1,-1), 0),
                 ('RIGHTPADDING', (0,0), (-1,-1), 0),

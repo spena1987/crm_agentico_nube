@@ -199,7 +199,7 @@ export const SYSTEM_MODULES: ModuleDefinition[] = [
       { code: 'ver_nomencladores', label: 'Ver Nomencladores & Aranceles', description: 'Consultar prácticas médicas y valores arancelarios' },
       { code: 'editar_nomencladores', label: 'Editar Nomencladores & Aranceles', description: 'Modificar valores, códigos y aranceles de prácticas' },
       { code: 'ver_quirofano', label: 'Ver Quirófano & Consentimientos', description: 'Consultar salas quirúrgicas, slots y configuraciones' },
-      { code: 'ver_prestadores', label: 'Ver Equipo & Prestadores', description: 'Consultar anestesistas e instrumentadores de la clínica' },
+      { code: 'ver_prestadores', label: 'Ver Equipo & Prestadores', description: 'Consultar cirujanos, anestesistas, instrumentadores y firmas digitales' },
       { code: 'ver_quirurgico', label: 'Ver Asesoría & Lead-to-Surgery', description: 'Consultar SLA, tiempos y checklist quirúrgico' },
       { code: 'ver_clinica', label: 'Ver Perfil del Centro Médico', description: 'Consultar datos y membrete de la institución' },
       { code: 'ver_plantilla_presupuesto', label: 'Ver Diseñador de Presupuestos', description: 'Consultar y diseñar plantillas PDF de presupuestos' },

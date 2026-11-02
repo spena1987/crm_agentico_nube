@@ -113,7 +113,7 @@ const tabCategories: TabCategory[] = [
     icon: Stethoscope,
     items: [
       { id: 'quirurgicos_turnos', label: 'Quirófano & Consentimientos', icon: CalendarClock, description: 'Salas, slots y confirmaciones' },
-      { id: 'prestadores', label: 'Equipo & Prestadores', icon: Users, description: 'Instrumentadores y Anestesistas' },
+      { id: 'prestadores', label: 'Equipo & Prestadores', icon: Users, description: 'Cirujanos, Anestesistas & Firmas' },
       { id: 'lios', label: 'Lentes Intraoculares (LIO)', icon: Eye, description: 'Catálogo de marcas, modelos y ópticas' },
       { id: 'quirurgico', label: 'Asesoría & Lead-to-Surgery', icon: Stethoscope, description: 'SLA, alertas y checklist quirúrgico' },
     ]

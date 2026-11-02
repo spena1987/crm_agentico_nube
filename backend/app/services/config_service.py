@@ -223,6 +223,55 @@ def obtener_o_cachear_logo_local(logo_url: Optional[str] = None) -> Optional[str
     return None
 
 
+def obtener_o_cachear_firma_local(firma_url: Optional[str] = None) -> Optional[str]:
+    """
+    Descarga o valida la existencia de la imagen de firma/sello en caché local
+    para inserción en ReportLab (PDF de indicaciones, certificados y protocolos).
+    """
+    if not firma_url:
+        return None
+
+    try:
+        from app.services.pdf_service import PDF_DIR
+    except Exception:
+        PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+    firmas_dir = os.path.join(PDF_DIR, "firmas")
+    os.makedirs(firmas_dir, exist_ok=True)
+
+    # Si es ruta estática local relativa (ej: /static/firmas/...)
+    if firma_url.startswith("/static/"):
+        static_rel = firma_url.replace("/static/", "")
+        candidate_path = os.path.join(PDF_DIR, static_rel)
+        if os.path.exists(candidate_path) and os.path.getsize(candidate_path) > 100:
+            return candidate_path
+
+    # Si es ruta absoluta directa
+    if os.path.exists(firma_url) and os.path.getsize(firma_url) > 100:
+        return firma_url
+
+    # Si es URL remota (http/https de Supabase Storage o CDN)
+    if firma_url.startswith("http://") or firma_url.startswith("https://"):
+        try:
+            import httpx
+            import hashlib
+            url_hash = hashlib.md5(firma_url.encode("utf-8")).hexdigest()[:10]
+            local_cache_path = os.path.join(firmas_dir, f"firma_cache_{url_hash}.png")
+            if os.path.exists(local_cache_path) and os.path.getsize(local_cache_path) > 100:
+                return local_cache_path
+
+            with httpx.Client(timeout=8.0, follow_redirects=True) as client:
+                resp = client.get(firma_url)
+                if resp.status_code == 200 and len(resp.content) > 100:
+                    with open(local_cache_path, "wb") as f:
+                        f.write(resp.content)
+                    return local_cache_path
+        except Exception as e:
+            logger.warning(f"No se pudo descargar firma desde {firma_url}: {e}")
+
+    return None
+
+
 def _deep_merge(base: Dict[str, Any], update: Dict[str, Any]) -> Dict[str, Any]:
     for k, v in update.items():
         if isinstance(v, dict) and k in base and isinstance(base[k], dict):

@@ -10,7 +10,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
-from app.services.config_service import load_settings, obtener_o_cachear_logo_local
+from app.services.config_service import load_settings, obtener_o_cachear_logo_local, obtener_o_cachear_firma_local
 
 logger = logging.getLogger(__name__)
 
@@ -1782,19 +1782,44 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
     story.append(t_obs)
     story.append(Spacer(1, 14))
 
-    # 7. Cuadro de Firmas Médicas
+    # 7. Cuadro de Firmas Médicas con resolución de firmas digitalizadas
+    from app.db import obtener_prestador_por_cirujano
+
+    def _resolver_firma_flowable(nombre_prof: str, id_prof: Optional[Any] = None, rol_def: str = "Médico") -> List[Any]:
+        items_f = []
+        firma_img = None
+        if nombre_prof and nombre_prof != "A designar":
+            try:
+                p_info = obtener_prestador_por_cirujano(id_prof, nombre_prof)
+                if p_info and p_info.get("firma_url"):
+                    local_f = obtener_o_cachear_firma_local(p_info["firma_url"])
+                    if local_f and os.path.exists(local_f):
+                        firma_img = RLImage(local_f, width=105, height=38)
+            except Exception as e_f:
+                logger.warning(f"Error resolviendo firma para {nombre_prof}: {e_f}")
+
+        if firma_img:
+            items_f.append(firma_img)
+            items_f.append(Spacer(1, 1))
+        else:
+            items_f.append(Spacer(1, 16))
+            items_f.append(Paragraph("______________________________________", ParagraphStyle('UL', parent=style_val, alignment=1)))
+
+        items_f.append(Paragraph(f"<b>Dr/a. {nombre_prof}</b><br/><font size=7 color='#64748B'>{rol_def}</font>", ParagraphStyle('FLabel', parent=style_val, alignment=1)))
+        return items_f
+
     firma_data = [
         [
-            Paragraph(f"______________________________________<br/><b>Dr/a. {cirujano}</b><br/><font size=7 color='#64748B'>Cirujano Principal</font>", ParagraphStyle('F1', parent=style_val, alignment=1)),
-            Paragraph(f"______________________________________<br/><b>{anestesista}</b><br/><font size=7 color='#64748B'>Médico Anestesiólogo</font>", ParagraphStyle('F2', parent=style_val, alignment=1)),
-            Paragraph(f"______________________________________<br/><b>{instrumentador}</b><br/><font size=7 color='#64748B'>Instrumentador/a Quirúrgico</font>", ParagraphStyle('F3', parent=style_val, alignment=1)),
+            _resolver_firma_flowable(cirujano, turno.get("cirujano_id"), "Cirujano Principal"),
+            _resolver_firma_flowable(anestesista, None, "Médico Anestesiólogo"),
+            _resolver_firma_flowable(instrumentador, None, "Instrumentador/a Quirúrgico"),
         ]
     ]
     t_firmas = Table(firma_data, colWidths=[180, 180, 180])
     t_firmas.setStyle(TableStyle([
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 16),
+        ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
     ]))
 
