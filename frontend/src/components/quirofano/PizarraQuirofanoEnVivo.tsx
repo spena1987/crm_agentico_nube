@@ -44,9 +44,13 @@ import {
   Sun,
   ShieldAlert,
   Barcode,
-  Undo2
+  Undo2,
+  Stethoscope,
+  UserCheck,
+  FilterX
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/context/AuthContext'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
@@ -78,7 +82,11 @@ const NOMBRES_ESTADOS: Record<string, string> = {
 
 export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofanoEnVivoProps) {
   const [fecha, setFecha] = useState<string>(new Date().toISOString().slice(0, 10))
+  const { user } = useAuth()
+  const currentUserName = (user?.user_metadata?.nombre || user?.user_metadata?.full_name || '').trim()
+
   const [quirofanoFiltro, setQuirofanoFiltro] = useState<string>('todos')
+  const [cirujanoFiltro, setCirujanoFiltro] = useState<string>('todos')
 
   // Estados de Pulsera Térmica y Escáner QR
   const [pulseraTurnoId, setPulseraTurnoId] = useState<string | null>(null)
@@ -208,7 +216,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   })
 
   // Filtros operativos múltiples y búsqueda en tiempo real
-  const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['programado'])
+  const [filtrosEstado, setFiltrosEstado] = useState<string[]>(['todos'])
   const [ultimoEstadoClickeado, setUltimoEstadoClickeado] = useState<string>('programado')
   const [busqueda, setBusqueda] = useState<string>('')
 
@@ -233,6 +241,10 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
       const savedSala = localStorage.getItem('quirofano_filtro_sala')
       if (savedSala) {
         setQuirofanoFiltro(savedSala)
+      }
+      const savedCir = localStorage.getItem('quirofano_filtro_cirujano')
+      if (savedCir) {
+        setCirujanoFiltro(savedCir)
       }
     } catch (e) {
       console.warn('Error cargando preferencias de quirofano en localStorage:', e)
@@ -324,6 +336,24 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     } catch (e) {
       console.warn('Error guardando quirofano_filtro_sala en localStorage:', e)
     }
+  }
+
+  // Cambiar y persistir filtro de cirujano / personal en localStorage
+  const handleSeleccionarCirujano = (cirujano: string) => {
+    setCirujanoFiltro(cirujano)
+    try {
+      localStorage.setItem('quirofano_filtro_cirujano', cirujano)
+    } catch (e) {
+      console.warn('Error guardando quirofano_filtro_cirujano en localStorage:', e)
+    }
+  }
+
+  // Limpiar todos los filtros operativos
+  const handleLimpiarTodosLosFiltros = () => {
+    handleSeleccionarSala('todos')
+    handleSeleccionarCirujano('todos')
+    guardarFiltros(['todos'])
+    setBusqueda('')
   }
 
   // Ticker de hora actual para cronómetros cada 1 segundo
@@ -655,7 +685,30 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
     return { total, programados, enEspera, preQuirofano, enOperacion, operados }
   }, [turnos])
 
-  // Filtrado reactivo por pestaña de estado múltiple y búsqueda en vivo
+  // Lista dinámica de cirujanos activos en los turnos del día
+  const cirujanosDisponibles = useMemo(() => {
+    const map = new Map<string, string>()
+    turnos.forEach((t) => {
+      const cNom = (t.cirujano_nombre || '').trim()
+      if (cNom && cNom.toLowerCase() !== 'a designar' && cNom.toLowerCase() !== 'sin asignar') {
+        const key = cNom.toLowerCase()
+        if (!map.has(key)) map.set(key, cNom)
+      }
+    })
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b))
+  }, [turnos])
+
+  // Cirujano actual del usuario para botón rápido "Mis Cirugías"
+  const miCirujanoCoincidente = useMemo(() => {
+    if (!currentUserName) return null
+    const cLow = currentUserName.toLowerCase()
+    return cirujanosDisponibles.find((c) => {
+      const cirLow = c.toLowerCase()
+      return cirLow.includes(cLow) || cLow.includes(cirLow)
+    }) || null
+  }, [currentUserName, cirujanosDisponibles])
+
+  // Filtrado reactivo por sala, cirujano, pestaña de estado múltiple y búsqueda en vivo
   const turnosFiltrados = useMemo(() => {
     return turnos.filter((t) => {
       const pac = t.pacientes || {}
@@ -670,10 +723,15 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         if (!matchText) return false
       }
 
+      if (cirujanoFiltro !== 'todos') {
+        const cirNom = (t.cirujano_nombre || '').toLowerCase()
+        if (!cirNom.includes(cirujanoFiltro.toLowerCase())) return false
+      }
+
       if (filtrosEstado.includes('todos')) return true
       return filtrosEstado.includes(t.estado)
     })
-  }, [turnos, filtrosEstado, busqueda])
+  }, [turnos, filtrosEstado, busqueda, cirujanoFiltro])
 
   // Calcular tiempo transcurrido en quirófano con alertas de sobretiempo
   const calcularTiempoEnOperacion = (inicioIso?: string, duracionEstimada: number = 20) => {
@@ -785,7 +843,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             )}
           </div>
 
-          {/* Filtro por Quirófano */}
+          {/* Filtro por Quirófano (Sala) */}
           <select
             value={quirofanoFiltro}
             onChange={(e) => handleSeleccionarSala(e.target.value)}
@@ -794,6 +852,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                 ? 'bg-[#090e1a] border-slate-800 text-slate-200'
                 : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
             }`}
+            title="Filtrar por Sala de Quirófano"
           >
             <option value="todos">Todas las Salas</option>
             {quirofanos.map((q) => (
@@ -802,6 +861,46 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
               </option>
             ))}
           </select>
+
+          {/* Filtro por Personal / Cirujano con Persistencia en LocalStorage */}
+          <div className="flex items-center gap-1.5">
+            <select
+              value={cirujanoFiltro}
+              onChange={(e) => handleSeleccionarCirujano(e.target.value)}
+              className={`px-3 py-2 rounded-xl border text-xs font-bold outline-none focus:border-blue-500 transition-colors max-w-[190px] truncate ${
+                cirujanoFiltro !== 'todos'
+                  ? 'bg-blue-500/15 border-blue-500 text-blue-600 dark:text-blue-300 ring-1 ring-blue-500/40'
+                  : modoOscuroQuirofano
+                  ? 'bg-[#090e1a] border-slate-800 text-slate-200'
+                  : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] text-[var(--foreground)]'
+              }`}
+              title="Filtrar por Médico Cirujano"
+            >
+              <option value="todos">Todos los Cirujanos</option>
+              {cirujanosDisponibles.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+
+            {/* Botón Rápido 'Mis Cirugías' si coincide con el usuario logueado */}
+            {miCirujanoCoincidente && (
+              <button
+                type="button"
+                onClick={() => handleSeleccionarCirujano(cirujanoFiltro === miCirujanoCoincidente ? 'todos' : miCirujanoCoincidente)}
+                className={`px-2.5 py-2 rounded-xl border text-xs font-extrabold flex items-center gap-1 transition-all shadow-xs ${
+                  cirujanoFiltro === miCirujanoCoincidente
+                    ? 'bg-blue-600 text-white border-blue-500 shadow-blue-500/30'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-[var(--border)] hover:bg-blue-500/10 hover:text-blue-600'
+                }`}
+                title={`Ver exclusivamente mis cirugías de hoy (${miCirujanoCoincidente})`}
+              >
+                <Stethoscope size={13} />
+                <span className="hidden xl:inline">Mis Cirugías</span>
+              </button>
+            )}
+          </div>
 
           {/* Botón Modo Quirófano Oscuro */}
           <button
@@ -1078,6 +1177,73 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           </div>
         )}
       </div>
+
+      {/* BARRA INFORMATIVA DE FILTROS ACTIVOS */}
+      {(quirofanoFiltro !== 'todos' || cirujanoFiltro !== 'todos' || !filtrosEstado.includes('todos') || busqueda) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-700 dark:text-blue-300 animate-fade-in shadow-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-extrabold flex items-center gap-1 text-[11px] uppercase tracking-wide">
+              Filtros activos:
+            </span>
+            {quirofanoFiltro !== 'todos' && (
+              <span className="font-bold bg-white dark:bg-slate-800 px-2 py-0.5 rounded-lg border border-blue-400/30 shadow-xs flex items-center gap-1">
+                Sala: {quirofanos.find((q) => q.id === quirofanoFiltro)?.nombre || quirofanoFiltro}
+                <button
+                  onClick={() => handleSeleccionarSala('todos')}
+                  className="hover:text-red-500 font-bold ml-0.5"
+                  title="Quitar filtro de sala"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+            {cirujanoFiltro !== 'todos' && (
+              <span className="font-bold bg-white dark:bg-slate-800 px-2 py-0.5 rounded-lg border border-blue-400/30 shadow-xs flex items-center gap-1">
+                Cirujano: {cirujanoFiltro}
+                <button
+                  onClick={() => handleSeleccionarCirujano('todos')}
+                  className="hover:text-red-500 font-bold ml-0.5"
+                  title="Quitar filtro de cirujano"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+            {!filtrosEstado.includes('todos') && (
+              <span className="font-bold bg-white dark:bg-slate-800 px-2 py-0.5 rounded-lg border border-blue-400/30 shadow-xs flex items-center gap-1">
+                Estados: {filtrosEstado.map((st) => NOMBRES_ESTADOS[st] || st).join(', ')}
+                <button
+                  onClick={() => guardarFiltros(['todos'])}
+                  className="hover:text-red-500 font-bold ml-0.5"
+                  title="Ver todos los estados"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+            {busqueda && (
+              <span className="font-bold bg-white dark:bg-slate-800 px-2 py-0.5 rounded-lg border border-blue-400/30 shadow-xs flex items-center gap-1">
+                Texto: "{busqueda}"
+                <button
+                  onClick={() => setBusqueda('')}
+                  className="hover:text-red-500 font-bold ml-0.5"
+                  title="Limpiar búsqueda"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleLimpiarTodosLosFiltros}
+            className="text-[11px] font-bold text-blue-700 dark:text-blue-300 hover:text-red-600 dark:hover:text-red-400 flex items-center gap-1 underline underline-offset-2 transition-colors cursor-pointer"
+          >
+            <FilterX size={13} />
+            <span>Restablecer todo</span>
+          </button>
+        </div>
+      )}
 
       {/* 3. LISTADO DE CIRUGÍAS FILTRADO EN TIEMPO REAL */}
       {cargando ? (

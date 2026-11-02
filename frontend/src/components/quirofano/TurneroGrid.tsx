@@ -12,6 +12,7 @@ interface TurneroGridProps {
   bloquesMedicos?: any[]
   fechaSeleccionada: string // YYYY-MM-DD
   diasSemana?: { fecha: string; nombreDia: string; numeroDia: number; esHoy: boolean }[]
+  cirujanoFiltro?: string
   onSlotClick: (quirofanoId: string, hora: string, fecha?: string) => void
   onTurnoClick: (turno: any) => void
   onEliminarBloqueo: (bloqueoId: string) => void
@@ -48,6 +49,7 @@ export default function TurneroGrid({
   bloquesMedicos = [],
   fechaSeleccionada,
   diasSemana = [],
+  cirujanoFiltro = 'todos',
   onSlotClick,
   onTurnoClick,
   onEliminarBloqueo,
@@ -92,7 +94,14 @@ export default function TurneroGrid({
 
   const numDiaHoy = getNumeroDiaSemana(fechaSeleccionada)
   const algunQuirofanoOperaHoy = quirofanos.some((q) => (q.dias_operativos || [1, 2, 3, 4, 5]).includes(numDiaHoy))
-  const turnosHoy = turnos.filter((t) => t.fecha_cirugia === fechaSeleccionada)
+  // Helper para filtrar por cirujano si se especifica
+  const coincideCirujano = (t: any) => {
+    if (!cirujanoFiltro || cirujanoFiltro === 'todos') return true
+    const cNom = (t.cirujano_nombre || '').toLowerCase()
+    return cNom.includes(cirujanoFiltro.toLowerCase())
+  }
+
+  const turnosHoy = turnos.filter((t) => t.fecha_cirugia === fechaSeleccionada && coincideCirujano(t))
 
   // Empty State para Vista Día si ningún quirófano opera hoy y no hay cirugías extraordinarias
   if (modo === 'dia' && !algunQuirofanoOperaHoy && turnosHoy.length === 0) {
@@ -122,7 +131,7 @@ export default function TurneroGrid({
 
   return (
     <div className="w-full overflow-x-auto bg-[var(--card)] rounded-2xl border border-[var(--border)] shadow-sm">
-      <table className="w-full border-collapse text-left min-w-[750px]">
+      <table className="w-full border-collapse text-left min-w-[1150px]">
         {/* Cabecera */}
         <thead>
           <tr className="bg-slate-100 dark:bg-slate-800/80 border-b border-[var(--border)]">
@@ -215,9 +224,13 @@ export default function TurneroGrid({
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5">
                             <p className="text-[10px] font-mono opacity-80">{d.fecha.slice(5)}</p>
-                            {turnosEsteDia.length > 0 && (
+                            {turnosEsteDia.length > 0 ? (
                               <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                                 {turnosEsteDia.length} {turnosEsteDia.length === 1 ? 'cirugía' : 'cirugías'}
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-800">
+                                0 cirugías
                               </span>
                             )}
                           </div>
@@ -232,39 +245,45 @@ export default function TurneroGrid({
                         )}
                       </div>
 
-                      {/* Aviso interactivo si hay cirugías en OTRAS salas este mismo día */}
-                      {turnosOtrasSalas.length > 0 && (
-                        <div className="pt-1.5 border-t border-[var(--border)]/50 flex flex-wrap gap-1 items-center">
-                          <span className="text-[8.5px] uppercase font-bold text-[var(--secondary)]">
-                            En otra sala:
+                      {/* Aviso interactivo simétrico y de altura fija si hay cirugías en OTRAS salas */}
+                      <div className="min-h-[26px] mt-1 pt-1 border-t border-[var(--border)]/50 flex items-center">
+                        {turnosOtrasSalas.length > 0 ? (
+                          <div className="flex flex-wrap gap-1 items-center">
+                            <span className="text-[8px] uppercase font-extrabold text-[var(--secondary)]">
+                              Otras salas:
+                            </span>
+                            {quirofanos
+                              .filter((q) => q.id !== quirofanoActual?.id && turnosOtrasSalas.some((t) => t.quirofano_id === q.id))
+                              .map((otraQ) => {
+                                const cantEnOtra = turnosOtrasSalas.filter((t) => t.quirofano_id === otraQ.id).length
+                                return (
+                                  <button
+                                    key={otraQ.id}
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      onSeleccionarQuirofano?.(otraQ.id)
+                                    }}
+                                    className="text-[8.5px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1 transition-all border shadow-xs hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
+                                    style={{
+                                      backgroundColor: `${otraQ.color || '#8b5cf6'}18`,
+                                      borderColor: `${otraQ.color || '#8b5cf6'}40`,
+                                      color: otraQ.color || '#8b5cf6'
+                                    }}
+                                    title={`Hay ${cantEnOtra} cirugía(s) en ${otraQ.nombre}. Clic para cambiar a esa sala.`}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: otraQ.color || '#8b5cf6' }} />
+                                    <span>{cantEnOtra} en {otraQ.codigo || otraQ.nombre.slice(0, 8)} ↗</span>
+                                  </button>
+                                )
+                              })}
+                          </div>
+                        ) : (
+                          <span className="text-[8px] text-slate-400 dark:text-slate-600 italic">
+                            Sin cirugías en otras salas
                           </span>
-                          {quirofanos
-                            .filter((q) => q.id !== quirofanoActual?.id && turnosOtrasSalas.some((t) => t.quirofano_id === q.id))
-                            .map((otraQ) => {
-                              const cantEnOtra = turnosOtrasSalas.filter((t) => t.quirofano_id === otraQ.id).length
-                              return (
-                                <button
-                                  key={otraQ.id}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    onSeleccionarQuirofano?.(otraQ.id)
-                                  }}
-                                  className="text-[9px] px-1.5 py-0.5 rounded font-bold flex items-center gap-1 transition-all border shadow-xs hover:scale-105 active:scale-95 cursor-pointer"
-                                  style={{
-                                    backgroundColor: `${otraQ.color || '#8b5cf6'}18`,
-                                    borderColor: `${otraQ.color || '#8b5cf6'}40`,
-                                    color: otraQ.color || '#8b5cf6'
-                                  }}
-                                  title={`Hay ${cantEnOtra} cirugía(s) agendada(s) en ${otraQ.nombre} el día ${d.fecha}. Haz clic para ver esa sala.`}
-                                >
-                                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: otraQ.color || '#8b5cf6' }} />
-                                  <span>{cantEnOtra} en {otraQ.codigo || otraQ.nombre.slice(0, 10)} ↗</span>
-                                </button>
-                              )
-                            })}
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </th>
                 )
@@ -315,7 +334,8 @@ export default function TurneroGrid({
                         t.quirofano_id === q.id &&
                         t.fecha_cirugia === fechaSeleccionada &&
                         (t.hora_inicio || '').slice(0, 5) === horaSlot &&
-                        t.estado !== 'cancelado'
+                        t.estado !== 'cancelado' &&
+                        coincideCirujano(t)
                     )
 
                     const turnosCubriendo = turnos.filter((t) => {
@@ -501,7 +521,8 @@ export default function TurneroGrid({
                         t.quirofano_id === qId &&
                         t.fecha_cirugia === d.fecha &&
                         (t.hora_inicio || '').slice(0, 5) === horaSlot &&
-                        t.estado !== 'cancelado'
+                        t.estado !== 'cancelado' &&
+                        coincideCirujano(t)
                     )
 
                     const turnosCubriendo = turnos.filter((t) => {

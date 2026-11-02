@@ -25,7 +25,8 @@ import {
   Radio,
   RefreshCw,
   Eye,
-  EyeOff
+  EyeOff,
+  Stethoscope
 } from 'lucide-react'
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
@@ -45,6 +46,42 @@ function ProgramacionQuirurgicaContent() {
   const [modoVista, setModoVista] = useState<'dia' | 'semana'>('semana')
   const [fechaSeleccionada, setFechaSeleccionada] = useState(new Date().toISOString().slice(0, 10))
   const [quirofanoSeleccionadoId, setQuirofanoSeleccionadoId] = useState<string>('')
+  const [cirujanoFiltro, setCirujanoFiltro] = useState<string>('todos')
+
+  // Restaurar preferencias del usuario en localStorage
+  useEffect(() => {
+    try {
+      const sModo = localStorage.getItem('agenda_modo_vista') as 'dia' | 'semana'
+      if (sModo && ['dia', 'semana'].includes(sModo)) setModoVista(sModo)
+      const sQ = localStorage.getItem('agenda_quirofano_activo')
+      if (sQ) setQuirofanoSeleccionadoId(sQ)
+      const sCir = localStorage.getItem('agenda_filtro_cirujano')
+      if (sCir) setCirujanoFiltro(sCir)
+    } catch (e) {
+      console.warn('Error cargando preferencias de agenda:', e)
+    }
+  }, [])
+
+  const handleCambiarModoVista = (modo: 'dia' | 'semana') => {
+    setModoVista(modo)
+    try {
+      localStorage.setItem('agenda_modo_vista', modo)
+    } catch (e) {}
+  }
+
+  const handleSeleccionarQuirofano = (qId: string) => {
+    setQuirofanoSeleccionadoId(qId)
+    try {
+      localStorage.setItem('agenda_quirofano_activo', qId)
+    } catch (e) {}
+  }
+
+  const handleSeleccionarCirujano = (cirujano: string) => {
+    setCirujanoFiltro(cirujano)
+    try {
+      localStorage.setItem('agenda_filtro_cirujano', cirujano)
+    } catch (e) {}
+  }
 
   const [quirofanos, setQuirofanos] = useState<any[]>([])
   const [turnos, setTurnos] = useState<any[]>([])
@@ -131,6 +168,19 @@ function ProgramacionQuirurgicaContent() {
     if (diasOp.length === 6 && diasOp.includes(1) && diasOp.includes(6)) return 'Vista Semanal (L-S)'
     return `Vista Semanal (${diasOp.length} días)`
   }, [diasOp, mostrarDiasInhabiles])
+
+  // Lista dinámica de cirujanos con turnos en el período cargado
+  const cirujanosDisponibles = useMemo(() => {
+    const map = new Map<string, string>()
+    turnos.forEach((t) => {
+      const cNom = (t.cirujano_nombre || '').trim()
+      if (cNom && cNom.toLowerCase() !== 'a designar' && cNom.toLowerCase() !== 'sin asignar') {
+        const key = cNom.toLowerCase()
+        if (!map.has(key)) map.set(key, cNom)
+      }
+    })
+    return Array.from(map.values()).sort((a, b) => a.localeCompare(b))
+  }, [turnos])
 
   // Conteo de turnos programados activos por quirófano para las fechas cargadas
   const conteoTurnosPorQuirofano = useMemo(() => {
@@ -403,7 +453,7 @@ function ProgramacionQuirurgicaContent() {
           {/* Toggle Vista Día / Semana */}
           <div className="flex items-center bg-slate-100 dark:bg-slate-800/80 p-1 rounded-xl border border-[var(--border)]">
             <button
-              onClick={() => setModoVista('dia')}
+              onClick={() => handleCambiarModoVista('dia')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
                 modoVista === 'dia'
                   ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm'
@@ -414,7 +464,7 @@ function ProgramacionQuirurgicaContent() {
               <span>Vista Día</span>
             </button>
             <button
-              onClick={() => setModoVista('semana')}
+              onClick={() => handleCambiarModoVista('semana')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 ${
                 modoVista === 'semana'
                   ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm'
@@ -455,7 +505,7 @@ function ProgramacionQuirurgicaContent() {
             return (
               <button
                 key={q.id}
-                onClick={() => setQuirofanoSeleccionadoId(q.id)}
+                onClick={() => handleSeleccionarQuirofano(q.id)}
                 className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 shrink-0 border ${
                   isSelected
                     ? 'bg-white dark:bg-slate-800 text-blue-600 dark:text-blue-400 border-blue-500 shadow-sm'
@@ -543,6 +593,28 @@ function ProgramacionQuirurgicaContent() {
             </button>
           )}
 
+          {/* Filtro por Cirujano en Agenda */}
+          <div className="flex items-center gap-1.5">
+            <Stethoscope size={14} className="text-blue-600 shrink-0" />
+            <select
+              value={cirujanoFiltro}
+              onChange={(e) => handleSeleccionarCirujano(e.target.value)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold outline-none focus:border-blue-500 transition-colors max-w-[190px] truncate ${
+                cirujanoFiltro !== 'todos'
+                  ? 'bg-blue-500/15 border-blue-500 text-blue-600 dark:text-blue-300 ring-1 ring-blue-500/40'
+                  : 'bg-[var(--card)] border-[var(--border)] text-[var(--foreground)]'
+              }`}
+              title="Filtrar turnos de la agenda por Médico Cirujano"
+            >
+              <option value="todos">Todos los Cirujanos</option>
+              {cirujanosDisponibles.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="flex items-center gap-2">
             <label className="text-[11px] font-semibold text-[var(--secondary)]">Ir a Fecha:</label>
             <input
@@ -577,10 +649,11 @@ function ProgramacionQuirurgicaContent() {
             bloquesMedicos={bloquesMedicos}
             fechaSeleccionada={fechaSeleccionada}
             diasSemana={diasVisibles}
+            cirujanoFiltro={cirujanoFiltro}
             onSlotClick={handleSlotClick}
             onTurnoClick={handleTurnoClick}
             onEliminarBloqueo={handleEliminarBloqueo}
-            onSeleccionarQuirofano={setQuirofanoSeleccionadoId}
+            onSeleccionarQuirofano={handleSeleccionarQuirofano}
           />
         </div>
       )}

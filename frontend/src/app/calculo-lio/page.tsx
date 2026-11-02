@@ -99,6 +99,34 @@ export default function CalculoLioPage() {
   const [cirujanos, setCirujanos] = useState<string[]>([])
   const [cirujanoSeleccionado, setCirujanoSeleccionado] = useState<string>('todos')
   const [estadoFiltro, setEstadoFiltro] = useState<string>('todos') // 'todos' | 'pendientes' | 'calculados' | 'stock_pendiente'
+
+  // Restaurar filtros persistentes de LIO
+  useEffect(() => {
+    try {
+      const sCir = localStorage.getItem('calculo_lio_cirujano_filtro')
+      if (sCir) setCirujanoSeleccionado(sCir)
+      const sEst = localStorage.getItem('calculo_lio_estado_filtro')
+      if (sEst && ['todos', 'pendientes', 'calculados', 'stock_pendiente'].includes(sEst)) {
+        setEstadoFiltro(sEst)
+      }
+    } catch (e) {
+      console.warn('Error cargando preferencias de calculo_lio:', e)
+    }
+  }, [])
+
+  const handleCambiarCirujano = (cirujano: string) => {
+    setCirujanoSeleccionado(cirujano)
+    try {
+      localStorage.setItem('calculo_lio_cirujano_filtro', cirujano)
+    } catch (e) {}
+  }
+
+  const handleCambiarEstadoFiltro = (estado: string) => {
+    setEstadoFiltro(estado)
+    try {
+      localStorage.setItem('calculo_lio_estado_filtro', estado)
+    } catch (e) {}
+  }
   const [busqueda, setBusqueda] = useState<string>('')
   const busquedaDebounced = useDebounce<string>(busqueda, 300)
 
@@ -666,7 +694,7 @@ export default function CalculoLioPage() {
             <User size={14} className="text-[var(--secondary)]" />
             <select
               value={cirujanoSeleccionado}
-              onChange={(e) => setCirujanoSeleccionado(e.target.value)}
+              onChange={(e) => handleCambiarCirujano(e.target.value)}
               className="bg-transparent text-xs font-bold text-[var(--foreground)] outline-none cursor-pointer"
             >
               <option value="todos">Todos los Cirujanos</option>
@@ -715,7 +743,7 @@ export default function CalculoLioPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         <button
           type="button"
-          onClick={() => setEstadoFiltro('todos')}
+          onClick={() => handleCambiarEstadoFiltro('todos')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'todos'
               ? 'bg-blue-600/10 border-blue-500 text-blue-700 dark:text-blue-300 ring-2 ring-blue-500/20'
@@ -731,7 +759,7 @@ export default function CalculoLioPage() {
 
         <button
           type="button"
-          onClick={() => setEstadoFiltro('pendientes')}
+          onClick={() => handleCambiarEstadoFiltro('pendientes')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'pendientes'
               ? 'bg-amber-600/10 border-amber-500 text-amber-700 dark:text-amber-300 ring-2 ring-amber-500/20'
@@ -749,7 +777,7 @@ export default function CalculoLioPage() {
 
         <button
           type="button"
-          onClick={() => setEstadoFiltro('calculados')}
+          onClick={() => handleCambiarEstadoFiltro('calculados')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'calculados'
               ? 'bg-emerald-600/10 border-emerald-500 text-emerald-700 dark:text-emerald-300 ring-2 ring-emerald-500/20'
@@ -767,7 +795,7 @@ export default function CalculoLioPage() {
 
         <button
           type="button"
-          onClick={() => setEstadoFiltro('stock_pendiente')}
+          onClick={() => handleCambiarEstadoFiltro('stock_pendiente')}
           className={`p-4 rounded-3xl border text-left transition shadow-xs cursor-pointer ${
             estadoFiltro === 'stock_pendiente'
               ? 'bg-purple-600/10 border-purple-500 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/20'
