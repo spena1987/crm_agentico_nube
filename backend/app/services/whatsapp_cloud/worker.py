@@ -2128,6 +2128,9 @@ async def record_outbound_audit_message(
     Registra en la base de datos de Supabase un mensaje saliente para auditoría clínica.
     Actualiza la sesión en patient_conversations y crea el registro en whatsapp_messages.
     """
+    if not supabase:
+        logger.debug("[Outbound Audit] Cliente Supabase no disponible, omitiendo registro.")
+        return
     try:
         normalized_phone = normalize_to_meta_e164(to_phone)
         

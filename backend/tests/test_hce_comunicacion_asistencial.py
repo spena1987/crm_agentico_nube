@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import uuid
 from unittest.mock import MagicMock, patch, AsyncMock
 from app.services.historia_oftalmo_service import HistoriaOftalmoService
 from app.services.whatsapp_cloud.client import ConversationWindowClosedError
@@ -8,11 +9,12 @@ from app.services.whatsapp_cloud.client import ConversationWindowClosedError
 async def test_despachar_comunicacion_prequirurgica_fallback():
     """
     Verifica que al cerrarse la ventana de 24h, un mensaje prequirúrgico
-    invoque la plantilla oficial homologada 'indicaciones_prequirurgicas_video_v1'
-    con sus 4 componentes sanitizados (paciente_nombre, cirujano_nombre, fecha_cirugia, video_url).
+    invoque la plantilla oficial homologada 'prequirurgico_video_indicaciones_v1'
+    con sus 4 componentes sanitizados (paciente_nombre, cirujano_nombre, video_url, observaciones).
     """
     mock_pac = [{"id": "p-123", "nombre": "Juan Pérez", "telefono": "+5491144445555", "dni": "30111222"}]
     mock_u_perfil = [{"nombre_completo": "Dr. Martínez"}]
+    test_wamid = f"wamid.preq.{uuid.uuid4().hex[:8]}"
 
     with patch("app.services.historia_oftalmo_service.supabase") as mock_supa, \
          patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient") as mock_client_cls, \
@@ -31,7 +33,7 @@ async def test_despachar_comunicacion_prequirurgica_fallback():
         mock_client = MagicMock()
         mock_client.phone_number_id = "phone-123"
         mock_client.send_free_text = AsyncMock(side_effect=ConversationWindowClosedError(131026, 0, "Message undeliverable outside 24h window", "trace123"))
-        mock_client.send_template = AsyncMock(return_value={"wamid": "wamid.preq.123"})
+        mock_client.send_template = AsyncMock(return_value={"wamid": test_wamid})
         mock_client.close = AsyncMock()
         mock_client_cls.return_value = mock_client
 
@@ -46,22 +48,22 @@ async def test_despachar_comunicacion_prequirurgica_fallback():
         )
 
         assert res["success"] is True
-        assert res["wamid"] == "wamid.preq.123"
+        assert res["wamid"] == test_wamid
         assert res["modo_envio"] == "fallback_plantilla_prequirurgica_24h"
-        assert res["template_usada"] == "indicaciones_prequirurgicas_video_v1"
+        assert res["template_usada"] == "prequirurgico_video_indicaciones_v1"
 
         # Verificar parámetros de plantilla
         mock_client.send_template.assert_called_once()
         call_kwargs = mock_client.send_template.call_args[1]
-        assert call_kwargs["template_name"] == "indicaciones_prequirurgicas_video_v1"
+        assert call_kwargs["template_name"] == "prequirurgico_video_indicaciones_v1"
         components = call_kwargs["components"]
         assert len(components) == 1
         params = components[0]["parameters"]
         assert len(params) == 4
         assert params[0]["text"] == "Juan Pérez"
         assert params[1]["text"] == "Dr. González"
-        assert params[2]["text"] == "25/11/2026"
-        assert params[3]["text"] == "https://centrovision.com.ar/video-catarata.mp4"
+        assert params[2]["text"] == "https://centrovision.com.ar/video-catarata.mp4"
+        assert params[3]["text"] == "Pautas preoperatorias generales"
 
 @pytest.mark.asyncio
 async def test_despachar_comunicacion_asistencial_no_trunca_400():
