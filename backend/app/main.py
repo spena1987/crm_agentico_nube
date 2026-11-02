@@ -579,22 +579,62 @@ def servir_archivo_estatico(filename: str, regenerar: Optional[bool] = False):
                         asesoria_item = emision_item.get("asesorias_quirurgicas") or {}
                         paciente_item = asesoria_item.get("pacientes") or {}
                         
+                        # Resolver cirujano
+                        med_id = emision_item.get("geclisa_pre_id") or asesoria_item.get("medico_cirujano_id")
+                        med_nom = emision_item.get("medico_nombre") or asesoria_item.get("medico_cirujano_nombre")
+                        med_mat = emision_item.get("medico_matricula") or asesoria_item.get("medico_cirujano_matricula")
+
+                        if not med_nom or med_nom in ("Médico Cirujano", "A designar"):
+                            if asesoria_item.get("medico_cirujano_nombre"):
+                                med_nom = asesoria_item.get("medico_cirujano_nombre")
+                                med_id = asesoria_item.get("medico_cirujano_id") or med_id
+                                med_mat = asesoria_item.get("medico_cirujano_matricula") or med_mat
+
                         from app.services.indicaciones_pdf_service import generar_pdf_indicacion_medica
-                        datos_rec = {
-                            "id": emision_id,
-                            "paciente_nombre": paciente_item.get("nombre") or emision_item.get("paciente_nombre") or "Paciente",
-                            "paciente_dni": paciente_item.get("dni") or "",
-                            "paciente_obra_social": asesoria_item.get("cobertura_obra_social") or paciente_item.get("obra_social") or "-",
-                            "paciente_afiliado": paciente_item.get("nro_afiliado") or "-",
-                            "paciente_domicilio": paciente_item.get("direccion") or "-",
-                            "practica_nombre": emision_item.get("practica_nombre") or asesoria_item.get("practica_nombre") or "Práctica Oftalmológica",
-                            "ojo": asesoria_item.get("ojo") or "OD",
-                            "medico_nombre": emision_item.get("medico_nombre") or "Médico Cirujano",
-                            "medico_matricula": emision_item.get("medico_matricula") or "",
-                            "cuerpo_indicaciones": emision_item.get("texto_indicaciones") or "",
-                            "geclisa_im_id": emision_item.get("geclisa_im_id")
-                        }
-                        generar_pdf_indicacion_medica(datos_rec, guardar_en_disco=True)
+                        from app.db import obtener_prestador_por_cirujano
+                        prest_info = obtener_prestador_por_cirujano(med_id, med_nom)
+                        if prest_info:
+                            if not med_mat:
+                                med_mat = prest_info.get("matricula") or ""
+                            if not med_nom or med_nom in ("Médico Cirujano", "A designar"):
+                                med_nom = prest_info.get("nombre_apellido") or med_nom
+
+                        # Si no existe en disco o si era genérico sin firma, forzar regeneración con firma
+                        debe_regenerar_indicacion = necesita_regenerar
+                        if not debe_regenerar_indicacion and prest_info and prest_info.get("firma_url"):
+                            if emision_item.get("medico_nombre") in (None, "Médico Cirujano", "A designar"):
+                                debe_regenerar_indicacion = True
+
+                        if debe_regenerar_indicacion:
+                            fecha_db_raw = emision_item.get("fecha_emision")
+                            fecha_pdf_fmt = None
+                            if fecha_db_raw and "-" in str(fecha_db_raw):
+                                pts = str(fecha_db_raw).split("-")
+                                if len(pts) == 3:
+                                    fecha_pdf_fmt = f"{pts[2]}/{pts[1]}/{pts[0]}"
+
+                            datos_rec = {
+                                "id": emision_id,
+                                "paciente_nombre": paciente_item.get("nombre") or emision_item.get("paciente_nombre") or "Paciente",
+                                "paciente_dni": paciente_item.get("dni") or "",
+                                "paciente_obra_social": asesoria_item.get("cobertura_obra_social") or paciente_item.get("obra_social") or "-",
+                                "paciente_plan": paciente_item.get("plan_cobertura") or asesoria_item.get("plan_cobertura") or "",
+                                "paciente_afiliado": paciente_item.get("nro_afiliado") or "-",
+                                "paciente_domicilio": paciente_item.get("direccion") or "-",
+                                "practica_nombre": emision_item.get("practica_nombre") or asesoria_item.get("practica_nombre") or "Práctica Oftalmológica",
+                                "ojo": asesoria_item.get("ojo") or "OD",
+                                "medico_nombre": med_nom or "Médico Cirujano",
+                                "medico_id": med_id,
+                                "medico_matricula": med_mat or "",
+                                "medico_especialidad": prest_info.get("especialidad") if prest_info else "Especialista en Oftalmología",
+                                "firma_url": prest_info.get("firma_url") if prest_info else None,
+                                "tipo_documento": emision_item.get("tipo_documento"),
+                                "titulo_documento": emision_item.get("titulo_documento"),
+                                "cuerpo_indicaciones": emision_item.get("texto_indicaciones") or "",
+                                "geclisa_im_id": emision_item.get("geclisa_im_id"),
+                                "fecha": fecha_pdf_fmt
+                            }
+                            generar_pdf_indicacion_medica(datos_rec, guardar_en_disco=True)
             except Exception as e:
                 logger.error(f"Error regenerando PDF de indicación on-demand ({safe_filename}): {e}")
 
@@ -4055,6 +4095,10 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
         tipo_documento = payload.get("tipo_documento")
         titulo_documento = payload.get("titulo_documento")
         fecha_emision = payload.get("fecha_emision")
+        medico_id = payload.get("medico_id")
+        medico_nombre = payload.get("medico_nombre")
+        practica_nombre = payload.get("practica_nombre")
+        practica_codigo = payload.get("practica_codigo")
         resultado = emitir_indicaciones_expediente(
             asesoria_id=asesoria_id,
             enviar_whatsapp=enviar_wa,
@@ -4066,7 +4110,11 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
             modulos=modulos,
             tipo_documento=tipo_documento,
             titulo_documento=titulo_documento,
-            fecha_emision=fecha_emision
+            fecha_emision=fecha_emision,
+            medico_id_override=medico_id,
+            medico_nombre_override=medico_nombre,
+            practica_nombre_override=practica_nombre,
+            practica_codigo_override=practica_codigo
         )
         if not resultado.get("success"):
             raise HTTPException(status_code=400, detail=resultado.get("error", "Error al emitir indicación."))

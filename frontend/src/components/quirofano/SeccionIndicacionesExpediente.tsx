@@ -469,7 +469,11 @@ export default function SeccionIndicacionesExpediente({
           modulos: modulosActivos.length > 0 ? modulosActivos : undefined,
           tipo_documento: tipoDocumento,
           titulo_documento: tituloDocumento,
-          fecha_emision: fechaEmision
+          fecha_emision: fechaEmision,
+          medico_id: medicoId,
+          medico_nombre: medicoNombre,
+          practica_nombre: practicaNombre,
+          practica_codigo: practicaCodigo
         })
       })
 

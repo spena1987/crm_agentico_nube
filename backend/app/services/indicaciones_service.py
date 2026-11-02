@@ -406,7 +406,11 @@ def emitir_indicaciones_expediente(
     modulos: Optional[List[Dict[str, Any]]] = None,
     tipo_documento: Optional[str] = None,
     titulo_documento: Optional[str] = None,
-    fecha_emision: Optional[str] = None
+    fecha_emision: Optional[str] = None,
+    medico_id_override: Optional[Any] = None,
+    medico_nombre_override: Optional[str] = None,
+    practica_nombre_override: Optional[str] = None,
+    practica_codigo_override: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Proceso central de Emisión de Indicaciones Médicas:
@@ -440,17 +444,21 @@ def emitir_indicaciones_expediente(
     paciente_afiliado = paciente.get("nro_afiliado") or paciente.get("numero_afiliado") or "-"
     paciente_domicilio = paciente.get("direccion") or paciente.get("domicilio") or "-"
     
-    medico_id = asesoria.get("medico_cirujano_id")
-    medico_nombre = asesoria.get("medico_cirujano_nombre") or "Médico Cirujano"
+    medico_id = medico_id_override or asesoria.get("medico_cirujano_id")
+    medico_nombre = medico_nombre_override or asesoria.get("medico_cirujano_nombre") or "Médico Cirujano"
     medico_matricula = asesoria.get("medico_cirujano_matricula") or ""
     medico_firma_url = None
     medico_especialidad = "Especialista en Oftalmología"
 
-    # Auto-resolución de prestador (matrícula y firma digital)
+    # Auto-resolución de prestador (matrícula, especialidad y firma digital)
     try:
         from app.db import obtener_prestador_por_cirujano
         prest_info = obtener_prestador_por_cirujano(medico_id, medico_nombre)
         if prest_info:
+            if not medico_id and prest_info.get("geclisa_pre_id"):
+                medico_id = prest_info.get("geclisa_pre_id")
+            if not medico_nombre or medico_nombre in ("Médico Cirujano", "A designar"):
+                medico_nombre = prest_info.get("nombre_apellido") or medico_nombre
             if not medico_matricula or str(medico_matricula).strip() in ("", "-", "None"):
                 medico_matricula = prest_info.get("matricula") or ""
             medico_firma_url = prest_info.get("firma_url")
@@ -458,8 +466,26 @@ def emitir_indicaciones_expediente(
     except Exception as e_pr:
         logger.warning(f"Aviso resolviendo prestador en emitir_indicaciones: {e_pr}")
 
-    practica_nombre = asesoria.get("practica_nombre") or "Cirugía Oftalmológica"
-    practica_codigo = asesoria.get("practica_codigo") or ""
+    practica_nombre = practica_nombre_override or asesoria.get("practica_nombre") or "Cirugía Oftalmológica"
+    practica_codigo = practica_codigo_override or asesoria.get("practica_codigo") or ""
+
+    # Sincronizar automáticamente en asesorias_quirurgicas si el caso no tenía médico o práctica guardados
+    try:
+        upd_as = {}
+        if medico_id and not asesoria.get("medico_cirujano_id"):
+            upd_as["medico_cirujano_id"] = int(medico_id)
+        if medico_nombre and medico_nombre != "Médico Cirujano" and not asesoria.get("medico_cirujano_nombre"):
+            upd_as["medico_cirujano_nombre"] = medico_nombre
+        if medico_matricula and not asesoria.get("medico_cirujano_matricula"):
+            upd_as["medico_cirujano_matricula"] = medico_matricula
+        if practica_nombre and practica_nombre != "Nueva Cirugía / Procedimiento" and asesoria.get("practica_nombre") in (None, "Nueva Cirugía / Procedimiento"):
+            upd_as["practica_nombre"] = practica_nombre
+        if practica_codigo and not asesoria.get("practica_codigo"):
+            upd_as["practica_codigo"] = practica_codigo
+        if upd_as:
+            supabase.table("asesorias_quirurgicas").update(upd_as).eq("id", asesoria_id).execute()
+    except Exception as e_sync_as:
+        logger.warning(f"Aviso actualizando datos de cirujano en asesoría: {e_sync_as}")
     
     # 2. Resolver textos e instrucciones
     texto_final = texto_override
