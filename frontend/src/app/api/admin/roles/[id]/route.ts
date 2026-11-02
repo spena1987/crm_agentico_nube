@@ -1,6 +1,19 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { verifyServerAdmin } from '@/lib/serverAuth'
+import { SYSTEM_MODULES } from '@/config/modules'
+
+async function ensureModulesSynced() {
+  const catalogToUpsert = SYSTEM_MODULES.map((m) => ({
+    codigo: m.code,
+    nombre: m.name,
+    descripcion: m.description,
+    icono: m.icon,
+    orden: Math.round(m.order),
+    activo: true,
+  }))
+  await supabaseAdmin.from('modulos').upsert(catalogToUpsert, { onConflict: 'codigo' })
+}
 
 // PATCH: Actualizar rol y su matriz de permisos
 export async function PATCH(
@@ -36,6 +49,9 @@ export async function PATCH(
 
     // 2. Si se enviaron permisos, sincronizarlos
     if (permisos && Array.isArray(permisos)) {
+      // Garantizar que todos los módulos del catálogo existan en public.modulos antes de insertar permisos
+      await ensureModulesSynced()
+
       // Eliminar permisos previos
       await supabaseAdmin.from('rol_permisos').delete().eq('rol_id', roleId)
 

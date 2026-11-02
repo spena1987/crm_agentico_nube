@@ -1,6 +1,19 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { verifyServerAdmin } from '@/lib/serverAuth'
+import { SYSTEM_MODULES } from '@/config/modules'
+
+async function ensureModulesSynced() {
+  const catalogToUpsert = SYSTEM_MODULES.map((m) => ({
+    codigo: m.code,
+    nombre: m.name,
+    descripcion: m.description,
+    icono: m.icon,
+    orden: Math.round(m.order),
+    activo: true,
+  }))
+  await supabaseAdmin.from('modulos').upsert(catalogToUpsert, { onConflict: 'codigo' })
+}
 
 // GET: Listar todos los roles con sus permisos asociados y cantidad de usuarios
 export async function GET(request: Request) {
@@ -116,6 +129,8 @@ export async function POST(request: Request) {
 
     // 2. Insertar permisos asignados
     if (permisos.length > 0) {
+      await ensureModulesSynced()
+
       const permsToInsert = permisos.map((p: any) => ({
         rol_id: newRole.id,
         modulo_codigo: p.modulo_codigo,
