@@ -803,7 +803,19 @@ def clasificar_indicacion_optica(
     if tiene_formula_refractiva and ("receta" in t_low or "lente" in t_low or "anteojo" in t_low or "esf" in t_low or "add" in t_low):
         match_aereos = True
 
-    # 2. Evaluar Lista Negra Quirúrgica Estricta
+    # Palabras clave de prescripción refractiva activa
+    tiene_prescripcion_activa = (
+        match_aereos
+        or tiene_formula_refractiva
+        or tiene_grad_estructurada
+        or any(w in t_low for w in (
+            "cerca", "lejos", "multifocal", "progresivo", "bifocal", "adicion", "adición",
+            "antirreflex", "antirreflejo", "blue cut", "filtro azul", "fotocromatico", "fotocromático",
+            "armazón", "armazon", "cristales", "prescripción", "prescripcion", "lectura"
+        ))
+    )
+
+    # 2. Evaluar Lista Negra Quirúrgica Estricta con diferenciación anatómica
     blacklist_hits = [bw.strip() for bw in BLACKLIST_QUIRURGICA_OPTICA if bw in t_low]
     if blacklist_hits:
         # Si menciona LCT / suspender LC, anular match_contacto
@@ -818,15 +830,28 @@ def clasificar_indicacion_optica(
                 "motivo_exclusion": f"EXCLUIDO_SIN_CAMBIO ({blacklist_hits[0]})",
                 "extracto_relevante": raw_text[:240]
             }
-        # Si menciona LIO / facoemulsificación y NO hay receta explícita de anteojos aéreos ni datos estructurados de anteojos
-        if not datos_estructurados and not ("receta de anteojos" in t_low or "receta de lentes aéreos" in t_low or "receta de lentes aereos" in t_low):
-            return {
-                "es_oportunidad": False,
-                "tipo_oportunidad": None,
-                "graduacion_json": grad,
-                "motivo_exclusion": f"EXCLUIDO_QUIRURGICO ({blacklist_hits[0]})",
-                "extracto_relevante": raw_text[:240]
-            }
+
+        # CLI-01: Diferenciar antecedente anatómico (pseudofaquia previa, LIO implantado en cirugía anterior)
+        # de una cirugía activa inminente (facoemulsificación programada, vitrectomía, capsulotomía).
+        es_termino_antecedente = all(
+            hit in ("pseudofaquia", "pseudofáquico", "cámara posterior", "camara posterior", "cámara anterior", "camara anterior", "lente intraocular")
+            for hit in blacklist_hits
+        )
+
+        if es_termino_antecedente and tiene_prescripcion_activa:
+            # NO excluir: El paciente es pseudofáquico pero el médico prescribió anteojos activos
+            logger.info(f"[Clasificador Óptica] Paciente pseudofáquico con prescripción activa detectado: {blacklist_hits}. Admitiendo oportunidad.")
+            match_aereos = True
+        else:
+            # Exclusión quirúrgica legítima (cirugía activa o sin indicación refractiva)
+            if not datos_estructurados and not ("receta de anteojos" in t_low or "receta de lentes aéreos" in t_low or "receta de lentes aereos" in t_low):
+                return {
+                    "es_oportunidad": False,
+                    "tipo_oportunidad": None,
+                    "graduacion_json": grad,
+                    "motivo_exclusion": f"EXCLUIDO_QUIRURGICO ({blacklist_hits[0]})",
+                    "extracto_relevante": raw_text[:240]
+                }
 
     if datos_estructurados and tiene_grad_estructurada and not match_contacto:
         match_aereos = True
@@ -1425,7 +1450,9 @@ def detectar_indicaciones_lentes_del_dia(
         )
 
         fuente_primaria, hc_reg_id, prest_nom, _ = textos_del_dia[0]
-        dedup_key = f"indicacion_hc:{fid}:{fecha_obj}"
+        # Caso Borde 1: Dedup key granular por médico/consulta para no descartar prescripciones vespertinas
+        medico_key = str(t_info.get("prestador_id") or hc_reg_id or t_info.get("turno_id") or "gral")
+        dedup_key = f"indicacion_hc:{fid}:{fecha_obj}:{medico_key}"
         if dedup_key in seen_dedup:
             continue
         seen_dedup.add(dedup_key)
@@ -2176,7 +2203,8 @@ def _esta_en_horario_comercial_optica(cfg: Dict[str, Any]) -> bool:
 async def extraer_graduacion_desde_imagen_receta(
     media_url_or_base64: str,
     conversacion_id: Optional[str] = None,
-    contacto_id: Optional[str] = None
+    contacto_id: Optional[str] = None,
+    rotacion_grados: int = 0
 ) -> Dict[str, Any]:
     """
     Utiliza Google Gemini Vision (`google.genai`) para analizar la foto de una receta médica oftalmológica
@@ -2186,6 +2214,7 @@ async def extraer_graduacion_desde_imagen_receta(
       - Adición (Cerca)
       - DNP (Distancia Nasopupilar / Interpupilar)
       - Tipo de lente sugerido y observaciones.
+    Soporta preprocesamiento de rotación con PIL.Image (`rotacion_grados in (90, 180, 270)`).
     Además actualiza `graduacion_actual_json` en `public.optica_contactos` si se provee `conversacion_id` o `contacto_id`.
     """
     from google import genai
@@ -2233,6 +2262,25 @@ async def extraer_graduacion_desde_imagen_receta(
 
     if not img_bytes:
         raise ValueError("No se pudieron obtener los bytes de la imagen de la receta.")
+
+    # Preprocesamiento de rotación con PIL.Image si rotacion_grados != 0
+    if rotacion_grados in (90, 180, 270):
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(io.BytesIO(img_bytes)) as pil_img:
+                pil_img = ImageOps.exif_transpose(pil_img) or pil_img
+                # Rotación en sentido horario: rotar (360 - rotacion_grados) en PIL
+                rotated = pil_img.rotate(360 - rotacion_grados, expand=True)
+
+                buf = io.BytesIO()
+                fmt = "PNG" if mime_type == "image/png" else "JPEG"
+                if fmt == "JPEG" and rotated.mode in ("RGBA", "P"):
+                    rotated = rotated.convert("RGB")
+                rotated.save(buf, format=fmt, quality=92)
+                img_bytes = buf.getvalue()
+                logger.info(f"[OpticaOCR] Imagen rotada exitosamente {rotacion_grados}° antes de enviar a Gemini Vision.")
+        except Exception as rot_err:
+            logger.warning(f"[OpticaOCR] No se pudo rotar la imagen ({rot_err}), continuando con la imagen original.")
 
     g_client = genai.Client(api_key=api_key)
     prompt = (
@@ -2501,11 +2549,22 @@ async def procesar_cola_envios_optica(max_batch: int = 10, force_outside_hours: 
                     continue
 
             try:
-                supabase.table("optica_envios_programados").update({
-                    "estado": "enviando",
-                    "intentos": intentos,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }).eq("id", env_id).execute()
+                now_claiming = datetime.now(timezone.utc).isoformat()
+                claim_res = (
+                    supabase.table("optica_envios_programados")
+                    .update({
+                        "estado": "enviando",
+                        "intentos": intentos,
+                        "updated_at": now_claiming
+                    })
+                    .eq("id", env_id)
+                    .eq("estado", "pendiente")
+                    .execute()
+                )
+
+                if not claim_res.data or len(claim_res.data) == 0:
+                    logger.info(f"[Motor3 Concurrencia] Envío id={env_id} ya fue reclamado por otro worker concurrente. Omitiendo duplicado.")
+                    continue
 
                 # Comprobar si la plantilla en BD tiene HEADER de tipo IMAGE
                 tpl_header_type = "NONE"

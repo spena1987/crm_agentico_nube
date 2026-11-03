@@ -137,6 +137,7 @@ class OcrRecetaPayload(BaseModel):
     media_url: str
     conversacion_id: Optional[str] = None
     contacto_id: Optional[str] = None
+    rotacion_grados: Optional[int] = 0
 
 
 class CopilotoOpticaPayload(BaseModel):
@@ -1169,12 +1170,13 @@ async def obtener_ficha_optica_conversacion(conv_id: str):
 
 @optica_vortix_router.post("/ia/ocr-receta")
 async def ocr_receta_endpoint(payload: OcrRecetaPayload):
-    """Extrae la graduación (OD, OI, Adición, DNP) desde la foto de una receta médica usando Gemini Vision."""
+    """Extrae la graduación (OD, OI, Adición, DNP) desde la foto de una receta médica usando Gemini Vision con rotación opcional."""
     try:
         res = await extraer_graduacion_desde_imagen_receta(
             media_url_or_base64=payload.media_url,
             conversacion_id=payload.conversacion_id,
-            contacto_id=payload.contacto_id
+            contacto_id=payload.contacto_id,
+            rotacion_grados=int(payload.rotacion_grados or 0)
         )
         grad = normalizar_estructura_graduacion(res.get("graduacion"))
         return {

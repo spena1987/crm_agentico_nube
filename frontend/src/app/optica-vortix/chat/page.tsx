@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
 import {
   EtapaComercialOptica,
   OpticaConversacion,
@@ -45,6 +46,23 @@ import {
   OpticaPlaca,
   OpticaTemplateMeta,
 } from '@/types/optica'
+
+// Helpers de sanitización y validación estricta para Cotizador
+const sanitizeMoney = (val: unknown): number => {
+  const num = typeof val === 'number' ? val : parseFloat(String(val).replace(/[^0-9.-]/g, ''))
+  return !Number.isFinite(num) || num < 0 ? 0 : Math.round(num)
+}
+
+const sanitizeDiscount = (val: unknown): number => {
+  const num = typeof val === 'number' ? val : parseFloat(String(val).replace(/[^0-9.-]/g, ''))
+  if (!Number.isFinite(num)) return 0
+  return Math.min(100, Math.max(0, Math.round(num)))
+}
+
+const formatCurrencySafe = (val: number): string => {
+  const safe = sanitizeMoney(val)
+  return safe.toLocaleString('es-AR')
+}
 
 const ETAPAS_EMBUDO: {
   code: EtapaComercialOptica
@@ -232,6 +250,7 @@ export default function OpticaVortixChatPage() {
 
   // Confirmación de aviso "Lentes Listos para Retirar"
   const [showConfirmListoRetirar, setShowConfirmListoRetirar] = useState(false)
+  const [cotizadorError, setCotizadorError] = useState<string | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -264,6 +283,78 @@ export default function OpticaVortixChatPage() {
     const interval = setInterval(fetchConversaciones, 12000)
     return () => clearInterval(interval)
   }, [filtroEtapa, searchQuery])
+
+  // UX-02: Suscripción en Tiempo Real con Supabase Realtime para la conversación activa
+  useEffect(() => {
+    if (!selectedConv?.id) return
+
+    const activeConvId = selectedConv.id
+    const channelName = `optica-chat-${activeConvId}`
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'optica_mensajes',
+          filter: `conversacion_id=eq.${activeConvId}`,
+        },
+        (payload) => {
+          const nuevoMsg = payload.new as OpticaMensaje
+          setMensajes((prev) => {
+            if (prev.some((m) => m.id === nuevoMsg.id || (m.metadata?.wamid && m.metadata.wamid === nuevoMsg.metadata?.wamid))) {
+              return prev
+            }
+            return [...prev, nuevoMsg]
+          })
+
+          setTimeout(() => {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+          }, 60)
+
+          setConversaciones((prevConvs) =>
+            prevConvs
+              .map((c) =>
+                c.id === activeConvId
+                  ? {
+                      ...c,
+                      ultimo_mensaje: nuevoMsg.contenido,
+                      ultimo_mensaje_at: nuevoMsg.created_at,
+                      no_leidos: nuevoMsg.direccion === 'inbound' ? 0 : c.no_leidos,
+                    }
+                  : c
+              )
+              .sort(
+                (a, b) =>
+                  new Date(b.ultimo_mensaje_at || 0).getTime() -
+                  new Date(a.ultimo_mensaje_at || 0).getTime()
+              )
+          )
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'optica_mensajes',
+          filter: `conversacion_id=eq.${activeConvId}`,
+        },
+        (payload) => {
+          const updatedMsg = payload.new as OpticaMensaje
+          setMensajes((prev) =>
+            prev.map((m) => (m.id === updatedMsg.id ? { ...m, ...updatedMsg } : m))
+          )
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [selectedConv?.id])
 
   const handleSelectConv = async (conv: OpticaConversacion) => {
     setSelectedConv(conv)
@@ -386,7 +477,7 @@ export default function OpticaVortixChatPage() {
     }
   }
 
-  const handleRunOcrReceta = async (mediaUrl: string) => {
+  const handleRunOcrReceta = async (mediaUrl: string, rotacionGrados: number = visorRotation) => {
     if (!selectedConv) return
     setOcrLoading(true)
     try {
@@ -395,6 +486,7 @@ export default function OpticaVortixChatPage() {
         body: JSON.stringify({
           media_url: mediaUrl,
           conversacion_id: selectedConv.id,
+          rotacion_grados: rotacionGrados,
         }),
       })
       if (res.ok) {
@@ -441,14 +533,23 @@ export default function OpticaVortixChatPage() {
 
   const handleEnviarCotizacion = async () => {
     if (!selectedConv) return
+    setCotizadorError(null)
+
+    // Validar opciones con importes positivos
+    const validas = cotizadorOpciones.filter((op) => op.precio_lista > 0 && op.precio_final > 0)
+    if (validas.length === 0) {
+      setCotizadorError('Al menos una opción debe tener precio de lista y precio final válidos mayores a $0.')
+      return
+    }
+
     const cupon = selectedConv.cupon_codigo || '#VORTIX-PACIENTE'
     const lineas = [
       `👓 *PRESUPUESTO ÓPTICA VORTIX* (${cupon})`,
       `Paciente: *${selectedConv.nombre_paciente}*`,
       '',
-      ...cotizadorOpciones.map(
+      ...validas.map(
         (op) =>
-          `🔹 *${op.titulo}*\n• Cristal: ${op.cristal}\n• Tratamiento: ${op.tratamiento}\n• Armazón: ${op.armazon}\n• Precio Lista: ~$${op.precio_lista.toLocaleString('es-AR')}~ (-${op.descuento_pct}% OFF)\n👉 *Valor Final Paciente: $${op.precio_final.toLocaleString('es-AR')}*`
+          `🔹 *${op.titulo || 'Opción'}*\n• Cristal: ${op.cristal || 'Estándar'}\n• Tratamiento: ${op.tratamiento || 'Básico'}\n• Armazón: ${op.armazon || 'A elección'}\n• Precio Lista: ~${formatCurrencySafe(op.precio_lista)}~ (-${op.descuento_pct}% OFF)\n👉 *Valor Final Paciente: ${formatCurrencySafe(op.precio_final)}*`
       ),
       '',
       '✅ *Incluye:* Garantía de adaptación médica, estuche rígido y paño microfibra. 3 y 6 cuotas sin interés.',
@@ -463,7 +564,7 @@ export default function OpticaVortixChatPage() {
           tipo: 'cotizacion',
           contenido: lineas,
           metadata: {
-            cotizacion_opciones: cotizadorOpciones,
+            cotizacion_opciones: validas,
             cupon_aplicado: cupon,
           },
         }),
@@ -1500,9 +1601,10 @@ export default function OpticaVortixChatPage() {
                     </label>
                     <input
                       type="number"
+                      min={0}
                       value={op.precio_lista}
                       onChange={(e) => {
-                        const val = Number(e.target.value) || 0
+                        const val = sanitizeMoney(e.target.value)
                         const next = [...cotizadorOpciones]
                         next[idx].precio_lista = val
                         next[idx].precio_final = Math.round(val * (1 - next[idx].descuento_pct / 100))
@@ -1517,10 +1619,11 @@ export default function OpticaVortixChatPage() {
                     </label>
                     <input
                       type="number"
+                      min={0}
                       value={op.precio_final}
                       onChange={(e) => {
                         const next = [...cotizadorOpciones]
-                        next[idx].precio_final = Number(e.target.value) || 0
+                        next[idx].precio_final = sanitizeMoney(e.target.value)
                         setCotizadorOpciones(next)
                       }}
                       className="w-full px-2.5 py-1.5 rounded-lg text-xs font-black text-emerald-600 bg-emerald-500/10 border border-emerald-500/30"
@@ -1529,6 +1632,12 @@ export default function OpticaVortixChatPage() {
                 </div>
               ))}
             </div>
+
+            {cotizadorError && (
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs font-bold">
+                ⚠️ {cotizadorError}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-3 border-t border-[var(--border)]">
               <button
@@ -1581,7 +1690,7 @@ export default function OpticaVortixChatPage() {
             </button>
             <button
               type="button"
-              onClick={() => handleRunOcrReceta(visorImagenUrl)}
+              onClick={() => handleRunOcrReceta(visorImagenUrl, visorRotation)}
               disabled={ocrLoading}
               className="px-3 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1.5"
             >

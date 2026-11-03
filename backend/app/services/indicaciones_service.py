@@ -274,7 +274,9 @@ def despachar_indicacion_por_whatsapp(
     practica_nombre: str,
     mensaje_wa: str,
     pdf_url: str,
-    emision_uuid: str
+    emision_uuid: str,
+    operador_id: Optional[str] = None,
+    operador_nombre: Optional[str] = None
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Despacha la indicación médica u orden médica al WhatsApp del paciente:
@@ -295,6 +297,18 @@ def despachar_indicacion_por_whatsapp(
         except Exception as e_c:
             logger.warning(f"Error resolviendo conversación para paciente {paciente_id}: {e_c}")
 
+    # Fallback: Resolver conversación por teléfono si no se obtuvo por paciente_id
+    if not conv_id and tel_norm:
+        try:
+            from app.db import get_paciente_by_telefono
+            pac_tel = get_paciente_by_telefono(tel_norm)
+            if pac_tel and pac_tel.get("id"):
+                conv = get_or_create_conversacion(pac_tel["id"])
+                if conv:
+                    conv_id = conv.get("id")
+        except Exception as e_pt:
+            logger.warning(f"Error resolviendo conversación por teléfono {tel_norm}: {e_pt}")
+
     backend_base = (
         os.getenv("BACKEND_PUBLIC_URL")
         or os.getenv("BACKEND_URL")
@@ -311,7 +325,9 @@ def despachar_indicacion_por_whatsapp(
             telefono_o_jid=tel_norm,
             texto=mensaje_wa,
             conversacion_id=conv_id,
-            emisor="operador"
+            emisor="operador",
+            usuario_id=operador_id,
+            usuario_nombre=operador_nombre
         )
         if wa_send and (wa_send.get("code") == "WINDOW_CLOSED" or not wa_send.get("enviado_real")):
             is_window_open = False
@@ -368,20 +384,26 @@ def despachar_indicacion_por_whatsapp(
                 }
 
                 if conv_id and wamid:
+                    meta_tpl: Dict[str, Any] = {
+                        "tipo": "template",
+                        "template_name": "comunicacion_asistencial_paciente_v1",
+                        "delivery_status": "enviado",
+                        "provider": "meta_cloud_api",
+                        "wamid": wamid,
+                        "emision_indicacion_id": emision_uuid,
+                        "media_url": full_pdf_link
+                    }
+                    if operador_id:
+                        meta_tpl["operador_id"] = operador_id
+                    if operador_nombre:
+                        meta_tpl["operador_nombre"] = operador_nombre
+
                     guardar_mensaje(
                         conversacion_id=conv_id,
                         emisor="operador",
                         contenido=f"📋 [Plantilla Oficial Meta: comunicacion_asistencial_paciente_v1]\n{aviso_param}",
                         whatsapp_message_id=wamid,
-                        metadata_json={
-                            "tipo": "template",
-                            "template_name": "comunicacion_asistencial_paciente_v1",
-                            "delivery_status": "enviado",
-                            "provider": "meta_cloud_api",
-                            "wamid": wamid,
-                            "emision_indicacion_id": emision_uuid,
-                            "media_url": full_pdf_link
-                        }
+                        metadata_json=meta_tpl
                     )
             except Exception as e_tpl:
                 logger.error(f"Error enviando plantilla asistencial a {tel_norm}: {e_tpl}")
@@ -410,7 +432,9 @@ def emitir_indicaciones_expediente(
     medico_id_override: Optional[Any] = None,
     medico_nombre_override: Optional[str] = None,
     practica_nombre_override: Optional[str] = None,
-    practica_codigo_override: Optional[str] = None
+    practica_codigo_override: Optional[str] = None,
+    operador_id: Optional[str] = None,
+    operador_nombre: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Proceso central de Emisión de Indicaciones Médicas:
@@ -754,7 +778,9 @@ def emitir_indicaciones_expediente(
                 practica_nombre=practica_nombre,
                 mensaje_wa=mensaje_wa,
                 pdf_url=pdf_url,
-                emision_uuid=emision_uuid
+                emision_uuid=emision_uuid,
+                operador_id=operador_id,
+                operador_nombre=operador_nombre or usu_alta
             )
             whatsapp_res = wa_send
 
@@ -800,7 +826,9 @@ def reeditar_emision_indicaciones(
     pautas_alarma: Optional[str] = None,
     reenviar_whatsapp: bool = True,
     usu_modificacion: str = "asesora_crm",
-    fecha_emision: Optional[str] = None
+    fecha_emision: Optional[str] = None,
+    operador_id: Optional[str] = None,
+    operador_nombre: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Reedita una indicación médica ya emitida:
@@ -947,7 +975,9 @@ def reeditar_emision_indicaciones(
                 practica_nombre=practica_nombre,
                 mensaje_wa=mensaje_wa,
                 pdf_url=pdf_url,
-                emision_uuid=emision_id
+                emision_uuid=emision_id,
+                operador_id=operador_id,
+                operador_nombre=operador_nombre or usu_modificacion
             )
             whatsapp_res = wa_send
             upd_em["whatsapp_status"] = whatsapp_status

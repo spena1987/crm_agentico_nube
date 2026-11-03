@@ -4111,6 +4111,8 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
         medico_nombre = payload.get("medico_nombre")
         practica_nombre = payload.get("practica_nombre")
         practica_codigo = payload.get("practica_codigo")
+        operador_id = payload.get("operador_id")
+        operador_nombre = payload.get("operador_nombre")
         resultado = emitir_indicaciones_expediente(
             asesoria_id=asesoria_id,
             enviar_whatsapp=enviar_wa,
@@ -4126,7 +4128,9 @@ def emitir_indicaciones_expediente_api(asesoria_id: str, payload: Dict[str, Any]
             medico_id_override=medico_id,
             medico_nombre_override=medico_nombre,
             practica_nombre_override=practica_nombre,
-            practica_codigo_override=practica_codigo
+            practica_codigo_override=practica_codigo,
+            operador_id=operador_id,
+            operador_nombre=operador_nombre
         )
         if not resultado.get("success"):
             raise HTTPException(status_code=400, detail=resultado.get("error", "Error al emitir indicación."))
@@ -4199,7 +4203,9 @@ def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)
             pautas_alarma=alarmas,
             reenviar_whatsapp=reenviar_wa,
             usu_modificacion=usu,
-            fecha_emision=fecha_emision
+            fecha_emision=fecha_emision,
+            operador_id=payload.get("operador_id"),
+            operador_nombre=payload.get("operador_nombre")
         )
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=res.get("error", "Error reeditando indicación."))
@@ -4211,7 +4217,7 @@ def reeditar_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(...)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/indicaciones/emisiones/{emision_id}/reenviar-whatsapp")
-def reenviar_whatsapp_indicacion_api(emision_id: str):
+def reenviar_whatsapp_indicacion_api(emision_id: str, payload: Dict[str, Any] = Body(default={})):
     """
     Reenvía el PDF oficial de una indicación/orden médica previamente emitida por WhatsApp al paciente.
     """
@@ -4251,6 +4257,9 @@ def reenviar_whatsapp_indicacion_api(emision_id: str):
             f"_Centro Visión - Cuidamos su salud visual_"
         )
 
+        operador_id = payload.get("operador_id")
+        operador_nombre = payload.get("operador_nombre")
+
         st_wa, wa_send = despachar_indicacion_por_whatsapp(
             paciente_id=paciente_id,
             paciente_telefono=paciente_tel,
@@ -4258,7 +4267,9 @@ def reenviar_whatsapp_indicacion_api(emision_id: str):
             practica_nombre=practica_nom,
             mensaje_wa=mensaje_wa,
             pdf_url=pdf_url,
-            emision_uuid=emision_id
+            emision_uuid=emision_id,
+            operador_id=operador_id,
+            operador_nombre=operador_nombre
         )
 
         supabase.table("emisiones_indicaciones_geclisa").update({

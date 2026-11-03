@@ -7,18 +7,19 @@ import {
   Send, 
   ShieldCheck, 
   Zap, 
-  ExternalLink,
-  Copy,
-  Check,
-  Server,
-  KeyRound,
-  Globe,
-  Radio,
-  Activity,
-  Eye,
-  Save,
-  Lock,
-  MessageSquareReply
+  ExternalLink, 
+  Copy, 
+  Check, 
+  Server, 
+  KeyRound, 
+  Globe, 
+  Radio, 
+  Activity, 
+  Eye, 
+  Save, 
+  Lock, 
+  MessageSquareReply,
+  Glasses
 } from 'lucide-react'
 import { formatPhoneDisplay, normalizePhoneNumber } from '@/lib/phoneUtils'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
@@ -66,6 +67,11 @@ interface LineHealthInfo {
     estudios_auto_reply_enabled?: boolean
     estudios_derivacion_telefono?: string
     estudios_auto_reply_text?: string
+    optica_phone_number_id?: string
+    optica_display_phone?: string
+    optica_verified_name?: string
+    optica_auto_reply_enabled?: boolean
+    optica_auto_reply_text?: string
   }
 }
 
@@ -74,7 +80,7 @@ export default function WhatsAppConfigCard() {
   const [cargando, setCargando] = useState<boolean>(true)
   const [verificando, setVerificando] = useState<boolean>(false)
 
-  // Estado Multi-Línea (Línea 1: Quirúrgico | Línea 2: Estudios Oftalmológicos)
+  // Estado Multi-Línea (Línea 1: Quirúrgico | Línea 2: Estudios | Línea 3: Óptica Vortix)
   const [lineaQuirurgica, setLineaQuirurgica] = useState<LineHealthInfo | null>(null)
   const [lineaEstudios, setLineaEstudios] = useState<LineHealthInfo | null>(null)
   const [estudiosPhoneId, setEstudiosPhoneId] = useState('')
@@ -90,8 +96,20 @@ export default function WhatsAppConfigCard() {
   const [vinculandoNumero, setVinculandoNumero] = useState(false)
   const [linea2Feedback, setLinea2Feedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // Estado Línea 3: Óptica Vortix
+  const [lineaOptica, setLineaOptica] = useState<LineHealthInfo | null>(null)
+  const [opticaPhoneId, setOpticaPhoneId] = useState('')
+  const [opticaDisplayPhone, setOpticaDisplayPhone] = useState('')
+  const [opticaVerifiedName, setOpticaVerifiedName] = useState('Óptica Vortix')
+  const [opticaAutoReplyEnabled, setOpticaAutoReplyEnabled] = useState(false)
+  const [opticaAutoReplyText, setOpticaAutoReplyText] = useState('')
+  const [guardandoLinea3, setGuardandoLinea3] = useState(false)
+  const [vinculandoOptica, setVinculandoOptica] = useState(false)
+  const [linea3Feedback, setLinea3Feedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
   // Modal de Verificación OTP (SMS/Voz) + Registro de PIN 2FA (/register en Cloud API)
   const [showPinModal, setShowPinModal] = useState(false)
+  const [activeModalLine, setActiveModalLine] = useState<'estudios' | 'optica'>('estudios')
   const [otpMethod, setOtpMethod] = useState<'SMS' | 'VOICE'>('SMS')
   const [otpCode, setOtpCode] = useState('')
   const [solicitandoOtp, setSolicitandoOtp] = useState(false)
@@ -99,8 +117,8 @@ export default function WhatsAppConfigCard() {
   const [pin2FA, setPin2FA] = useState('')
   const [registrandoPin, setRegistrandoPin] = useState(false)
 
-  // Mensaje de prueba
-  const [testLine, setTestLine] = useState<'quirurgico' | 'estudios'>('quirurgico')
+  // Mensaje de prueba (3 líneas)
+  const [testLine, setTestLine] = useState<'quirurgico' | 'estudios' | 'optica'>('quirurgico')
   const [testPhone, setTestPhone] = useState('')
   const [testMsg, setTestMsg] = useState('¡Hola! Este es un mensaje de prueba desde MedCRM vía Meta Cloud API. 🩺')
   const [enviandoTest, setEnviandoTest] = useState(false)
@@ -172,6 +190,16 @@ export default function WhatsAppConfigCard() {
           setEstudiosDerivacionTelefono(cfg.estudios_derivacion_telefono || '5492616859303')
           setEstudiosAutoReplyText(cfg.estudios_auto_reply_text || '')
         }
+
+        setLineaOptica(linesData.linea_optica || null)
+        const optCfg = linesData.linea_optica?.config
+        if (optCfg && populateForm) {
+          setOpticaPhoneId(optCfg.optica_phone_number_id || linesData.linea_optica?.phone_number_id || '')
+          setOpticaDisplayPhone(optCfg.optica_display_phone || linesData.linea_optica?.display_phone_number || '')
+          setOpticaVerifiedName(optCfg.optica_verified_name || linesData.linea_optica?.verified_name || 'Óptica Vortix')
+          setOpticaAutoReplyEnabled(optCfg.optica_auto_reply_enabled === true)
+          setOpticaAutoReplyText(optCfg.optica_auto_reply_text || '')
+        }
       }
     } catch (err) {
       console.error('Error obteniendo estado de WhatsApp Cloud API:', err)
@@ -202,67 +230,95 @@ export default function WhatsAppConfigCard() {
     }
   }
 
-  const handleLinkPhoneNumber = async () => {
-    if (!estudiosDisplayPhone.trim()) {
-      setLinea2Feedback({
+  const handleLinkPhoneNumber = async (targetLine: 'estudios' | 'optica' = 'estudios') => {
+    const isOptica = targetLine === 'optica'
+    const phoneToLink = isOptica ? opticaDisplayPhone.trim() : estudiosDisplayPhone.trim()
+    const verifiedName = isOptica
+      ? (opticaVerifiedName.trim() || 'Óptica Vortix')
+      : (estudiosVerifiedName.trim() || 'Centrovision - Estudios Oftalmologicos')
+    const setFeedback = isOptica ? setLinea3Feedback : setLinea2Feedback
+
+    if (!phoneToLink) {
+      setFeedback({
         type: 'error',
-        text: 'Ingresa el número de teléfono de la Línea 2 (ej: 5492615739990) para vincularlo con Meta.'
+        text: `Ingresa el número de teléfono de la ${isOptica ? 'Línea 3 (Óptica)' : 'Línea 2 (Estudios)'} para vincularlo con Meta.`
       })
       return
     }
-    setVinculandoNumero(true)
-    setLinea2Feedback(null)
+
+    if (isOptica) setVinculandoOptica(true)
+    else setVinculandoNumero(true)
+    setFeedback(null)
+
     try {
       const res = await apiFetch('/api/whatsapp/link-phone-number', {
         method: 'POST',
         body: JSON.stringify({
-          telefono: estudiosDisplayPhone.trim(),
-          phone_number: estudiosDisplayPhone.trim(),
-          verified_name: estudiosVerifiedName.trim() || 'Centrovision - Estudios Oftalmologicos',
-          derivacion_telefono: estudiosDerivacionTelefono.trim() || undefined
+          line: targetLine,
+          telefono: phoneToLink,
+          phone_number: phoneToLink,
+          verified_name: verifiedName,
+          derivacion_telefono: isOptica ? undefined : (estudiosDerivacionTelefono.trim() || undefined)
         })
       })
       const data = await res.json()
       if (res.ok && data.success) {
-        const resolvedId = data.phone_number_id || data.linked_phone_number_id || data.linea_estudios?.phone_number_id
+        const resolvedId = data.phone_number_id || data.linked_phone_number_id || (isOptica ? data.linea_optica?.phone_number_id : data.linea_estudios?.phone_number_id)
         if (resolvedId) {
-          setEstudiosPhoneId(String(resolvedId))
+          if (isOptica) setOpticaPhoneId(String(resolvedId))
+          else setEstudiosPhoneId(String(resolvedId))
         }
-        if (data.linea_estudios) {
+        if (isOptica && data.linea_optica) {
+          setLineaOptica(data.linea_optica)
+        } else if (!isOptica && data.linea_estudios) {
           setLineaEstudios(data.linea_estudios)
         }
-        setLinea2Feedback({
+
+        setFeedback({
           type: 'success',
           text: typeof data.mensaje === 'string'
             ? data.mensaje
             : `Número vinculado en Meta con Phone ID ${resolvedId || ''}.`
         })
-        if (!data.linea_estudios?.connected) {
+
+        const isConn = isOptica ? data.linea_optica?.connected : data.linea_estudios?.connected
+        if (!isConn) {
+          setActiveModalLine(targetLine)
           setShowPinModal(true)
         }
         await fetchStatus(false)
       } else {
-        setLinea2Feedback({
+        setFeedback({
           type: 'error',
           text: extractErrorMessage(data, 'No se pudo vincular el número en Meta WABA.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error de red al vincular con Meta.') })
+      setFeedback({ type: 'error', text: String(err?.message || 'Error de red al vincular con Meta.') })
     } finally {
-      setVinculandoNumero(false)
+      if (isOptica) setVinculandoOptica(false)
+      else setVinculandoNumero(false)
     }
   }
 
   const handleRequestOtpCode = async () => {
+    const isOptica = activeModalLine === 'optica'
+    const targetId = isOptica ? opticaPhoneId.trim() : estudiosPhoneId.trim()
+    const setFeedback = isOptica ? setLinea3Feedback : setLinea2Feedback
+
+    if (!targetId) {
+      setFeedback({ type: 'error', text: 'Primero vincula el número para obtener su Phone Number ID.' })
+      return
+    }
+
     setSolicitandoOtp(true)
     setOtpSentMessage(null)
-    setLinea2Feedback(null)
+    setFeedback(null)
     try {
       const res = await apiFetch('/api/whatsapp/request-verification-code', {
         method: 'POST',
         body: JSON.stringify({
-          phone_number_id: estudiosPhoneId.trim(),
+          phone_number_id: targetId,
           code_method: otpMethod,
           language: 'es_AR'
         })
@@ -272,16 +328,16 @@ export default function WhatsAppConfigCard() {
         setOtpSentMessage(
           typeof data.mensaje === 'string'
             ? data.mensaje
-            : `Código enviado por ${otpMethod} al número de la Línea 2.`
+            : `Código enviado por ${otpMethod} al número de la ${isOptica ? 'Línea 3 (Óptica)' : 'Línea 2 (Estudios)'}.`
         )
       } else {
-        setLinea2Feedback({
+        setFeedback({
           type: 'error',
           text: extractErrorMessage(data, 'Error al solicitar el código de verificación a Meta.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error al solicitar código OTP.') })
+      setFeedback({ type: 'error', text: String(err?.message || 'Error al solicitar código OTP.') })
     } finally {
       setSolicitandoOtp(false)
     }
@@ -331,33 +387,77 @@ export default function WhatsAppConfigCard() {
     }
   }
 
+  const handleSaveLinea3 = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setGuardandoLinea3(true)
+    setLinea3Feedback(null)
+    try {
+      const res = await apiFetch('/api/whatsapp/lines', {
+        method: 'PUT',
+        body: JSON.stringify({
+          optica_phone_number_id: opticaPhoneId.trim(),
+          optica_display_phone: opticaDisplayPhone.trim(),
+          optica_verified_name: opticaVerifiedName.trim(),
+          optica_auto_reply_enabled: opticaAutoReplyEnabled,
+          optica_auto_reply_text: opticaAutoReplyText
+        })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setLineaOptica(data.linea_optica || null)
+        if (data.linea_optica?.phone_number_id) {
+          setOpticaPhoneId(String(data.linea_optica.phone_number_id))
+        }
+        setLinea3Feedback({
+          type: 'success',
+          text: data.linea_optica?.connected
+            ? '¡Línea 3 de Óptica Vortix guardada y verificada en vivo con Meta Graph API!'
+            : 'Configuración de Línea 3 guardada. Si el número está pendiente de verificación en Meta, haz clic en "Verificar SMS / Activar Línea".'
+        })
+      } else {
+        setLinea3Feedback({
+          type: 'error',
+          text: extractErrorMessage(data, 'Error al guardar la configuración de la Línea 3.')
+        })
+      }
+    } catch (err: any) {
+      setLinea3Feedback({ type: 'error', text: String(err?.message || 'Error de red.') })
+    } finally {
+      setGuardandoLinea3(false)
+    }
+  }
+
   const handleRegisterPinCloudApi = async (e: React.FormEvent) => {
     e.preventDefault()
+    const isOptica = activeModalLine === 'optica'
+    const targetId = isOptica ? opticaPhoneId.trim() : estudiosPhoneId.trim()
+    const setFeedback = isOptica ? setLinea3Feedback : setLinea2Feedback
+
     const cleanOtp = otpCode.replace(/\D/g, '')
     const cleanPin = pin2FA.replace(/\D/g, '')
 
     if (cleanOtp && cleanOtp.length !== 6) {
-      setLinea2Feedback({ type: 'error', text: 'El código SMS/Voz de Meta debe tener 6 dígitos.' })
+      setFeedback({ type: 'error', text: 'El código SMS/Voz de Meta debe tener 6 dígitos.' })
       return
     }
     if (cleanPin.length !== 6) {
-      setLinea2Feedback({ type: 'error', text: 'El PIN de verificación en dos pasos (2FA) debe tener exactamente 6 dígitos.' })
+      setFeedback({ type: 'error', text: 'El PIN de verificación en dos pasos (2FA) debe tener exactamente 6 dígitos.' })
       return
     }
 
     setRegistrandoPin(true)
-    setLinea2Feedback(null)
+    setFeedback(null)
     try {
       const endpoint = cleanOtp ? '/api/whatsapp/verify-code' : '/api/whatsapp/register-line'
       const payload = cleanOtp
         ? {
-            phone_number_id: estudiosPhoneId.trim(),
+            phone_number_id: targetId,
             code: cleanOtp,
             pin: cleanPin
           }
         : {
-            line: 'estudios',
-            phone_number_id: estudiosPhoneId.trim(),
+            line: activeModalLine,
+            phone_number_id: targetId,
             pin: cleanPin
           }
 
@@ -371,21 +471,21 @@ export default function WhatsAppConfigCard() {
         setOtpCode('')
         setPin2FA('')
         setOtpSentMessage(null)
-        setLinea2Feedback({
+        setFeedback({
           type: 'success',
           text: typeof data.mensaje === 'string'
             ? data.mensaje
-            : '¡Número verificado y activado en Meta WhatsApp Cloud API!'
+            : `¡${isOptica ? 'Línea 3 (Óptica Vortix)' : 'Línea 2 (Estudios Oftalmológicos)'} verificada y activada en Meta WhatsApp Cloud API!`
         })
         await fetchStatus(false)
       } else {
-        setLinea2Feedback({
+        setFeedback({
           type: 'error',
           text: extractErrorMessage(data, 'Meta rechazó el código o el PIN.')
         })
       }
     } catch (err: any) {
-      setLinea2Feedback({ type: 'error', text: String(err?.message || 'Error al verificar/activar número en Meta.') })
+      setFeedback({ type: 'error', text: String(err?.message || 'Error al verificar/activar número en Meta.') })
     } finally {
       setRegistrandoPin(false)
     }
@@ -466,7 +566,7 @@ export default function WhatsAppConfigCard() {
               </div>
               <p className="text-sm text-[var(--secondary)] mt-1">
                 {isConnected 
-                  ? `Misma App de Meta y WABA operando líneas independientes por unidad de negocio (Quirúrgico vs Estudios Oftalmológicos).`
+                  ? `Misma App de Meta y WABA operando 3 líneas independientes por unidad de negocio (1. Quirúrgico & CRM | 2. Estudios Oftalmológicos | 3. Óptica Vortix).`
                   : 'Se requiere configurar las credenciales de Meta for Developers para activar el canal.'}
               </p>
             </div>
@@ -478,7 +578,7 @@ export default function WhatsAppConfigCard() {
               onClick={handleCheckConnection}
               disabled={verificando}
               className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-[var(--card)] border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] flex items-center gap-2 transition-all shadow-sm"
-              title="Comprobar enlace de ambas líneas con Meta Cloud API"
+              title="Comprobar enlace de las 3 líneas con Meta Cloud API"
             >
               <RefreshCw size={14} className={verificando ? 'animate-spin text-blue-600' : ''} />
               <span>{verificando ? 'Verificando...' : 'Comprobar Líneas'}</span>
@@ -487,8 +587,8 @@ export default function WhatsAppConfigCard() {
         </div>
       </div>
 
-      {/* PANEL DUAL DE LÍNEAS TELEFÓNICAS (LÍNEA 1 QUIRÚRGICO VS LÍNEA 2 ESTUDIOS OFTALMOLÓGICOS) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* PANEL MULTI-LÍNEA (LÍNEA 1 QUIRÚRGICO | LÍNEA 2 ESTUDIOS | LÍNEA 3 ÓPTICA VORTIX) */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* TARJETA LÍNEA 1: ASESORAMIENTO QUIRÚRGICO */}
         <div className="p-6 rounded-2xl border border-emerald-500/30 bg-[var(--card)] shadow-sm flex flex-col justify-between space-y-4">
           <div className="space-y-3">
@@ -606,7 +706,7 @@ export default function WhatsAppConfigCard() {
                 <div className="sm:col-span-3">
                   <button
                     type="button"
-                    onClick={handleLinkPhoneNumber}
+                    onClick={() => handleLinkPhoneNumber('estudios')}
                     disabled={vinculandoNumero}
                     className="w-full py-2 px-2.5 rounded-xl text-xs font-bold bg-cyan-600/15 hover:bg-cyan-600/25 text-cyan-700 dark:text-cyan-300 border border-cyan-500/30 flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
                     title="Registra o descubre automáticamente el Phone Number ID en el portafolio WABA de Meta a partir del número telefónico"
@@ -750,7 +850,10 @@ export default function WhatsAppConfigCard() {
               {estudiosPhoneId && (
                 <button
                   type="button"
-                  onClick={() => setShowPinModal(true)}
+                  onClick={() => {
+                    setActiveModalLine('estudios')
+                    setShowPinModal(true)
+                  }}
                   className="py-2 px-3 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1.5 transition-all"
                   title="Solicitar código SMS/Voz de Meta y activar la línea con PIN de 6 dígitos"
                 >
@@ -791,6 +894,174 @@ export default function WhatsAppConfigCard() {
             </div>
           </form>
         </div>
+
+        {/* TARJETA LÍNEA 3: ÓPTICA VORTIX (COMERCIALIZACIÓN ARMAZONES & CRISTALES) */}
+        <div className="p-6 rounded-2xl border border-indigo-500/40 bg-[var(--card)] shadow-sm space-y-4 flex flex-col justify-between">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2.5">
+                <span className="px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                  <Glasses size={13} />
+                  Línea 3 • Óptica Vortix
+                </span>
+                <h3 className="font-bold text-base text-[var(--foreground)]">
+                  Vortix Eyewear
+                </h3>
+              </div>
+              <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1.5 ${
+                lineaOptica?.connected
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                  : opticaPhoneId
+                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+                  : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}>
+                <span className={`w-2 h-2 rounded-full ${
+                  lineaOptica?.connected ? 'bg-emerald-500 animate-pulse' : opticaPhoneId ? 'bg-amber-500' : 'bg-slate-400'
+                }`} />
+                {lineaOptica?.connected
+                  ? `Conectada (${lineaOptica.display_phone_number || 'Activa'})`
+                  : opticaPhoneId
+                  ? `Phone ID Asignado (${lineaOptica?.code_verification_status === 'NOT_VERIFIED' ? 'Falta Verificar SMS' : 'Pendiente Activar PIN'})`
+                  : 'Sin Phone ID asignado'}
+              </span>
+            </div>
+
+            <p className="text-xs text-[var(--secondary)] leading-relaxed">
+              Línea comercial dedicada a la venta de anteojos, armazones y lentes de contacto. <strong>Aislamiento Fail-Closed:</strong> los chats y mensajes de óptica jamás tocan la bandeja quirúrgica ni de estudios.
+            </p>
+
+            <form onSubmit={handleSaveLinea3} className="space-y-3">
+              {/* Paso 1: Número de Teléfono real de Línea 3 + Botón de Vinculación Automática con Meta */}
+              <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/20 space-y-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+                  <div className="sm:col-span-5">
+                    <label className="block text-[11px] font-bold text-indigo-700 dark:text-indigo-300 uppercase tracking-wider mb-1">
+                      Número Teléfono Línea 3 (Óptica)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ej: 549261XXXXXXX"
+                      value={opticaDisplayPhone}
+                      onChange={(e) => setOpticaDisplayPhone(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl text-xs font-mono font-bold bg-white dark:bg-slate-900 border border-indigo-500/30 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                    />
+                  </div>
+                  <div className="sm:col-span-4">
+                    <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
+                      Nombre Visible en WhatsApp
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Óptica Vortix"
+                      value={opticaVerifiedName}
+                      onChange={(e) => setOpticaVerifiedName(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-white dark:bg-slate-900 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                    />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <button
+                      type="button"
+                      onClick={() => handleLinkPhoneNumber('optica')}
+                      disabled={vinculandoOptica}
+                      className="w-full py-2 px-2.5 rounded-xl text-xs font-bold bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-700 dark:text-indigo-300 border border-indigo-500/30 flex items-center justify-center gap-1.5 transition-all disabled:opacity-50"
+                      title="Registra o descubre automáticamente el Phone Number ID en el portafolio WABA de Meta a partir del número telefónico"
+                    >
+                      <RefreshCw size={13} className={vinculandoOptica ? 'animate-spin' : ''} />
+                      <span>{vinculandoOptica ? 'Vinculando...' : 'Vincular en Meta'}</span>
+                    </button>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[var(--secondary)]">
+                  Ingresa tu número (ej. <code>549261XXXXXXX</code>) y pulsa <strong>Vincular en Meta</strong>: el CRM obtendrá automáticamente el <code>Phone Number ID</code> oficial en tu WABA.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[var(--secondary)] uppercase tracking-wider mb-1">
+                  Phone Number ID (Autocompletado por Meta)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: 104928172819283"
+                  value={opticaPhoneId}
+                  onChange={(e) => setOpticaPhoneId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl text-xs font-mono bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                />
+              </div>
+
+              {/* Métricas y Estado de Meta */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] flex items-center justify-between text-xs">
+                <span className="text-[var(--secondary)] font-medium">
+                  Calidad Meta: <strong className="text-emerald-600 dark:text-emerald-400">{lineaOptica?.quality_rating || 'GREEN'}</strong>
+                </span>
+                <span className="text-[var(--secondary)] font-medium">
+                  Límite: <strong className="text-[var(--foreground)]">{lineaOptica?.messaging_limit_tier || 'TIER_250'}</strong>
+                </span>
+              </div>
+
+              {linea3Feedback && (
+                <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                  linea3Feedback.type === 'success'
+                    ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                    : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
+                }`}>
+                  {linea3Feedback.type === 'success' ? <CheckCircle2 size={15} className="shrink-0" /> : <AlertTriangle size={15} className="shrink-0" />}
+                  <span>{linea3Feedback.text}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1 flex-wrap">
+                <button
+                  type="submit"
+                  disabled={guardandoLinea3}
+                  className="flex-1 py-2 px-4 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 shadow-sm"
+                >
+                  <Save size={14} />
+                  <span>{guardandoLinea3 ? 'Guardando...' : 'Guardar Línea 3 (Óptica)'}</span>
+                </button>
+
+                {opticaPhoneId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModalLine('optica')
+                      setShowPinModal(true)
+                    }}
+                    className="py-2 px-3 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-800 dark:text-amber-300 border border-amber-500/30 flex items-center gap-1.5 transition-all"
+                    title="Solicitar código SMS/Voz de Meta y activar la línea con PIN de 6 dígitos"
+                  >
+                    <Lock size={13} className="text-amber-600 dark:text-amber-400" />
+                    <span>Verificar SMS / Activar PIN</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Acceso directo al Módulo de Óptica Vortix */}
+              <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/20 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
+                <div className="text-[var(--secondary)]">
+                  <strong className="text-[var(--foreground)]">Módulo Comercial:</strong>{' '}
+                  <code>Óptica Vortix (Independiente)</code>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <a
+                    href="/optica-vortix/chat"
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600/15 hover:bg-indigo-600/25 text-indigo-700 dark:text-indigo-300 font-bold flex items-center gap-1 transition-all"
+                  >
+                    <ExternalLink size={12} />
+                    <span>Abrir Chat Óptica</span>
+                  </a>
+                  <a
+                    href="/optica-vortix/campanas"
+                    className="px-2.5 py-1 rounded-lg bg-slate-200/70 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-[var(--foreground)] font-semibold flex items-center gap-1 transition-all"
+                  >
+                    <ExternalLink size={12} />
+                    <span>Campañas & Placas</span>
+                  </a>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
       </div>
 
       {/* Modal para verificar código OTP (SMS/Voz) y activar número nuevo con PIN de 6 dígitos en Meta Cloud API */}
@@ -799,13 +1070,15 @@ export default function WhatsAppConfigCard() {
           <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-cyan-500/15 text-cyan-500">
+                <div className={`p-2 rounded-xl ${activeModalLine === 'optica' ? 'bg-indigo-500/15 text-indigo-500' : 'bg-cyan-500/15 text-cyan-500'}`}>
                   <Lock size={20} />
                 </div>
                 <div>
-                  <h4 className="font-bold text-sm">Verificación SMS y Activación en Meta Cloud API</h4>
+                  <h4 className="font-bold text-sm">
+                    {activeModalLine === 'optica' ? 'Verificación SMS y PIN — Línea 3 (Óptica Vortix)' : 'Verificación SMS y Activación en Meta Cloud API'}
+                  </h4>
                   <p className="text-[11px] text-[var(--secondary)]">
-                    Teléfono: <strong>{estudiosDisplayPhone || '+54 9 261 573-9990'}</strong> • Phone ID: <code>{estudiosPhoneId}</code>
+                    Teléfono: <strong>{(activeModalLine === 'optica' ? opticaDisplayPhone : estudiosDisplayPhone) || '+54 9 261...'}</strong> • Phone ID: <code>{activeModalLine === 'optica' ? opticaPhoneId : estudiosPhoneId}</code>
                   </p>
                 </div>
               </div>
@@ -822,14 +1095,14 @@ export default function WhatsAppConfigCard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] space-y-2.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-[var(--foreground)]">
-                  Paso 1: Recibir código de 6 dígitos en el teléfono {estudiosDisplayPhone}
+                  Paso 1: Recibir código de 6 dígitos en el teléfono {activeModalLine === 'optica' ? opticaDisplayPhone : estudiosDisplayPhone}
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 font-bold">
-                  {lineaEstudios?.code_verification_status === 'VERIFIED' ? '✓ Ya Verificado' : 'Requerido si es línea nueva'}
+                <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${activeModalLine === 'optica' ? 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400' : 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400'}`}>
+                  {(activeModalLine === 'optica' ? lineaOptica : lineaEstudios)?.code_verification_status === 'VERIFIED' ? '✓ Ya Verificado' : 'Requerido si es línea nueva'}
                 </span>
               </div>
               <p className="text-[11px] text-[var(--secondary)]">
-                Haz clic en <strong>Enviar Código ahora</strong> para que Meta envíe un SMS o llamada automática con el código de 6 dígitos al chip <code>{estudiosDisplayPhone}</code>.
+                Haz clic en <strong>Enviar Código ahora</strong> para que Meta envíe un SMS o llamada automática con el código de 6 dígitos al chip <code>{activeModalLine === 'optica' ? opticaDisplayPhone : estudiosDisplayPhone}</code>.
               </p>
               <div className="flex items-center gap-2">
                 <select
@@ -844,7 +1117,9 @@ export default function WhatsAppConfigCard() {
                   type="button"
                   onClick={handleRequestOtpCode}
                   disabled={solicitandoOtp}
-                  className="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-all"
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold text-white disabled:opacity-50 transition-all ${
+                    activeModalLine === 'optica' ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-blue-600 hover:bg-blue-500'
+                  }`}
                 >
                   {solicitandoOtp ? 'Solicitando a Meta...' : `Enviar Código por ${otpMethod} ahora`}
                 </button>
@@ -868,7 +1143,7 @@ export default function WhatsAppConfigCard() {
                   placeholder="Ej: 849201"
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="w-full px-3.5 py-2 rounded-xl text-center text-base tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl text-center text-base tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
@@ -882,7 +1157,7 @@ export default function WhatsAppConfigCard() {
                   placeholder="Define o ingresa tu PIN de 6 dígitos (ej: 123456)"
                   value={pin2FA}
                   onChange={(e) => setPin2FA(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  className="w-full px-3.5 py-2 rounded-xl text-center text-base tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl text-center text-base tracking-widest font-mono bg-slate-50 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   required
                 />
                 <p className="text-[10px] text-[var(--secondary)] mt-1">
@@ -890,14 +1165,14 @@ export default function WhatsAppConfigCard() {
                 </p>
               </div>
 
-              {linea2Feedback && (
+              {(activeModalLine === 'optica' ? linea3Feedback : linea2Feedback) && (
                 <div className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
-                  linea2Feedback.type === 'success'
+                  (activeModalLine === 'optica' ? linea3Feedback : linea2Feedback)?.type === 'success'
                     ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
                     : 'bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 border border-red-200 dark:border-red-800'
                 }`}>
-                  {linea2Feedback.type === 'success' ? <CheckCircle2 size={15} className="shrink-0" /> : <AlertTriangle size={15} className="shrink-0" />}
-                  <span>{String(linea2Feedback.text)}</span>
+                  {(activeModalLine === 'optica' ? linea3Feedback : linea2Feedback)?.type === 'success' ? <CheckCircle2 size={15} className="shrink-0" /> : <AlertTriangle size={15} className="shrink-0" />}
+                  <span>{String((activeModalLine === 'optica' ? linea3Feedback : linea2Feedback)?.text)}</span>
                 </div>
               )}
 
@@ -912,9 +1187,11 @@ export default function WhatsAppConfigCard() {
                 <button
                   type="submit"
                   disabled={registrandoPin || pin2FA.length !== 6}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white disabled:opacity-50"
+                  className={`px-4 py-2 rounded-xl text-xs font-bold text-white disabled:opacity-50 ${
+                    activeModalLine === 'optica' ? 'bg-indigo-600 hover:bg-indigo-500' : 'bg-cyan-600 hover:bg-cyan-500'
+                  }`}
                 >
-                  {registrandoPin ? 'Activando en Meta...' : 'Confirmar y Activar Línea 2'}
+                  {registrandoPin ? 'Activando en Meta...' : `Confirmar y Activar ${activeModalLine === 'optica' ? 'Línea 3 (Óptica)' : 'Línea 2'}`}
                 </button>
               </div>
             </form>
@@ -1138,28 +1415,39 @@ export default function WhatsAppConfigCard() {
                 <label className="block text-xs font-semibold text-[var(--secondary)] mb-1">
                   Línea Emisora
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setTestLine('quirurgico')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all truncate ${
                       testLine === 'quirurgico'
                         ? 'bg-emerald-600 text-white border-emerald-600'
                         : 'bg-slate-50 dark:bg-slate-800/40 border-[var(--border)] text-[var(--foreground)]'
                     }`}
                   >
-                    Línea 1: Quirúrgica
+                    L1: Quirúrgico
                   </button>
                   <button
                     type="button"
                     onClick={() => setTestLine('estudios')}
-                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all ${
+                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all truncate ${
                       testLine === 'estudios'
                         ? 'bg-cyan-600 text-white border-cyan-600'
                         : 'bg-slate-50 dark:bg-slate-800/40 border-[var(--border)] text-[var(--foreground)]'
                     }`}
                   >
-                    Línea 2: Estudios Oftalmo
+                    L2: Estudios
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestLine('optica')}
+                    className={`py-2 px-2.5 rounded-xl text-xs font-bold border transition-all truncate ${
+                      testLine === 'optica'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-slate-50 dark:bg-slate-800/40 border-[var(--border)] text-[var(--foreground)]'
+                    }`}
+                  >
+                    L3: Óptica Vortix
                   </button>
                 </div>
               </div>
@@ -1213,7 +1501,7 @@ export default function WhatsAppConfigCard() {
                 className="w-full py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2 glow-primary transition-all disabled:opacity-50"
               >
                 <Send size={14} className={enviandoTest ? 'animate-bounce' : ''} />
-                <span>{enviandoTest ? 'Despachando...' : `Probar Envío desde ${testLine === 'estudios' ? 'Línea 2 (Estudios)' : 'Línea 1 (Quirúrgica)'}`}</span>
+                <span>{enviandoTest ? 'Despachando...' : `Probar Envío desde ${testLine === 'optica' ? 'Línea 3 (Óptica Vortix)' : testLine === 'estudios' ? 'Línea 2 (Estudios)' : 'Línea 1 (Quirúrgica)'}`}</span>
               </button>
             </form>
           </div>

@@ -30,7 +30,8 @@ import {
   Download,
   Calendar
 } from 'lucide-react'
-import { BACKEND_URL as API_BASE_URL } from '@/lib/api'
+import { BACKEND_URL as API_BASE_URL, apiFetch } from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
 
 interface SeccionIndicacionesExpedienteProps {
   asesoriaId?: string | null
@@ -76,6 +77,10 @@ export default function SeccionIndicacionesExpediente({
   const [desplegado, setDesplegado] = useState<boolean>(desplegadoInicial)
   const [resolviendo, setResolviendo] = useState<boolean>(false)
   const [emitiendo, setEmitiendo] = useState<boolean>(false)
+
+  const { user } = useAuth()
+  const operadorNombre = (user as any)?.user_metadata?.nombre_completo || (user as any)?.user_metadata?.full_name || user?.email?.split('@')[0] || 'operador'
+  const operadorId = user?.id || null
   
   // Historial de emisiones acumuladas en el expediente
   const [historialEmisiones, setHistorialEmisiones] = useState<any[]>([])
@@ -151,7 +156,7 @@ export default function SeccionIndicacionesExpediente({
     if (!asesoriaId) return
     setCargandoHistorial(true)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/expediente-quirurgico/${asesoriaId}/historial-indicaciones`)
+      const res = await apiFetch(`/api/expediente-quirurgico/${asesoriaId}/historial-indicaciones`)
       if (res.ok) {
         const data = await res.json()
         const items = data.emisiones || []
@@ -177,12 +182,12 @@ export default function SeccionIndicacionesExpediente({
   const [plantillasCrm, setPlantillasCrm] = useState<any[]>([])
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/indicaciones/plantillas-geclisa`)
+    apiFetch('/api/indicaciones/plantillas-geclisa')
       .then((r) => r.json())
       .then((d) => { if (d.success) setPlantillasCatalogoGeclisa(d.plantillas || []) })
       .catch((e) => console.error('Error cargando catalogo Geclisa:', e))
 
-    fetch(`${API_BASE_URL}/api/indicaciones/plantillas`)
+    apiFetch('/api/indicaciones/plantillas')
       .then((r) => r.json())
       .then((d) => { if (d.success) setPlantillasCrm(d.plantillas || []) })
       .catch((e) => console.error('Error cargando biblioteca CRM:', e))
@@ -193,9 +198,8 @@ export default function SeccionIndicacionesExpediente({
     if (!practicaNombre && !medicoNombre && !practicaCodigo && !practicaId) return
     setResolviendo(true)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/indicaciones/resolver-sugerencia`, {
+      const res = await apiFetch('/api/indicaciones/resolver-sugerencia', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           practica_nombre: practicaNombre,
           practica_codigo: practicaCodigo,
@@ -417,9 +421,8 @@ export default function SeccionIndicacionesExpediente({
         datosPayload.modulos = modulosActivos
       }
 
-      const res = await fetch(`${API_BASE_URL}/api/indicaciones/preview-pdf`, {
+      const res = await apiFetch('/api/indicaciones/preview-pdf', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           datos_emision: datosPayload,
           asesoria_id: asesoriaId
@@ -457,9 +460,8 @@ export default function SeccionIndicacionesExpediente({
         modulosSeleccionadosIds.includes(m.id)
       )
 
-      const res = await fetch(`${API_BASE_URL}/api/expediente-quirurgico/${asesoriaId}/emitir-indicaciones`, {
+      const res = await apiFetch(`/api/expediente-quirurgico/${asesoriaId}/emitir-indicaciones`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enviar_whatsapp: true,
           texto_indicaciones: textoIndicaciones,
@@ -473,7 +475,10 @@ export default function SeccionIndicacionesExpediente({
           medico_id: medicoId,
           medico_nombre: medicoNombre,
           practica_nombre: practicaNombre,
-          practica_codigo: practicaCodigo
+          practica_codigo: practicaCodigo,
+          operador_id: operadorId,
+          operador_nombre: operadorNombre,
+          usu_alta: operadorNombre
         })
       })
 
@@ -515,8 +520,12 @@ export default function SeccionIndicacionesExpediente({
     setMensajeExito(null)
     setMensajeError(null)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/indicaciones/emisiones/${emisionId}/reenviar-whatsapp`, {
-        method: 'POST'
+      const res = await apiFetch(`/api/indicaciones/emisiones/${emisionId}/reenviar-whatsapp`, {
+        method: 'POST',
+        body: JSON.stringify({
+          operador_id: operadorId,
+          operador_nombre: operadorNombre
+        })
       })
       const data = await res.json()
       if (res.ok && data.success) {
@@ -546,13 +555,15 @@ export default function SeccionIndicacionesExpediente({
     if (!emisionParaReeditar) return
     setGuardandoReedicion(true)
     try {
-      const res = await fetch(`${API_BASE_URL}/api/indicaciones/emisiones/${emisionParaReeditar.id}/reeditar`, {
+      const res = await apiFetch(`/api/indicaciones/emisiones/${emisionParaReeditar.id}/reeditar`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           texto_indicaciones: textoReedicion,
           reenviar_whatsapp: reenviarWaReedicion,
-          fecha_emision: fechaReedicion || undefined
+          fecha_emision: fechaReedicion || undefined,
+          operador_id: operadorId,
+          operador_nombre: operadorNombre,
+          usu_modificacion: operadorNombre
         })
       })
       const data = await res.json()

@@ -29,6 +29,8 @@ from app.services.whatsapp_cloud.client import (
     get_whatsapp_cloud_credentials,
     get_whatsapp_estudios_credentials,
     get_whatsapp_estudios_config,
+    get_whatsapp_optica_credentials,
+    get_whatsapp_optica_config,
     invalidate_whatsapp_credentials_cache,
     MetaAPIError
 )
@@ -53,12 +55,19 @@ class UpdateWhatsAppLinesPayload(BaseModel):
     estudios_auto_reply_enabled: Optional[bool] = True
     estudios_derivacion_telefono: Optional[str] = ""
     estudios_auto_reply_text: Optional[str] = None
+    # Línea 3: Óptica Vortix
+    optica_phone_number_id: Optional[str] = ""
+    optica_display_phone: Optional[str] = ""
+    optica_verified_name: Optional[str] = "Óptica Vortix"
+    optica_auto_reply_enabled: Optional[bool] = False
+    optica_auto_reply_text: Optional[str] = None
 
 
 class LinkPhoneNumberPayload(BaseModel):
+    line: Optional[str] = "estudios"  # "estudios" | "optica"
     telefono: Optional[str] = None
     phone_number: Optional[str] = None
-    verified_name: Optional[str] = "Centrovisión - Estudios Oftalmológicos"
+    verified_name: Optional[str] = None
     derivacion_telefono: Optional[str] = None
 
 
@@ -75,13 +84,13 @@ class VerifyCodePayload(BaseModel):
 
 
 class RegisterLinePinPayload(BaseModel):
-    line: str = "estudios"  # "estudios" | "quirurgico"
+    line: str = "estudios"  # "estudios" | "quirurgico" | "optica"
     phone_number_id: Optional[str] = None
     pin: str
 
 
 class SendTestLinePayload(BaseModel):
-    line: str = "estudios"  # "estudios" | "quirurgico"
+    line: str = "estudios"  # "estudios" | "quirurgico" | "optica"
     telefono: str
     mensaje: Optional[str] = "¡Hola! Mensaje de prueba desde la línea de Estudios Oftalmológicos de Centrovisión. 👁️"
 
@@ -529,15 +538,18 @@ async def get_estudios_whatsapp_templates():
 @estudios_router.get("/api/whatsapp/lines")
 async def get_whatsapp_lines_status():
     """
-    Consulta en vivo el estado y la salud en Meta Graph API de las 2 líneas de WhatsApp:
+    Consulta en vivo el estado y la salud en Meta Graph API de las 3 líneas de WhatsApp:
       - Línea 1: Asesoramiento Quirúrgico & Turnos (Principal)
       - Línea 2: Unidad de Estudios Oftalmológicos (Exclusiva Técnicos)
+      - Línea 3: Óptica Vortix (Comercialización Armazones y Cristales)
     Además devuelve los números registrados actualmente en el portafolio WABA.
     """
     q_phone_id, token = get_whatsapp_cloud_credentials()
     waba_id = get_whatsapp_waba_id()
     est_cfg = get_whatsapp_estudios_config()
     est_phone_id = str(est_cfg.get("estudios_phone_number_id") or "").strip() or None
+    opt_cfg = get_whatsapp_optica_config()
+    opt_phone_id = str(opt_cfg.get("optica_phone_number_id") or "").strip() or None
 
     async def _fetch_line_health(pid: Optional[str], line_key: str) -> Dict[str, Any]:
         if not pid or not token:
@@ -591,16 +603,16 @@ async def get_whatsapp_lines_status():
         except Exception:
             return []
 
-    linea_quirurgica, linea_estudios, waba_numbers = await asyncio.gather(
+    linea_quirurgica, linea_estudios, linea_optica, waba_numbers = await asyncio.gather(
         _fetch_line_health(q_phone_id, "quirurgico"),
         _fetch_line_health(est_phone_id, "estudios"),
+        _fetch_line_health(opt_phone_id, "optica"),
         _fetch_waba_numbers()
     )
 
     q_display_norm = normalize_phone_number(linea_quirurgica.get("display_phone_number") or "")
 
-    # Auto-corrección UX: Si el usuario colocó por error el teléfono de la Línea 2 en 'estudios_derivacion_telefono'
-    # y dejó 'estudios_display_phone' vacío, migrarlo automáticamente al campo correcto.
+    # Auto-corrección UX Línea 2 Estudios
     deriv_actual = normalize_phone_number(est_cfg.get("estudios_derivacion_telefono") or "")
     disp_actual = normalize_phone_number(est_cfg.get("estudios_display_phone") or "")
     if not disp_actual and deriv_actual and q_display_norm and deriv_actual[-10:] != q_display_norm[-10:]:
@@ -608,14 +620,11 @@ async def get_whatsapp_lines_status():
         est_cfg["estudios_derivacion_telefono"] = q_display_norm
         disp_actual = deriv_actual
 
-    # Si no teníamos teléfono de derivación configurado en Línea 2, usar el de la Línea 1 (Quirúrgica/Recepción)
     if not est_cfg.get("estudios_derivacion_telefono") and q_display_norm:
         est_cfg["estudios_derivacion_telefono"] = q_display_norm
 
-    # Si el Phone ID guardado ya no existe en la WABA (ej. fue eliminado en Meta) y aún no está conectado, limpiar el ID obsoleto
     waba_ids = {str(n.get("id")) for n in (waba_numbers or []) if n.get("id")}
     if est_phone_id and waba_ids and est_phone_id not in waba_ids and not linea_estudios.get("connected"):
-        # Buscar si el teléfono de estudios ya figura en la WABA bajo un nuevo Phone ID
         matched_id = None
         if disp_actual and len(disp_actual) >= 8:
             last10 = disp_actual[-10:]
@@ -629,6 +638,22 @@ async def get_whatsapp_lines_status():
         linea_estudios["configured"] = bool(matched_id)
         linea_estudios["status"] = "NOT_CONFIGURED" if not matched_id else linea_estudios.get("status")
 
+    # Auto-corrección UX Línea 3 Óptica Vortix
+    opt_disp_actual = normalize_phone_number(opt_cfg.get("optica_display_phone") or "")
+    if opt_phone_id and waba_ids and opt_phone_id not in waba_ids and not linea_optica.get("connected"):
+        matched_opt_id = None
+        if opt_disp_actual and len(opt_disp_actual) >= 8:
+            last10_opt = opt_disp_actual[-10:]
+            for n in waba_numbers:
+                n_digits = "".join(filter(str.isdigit, str(n.get("display_phone_number") or "")))
+                if n_digits.endswith(last10_opt) and str(n.get("id")) not in (str(q_phone_id), str(est_phone_id)):
+                    matched_opt_id = str(n.get("id"))
+                    break
+        opt_cfg["optica_phone_number_id"] = matched_opt_id or ""
+        linea_optica["phone_number_id"] = matched_opt_id
+        linea_optica["configured"] = bool(matched_opt_id)
+        linea_optica["status"] = "NOT_CONFIGURED" if not matched_opt_id else linea_optica.get("status")
+
     return {
         "success": True,
         "waba_id": waba_id,
@@ -637,6 +662,10 @@ async def get_whatsapp_lines_status():
         "linea_estudios": {
             **linea_estudios,
             "config": est_cfg
+        },
+        "linea_optica": {
+            **linea_optica,
+            "config": opt_cfg
         }
     }
 
@@ -644,13 +673,14 @@ async def get_whatsapp_lines_status():
 @estudios_router.post("/api/whatsapp/link-phone-number")
 async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
     """
-    Vincula un número de teléfono (ej: `5492615739990`) a la Línea 2 (Estudios Oftalmológicos) sin
+    Vincula un número de teléfono a la Línea 2 (Estudios) o Línea 3 (Óptica Vortix) sin
     requerir que el usuario conozca el `Phone Number ID`:
       1. Consulta el portafolio de la WABA (`GET /v21.0/{waba_id}/phone_numbers`). Si el número ya existe,
          toma su `Phone Number ID` automáticamente.
       2. Si el número no existe aún en la WABA, lo da de alta vía `POST /v21.0/{waba_id}/phone_numbers`
          con `cc='54'`, obtiene el nuevo `Phone Number ID` asignado por Meta y lo guarda en `configuracion_sistema`.
     """
+    target_line = (payload.line or "estudios").lower()
     q_phone_id, token = get_whatsapp_cloud_credentials()
     waba_id = get_whatsapp_waba_id()
     if not token or not waba_id:
@@ -669,17 +699,33 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
 
     norm_tel = normalize_phone_number(raw_digits)
     last_10 = raw_digits[-10:]
-    verified_name = (payload.verified_name or "Centrovisión - Estudios Oftalmológicos").strip()
+    default_name = "Óptica Vortix" if target_line == "optica" else "Centrovisión - Estudios Oftalmológicos"
+    verified_name = (payload.verified_name or default_name).strip()
 
-    # Verificar que no sea el mismo número de la Línea 1 Quirúrgica
+    # Verificar que no sea el mismo número de otra línea
     waba_numbers = await WhatsAppCloudClient.list_waba_phone_numbers(waba_id, token)
+    est_phone_id, _ = get_whatsapp_estudios_credentials()
+    opt_phone_id, _ = get_whatsapp_optica_credentials()
+
     for item in waba_numbers:
         item_digits = "".join(filter(str.isdigit, str(item.get("display_phone_number") or "")))
-        if item_digits.endswith(last_10) and str(item.get("id")) == str(q_phone_id):
-            raise HTTPException(
-                status_code=400,
-                detail="Ese número de teléfono corresponde a la Línea 1 (Asesoramiento Quirúrgico). Ingresa el número exclusivo de Estudios Oftalmológicos."
-            )
+        if item_digits.endswith(last_10):
+            item_id = str(item.get("id"))
+            if item_id == str(q_phone_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ese número corresponde a la Línea 1 (Asesoramiento Quirúrgico). Debe ser una línea exclusiva e independiente."
+                )
+            if target_line == "optica" and est_phone_id and item_id == str(est_phone_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ese número ya corresponde a la Línea 2 (Estudios Oftalmológicos). Debe ser un chip exclusivo para Óptica Vortix."
+                )
+            if target_line == "estudios" and opt_phone_id and item_id == str(opt_phone_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Ese número ya corresponde a la Línea 3 (Óptica Vortix). Debe ser un chip exclusivo para Estudios Oftalmológicos."
+                )
 
     # 1. Buscar si ya está dado de alta en la WABA
     resolved_phone_id = None
@@ -733,45 +779,69 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
             detail="Meta no devolvió un Phone Number ID para el número ingresado."
         )
 
-    # 3. Guardar automáticamente en configuracion_sistema
-    current_cfg = get_whatsapp_estudios_config()
-    deriv_tel = (payload.derivacion_telefono or current_cfg.get("estudios_derivacion_telefono") or "").strip()
-    deriv_digits = "".join(filter(str.isdigit, deriv_tel))
-    if not deriv_digits or deriv_digits.endswith(last_10):
-        # Usar por defecto el teléfono de la Línea 1 para derivación de consultas
-        for item in waba_numbers:
-            if str(item.get("id")) == str(q_phone_id) and item.get("display_phone_number"):
-                deriv_tel = normalize_phone_number(item["display_phone_number"])
-                break
+    # 3. Guardar automáticamente en configuracion_sistema según la línea objetivo
+    if target_line == "optica":
+        from app.services.optica_vortix_service import OpticaVortixService
+        opt_srv = OpticaVortixService()
+        opt_srv.guardar_config({
+            "optica_phone_number_id": resolved_phone_id,
+            "optica_display_phone": norm_tel,
+            "optica_verified_name": verified_name,
+        })
+        current_cfg = get_whatsapp_estudios_config()
+        current_cfg.update({
+            "optica_phone_number_id": resolved_phone_id,
+            "optica_display_phone": norm_tel,
+            "optica_verified_name": verified_name,
+        })
+        _persist_whatsapp_lineas_config(current_cfg)
 
-    new_cfg = {
-        **current_cfg,
-        "estudios_phone_number_id": resolved_phone_id,
-        "estudios_display_phone": norm_tel,
-        "estudios_verified_name": verified_name,
-        "estudios_derivacion_telefono": deriv_tel or "5492616859303"
-    }
-    _persist_whatsapp_lineas_config(new_cfg)
+        log_event(
+            nivel="INFO",
+            modulo="WHATSAPP",
+            accion="VINCULAR_NUMERO_LINEA_OPTICA",
+            mensaje=f"Número {norm_tel} vinculado a Línea 3 (Óptica Vortix) con Phone ID {resolved_phone_id} ({action_taken}).",
+            detalles={"phone_number_id": resolved_phone_id, "telefono": norm_tel, "action": action_taken}
+        )
+    else:
+        current_cfg = get_whatsapp_estudios_config()
+        deriv_tel = (payload.derivacion_telefono or current_cfg.get("estudios_derivacion_telefono") or "").strip()
+        deriv_digits = "".join(filter(str.isdigit, deriv_tel))
+        if not deriv_digits or deriv_digits.endswith(last_10):
+            # Usar por defecto el teléfono de la Línea 1 para derivación de consultas
+            for item in waba_numbers:
+                if str(item.get("id")) == str(q_phone_id) and item.get("display_phone_number"):
+                    deriv_tel = normalize_phone_number(item["display_phone_number"])
+                    break
 
-    log_event(
-        nivel="INFO",
-        modulo="WHATSAPP",
-        accion="VINCULAR_NUMERO_LINEA_ESTUDIOS",
-        mensaje=f"Número {norm_tel} vinculado a Línea 2 (Estudios) con Phone ID {resolved_phone_id} ({action_taken}).",
-        detalles={"phone_number_id": resolved_phone_id, "telefono": norm_tel, "action": action_taken}
-    )
+        new_cfg = {
+            **current_cfg,
+            "estudios_phone_number_id": resolved_phone_id,
+            "estudios_display_phone": norm_tel,
+            "estudios_verified_name": verified_name,
+            "estudios_derivacion_telefono": deriv_tel or "5492616859303"
+        }
+        _persist_whatsapp_lineas_config(new_cfg)
+
+        log_event(
+            nivel="INFO",
+            modulo="WHATSAPP",
+            accion="VINCULAR_NUMERO_LINEA_ESTUDIOS",
+            mensaje=f"Número {norm_tel} vinculado a Línea 2 (Estudios) con Phone ID {resolved_phone_id} ({action_taken}).",
+            detalles={"phone_number_id": resolved_phone_id, "telefono": norm_tel, "action": action_taken}
+        )
 
     status_payload = await get_whatsapp_lines_status()
+    line_label = "Óptica Vortix (Línea 3)" if target_line == "optica" else "Estudios Oftalmológicos (Línea 2)"
     return {
         **status_payload,
         "action": action_taken,
         "phone_number_id": resolved_phone_id,
         "linked_phone_number_id": resolved_phone_id,
         "linked_display_phone": norm_tel,
+        "line": target_line,
         "mensaje": (
-            f"¡Número {format_phone_display(norm_tel)} encontrado en tu WABA y vinculado con ID {resolved_phone_id}! Haz clic en 'Enviar Código por SMS' para verificarlo."
-            if action_taken == "found_in_waba"
-            else f"¡Número {format_phone_display(norm_tel)} dado de alta en Meta WABA con ID {resolved_phone_id}! Ahora solicita el código SMS/llamada para verificarlo."
+            f"¡Número {format_phone_display(norm_tel)} vinculado con éxito a {line_label} con Phone ID {resolved_phone_id}! Si la línea no está verificada, haz clic en 'Verificar SMS / Activar Línea'."
         )
     }
 
@@ -883,10 +953,9 @@ async def verify_meta_otp_code(payload: VerifyCodePayload):
 async def update_whatsapp_lines_config(payload: UpdateWhatsAppLinesPayload):
     """
     Guarda en `public.configuracion_sistema` (`clave = 'whatsapp_lineas'`) los parámetros
-    de la Línea 2 (Estudios Oftalmológicos), invalida la caché de credenciales en memoria
-    y devuelve el estado actualizado en tiempo real desde Meta Graph API.
-    Si el usuario ingresó `estudios_display_phone` pero no tiene `estudios_phone_number_id`,
-    intenta vincularlo o resolverlo automáticamente en la WABA.
+    de las líneas telefónicas (Línea 2: Estudios y Línea 3: Óptica Vortix), invalida la caché
+    de credenciales en memoria y devuelve el estado actualizado en tiempo real desde Meta Graph API.
+    Si el usuario ingresó un número sin Phone ID, intenta vincularlo o resolverlo automáticamente en la WABA.
     """
     if not supabase:
         raise HTTPException(status_code=500, detail="Base de datos Supabase no disponible.")
@@ -896,10 +965,11 @@ async def update_whatsapp_lines_config(payload: UpdateWhatsAppLinesPayload):
     input_display_phone = normalize_phone_number(payload.estudios_display_phone or "") if payload.estudios_display_phone else ""
     input_verified_name = (payload.estudios_verified_name or "Centrovisión - Estudios Oftalmológicos").strip()
 
+    q_phone_id, token = get_whatsapp_cloud_credentials()
+    waba_id = get_whatsapp_waba_id()
+
     # Si no hay Phone ID pero sí ingresó el número de teléfono de la Línea 2, resolverlo/crearlo en WABA
     if not input_phone_id and input_display_phone and len(input_display_phone) >= 10:
-        q_phone_id, token = get_whatsapp_cloud_credentials()
-        waba_id = get_whatsapp_waba_id()
         last_10 = input_display_phone[-10:]
         if waba_id and token:
             waba_numbers = await WhatsAppCloudClient.list_waba_phone_numbers(waba_id, token)
@@ -944,13 +1014,46 @@ async def update_whatsapp_lines_config(payload: UpdateWhatsAppLinesPayload):
     if payload.estudios_auto_reply_text is not None:
         new_cfg["estudios_auto_reply_text"] = payload.estudios_auto_reply_text.strip()
 
+    # Procesar Línea 3: Óptica Vortix si se enviaron parámetros
+    input_opt_phone_id = (payload.optica_phone_number_id or "").strip()
+    input_opt_display = normalize_phone_number(payload.optica_display_phone or "") if payload.optica_display_phone else ""
+    input_opt_name = (payload.optica_verified_name or "Óptica Vortix").strip()
+
+    if not input_opt_phone_id and input_opt_display and len(input_opt_display) >= 10:
+        last_10_opt = input_opt_display[-10:]
+        if waba_id and token:
+            waba_numbers = await WhatsAppCloudClient.list_waba_phone_numbers(waba_id, token)
+            for item in waba_numbers:
+                item_digits = "".join(filter(str.isdigit, str(item.get("display_phone_number") or "")))
+                if item_digits.endswith(last_10_opt) and str(item.get("id")) not in (str(q_phone_id), str(input_phone_id)):
+                    input_opt_phone_id = str(item.get("id"))
+                    break
+
+    if input_opt_phone_id or input_opt_display:
+        opt_data = {
+            "optica_phone_number_id": input_opt_phone_id or new_cfg.get("optica_phone_number_id", ""),
+            "optica_display_phone": input_opt_display or new_cfg.get("optica_display_phone", ""),
+            "optica_verified_name": input_opt_name,
+            "optica_auto_reply_enabled": bool(payload.optica_auto_reply_enabled),
+        }
+        if payload.optica_auto_reply_text is not None:
+            opt_data["optica_auto_reply_text"] = payload.optica_auto_reply_text.strip()
+        new_cfg.update(opt_data)
+
+        # Sincronizar en optica_vortix_service
+        try:
+            from app.services.optica_vortix_service import OpticaVortixService
+            OpticaVortixService().guardar_config(opt_data)
+        except Exception as opt_sync_err:
+            logger.warning(f"Error sincronizando optica_vortix_config: {opt_sync_err}")
+
     try:
         _persist_whatsapp_lineas_config(new_cfg)
         log_event(
             nivel="INFO",
             modulo="WHATSAPP",
-            accion="CONFIGURAR_LINEA_ESTUDIOS",
-            mensaje=f"Configuración de Línea 2 (Estudios) actualizada. Phone ID: {new_cfg.get('estudios_phone_number_id')}",
+            accion="CONFIGURAR_LINEAS_WHATSAPP",
+            mensaje=f"Configuración de líneas de WhatsApp actualizada. Phone ID Estudios: {new_cfg.get('estudios_phone_number_id')} | Phone ID Óptica: {new_cfg.get('optica_phone_number_id')}",
             detalles=new_cfg
         )
         return await get_whatsapp_lines_status()
@@ -974,10 +1077,13 @@ async def register_whatsapp_line_in_cloud_api(payload: RegisterLinePinPayload):
     if not target_phone_id:
         if payload.line == "estudios":
             target_phone_id, _ = get_whatsapp_estudios_credentials()
+        elif payload.line == "optica":
+            target_phone_id, _ = get_whatsapp_optica_credentials()
         else:
             target_phone_id, _ = get_whatsapp_cloud_credentials()
 
     if not target_phone_id:
+        raise HTTPException(status_code=400, detail="Debe especificar el Phone Number ID del número a registrar.")
         raise HTTPException(status_code=400, detail="Debe especificar el Phone Number ID del número a registrar.")
 
     client = WhatsAppCloudClient(phone_number_id=target_phone_id, access_token=token, line=payload.line)
@@ -1017,6 +1123,13 @@ async def send_test_message_from_line(payload: SendTestLinePayload):
             raise HTTPException(
                 status_code=400,
                 detail="La Línea 2 (Estudios Oftalmológicos) aún no tiene un Phone Number ID configurado."
+            )
+    elif payload.line == "optica":
+        phone_id, token = get_whatsapp_optica_credentials()
+        if not phone_id:
+            raise HTTPException(
+                status_code=400,
+                detail="La Línea 3 (Óptica Vortix) aún no tiene un Phone Number ID configurado."
             )
     else:
         phone_id, token = get_whatsapp_cloud_credentials()

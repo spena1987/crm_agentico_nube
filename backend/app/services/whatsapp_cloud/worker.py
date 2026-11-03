@@ -153,17 +153,37 @@ async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Opt
       2. public.mensajes (chat interactivo del CRM para mostrar tildes ✓, ✓✓ gris, ✓✓ azul o alerta de fallo)
     """
     wamid = status_dict.get("id")
+    clean_phone_id = str(phone_number_id or "").strip()
     try:
-        from app.services.whatsapp_cloud.client import get_whatsapp_optica_credentials
+        from app.services.whatsapp_cloud.client import (
+            get_whatsapp_cloud_credentials,
+            get_whatsapp_estudios_credentials,
+            get_whatsapp_optica_credentials
+        )
         from app.services.optica_vortix_service import handle_optica_line_status_update
+
+        line1_phone_id, _ = get_whatsapp_cloud_credentials()
+        est_phone_id, _ = get_whatsapp_estudios_credentials()
         optica_phone_id, _ = get_whatsapp_optica_credentials()
-        if optica_phone_id and phone_number_id and str(phone_number_id).strip() == str(optica_phone_id).strip():
-            await handle_optica_line_status_update(status_dict, str(phone_number_id).strip())
+
+        line1_id = str(line1_phone_id or "").strip()
+        est_id = str(est_phone_id or "").strip()
+        optica_id = str(optica_phone_id or "").strip()
+
+        # 0. Verificación específica de Línea 3 (Óptica Vortix)
+        if optica_id and clean_phone_id == optica_id:
+            await handle_optica_line_status_update(status_dict, clean_phone_id)
             return
         elif wamid:
-            handled_optica = await handle_optica_line_status_update(status_dict, phone_number_id, only_if_exists=True)
+            handled_optica = await handle_optica_line_status_update(status_dict, clean_phone_id, only_if_exists=True)
             if handled_optica:
                 return
+
+        # 1. Allowlist estricto para status updates si viene phone_number_id
+        allowlist = {pid for pid in (line1_id, est_id) if pid}
+        if clean_phone_id and clean_phone_id not in allowlist:
+            logger.debug(f"[Worker Status Security] phone_number_id='{clean_phone_id}' desconocido para status update. Descartando (Fail-Closed).")
+            return
     except Exception as opt_st_err:
         logger.debug(f"[Worker Status Óptica] Aviso verificando status de óptica: {opt_st_err}")
 
@@ -410,31 +430,60 @@ async def handle_estudios_line_inbound_message(
 
 async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Optional[str], contact_name: Optional[str]):
     """
-    Maneja un mensaje de paciente entrante:
+    Maneja un mensaje de paciente entrante con Allowlist estricto (Fail-Closed):
       - Si el phone_number_id pertenece a la Línea 3 (Óptica Vortix), delega a
         handle_optica_line_inbound_message con aislamiento 100% en tablas optica_*.
       - Si el phone_number_id pertenece a la Línea 2 (Estudios Oftalmológicos), delega a
         handle_estudios_line_inbound_message sin tocar pacientes ni conversaciones del CRM quirúrgico.
       - En la Línea 1 (Quirúrgico), normaliza el teléfono E.164, renueva la ventana de 24 horas,
         descarga/transcribe notas de voz o imágenes y rutea al agente IA o bandeja de asesores.
+      - Si el phone_number_id es desconocido, vacío o no autorizado: DESCARTA (Fail-Closed).
     """
-    if phone_number_id:
-        from app.services.whatsapp_cloud.client import (
-            get_whatsapp_estudios_credentials,
-            get_whatsapp_optica_config,
-            get_whatsapp_optica_credentials
-        )
-        optica_phone_id, _ = get_whatsapp_optica_credentials()
-        if optica_phone_id and str(phone_number_id).strip() == str(optica_phone_id).strip():
-            from app.services.optica_vortix_service import handle_optica_line_inbound_message
-            optica_cfg = get_whatsapp_optica_config()
-            await handle_optica_line_inbound_message(msg_dict, str(phone_number_id).strip(), contact_name, optica_cfg)
-            return
+    from app.services.whatsapp_cloud.client import (
+        get_whatsapp_cloud_credentials,
+        get_whatsapp_estudios_credentials,
+        get_whatsapp_optica_config,
+        get_whatsapp_optica_credentials
+    )
 
-        est_phone_id, _ = get_whatsapp_estudios_credentials()
-        if est_phone_id and str(phone_number_id).strip() == str(est_phone_id).strip():
-            await handle_estudios_line_inbound_message(msg_dict, str(phone_number_id).strip(), contact_name)
-            return
+    clean_phone_id = str(phone_number_id or "").strip()
+    if not clean_phone_id:
+        logger.warning("[Worker Inbound Security] Mensaje entrante descartado: phone_number_id ausente o vacío (Fail-Closed).")
+        return
+
+    # 1. Obtener IDs oficiales registrados
+    line1_phone_id, _ = get_whatsapp_cloud_credentials()
+    est_phone_id, _ = get_whatsapp_estudios_credentials()
+    optica_phone_id, _ = get_whatsapp_optica_credentials()
+
+    line1_id = str(line1_phone_id or "").strip()
+    est_id = str(est_phone_id or "").strip()
+    optica_id = str(optica_phone_id or "").strip()
+
+    # 2. Allowlist estricto: Descartar si el número no pertenece a ninguna línea oficial
+    allowlist = {pid for pid in (line1_id, est_id, optica_id) if pid}
+    if clean_phone_id not in allowlist:
+        logger.warning(
+            f"[Worker Inbound Security] phone_number_id='{clean_phone_id}' NO autorizado en allowlist. "
+            f"Líneas registradas: {list(allowlist)}. Descartando evento (Fail-Closed)."
+        )
+        return
+
+    # 3. Enrutamiento 100% aislado por línea
+    if optica_id and clean_phone_id == optica_id:
+        from app.services.optica_vortix_service import handle_optica_line_inbound_message
+        optica_cfg = get_whatsapp_optica_config()
+        await handle_optica_line_inbound_message(msg_dict, clean_phone_id, contact_name, optica_cfg)
+        return
+
+    if est_id and clean_phone_id == est_id:
+        await handle_estudios_line_inbound_message(msg_dict, clean_phone_id, contact_name)
+        return
+
+    # Solo si coincide explícitamente con line1_id procesa el flujo quirúrgico
+    if not line1_id or clean_phone_id != line1_id:
+        logger.warning(f"[Worker Inbound Security] phone_number_id='{clean_phone_id}' no asignado a Línea 1. Descartando.")
+        return
     wamid = msg_dict.get("id")
     raw_sender = msg_dict.get("from")
     normalized_phone = normalize_to_meta_e164(raw_sender)

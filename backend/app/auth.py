@@ -188,6 +188,7 @@ class AuthSecurityMiddleware(BaseHTTPMiddleware):
             "/api/whatsapp/webhook/incoming",
             "/api/whatsapp/cloud/webhook",
             "/webhooks/whatsapp",
+            "/api/indicaciones/preview-pdf",
             "/docs",
             "/redoc",
             "/openapi.json"
