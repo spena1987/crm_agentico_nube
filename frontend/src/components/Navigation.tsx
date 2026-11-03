@@ -36,7 +36,8 @@ import {
   KeyRound,
   CheckCircle2,
   AlertCircle,
-  Loader2
+  Loader2,
+  MessageSquareText
 } from 'lucide-react'
 
 import { apiFetch, BACKEND_URL } from '@/lib/api'
@@ -96,6 +97,7 @@ const allNavItems: NavItem[] = [
       { code: 'optica-vortix', label: 'Oportunidades del Día', href: '/optica-vortix/oportunidades', icon: Sparkles },
       { code: 'optica-vortix', label: 'Campañas & Placas', href: '/optica-vortix/campanas', icon: Megaphone },
       { code: 'optica-vortix', label: 'Automatismos & Línea', href: '/optica-vortix/automatizaciones', icon: Cpu },
+      { code: 'optica-vortix', label: 'Plantillas WhatsApp', href: '/optica-vortix/plantillas', icon: MessageSquareText },
     ]
   },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },

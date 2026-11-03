@@ -11,6 +11,7 @@ import uuid
 import random
 import asyncio
 import logging
+import httpx
 from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
@@ -188,6 +189,20 @@ class CrearCampanaOpticaPayload(BaseModel):
     programada_para: Optional[str] = None
     lanzar_ahora: bool = False
     created_by: Optional[str] = "Óptica Vortix"
+
+
+class CrearPlantillaOpticaPayload(BaseModel):
+    name: str
+    category: str = "MARKETING"  # MARKETING o UTILITY
+    language: str = "es_AR"
+    header_type: str = "NONE"   # NONE, TEXT, IMAGE, DOCUMENT
+    header_content: Optional[str] = None
+    body_text: str
+    footer_text: Optional[str] = None
+    buttons: Optional[List[Dict[str, Any]]] = None
+    titulo_amigable: Optional[str] = None
+    variable_mappings: Optional[Dict[str, str]] = None
+    sample_values: Optional[List[str]] = None
 
 
 # ============================================================================
@@ -538,10 +553,277 @@ async def activar_pin_linea_optica(payload: ActivarPinOpticaPayload):
         await client.close()
 
 
+# ============================================================================
+# 1.1 GESTIÓN DE PLANTILLAS DE WHATSAPP (META GRAPH API) - ÓPTICA VORTIX
+# ============================================================================
+
+@optica_vortix_router.get("/plantillas")
+async def listar_plantillas_optica():
+    """
+    Lista todas las plantillas registradas para Óptica Vortix.
+    Si la base de datos aún no tiene las 4 base de catálogo, las integra marcándolas como
+    no aprovisionadas o pendientes para que el usuario pueda visualizarlas y autorizarlas.
+    """
+    templates_db = []
+    if supabase:
+        try:
+            res = (
+                supabase.table("whatsapp_templates")
+                .select("*")
+                .or_("grupo_crm.eq.Óptica Vortix,name.ilike.vortix_%,name.ilike.optica_%")
+                .order("name")
+                .execute()
+            )
+            templates_db = res.data or []
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error consultando whatsapp_templates: {e}")
+
+    db_names = {t.get("name") for t in templates_db}
+    merged_list = list(templates_db)
+    catalog_base_names = {c["name"] for c in OPTICA_VORTIX_TEMPLATES_CATALOG}
+
+    # Para cada plantilla en BD, marcar si es del catálogo base
+    for t in merged_list:
+        t["is_catalog_base"] = t.get("name") in catalog_base_names
+
+    # Si hay plantillas del catálogo que aún no están en la BD, enriquecer con los metadatos de catálogo
+    for cat_item in OPTICA_VORTIX_TEMPLATES_CATALOG:
+        c_name = cat_item["name"]
+        if c_name not in db_names:
+            merged_list.append({
+                "id": f"catalog_{c_name}",
+                "name": c_name,
+                "titulo_amigable": cat_item.get("titulo_amigable") or c_name,
+                "category": cat_item.get("category", "UTILITY"),
+                "language": "es_AR",
+                "status": "NOT_PROVISIONED",
+                "header_type": cat_item.get("header_type", "NONE"),
+                "header_content": cat_item.get("header_content"),
+                "body_text": cat_item.get("body_text", ""),
+                "footer_text": cat_item.get("footer_text"),
+                "buttons": cat_item.get("buttons") or [],
+                "variable_mappings": cat_item.get("variable_mappings") or {},
+                "sample_values": cat_item.get("sample_values") or [],
+                "grupo_crm": "Óptica Vortix",
+                "activo": False,
+                "is_catalog_base": True
+            })
+
+    aprobadas = sum(1 for t in merged_list if str(t.get("status")).upper() == "APPROVED")
+    en_revision = sum(1 for t in merged_list if str(t.get("status")).upper() == "PENDING")
+    rechazadas = sum(1 for t in merged_list if str(t.get("status")).upper() == "REJECTED")
+    no_aprovisionadas = sum(1 for t in merged_list if str(t.get("status")).upper() == "NOT_PROVISIONED")
+
+    return {
+        "success": True,
+        "total": len(merged_list),
+        "metricas": {
+            "aprobadas": aprobadas,
+            "en_revision": en_revision,
+            "rechazadas": rechazadas,
+            "no_aprovisionadas": no_aprovisionadas
+        },
+        "plantillas": merged_list
+    }
+
+
+@optica_vortix_router.post("/plantillas/sincronizar")
+async def sincronizar_plantillas_meta_optica():
+    """
+    Sincroniza en tiempo real contra Meta Graph API (GET /{waba_id}/message_templates)
+    las plantillas correspondientes a Óptica Vortix (prefijos vortix_ u optica_).
+    Actualiza su estado (APPROVED, PENDING, REJECTED, motivo) en public.whatsapp_templates.
+    """
+    waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
+    _, token = get_whatsapp_cloud_credentials()
+    if not waba_id or not token:
+        raise HTTPException(status_code=400, detail="Credenciales WABA o Token de Meta no configurados.")
+
+    url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates?limit=100"
+    meta_templates = []
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        res = await client.get(url, headers={"Authorization": f"Bearer {token}"})
+        if res.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Meta Graph API error al consultar plantillas: {res.text}")
+        meta_templates = res.json().get("data", [])
+
+    actualizadas = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    catalog_by_name = {c["name"]: c for c in OPTICA_VORTIX_TEMPLATES_CATALOG}
+
+    for mt in meta_templates:
+        tpl_name = str(mt.get("name") or "").lower()
+        if tpl_name.startswith(("vortix_", "optica_")):
+            status_meta = str(mt.get("status") or "PENDING").upper()
+            rejection = mt.get("rejected_reason") or mt.get("quality_score", {}).get("reasons")
+            cat_info = catalog_by_name.get(tpl_name, {})
+
+            if supabase:
+                try:
+                    upsert_data = {
+                        "waba_id": waba_id,
+                        "meta_template_id": mt.get("id"),
+                        "name": tpl_name,
+                        "category": mt.get("category") or cat_info.get("category") or "UTILITY",
+                        "language": mt.get("language") or "es_AR",
+                        "status": status_meta,
+                        "rejection_reason": str(rejection) if rejection else None,
+                        "grupo_crm": "Óptica Vortix",
+                        "visible_en_chat": False,
+                        "visible_en_hce": False,
+                        "activo": status_meta == "APPROVED",
+                        "updated_at": now_iso
+                    }
+                    if cat_info.get("titulo_amigable"):
+                        upsert_data["titulo_amigable"] = cat_info["titulo_amigable"]
+                    if cat_info.get("body_text"):
+                        upsert_data["body_text"] = cat_info["body_text"]
+                    if cat_info.get("variable_mappings"):
+                        upsert_data["variable_mappings"] = cat_info["variable_mappings"]
+
+                    supabase.table("whatsapp_templates").upsert(upsert_data, on_conflict="name").execute()
+                    actualizadas += 1
+                except Exception as db_e:
+                    logger.warning(f"[OpticaTemplates] Error upserting {tpl_name}: {db_e}")
+
+    return {
+        "success": True,
+        "mensaje": f"Sincronización completada. Se verificaron {len(meta_templates)} plantillas en Meta ({actualizadas} de Óptica Vortix reconocidas).",
+        "total_meta": len(meta_templates),
+        "actualizadas_optica": actualizadas
+    }
+
+
 @optica_vortix_router.post("/plantillas/aprovisionar-base")
 async def aprovisionar_plantillas_endpoint():
     """Registra en la WABA y en Supabase las 4 plantillas base de Óptica Vortix."""
     return await aprovisionar_plantillas_base_optica()
+
+
+@optica_vortix_router.post("/plantillas")
+async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
+    """
+    Crea una nueva plantilla para Óptica Vortix y la envía a revisión en Meta Graph API.
+    Asegura prefijo `vortix_` y aislamiento fail-closed respecto al resto del CRM.
+    """
+    clean_name = re.sub(r"[^a-z0-9_]", "", payload.name.lower().strip())
+    if not clean_name.startswith("vortix_"):
+        clean_name = f"vortix_{clean_name}"
+
+    waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
+    _, token = get_whatsapp_cloud_credentials()
+    if not waba_id or not token:
+        raise HTTPException(status_code=400, detail="Credenciales de WABA o Access Token no configurados.")
+
+    components = []
+    h_type = (payload.header_type or "NONE").upper()
+    if h_type == "TEXT" and payload.header_content:
+        components.append({"type": "HEADER", "format": "TEXT", "text": payload.header_content[:60]})
+    elif h_type == "IMAGE":
+        components.append({"type": "HEADER", "format": "IMAGE"})
+    elif h_type == "DOCUMENT":
+        components.append({"type": "HEADER", "format": "DOCUMENT"})
+
+    body_comp: Dict[str, Any] = {"type": "BODY", "text": payload.body_text}
+    if payload.sample_values and len(payload.sample_values) > 0:
+        body_comp["example"] = {"body_text": [payload.sample_values]}
+    components.append(body_comp)
+
+    if payload.footer_text:
+        components.append({"type": "FOOTER", "text": payload.footer_text[:60]})
+
+    if payload.buttons and len(payload.buttons) > 0:
+        clean_btns = []
+        for b in payload.buttons:
+            b_type = b.get("type", "QUICK_REPLY").upper()
+            btn_dict: Dict[str, Any] = {"type": b_type, "text": b.get("text", "")[:25]}
+            if b_type == "URL" and b.get("url"):
+                btn_dict["url"] = b["url"]
+            clean_btns.append(btn_dict)
+        components.append({"type": "BUTTONS", "buttons": clean_btns})
+
+    meta_payload = {
+        "name": clean_name,
+        "category": (payload.category or "MARKETING").upper(),
+        "language": payload.language or "es_AR",
+        "components": components
+    }
+
+    url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates"
+    meta_id = None
+    meta_status = "PENDING"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        res = await client.post(url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+        if res.status_code in (200, 201):
+            res_data = res.json()
+            meta_id = res_data.get("id")
+            meta_status = res_data.get("status", "PENDING")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Meta rechazó la plantilla: {res.text}"
+            )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if supabase:
+        try:
+            supabase.table("whatsapp_templates").upsert({
+                "waba_id": waba_id,
+                "meta_template_id": meta_id,
+                "name": clean_name,
+                "titulo_amigable": payload.titulo_amigable or clean_name,
+                "category": (payload.category or "MARKETING").upper(),
+                "language": payload.language or "es_AR",
+                "status": meta_status,
+                "header_type": h_type,
+                "header_content": payload.header_content,
+                "body_text": payload.body_text,
+                "footer_text": payload.footer_text,
+                "buttons": payload.buttons or [],
+                "variable_mappings": payload.variable_mappings or {},
+                "grupo_crm": "Óptica Vortix",
+                "visible_en_chat": False,
+                "visible_en_hce": False,
+                "activo": True,
+                "created_at": now_iso,
+                "updated_at": now_iso
+            }, on_conflict="name").execute()
+        except Exception as db_e:
+            logger.warning(f"[OpticaTemplates] Error guardando plantilla en Supabase: {db_e}")
+
+    return {
+        "success": True,
+        "mensaje": f"Plantilla '{clean_name}' enviada con éxito a Meta en estado '{meta_status}'.",
+        "meta_id": meta_id,
+        "name": clean_name,
+        "status": meta_status
+    }
+
+
+@optica_vortix_router.delete("/plantillas/{name}")
+async def eliminar_plantilla_optica(name: str):
+    """Elimina una plantilla de Óptica Vortix en Meta Graph API y en Supabase."""
+    clean_name = name.strip().lower()
+    waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
+    _, token = get_whatsapp_cloud_credentials()
+
+    if waba_id and token:
+        try:
+            url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates?name={clean_name}"
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.delete(url, headers={"Authorization": f"Bearer {token}"})
+                if res.status_code not in (200, 204, 404):
+                    logger.warning(f"[OpticaTemplates] Aviso eliminando {clean_name} en Meta: {res.text}")
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error conectando con Meta para eliminar: {e}")
+
+    if supabase:
+        try:
+            supabase.table("whatsapp_templates").delete().eq("name", clean_name).execute()
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error eliminando en Supabase: {e}")
+
+    return {"success": True, "mensaje": f"Plantilla '{clean_name}' eliminada correctamente."}
 
 
 # ============================================================================

@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Radio,
   RefreshCw,
+  MessageSquareText,
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { OpticaSaludLinea } from '@/types/optica'
@@ -45,6 +46,13 @@ const SUB_TABS = [
     shortLabel: 'Automatismos',
     icon: Cpu,
     badgeColor: 'bg-purple-500',
+  },
+  {
+    href: '/optica-vortix/plantillas',
+    label: 'Plantillas WhatsApp (Meta)',
+    shortLabel: 'Plantillas Meta',
+    icon: MessageSquareText,
+    badgeColor: 'bg-blue-500',
   },
 ]
 
