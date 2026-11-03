@@ -697,8 +697,40 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
             detail="Ingresa un número de teléfono válido con código de área (ej: 2615739990 o 5492615739990)."
         )
 
+    # Validación estricta de longitud para números de Argentina
+    if raw_digits.startswith("549"):
+        if len(raw_digits) < 13:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El número ingresado ({raw_digits}) tiene {len(raw_digits)} dígitos. Con prefijo 549, los números móviles de Argentina deben tener 13 dígitos completos (ej: 549261XXXXXXX, faltan dígitos). Por favor verifica el número asignado a la línea."
+            )
+        national_10 = raw_digits[3:13]
+    elif raw_digits.startswith("54"):
+        national = raw_digits[2:]
+        if len(national) < 10:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El número ingresado ({raw_digits}) está incompleto. Debe contener 10 dígitos nacionales (ej: 549261XXXXXXX)."
+            )
+        national_10 = national[-10:]
+    elif raw_digits.startswith("0"):
+        national = raw_digits[1:]
+        if len(national) < 10:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El número ingresado ({raw_digits}) está incompleto. Debe contener 10 dígitos nacionales sin el 0 inicial."
+            )
+        national_10 = national[-10:]
+    else:
+        if len(raw_digits) < 10:
+            raise HTTPException(
+                status_code=400,
+                detail="Ingresa un número de teléfono válido con código de área (ej: 2615739990 o 5492615739990)."
+            )
+        national_10 = raw_digits[-10:]
+
     norm_tel = normalize_phone_number(raw_digits)
-    last_10 = raw_digits[-10:]
+    last_10 = national_10
     default_name = "Óptica Vortix" if target_line == "optica" else "Centrovisión - Estudios Oftalmológicos"
     verified_name = (payload.verified_name or default_name).strip()
 
@@ -747,7 +779,7 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
                 waba_id=waba_id,
                 access_token=token,
                 cc="54",
-                phone_number=f"9{last_10}",
+                phone_number=f"9{national_10}",
                 verified_name=verified_name
             )
             resolved_phone_id = str(add_res.get("id") or "").strip()
@@ -758,7 +790,7 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
                     waba_id=waba_id,
                     access_token=token,
                     cc="54",
-                    phone_number=last_10,
+                    phone_number=national_10,
                     verified_name=verified_name
                 )
                 resolved_phone_id = str(add_res.get("id") or "").strip()
@@ -781,9 +813,8 @@ async def link_estudios_phone_number_in_waba(payload: LinkPhoneNumberPayload):
 
     # 3. Guardar automáticamente en configuracion_sistema según la línea objetivo
     if target_line == "optica":
-        from app.services.optica_vortix_service import OpticaVortixService
-        opt_srv = OpticaVortixService()
-        opt_srv.guardar_config({
+        from app.services.optica_vortix_service import save_optica_vortix_full_config
+        save_optica_vortix_full_config({
             "optica_phone_number_id": resolved_phone_id,
             "optica_display_phone": norm_tel,
             "optica_verified_name": verified_name,

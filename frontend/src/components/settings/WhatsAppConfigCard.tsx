@@ -246,6 +246,22 @@ export default function WhatsAppConfigCard() {
       return
     }
 
+    const digitsOnly = phoneToLink.replace(/\D/g, '')
+    if (digitsOnly.startsWith('549') && digitsOnly.length < 13) {
+      setFeedback({
+        type: 'error',
+        text: `El número ingresado (${digitsOnly}) tiene ${digitsOnly.length} dígitos. Los celulares de Argentina con prefijo 549 requieren 13 dígitos completos (ej: 549261XXXXXXX, faltan dígitos). Por favor revisa el número.`
+      })
+      return
+    }
+    if (digitsOnly.length < 10) {
+      setFeedback({
+        type: 'error',
+        text: 'Ingresa un número telefónico completo con código de área (ej: 549261XXXXXXX).'
+      })
+      return
+    }
+
     if (isOptica) setVinculandoOptica(true)
     else setVinculandoNumero(true)
     setFeedback(null)
@@ -253,6 +269,7 @@ export default function WhatsAppConfigCard() {
     try {
       const res = await apiFetch('/api/whatsapp/link-phone-number', {
         method: 'POST',
+        timeoutMs: 45000,
         body: JSON.stringify({
           line: targetLine,
           telefono: phoneToLink,
@@ -294,7 +311,14 @@ export default function WhatsAppConfigCard() {
         })
       }
     } catch (err: any) {
-      setFeedback({ type: 'error', text: String(err?.message || 'Error de red al vincular con Meta.') })
+      const isNetworkOrAbort =
+        err?.name === 'AbortError' ||
+        String(err?.message || '').toLowerCase().includes('failed to fetch') ||
+        String(err?.message || '').toLowerCase().includes('network')
+      const msg = isNetworkOrAbort
+        ? 'No se pudo comunicar con el servidor o la operación en Meta demoró más de 45 segundos. Verifica que el servidor backend esté en línea y que el número tenga 13 dígitos completos.'
+        : String(err?.message || 'Error al vincular con Meta.')
+      setFeedback({ type: 'error', text: msg })
     } finally {
       if (isOptica) setVinculandoOptica(false)
       else setVinculandoNumero(false)
@@ -317,6 +341,7 @@ export default function WhatsAppConfigCard() {
     try {
       const res = await apiFetch('/api/whatsapp/request-verification-code', {
         method: 'POST',
+        timeoutMs: 35000,
         body: JSON.stringify({
           phone_number_id: targetId,
           code_method: otpMethod,
@@ -463,6 +488,7 @@ export default function WhatsAppConfigCard() {
 
       const res = await apiFetch(endpoint, {
         method: 'POST',
+        timeoutMs: 35000,
         body: JSON.stringify(payload)
       })
       const data = await res.json()
