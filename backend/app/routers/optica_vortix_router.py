@@ -205,6 +205,19 @@ class CrearPlantillaOpticaPayload(BaseModel):
     sample_values: Optional[List[str]] = None
 
 
+class EditarPlantillaOpticaPayload(BaseModel):
+    category: Optional[str] = None
+    language: str = "es_AR"
+    header_type: str = "NONE"
+    header_content: Optional[str] = None
+    body_text: str
+    footer_text: Optional[str] = None
+    buttons: Optional[List[Dict[str, Any]]] = None
+    titulo_amigable: Optional[str] = None
+    variable_mappings: Optional[Dict[str, str]] = None
+    sample_values: Optional[List[str]] = None
+
+
 # ============================================================================
 # 1. CONFIGURACIÓN Y SALUD DE LA LÍNEA 3 DE WHATSAPP (ÓPTICA VORTIX)
 # ============================================================================
@@ -800,10 +813,293 @@ async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
     }
 
 
+@optica_vortix_router.put("/plantillas/{name}")
+async def editar_plantilla_optica(name: str, payload: EditarPlantillaOpticaPayload):
+    """
+    Edita una plantilla existente de Óptica Vortix:
+    - Si la plantilla ya está registrada en Meta (tiene meta_template_id o existe en WABA),
+      actualiza sus componentes en Meta Graph API (POST /v21.0/{meta_template_id}).
+      Esto somete los cambios a revisión en Meta manteniendo el mismo nombre técnico (Opción 1 oficial de Meta).
+    - Si la plantilla aún no estaba en Meta (NOT_PROVISIONED), actualiza su contenido localmente.
+    - Sincroniza los cambios en public.whatsapp_templates en Supabase.
+    """
+    clean_name = name.strip().lower()
+    waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
+    _, token = get_whatsapp_cloud_credentials()
+
+    # 1. Buscar plantilla en la base de datos local
+    local_tpl = None
+    if supabase:
+        try:
+            res = supabase.table("whatsapp_templates").select("*").eq("name", clean_name).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                local_tpl = res.data[0]
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error buscando {clean_name}: {e}")
+
+    meta_template_id = local_tpl.get("meta_template_id") if local_tpl else None
+
+    # 2. Si no tenemos meta_template_id localmente, intentar buscarla en Meta
+    if not meta_template_id and waba_id and token:
+        try:
+            lookup_url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates?name={clean_name}"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                lookup_res = await client.get(lookup_url, headers={"Authorization": f"Bearer {token}"})
+                if lookup_res.status_code == 200:
+                    matches = lookup_res.json().get("data", [])
+                    if matches:
+                        meta_template_id = matches[0].get("id")
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error buscando template en Meta: {e}")
+
+    # 3. Construir componentes para Meta
+    components = []
+    h_type = (payload.header_type or "NONE").upper()
+    if h_type == "TEXT" and payload.header_content:
+        components.append({"type": "HEADER", "format": "TEXT", "text": payload.header_content[:60]})
+    elif h_type == "IMAGE":
+        components.append({"type": "HEADER", "format": "IMAGE"})
+    elif h_type == "DOCUMENT":
+        components.append({"type": "HEADER", "format": "DOCUMENT"})
+
+    body_comp: Dict[str, Any] = {"type": "BODY", "text": payload.body_text}
+    if payload.sample_values and len(payload.sample_values) > 0:
+        body_comp["example"] = {"body_text": [payload.sample_values]}
+    components.append(body_comp)
+
+    if payload.footer_text:
+        components.append({"type": "FOOTER", "text": payload.footer_text[:60]})
+
+    if payload.buttons and len(payload.buttons) > 0:
+        clean_btns = []
+        for b in payload.buttons:
+            b_type = b.get("type", "QUICK_REPLY").upper()
+            btn_dict: Dict[str, Any] = {"type": b_type, "text": b.get("text", "")[:25]}
+            if b_type == "URL" and b.get("url"):
+                btn_dict["url"] = b["url"]
+            clean_btns.append(btn_dict)
+        components.append({"type": "BUTTONS", "buttons": clean_btns})
+
+    meta_status = "PENDING"
+    meta_edit_msg = ""
+    # 4. Si la plantilla existe en Meta, despachar actualización vía POST /{meta_template_id}
+    if meta_template_id and token:
+        meta_payload: Dict[str, Any] = {"components": components}
+        if payload.category:
+            meta_payload["category"] = payload.category.upper()
+
+        edit_url = f"https://graph.facebook.com/v21.0/{meta_template_id}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            edit_res = await client.post(edit_url, json=meta_payload, headers={"Authorization": f"Bearer {token}"})
+            if edit_res.status_code in (200, 201):
+                meta_edit_msg = "Actualizada en Meta y enviada a revisión."
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Meta rechazó la actualización de la plantilla: {edit_res.text}"
+                )
+    else:
+        meta_status = "NOT_PROVISIONED"
+        meta_edit_msg = "Guardada localmente lista para aprovisionar en Meta."
+
+    # 5. Persistir en Supabase
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if supabase:
+        try:
+            update_data = {
+                "waba_id": waba_id,
+                "meta_template_id": meta_template_id,
+                "name": clean_name,
+                "titulo_amigable": payload.titulo_amigable or (local_tpl.get("titulo_amigable") if local_tpl else clean_name),
+                "category": (payload.category or (local_tpl.get("category") if local_tpl else "MARKETING")).upper(),
+                "language": payload.language or "es_AR",
+                "status": meta_status,
+                "header_type": h_type,
+                "header_content": payload.header_content,
+                "body_text": payload.body_text,
+                "footer_text": payload.footer_text,
+                "buttons": payload.buttons or [],
+                "variable_mappings": payload.variable_mappings or (local_tpl.get("variable_mappings") if local_tpl else {}),
+                "grupo_crm": "Óptica Vortix",
+                "visible_en_chat": False,
+                "visible_en_hce": False,
+                "updated_at": now_iso
+            }
+            supabase.table("whatsapp_templates").upsert(update_data, on_conflict="name").execute()
+        except Exception as db_e:
+            logger.warning(f"[OpticaTemplates] Error actualizando en Supabase: {db_e}")
+
+    return {
+        "success": True,
+        "name": clean_name,
+        "status": meta_status,
+        "meta_template_id": meta_template_id,
+        "mensaje": f"Plantilla '{clean_name}' editada con éxito. {meta_edit_msg}"
+    }
+
+
+@optica_vortix_router.patch("/plantillas/{name}/toggle-activo")
+async def toggle_activo_plantilla_optica(name: str):
+    """
+    Habilita o desactiva una plantilla aprobada para uso en campañas y automatizaciones de Óptica Vortix.
+    """
+    clean_name = name.strip().lower()
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Base de datos no disponible.")
+
+    res = supabase.table("whatsapp_templates").select("name, activo, status").eq("name", clean_name).limit(1).execute()
+    if not res.data or len(res.data) == 0:
+        raise HTTPException(status_code=404, detail=f"Plantilla '{clean_name}' no encontrada.")
+
+    current = res.data[0]
+    new_activo = not bool(current.get("activo", True))
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("whatsapp_templates").update({
+        "activo": new_activo,
+        "updated_at": now_iso
+    }).eq("name", clean_name).execute()
+
+    estado_txt = "habilitada" if new_activo else "deshabilitada"
+    return {
+        "success": True,
+        "name": clean_name,
+        "activo": new_activo,
+        "mensaje": f"Plantilla '{clean_name}' {estado_txt} para su uso en Óptica Vortix."
+    }
+
+
+@optica_vortix_router.post("/plantillas/{name}/aprovisionar")
+async def aprovisionar_plantilla_individual(name: str):
+    """
+    Aprovisiona en Meta Graph API y en Supabase una plantilla individual específica.
+    """
+    clean_name = name.strip().lower()
+    waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
+    _, token = get_whatsapp_cloud_credentials()
+    if not waba_id or not token:
+        raise HTTPException(status_code=400, detail="Credenciales WABA o Token de Meta no configurados.")
+
+    spec = next((c for c in OPTICA_VORTIX_TEMPLATES_CATALOG if c["name"] == clean_name), None)
+    if not spec and supabase:
+        res = supabase.table("whatsapp_templates").select("*").eq("name", clean_name).limit(1).execute()
+        if res.data and len(res.data) > 0:
+            spec = res.data[0]
+
+    if not spec:
+        raise HTTPException(status_code=404, detail=f"No se encontró la especificación de la plantilla '{clean_name}'.")
+
+    components: List[Dict[str, Any]] = []
+    if spec.get("header_type") == "TEXT" and spec.get("header_content"):
+        components.append({"type": "HEADER", "format": "TEXT", "text": spec["header_content"][:60]})
+    elif spec.get("header_type") == "IMAGE":
+        components.append({"type": "HEADER", "format": "IMAGE"})
+    elif spec.get("header_type") == "DOCUMENT":
+        components.append({"type": "HEADER", "format": "DOCUMENT"})
+
+    body_comp: Dict[str, Any] = {"type": "BODY", "text": spec["body_text"]}
+    sample_vals = spec.get("sample_values") or ["Mariana", "10:30 hs", "20% OFF", "#VORTIX-8A4F"]
+    body_comp["example"] = {"body_text": [sample_vals]}
+    components.append(body_comp)
+
+    if spec.get("footer_text"):
+        components.append({"type": "FOOTER", "text": spec["footer_text"][:60]})
+
+    if spec.get("buttons"):
+        clean_btns = []
+        for b in spec["buttons"]:
+            b_type = b.get("type", "QUICK_REPLY").upper()
+            btn_dict: Dict[str, Any] = {"type": b_type, "text": b.get("text", "")[:25]}
+            if b_type == "URL" and b.get("url"):
+                btn_dict["url"] = b["url"]
+            clean_btns.append(btn_dict)
+        components.append({"type": "BUTTONS", "buttons": clean_btns})
+
+    url = f"https://graph.facebook.com/v21.0/{waba_id}/message_templates"
+    meta_id = None
+    meta_status = "PENDING"
+    async with httpx.AsyncClient(timeout=25.0) as client:
+        res = await client.post(
+            url,
+            json={
+                "name": clean_name,
+                "category": spec.get("category", "UTILITY"),
+                "language": spec.get("language", "es_AR"),
+                "components": components
+            },
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        if res.status_code in (200, 201):
+            body = res.json()
+            meta_id = body.get("id")
+            meta_status = body.get("status", "PENDING")
+        else:
+            err_txt = res.text.lower()
+            if "already exists" in err_txt:
+                meta_status = "APPROVED"
+            else:
+                raise HTTPException(status_code=400, detail=f"Meta rechazó el aprovisionamiento: {res.text}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if supabase:
+        try:
+            supabase.table("whatsapp_templates").upsert({
+                "waba_id": waba_id,
+                "meta_template_id": meta_id,
+                "name": clean_name,
+                "titulo_amigable": spec.get("titulo_amigable") or clean_name,
+                "category": spec.get("category", "UTILITY"),
+                "language": spec.get("language", "es_AR"),
+                "status": meta_status,
+                "header_type": spec.get("header_type", "NONE"),
+                "header_content": spec.get("header_content"),
+                "body_text": spec["body_text"],
+                "footer_text": spec.get("footer_text"),
+                "buttons": spec.get("buttons") or [],
+                "variable_mappings": spec.get("variable_mappings") or {},
+                "grupo_crm": "Óptica Vortix",
+                "visible_en_chat": False,
+                "visible_en_hce": False,
+                "activo": True,
+                "updated_at": now_iso
+            }, on_conflict="name").execute()
+        except Exception as db_e:
+            logger.warning(f"[OpticaTemplates] Error guardando {clean_name} en Supabase: {db_e}")
+
+    return {
+        "success": True,
+        "name": clean_name,
+        "status": meta_status,
+        "meta_id": meta_id,
+        "mensaje": f"Plantilla '{clean_name}' enviada con éxito a Meta en estado '{meta_status}'."
+    }
+
+
 @optica_vortix_router.delete("/plantillas/{name}")
 async def eliminar_plantilla_optica(name: str):
-    """Elimina una plantilla de Óptica Vortix en Meta Graph API y en Supabase."""
+    """
+    Elimina una plantilla de Óptica Vortix siempre y cuando NO esté aprobada en Meta.
+    Si está APPROVED, se bloquea la eliminación para proteger la estabilidad de campañas y automatizaciones.
+    """
     clean_name = name.strip().lower()
+
+    # Verificar estado actual
+    status_actual = "NOT_PROVISIONED"
+    if supabase:
+        try:
+            check_res = supabase.table("whatsapp_templates").select("status").eq("name", clean_name).limit(1).execute()
+            if check_res.data and len(check_res.data) > 0:
+                status_actual = str(check_res.data[0].get("status") or "").upper()
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error consultando status de {clean_name}: {e}")
+
+    # REGLA ESTRICTA: No se pueden eliminar plantillas aprobadas
+    if status_actual == "APPROVED":
+        raise HTTPException(
+            status_code=400,
+            detail=f"No es posible eliminar la plantilla '{clean_name}' porque está aprobada por Meta. Para suspender su uso en campañas y automatismos, desactívala usando la opción Deshabilitar."
+        )
+
     waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
     _, token = get_whatsapp_cloud_credentials()
 

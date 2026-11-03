@@ -24,7 +24,10 @@ import {
   ExternalLink,
   ShieldCheck,
   Zap,
-  Info
+  Info,
+  Pencil,
+  Power,
+  Lock
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import WhatsAppPhoneSimulator from '@/components/settings/whatsapp/WhatsAppPhoneSimulator'
@@ -83,8 +86,9 @@ export default function OpticaTemplatesManager() {
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'APPROVED' | 'PENDING' | 'REJECTED' | 'NOT_PROVISIONED'>('ALL')
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null)
 
-  // Modal Diseñador
+  // Modal Diseñador / Editor
   const [showModal, setShowModal] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<OpticaTemplate | null>(null)
   const [nombrePlantilla, setNombrePlantilla] = useState('')
   const [tituloAmigable, setTituloAmigable] = useState('')
   const [categoria, setCategoria] = useState<'MARKETING' | 'UTILITY'>('MARKETING')
@@ -187,7 +191,97 @@ export default function OpticaTemplatesManager() {
     }
   }
 
+  const handleAprovisionarIndividual = async (tpl: OpticaTemplate) => {
+    setFeedback(null)
+    try {
+      const res = await apiFetch(`/api/optica-vortix/plantillas/${tpl.name}/aprovisionar`, {
+        method: 'POST',
+        timeoutMs: 35000
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setFeedback({
+          type: 'success',
+          text: data.mensaje || `Plantilla '${tpl.name}' enviada a Meta con éxito.`
+        })
+        await cargarPlantillas(true)
+      } else {
+        setFeedback({
+          type: 'error',
+          text: data.detail || 'Error al aprovisionar la plantilla en Meta.'
+        })
+      }
+    } catch {
+      setFeedback({
+        type: 'error',
+        text: 'Error de conexión o timeout al comunicar con Meta. Pulsa "Sincronizar con Meta" en unos segundos.'
+      })
+    }
+  }
+
+  const handleToggleActivo = async (tpl: OpticaTemplate) => {
+    setFeedback(null)
+    try {
+      const res = await apiFetch(`/api/optica-vortix/plantillas/${tpl.name}/toggle-activo`, {
+        method: 'PATCH'
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setFeedback({
+          type: 'success',
+          text: data.mensaje || `Plantilla '${tpl.name}' ${data.activo ? 'habilitada' : 'deshabilitada'}.`
+        })
+        await cargarPlantillas(true)
+      } else {
+        setFeedback({
+          type: 'error',
+          text: data.detail || 'Error al cambiar estado de la plantilla.'
+        })
+      }
+    } catch {
+      setFeedback({
+        type: 'error',
+        text: 'Error de conexión al cambiar estado de la plantilla.'
+      })
+    }
+  }
+
+  const handleAbrirCrear = () => {
+    setEditingTemplate(null)
+    setNombrePlantilla('')
+    setTituloAmigable('')
+    setCategoria('MARKETING')
+    setHeaderType('NONE')
+    setHeaderContent('')
+    setBodyText('')
+    setFooterText('Óptica Vortix • Responde BAJA para no recibir promos')
+    setButtons([{ type: 'QUICK_REPLY', text: 'Quiero mi descuento' }])
+    setShowModal(true)
+  }
+
+  const handleEditarPlantilla = (tpl: OpticaTemplate) => {
+    setEditingTemplate(tpl)
+    setNombrePlantilla(tpl.name)
+    setTituloAmigable(tpl.titulo_amigable || tpl.name)
+    setCategoria(tpl.category === 'AUTHENTICATION' ? 'MARKETING' : tpl.category)
+    setHeaderType(tpl.header_type || 'NONE')
+    setHeaderContent(tpl.header_content || '')
+    setBodyText(tpl.body_text || '')
+    setFooterText(tpl.footer_text || 'Óptica Vortix • Responde BAJA para no recibir promos')
+    setButtons(
+      tpl.buttons && tpl.buttons.length > 0
+        ? tpl.buttons.map(b => ({ type: b.type, text: b.text, url: b.url }))
+        : [{ type: 'QUICK_REPLY', text: 'Quiero mi descuento' }]
+    )
+    setShowModal(true)
+  }
+
   const handleEliminarPlantilla = async (tpl: OpticaTemplate) => {
+    if (tpl.status === 'APPROVED') {
+      alert('Las plantillas aprobadas por Meta no se pueden eliminar para proteger las campañas y automatismos activos. Puedes deshabilitarla.')
+      return
+    }
+
     if (!confirm(`¿Estás seguro de eliminar la plantilla '${tpl.name}' de Meta y del CRM? Esta acción es irreversible.`)) {
       return
     }
@@ -218,7 +312,7 @@ export default function OpticaTemplatesManager() {
     setBodyText(prev => `${prev} {{${nextIndex}}}`)
   }
 
-  const handleCrearPlantillaSubmit = async (e: React.FormEvent) => {
+  const handleGuardarPlantillaSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nombrePlantilla.trim() || !bodyText.trim()) {
       alert('Ingresa el nombre y el cuerpo del mensaje de la plantilla.')
@@ -227,10 +321,14 @@ export default function OpticaTemplatesManager() {
 
     setGuardandoPlantilla(true)
     setFeedback(null)
+    const isEditing = !!editingTemplate
+    const cleanName = isEditing ? editingTemplate.name : nombrePlantilla.toLowerCase().replace(/[^a-z0-9_]/g, '')
+    const endpoint = isEditing ? `/api/optica-vortix/plantillas/${editingTemplate.name}` : '/api/optica-vortix/plantillas'
+    const method = isEditing ? 'PUT' : 'POST'
+
     try {
-      const cleanName = nombrePlantilla.toLowerCase().replace(/[^a-z0-9_]/g, '')
-      const res = await apiFetch('/api/optica-vortix/plantillas', {
-        method: 'POST',
+      const res = await apiFetch(endpoint, {
+        method,
         timeoutMs: 40000,
         body: JSON.stringify({
           name: cleanName,
@@ -247,12 +345,10 @@ export default function OpticaTemplatesManager() {
       const data = await res.json()
       if (res.ok && data.success) {
         setShowModal(false)
-        setNombrePlantilla('')
-        setTituloAmigable('')
-        setBodyText('')
+        setEditingTemplate(null)
         setFeedback({
           type: 'success',
-          text: `¡Plantilla '${data.name}' enviada con éxito a Meta! Estado: ${data.status}. Meta revisa y aprueba usualmente en 1 a 15 minutos.`
+          text: data.mensaje || `¡Plantilla '${cleanName}' guardada con éxito!`
         })
         await cargarPlantillas(true)
       } else {
@@ -344,7 +440,7 @@ export default function OpticaTemplatesManager() {
             </button>
 
             <button
-              onClick={() => setShowModal(true)}
+              onClick={handleAbrirCrear}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-500/20 transition-all"
             >
               <Plus size={15} />
@@ -566,28 +662,85 @@ export default function OpticaTemplatesManager() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {isNotProv && (
-                        <button
-                          onClick={e => {
-                            e.stopPropagation()
-                            handleAprovisionarBase()
-                          }}
-                          className="px-2.5 py-1 rounded-lg font-medium text-xs bg-purple-600/20 text-purple-300 hover:bg-purple-600/30 transition-colors"
-                        >
-                          Aprovisionar en Meta
-                        </button>
-                      )}
-                      {!tpl.is_catalog_base && (
-                        <button
-                          onClick={e => {
-                            e.stopPropagation()
-                            handleEliminarPlantilla(tpl)
-                          }}
-                          className="p-1 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                          title="Eliminar de Meta"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                      {isApproved ? (
+                        <>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              handleToggleActivo(tpl)
+                            }}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                              tpl.activo !== false
+                                ? 'bg-emerald-500/10 text-emerald-400 hover:bg-amber-500/20 hover:text-amber-300 border border-emerald-500/30'
+                                : 'bg-slate-800 text-slate-400 hover:bg-emerald-500/20 hover:text-emerald-300 border border-slate-700'
+                            }`}
+                            title={
+                              tpl.activo !== false
+                                ? 'Plantilla habilitada en CRM. Clic para pausar.'
+                                : 'Plantilla pausada. Clic para habilitar.'
+                            }
+                          >
+                            <Power size={11} />
+                            <span>{tpl.activo !== false ? 'Habilitada' : 'Deshabilitada'}</span>
+                          </button>
+
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              handleEditarPlantilla(tpl)
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-blue-600/15 text-blue-400 hover:bg-blue-600/25 border border-blue-500/30 transition-colors"
+                            title="Editar texto y actualizar versión en Meta Cloud API (Opción 1)"
+                          >
+                            <Pencil size={11} />
+                            <span>Editar en Meta</span>
+                          </button>
+
+                          <span
+                            className="p-1 rounded-lg text-slate-600 cursor-not-allowed opacity-50"
+                            title="Las plantillas aprobadas por Meta no pueden eliminarse directamente para proteger campañas y automatizaciones activas. Puedes deshabilitarla."
+                          >
+                            <Lock size={13} />
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              handleEditarPlantilla(tpl)
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 hover:border-slate-600 transition-colors"
+                            title="Editar plantilla"
+                          >
+                            <Pencil size={11} />
+                            <span>Editar</span>
+                          </button>
+
+                          {isNotProv && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation()
+                                handleAprovisionarIndividual(tpl)
+                              }}
+                              className="px-2.5 py-1 rounded-lg font-medium text-[11px] bg-purple-600/20 text-purple-300 hover:bg-purple-600/30 border border-purple-500/30 transition-colors"
+                              title="Aprovisionar y enviar a revisión en Meta"
+                            >
+                              Aprovisionar en Meta
+                            </button>
+                          )}
+
+                          <button
+                            onClick={e => {
+                              e.stopPropagation()
+                              handleEliminarPlantilla(tpl)
+                            }}
+                            className="p-1 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-colors"
+                            title="Eliminar de Meta y del CRM"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -651,32 +804,57 @@ export default function OpticaTemplatesManager() {
         </div>
       )}
 
-      {/* MODAL: Diseñador de Nuevas Plantillas para Meta */}
+      {/* MODAL: Diseñador / Editor de Plantillas para Meta */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl p-6 space-y-5">
             <div className="flex items-center justify-between pb-4 border-b border-slate-800">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center">
-                  <Plus size={18} />
+                  {editingTemplate ? <Pencil size={18} /> : <Plus size={18} />}
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-white">Diseñar Nueva Plantilla para Meta</h3>
+                  <h3 className="text-base font-bold text-white">
+                    {editingTemplate
+                      ? `Editar Plantilla: ${editingTemplate.name}`
+                      : 'Diseñar Nueva Plantilla para Meta'}
+                  </h3>
                   <p className="text-xs text-slate-400">
-                    Se enviará a revisión en la WABA <code>3731563350343089</code> con prefijo obligatorio{' '}
-                    <code>vortix_</code>.
+                    {editingTemplate
+                      ? editingTemplate.status === 'APPROVED'
+                        ? 'Edición oficial de plantilla aprobada vía Meta Cloud API (Opción 1).'
+                        : `Modifica el contenido antes de someter a Meta (${editingTemplate.status}).`
+                      : 'Se enviará a revisión en la WABA 3731563350343089 con prefijo obligatorio vortix_.'}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setShowModal(false)}
+                onClick={() => {
+                  setShowModal(false)
+                  setEditingTemplate(null)
+                }}
                 className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
               >
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleCrearPlantillaSubmit} className="space-y-4 text-xs">
+            {/* Banner Informativo de Opción 1 de Meta si está Aprobada */}
+            {editingTemplate && editingTemplate.status === 'APPROVED' && (
+              <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-xs text-blue-300 space-y-1">
+                <div className="flex items-center gap-2 font-bold text-blue-200">
+                  <Sparkles size={14} />
+                  <span>Actualización de Versión en Meta (Opción 1 Oficial)</span>
+                </div>
+                <p className="text-[11px] text-blue-200/90 leading-relaxed">
+                  Al guardar, se actualizarán los componentes en Meta Cloud API bajo el mismo identificador.
+                  Meta someterá el nuevo texto a revisión (estado <code>PENDING</code>). Mientras tanto,
+                  WhatsApp preserva la entrega de la versión actual para que tus campañas y automatizaciones no se detengan.
+                </p>
+              </div>
+            )}
+
+            <form onSubmit={handleGuardarPlantillaSubmit} className="space-y-4 text-xs">
               {/* Nombre Interno y Título Amigable */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
@@ -688,12 +866,25 @@ export default function OpticaTemplatesManager() {
                     <input
                       type="text"
                       value={nombrePlantilla.replace(/^vortix_/, '')}
-                      onChange={e => setNombrePlantilla(`vortix_${e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')}`)}
+                      onChange={e =>
+                        !editingTemplate &&
+                        setNombrePlantilla(
+                          `vortix_${e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')}`
+                        )
+                      }
+                      readOnly={!!editingTemplate}
                       placeholder="promo_armazones_v1"
-                      className="bg-transparent focus:outline-none w-full font-mono text-xs"
+                      className={`bg-transparent focus:outline-none w-full font-mono text-xs ${
+                        editingTemplate ? 'text-slate-400 cursor-not-allowed' : ''
+                      }`}
                       required
                     />
                   </div>
+                  {editingTemplate && (
+                    <span className="text-[10px] text-slate-500">
+                      El nombre técnico de Meta no puede modificarse al editar.
+                    </span>
+                  )}
                 </div>
 
                 <div className="space-y-1">
@@ -833,7 +1024,10 @@ export default function OpticaTemplatesManager() {
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
+                  onClick={() => {
+                    setShowModal(false)
+                    setEditingTemplate(null)
+                  }}
                   className="px-4 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                 >
                   Cancelar
@@ -844,7 +1038,15 @@ export default function OpticaTemplatesManager() {
                   className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/25 transition-all disabled:opacity-50"
                 >
                   <Send size={14} className={guardandoPlantilla ? 'animate-pulse' : ''} />
-                  <span>{guardandoPlantilla ? 'Enviando a Meta...' : 'Enviar a Meta para Aprobación'}</span>
+                  <span>
+                    {guardandoPlantilla
+                      ? 'Guardando...'
+                      : editingTemplate
+                      ? editingTemplate.status === 'APPROVED'
+                        ? 'Actualizar Versión en Meta'
+                        : 'Guardar Cambios'
+                      : 'Enviar a Meta para Aprobación'}
+                  </span>
                 </button>
               </div>
             </form>
