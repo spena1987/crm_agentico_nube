@@ -573,9 +573,10 @@ async def activar_pin_linea_optica(payload: ActivarPinOpticaPayload):
 @optica_vortix_router.get("/plantillas")
 async def listar_plantillas_optica():
     """
-    Lista todas las plantillas registradas para Óptica Vortix.
-    Si la base de datos aún no tiene las 4 base de catálogo, las integra marcándolas como
-    no aprovisionadas o pendientes para que el usuario pueda visualizarlas y autorizarlas.
+    Lista todas las plantillas registradas para Óptica Vortix directamente desde la base de datos Supabase.
+    Si la base de datos está totalmente vacía de plantillas de óptica (primer uso), realiza el sembrado
+    físico inicial en Supabase. Si una plantilla es eliminada por el usuario, permanece eliminada
+    y no se vuelve a generar automáticamente en memoria.
     """
     templates_db = []
     if supabase:
@@ -584,59 +585,67 @@ async def listar_plantillas_optica():
                 supabase.table("whatsapp_templates")
                 .select("*")
                 .or_("grupo_crm.eq.Óptica Vortix,name.ilike.vortix_%,name.ilike.optica_%")
-                .order("name")
+                .order("created_at")
                 .execute()
             )
             templates_db = res.data or []
         except Exception as e:
             logger.warning(f"[OpticaTemplates] Error consultando whatsapp_templates: {e}")
 
-    db_names = {t.get("name") for t in templates_db}
-    merged_list = list(templates_db)
-    catalog_base_names = {c["name"] for c in OPTICA_VORTIX_TEMPLATES_CATALOG}
+    # Si la base de datos está 100% vacía para óptica (instalación inicial), sembrar físicamente las 4 base
+    if len(templates_db) == 0 and supabase:
+        waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
+        for cat in OPTICA_VORTIX_TEMPLATES_CATALOG:
+            try:
+                row = {
+                    "waba_id": waba_id,
+                    "name": cat["name"],
+                    "titulo_amigable": cat.get("titulo_amigable") or cat["name"],
+                    "category": cat.get("category", "UTILITY"),
+                    "language": "es_AR",
+                    "status": "NOT_PROVISIONED",
+                    "header_type": cat.get("header_type", "NONE"),
+                    "header_content": cat.get("header_content"),
+                    "body_text": cat.get("body_text", ""),
+                    "footer_text": cat.get("footer_text"),
+                    "buttons": cat.get("buttons") or [],
+                    "variable_mappings": cat.get("variable_mappings") or {},
+                    "grupo_crm": "Óptica Vortix",
+                    "activo": False,
+                    "visible_en_chat": False,
+                    "visible_en_hce": False
+                }
+                ins = supabase.table("whatsapp_templates").insert(row).execute()
+                if ins.data:
+                    templates_db.append(ins.data[0])
+            except Exception as seed_err:
+                logger.warning(f"[OpticaTemplates] Error sembrando plantilla inicial {cat['name']}: {seed_err}")
 
-    # Para cada plantilla en BD, marcar si es del catálogo base
-    for t in merged_list:
-        t["is_catalog_base"] = t.get("name") in catalog_base_names
+    catalog_dict = {c["name"]: c for c in OPTICA_VORTIX_TEMPLATES_CATALOG}
 
-    # Si hay plantillas del catálogo que aún no están en la BD, enriquecer con los metadatos de catálogo
-    for cat_item in OPTICA_VORTIX_TEMPLATES_CATALOG:
-        c_name = cat_item["name"]
-        if c_name not in db_names:
-            merged_list.append({
-                "id": f"catalog_{c_name}",
-                "name": c_name,
-                "titulo_amigable": cat_item.get("titulo_amigable") or c_name,
-                "category": cat_item.get("category", "UTILITY"),
-                "language": "es_AR",
-                "status": "NOT_PROVISIONED",
-                "header_type": cat_item.get("header_type", "NONE"),
-                "header_content": cat_item.get("header_content"),
-                "body_text": cat_item.get("body_text", ""),
-                "footer_text": cat_item.get("footer_text"),
-                "buttons": cat_item.get("buttons") or [],
-                "variable_mappings": cat_item.get("variable_mappings") or {},
-                "sample_values": cat_item.get("sample_values") or [],
-                "grupo_crm": "Óptica Vortix",
-                "activo": False,
-                "is_catalog_base": True
-            })
+    # Enriquecer plantillas con metadatos de catálogo (sample_values si no existen)
+    for t in templates_db:
+        c_name = t.get("name")
+        t["is_catalog_base"] = c_name in catalog_dict
+        if "sample_values" not in t or not t.get("sample_values"):
+            if c_name in catalog_dict:
+                t["sample_values"] = catalog_dict[c_name].get("sample_values") or []
 
-    aprobadas = sum(1 for t in merged_list if str(t.get("status")).upper() == "APPROVED")
-    en_revision = sum(1 for t in merged_list if str(t.get("status")).upper() == "PENDING")
-    rechazadas = sum(1 for t in merged_list if str(t.get("status")).upper() == "REJECTED")
-    no_aprovisionadas = sum(1 for t in merged_list if str(t.get("status")).upper() == "NOT_PROVISIONED")
+    aprobadas = sum(1 for t in templates_db if str(t.get("status")).upper() == "APPROVED")
+    en_revision = sum(1 for t in templates_db if str(t.get("status")).upper() == "PENDING")
+    rechazadas = sum(1 for t in templates_db if str(t.get("status")).upper() == "REJECTED")
+    no_aprovisionadas = sum(1 for t in templates_db if str(t.get("status")).upper() == "NOT_PROVISIONED")
 
     return {
         "success": True,
-        "total": len(merged_list),
+        "total": len(templates_db),
         "metricas": {
             "aprobadas": aprobadas,
             "en_revision": en_revision,
             "rechazadas": rechazadas,
             "no_aprovisionadas": no_aprovisionadas
         },
-        "plantillas": merged_list
+        "plantillas": templates_db
     }
 
 
@@ -899,7 +908,7 @@ async def editar_plantilla_optica(name: str, payload: EditarPlantillaOpticaPaylo
                     detail=f"Meta rechazó la actualización de la plantilla: {edit_res.text}"
                 )
     else:
-        meta_status = "NOT_PROVISIONED"
+        meta_status = (local_tpl.get("status") if local_tpl else "NOT_PROVISIONED") or "NOT_PROVISIONED"
         meta_edit_msg = "Guardada localmente lista para aprovisionar en Meta."
 
     # 5. Persistir en Supabase
@@ -927,7 +936,8 @@ async def editar_plantilla_optica(name: str, payload: EditarPlantillaOpticaPaylo
             }
             supabase.table("whatsapp_templates").upsert(update_data, on_conflict="name").execute()
         except Exception as db_e:
-            logger.warning(f"[OpticaTemplates] Error actualizando en Supabase: {db_e}")
+            logger.error(f"[OpticaTemplates] Error crítico actualizando en Supabase: {db_e}")
+            raise HTTPException(status_code=500, detail=f"Error al guardar la plantilla en la base de datos: {str(db_e)}")
 
     return {
         "success": True,
@@ -1117,7 +1127,8 @@ async def eliminar_plantilla_optica(name: str):
         try:
             supabase.table("whatsapp_templates").delete().eq("name", clean_name).execute()
         except Exception as e:
-            logger.warning(f"[OpticaTemplates] Error eliminando en Supabase: {e}")
+            logger.error(f"[OpticaTemplates] Error eliminando en Supabase {clean_name}: {e}")
+            raise HTTPException(status_code=500, detail=f"Error al eliminar la plantilla de la base de datos: {str(e)}")
 
     return {"success": True, "mensaje": f"Plantilla '{clean_name}' eliminada correctamente."}
 

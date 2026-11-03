@@ -293,9 +293,14 @@ export default function OpticaTemplatesManager() {
       const data = await res.json()
       if (res.ok && data.success) {
         setFeedback({ type: 'success', text: data.mensaje || `Plantilla '${tpl.name}' eliminada.` })
-        if (selectedTemplate?.name === tpl.name) {
-          setSelectedTemplate(null)
-        }
+        // Remoción inmediata del estado local para respuesta instantánea en UI
+        setPlantillas(prev => {
+          const updated = prev.filter(p => p.name !== tpl.name)
+          if (selectedTemplate?.name === tpl.name) {
+            setSelectedTemplate(updated.length > 0 ? updated[0] : null)
+          }
+          return updated
+        })
         await cargarPlantillas(true)
       } else {
         setFeedback({ type: 'error', text: data.detail || 'Error al eliminar la plantilla en Meta.' })
@@ -326,6 +331,8 @@ export default function OpticaTemplatesManager() {
     const endpoint = isEditing ? `/api/optica-vortix/plantillas/${editingTemplate.name}` : '/api/optica-vortix/plantillas'
     const method = isEditing ? 'PUT' : 'POST'
 
+    const cleanButtons = buttons.filter(b => b.text && b.text.trim())
+
     try {
       const res = await apiFetch(endpoint, {
         method,
@@ -339,7 +346,7 @@ export default function OpticaTemplatesManager() {
           header_content: headerType === 'TEXT' ? headerContent.trim() : undefined,
           body_text: bodyText.trim(),
           footer_text: footerText.trim() || undefined,
-          buttons: buttons.filter(b => b.text.trim())
+          buttons: cleanButtons
         })
       })
       const data = await res.json()
@@ -350,6 +357,33 @@ export default function OpticaTemplatesManager() {
           type: 'success',
           text: data.mensaje || `¡Plantilla '${cleanName}' guardada con éxito!`
         })
+
+        // Actualización optimista inmediata en memoria
+        if (isEditing) {
+          setPlantillas(prev =>
+            prev.map(p => {
+              if (p.name === cleanName) {
+                const updated: OpticaTemplate = {
+                  ...p,
+                  titulo_amigable: tituloAmigable.trim() || cleanName,
+                  category: categoria,
+                  header_type: headerType,
+                  header_content: headerType === 'TEXT' ? headerContent.trim() : undefined,
+                  body_text: bodyText.trim(),
+                  footer_text: footerText.trim() || undefined,
+                  buttons: cleanButtons,
+                  status: data.status || p.status
+                }
+                if (selectedTemplate?.name === cleanName) {
+                  setSelectedTemplate(updated)
+                }
+                return updated
+              }
+              return p
+            })
+          )
+        }
+
         await cargarPlantillas(true)
       } else {
         alert(data.detail || 'Meta rechazó la plantilla.')
