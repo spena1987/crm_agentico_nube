@@ -205,7 +205,7 @@ function ProgramacionQuirurgicaContent() {
   const cargarQuirofanosYBloques = async () => {
     try {
       const [resQ, resBM] = await Promise.all([
-        apiFetch('/api/quirofanos?solo_activos=true'),
+        apiFetch('/api/quirofanos?solo_activos=true&solo_agenda=true'),
         apiFetch('/api/quirofanos/bloques-medicos')
       ])
       const dataQ = await resQ.json()
@@ -213,7 +213,10 @@ function ProgramacionQuirurgicaContent() {
 
       if (dataQ.success && Array.isArray(dataQ.quirofanos)) {
         setQuirofanos(dataQ.quirofanos)
-        setQuirofanoSeleccionadoId((prev) => prev || (dataQ.quirofanos[0]?.id || ''))
+        setQuirofanoSeleccionadoId((prev) => {
+          const existe = dataQ.quirofanos.some((q: any) => q.id === prev)
+          return existe ? prev : (dataQ.quirofanos[0]?.id || '')
+        })
       }
       if (dataBM.success) setBloquesMedicos(dataBM.bloques || [])
     } catch (e) {

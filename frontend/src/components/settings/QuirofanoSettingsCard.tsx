@@ -39,6 +39,7 @@ interface Quirofano {
   dias_operativos?: number[] // [1, 2, 3, 4, 5] donde 1=Lunes, 7=Domingo
   activo: boolean
   orden: number
+  mostrar_en_agenda?: boolean
   mostrar_en_pizarra?: boolean
   mostrar_en_recepcion?: boolean
   tipo_sala?: 'quirofano' | 'consultorio'
@@ -367,6 +368,9 @@ export default function QuirofanoSettingsCard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...salaEnEdicion,
+          mostrar_en_agenda: salaEnEdicion.mostrar_en_agenda !== false,
+          mostrar_en_pizarra: salaEnEdicion.mostrar_en_pizarra !== false,
+          mostrar_en_recepcion: salaEnEdicion.mostrar_en_recepcion !== false,
           duracion_slot_minutos: Number(salaEnEdicion.duracion_slot_minutos) || 15,
           hora_inicio: salaEnEdicion.hora_inicio || '08:00',
           hora_fin: salaEnEdicion.hora_fin || '14:00',
@@ -578,6 +582,7 @@ export default function QuirofanoSettingsCard({
                   dias_operativos: [1, 2, 3, 4, 5],
                   activo: true,
                   orden: quirofanos.length + 1,
+                  mostrar_en_agenda: true,
                   mostrar_en_pizarra: true,
                   mostrar_en_recepcion: true,
                   tipo_sala: 'quirofano',
@@ -716,7 +721,7 @@ export default function QuirofanoSettingsCard({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   {/* Tipo de Sala */}
                   <div>
                     <label className="text-[11px] font-semibold text-[var(--secondary)] block mb-1">
@@ -737,6 +742,31 @@ export default function QuirofanoSettingsCard({
                       <option value="quirofano">🏥 Quirófano Estéril (Cirugía)</option>
                       <option value="consultorio">🏢 Consultorio / Tratamientos (Láser/Iny.)</option>
                     </select>
+                  </div>
+
+                  {/* Switch Mostrar en Agenda Quirúrgica */}
+                  <div className="flex flex-col justify-center p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-[var(--border)]">
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <span className="text-[11px] font-bold text-[var(--foreground)] flex items-center gap-1">
+                        📅 Agenda Quirúrgica
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={salaEnEdicion.mostrar_en_agenda !== false}
+                        onChange={(e) =>
+                          setSalaEnEdicion({
+                            ...salaEnEdicion,
+                            mostrar_en_agenda: e.target.checked
+                          })
+                        }
+                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                    </label>
+                    <span className="text-[10px] text-[var(--secondary)] mt-1">
+                      {salaEnEdicion.mostrar_en_agenda !== false
+                        ? 'Visible en planificación y turnero'
+                        : 'Oculta en la agenda quirúrgica'}
+                    </span>
                   </div>
 
                   {/* Switch Mostrar en Pizarra de Quirófano en Vivo */}
@@ -1024,6 +1054,16 @@ export default function QuirofanoSettingsCard({
                     >
                       {q.tipo_sala === 'consultorio' ? '🏢 Consultorio / Tratamientos' : '🏥 Quirófano Estéril'}
                     </span>
+
+                    {q.mostrar_en_agenda !== false ? (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300/40">
+                        📅 Agenda Qx
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-400">
+                        🚫 Fuera de Agenda
+                      </span>
+                    )}
 
                     {q.mostrar_en_pizarra !== false ? (
                       <span className="px-2 py-0.5 rounded-md font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300/40">

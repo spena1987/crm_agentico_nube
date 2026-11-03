@@ -6391,7 +6391,8 @@ def actualizar_configuracion_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
 def get_quirofanos(
     solo_activos: bool = False,
     solo_pizarra: bool = False,
-    solo_recepcion: bool = False
+    solo_recepcion: bool = False,
+    solo_agenda: bool = False
 ) -> List[Dict[str, Any]]:
     """Lista las salas de quirófano configuradas con filtros opcionales de ámbito y visibilidad."""
     if not supabase:
@@ -6404,6 +6405,8 @@ def get_quirofanos(
             query = query.eq("mostrar_en_pizarra", True)
         if solo_recepcion:
             query = query.eq("mostrar_en_recepcion", True)
+        if solo_agenda:
+            query = query.eq("mostrar_en_agenda", True)
         resp = query.execute()
         return resp.data or []
     except Exception as e:
@@ -6412,7 +6415,7 @@ def get_quirofanos(
 
 ALLOWED_KEYS_QUIROFANO = {
     "nombre", "codigo", "descripcion", "color", "activo", "orden", 
-    "duracion_slot_minutos", "equipamiento", "mostrar_en_pizarra", 
+    "duracion_slot_minutos", "equipamiento", "mostrar_en_agenda", "mostrar_en_pizarra", 
     "mostrar_en_recepcion", "tipo_sala", "permite_simultaneos", "capacidad_simultanea",
     "hora_inicio", "hora_fin", "dias_operativos"
 }
