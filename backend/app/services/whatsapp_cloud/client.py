@@ -103,6 +103,8 @@ _CREDENTIALS_CACHE: Dict[str, Any] = {
     "token": None,
     "estudios_phone_id": None,
     "estudios_config": None,
+    "optica_phone_id": None,
+    "optica_config": None,
     "expires_at": 0.0
 }
 
@@ -126,9 +128,86 @@ def invalidate_whatsapp_credentials_cache():
     _CREDENTIALS_CACHE["token"] = None
     _CREDENTIALS_CACHE["estudios_phone_id"] = None
     _CREDENTIALS_CACHE["estudios_config"] = None
+    _CREDENTIALS_CACHE["optica_phone_id"] = None
+    _CREDENTIALS_CACHE["optica_config"] = None
     _APP_SECRET_CACHE["expires_at"] = 0.0
     _APP_SECRET_CACHE["secret"] = None
     logger.info("[Credentials Cache] Memoria caché de credenciales WABA invalidada.")
+
+
+def get_whatsapp_optica_config() -> Dict[str, Any]:
+    """
+    Obtiene la configuración de la Línea 3 dedicada a Óptica Vortix desde
+    configuracion_sistema (clave='optica_vortix_config' o clave='whatsapp_lineas') o variables de entorno.
+    """
+    import time
+    import os
+    global _CREDENTIALS_CACHE
+
+    now = time.time()
+    if _CREDENTIALS_CACHE["expires_at"] > now and _CREDENTIALS_CACHE.get("optica_config") is not None:
+        return _CREDENTIALS_CACHE["optica_config"]
+
+    cfg: Dict[str, Any] = {
+        "optica_phone_number_id": os.getenv("META_WA_PHONE_NUMBER_ID_OPTICA") or os.getenv("META_PHONE_NUMBER_ID_OPTICA") or "",
+        "optica_display_phone": os.getenv("META_WA_DISPLAY_PHONE_OPTICA") or "",
+        "optica_verified_name": "Óptica Vortix",
+        "optica_waba_id": os.getenv("META_WA_WABA_ID") or "3731563350343089",
+    }
+
+    try:
+        from app.db import supabase
+        if supabase:
+            # 1. Leer de whatsapp_lineas si tiene campos optica_*
+            res_l = supabase.table("configuracion_sistema").select("valor").eq("clave", "whatsapp_lineas").limit(1).execute()
+            if res_l.data and len(res_l.data) > 0:
+                val_l = res_l.data[0].get("valor")
+                if isinstance(val_l, dict):
+                    for k, v in val_l.items():
+                        if k.startswith("optica_") and v is not None and str(v).strip() != "":
+                            cfg[k] = v
+                        elif k.startswith("optica_") and isinstance(v, bool):
+                            cfg[k] = v
+
+            # 2. Priorizar clave dedicada 'optica_vortix_config'
+            res_o = supabase.table("configuracion_sistema").select("valor").eq("clave", "optica_vortix_config").limit(1).execute()
+            if res_o.data and len(res_o.data) > 0:
+                val_o = res_o.data[0].get("valor")
+                if isinstance(val_o, dict):
+                    for k, v in val_o.items():
+                        if v is not None and str(v).strip() != "":
+                            cfg[k] = v
+                        elif isinstance(v, (bool, int, float, list, dict)):
+                            cfg[k] = v
+    except Exception as e:
+        logger.debug(f"[Credentials] Error leyendo configuración de Óptica Vortix: {e}")
+
+    _CREDENTIALS_CACHE["optica_config"] = cfg
+    _CREDENTIALS_CACHE["optica_phone_id"] = str(cfg.get("optica_phone_number_id") or "").strip() or None
+    return cfg
+
+
+def get_whatsapp_optica_credentials() -> tuple[Optional[str], Optional[str]]:
+    """
+    Retorna (optica_phone_number_id, system_user_access_token) para la Línea 3 (Óptica Vortix).
+    Comparte el System User Access Token y WABA de la cuenta principal de Meta.
+    Seguridad Fail-Closed: NUNCA hace fallback al phone_id quirúrgico ni al de estudios.
+    """
+    q_phone_id, token = get_whatsapp_cloud_credentials()
+    est_phone_id, _ = get_whatsapp_estudios_credentials()
+    cfg = get_whatsapp_optica_config()
+    optica_phone_id = str(cfg.get("optica_phone_number_id") or "").strip() or None
+
+    if optica_phone_id and (
+        (q_phone_id and optica_phone_id == str(q_phone_id).strip())
+        or (est_phone_id and optica_phone_id == str(est_phone_id).strip())
+    ):
+        logger.error(
+            f"[Seguridad Fail-Closed] optica_phone_number_id ({optica_phone_id}) coincide con línea quirúrgica o de estudios. Se bloquea uso."
+        )
+        return None, token
+
+    return optica_phone_id, token
 
 
 def get_whatsapp_estudios_config() -> Dict[str, Any]:
@@ -318,8 +397,25 @@ class WhatsAppCloudClient:
         timeout_seconds: float = 12.0,
         line: str = "quirurgico"
     ):
-        if not phone_number_id or not access_token:
-            if line == "estudios":
+        norm_line = (line or "quirurgico").lower().strip()
+        if norm_line in ("optica", "vortix"):
+            opt_phone, opt_token = get_whatsapp_optica_credentials()
+            # Seguridad Fail-Closed: NUNCA hacer fallback al phone_id quirúrgico ni de estudios
+            phone_number_id = phone_number_id or opt_phone
+            access_token = access_token or opt_token
+            q_phone, _ = get_whatsapp_cloud_credentials()
+            est_phone, _ = get_whatsapp_estudios_credentials()
+            cand_id = str(phone_number_id or "").strip()
+            if cand_id and (
+                (q_phone and cand_id == str(q_phone).strip())
+                or (est_phone and cand_id == str(est_phone).strip())
+            ):
+                raise ValueError(
+                    "Seguridad Fail-Closed: El phone_number_id de la Línea 3 (Óptica Vortix) no puede coincidir "
+                    "con el de la Línea 1 (Quirúrgica) ni con el de la Línea 2 (Estudios)."
+                )
+        elif not phone_number_id or not access_token:
+            if norm_line == "estudios":
                 est_phone, est_token = get_whatsapp_estudios_credentials()
                 phone_number_id = phone_number_id or est_phone
                 access_token = access_token or est_token
@@ -330,7 +426,7 @@ class WhatsAppCloudClient:
 
         self.phone_number_id = str(phone_number_id or "").strip()
         self.access_token = str(access_token or "").strip()
-        self.line = line
+        self.line = norm_line
         self.graph_version = graph_version
         self.max_retries = max_retries
         self.timeout = httpx.Timeout(timeout_seconds, connect=5.0)
@@ -357,6 +453,20 @@ class WhatsAppCloudClient:
         """
         Ejecuta solicitudes HTTP contra Graph API con Exponential Backoff, Jitter y Circuit Breaker.
         """
+        if self.line in ("optica", "vortix"):
+            q_phone, _ = get_whatsapp_cloud_credentials()
+            est_phone, _ = get_whatsapp_estudios_credentials()
+            if not self.phone_number_id:
+                raise ValueError(
+                    "La Línea 3 de Óptica Vortix no tiene un phone_number_id exclusivo configurado. "
+                    "Vincule y active primero el número de la óptica en Configuración > Línea WhatsApp."
+                )
+            if (q_phone and self.phone_number_id == str(q_phone).strip()) or (est_phone and self.phone_number_id == str(est_phone).strip()):
+                raise ValueError(
+                    "Seguridad Fail-Closed: La Línea 3 de Óptica Vortix tiene un phone_number_id que colisiona "
+                    "con la línea quirúrgica o de estudios. Operación abortada."
+                )
+
         if not self._circuit_breaker.can_execute():
             raise CircuitBreakerOpenException("Circuit Breaker está OPEN. Meta Graph API temporalmente no disponible.")
 

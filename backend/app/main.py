@@ -382,8 +382,11 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cron_limpieza_diaria_media())
     asyncio.create_task(cron_envio_automatico_consentimientos_anticipados())
     asyncio.create_task(cron_seguimiento_automatico_quirurgico())
-    from app.services.optica_vortix_service import cron_automatismos_optica_vortix
-    asyncio.create_task(cron_automatismos_optica_vortix())
+    try:
+        from app.services.optica_vortix_service import cron_automatismos_optica_vortix
+        asyncio.create_task(cron_automatismos_optica_vortix())
+    except Exception as e:
+        logger.warning(f"Aviso al iniciar cron de óptica: {e}")
     yield
     logger.info("Deteniendo aplicación CRM Médico...")
 
@@ -433,8 +436,11 @@ from app.services.estudios_tecnicos_service import estudios_router
 app.include_router(estudios_router)
 
 # Módulo Independiente Óptica Vortix (Línea 3 de WhatsApp Cloud API)
-from app.routers.optica_vortix_router import optica_vortix_router
-app.include_router(optica_vortix_router)
+try:
+    from app.routers.optica_vortix_router import optica_vortix_router
+    app.include_router(optica_vortix_router)
+except Exception as e:
+    logger.warning(f"Aviso al cargar router de óptica: {e}")
 
 # ====================================================================
 # SERVIDOR INTELIGENTE DE ESTÁTICOS Y PDFs ON-DEMAND (CON AUTO-REGENERACIÓN)

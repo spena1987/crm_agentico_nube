@@ -147,10 +147,26 @@ async def process_meta_webhook_payload(payload_dict: Dict[str, Any]):
 async def handle_status_update(status_dict: Dict[str, Any], phone_number_id: Optional[str]):
     """
     Actualiza el estado de entrega o lectura de un mensaje outbound en:
+      0. Línea 3 (Óptica Vortix): si phone_number_id corresponde a Óptica Vortix o el wamid pertenece a optica_mensajes,
+         actualiza exclusivamente las tablas de Óptica Vortix y retorna inmediatamente.
       1. whatsapp_messages (auditoría oficial de Meta)
       2. public.mensajes (chat interactivo del CRM para mostrar tildes ✓, ✓✓ gris, ✓✓ azul o alerta de fallo)
     """
     wamid = status_dict.get("id")
+    try:
+        from app.services.whatsapp_cloud.client import get_whatsapp_optica_credentials
+        from app.services.optica_vortix_service import handle_optica_line_status_update
+        optica_phone_id, _ = get_whatsapp_optica_credentials()
+        if optica_phone_id and phone_number_id and str(phone_number_id).strip() == str(optica_phone_id).strip():
+            await handle_optica_line_status_update(status_dict, str(phone_number_id).strip())
+            return
+        elif wamid:
+            handled_optica = await handle_optica_line_status_update(status_dict, phone_number_id, only_if_exists=True)
+            if handled_optica:
+                return
+    except Exception as opt_st_err:
+        logger.debug(f"[Worker Status Óptica] Aviso verificando status de óptica: {opt_st_err}")
+
     status_name = status_dict.get("status")  # sent, delivered, read, failed
     timestamp_epoch = status_dict.get("timestamp")
 
@@ -395,13 +411,26 @@ async def handle_estudios_line_inbound_message(
 async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Optional[str], contact_name: Optional[str]):
     """
     Maneja un mensaje de paciente entrante:
+      - Si el phone_number_id pertenece a la Línea 3 (Óptica Vortix), delega a
+        handle_optica_line_inbound_message con aislamiento 100% en tablas optica_*.
       - Si el phone_number_id pertenece a la Línea 2 (Estudios Oftalmológicos), delega a
         handle_estudios_line_inbound_message sin tocar pacientes ni conversaciones del CRM quirúrgico.
       - En la Línea 1 (Quirúrgico), normaliza el teléfono E.164, renueva la ventana de 24 horas,
         descarga/transcribe notas de voz o imágenes y rutea al agente IA o bandeja de asesores.
     """
     if phone_number_id:
-        from app.services.whatsapp_cloud.client import get_whatsapp_estudios_credentials
+        from app.services.whatsapp_cloud.client import (
+            get_whatsapp_estudios_credentials,
+            get_whatsapp_optica_config,
+            get_whatsapp_optica_credentials
+        )
+        optica_phone_id, _ = get_whatsapp_optica_credentials()
+        if optica_phone_id and str(phone_number_id).strip() == str(optica_phone_id).strip():
+            from app.services.optica_vortix_service import handle_optica_line_inbound_message
+            optica_cfg = get_whatsapp_optica_config()
+            await handle_optica_line_inbound_message(msg_dict, str(phone_number_id).strip(), contact_name, optica_cfg)
+            return
+
         est_phone_id, _ = get_whatsapp_estudios_credentials()
         if est_phone_id and str(phone_number_id).strip() == str(est_phone_id).strip():
             await handle_estudios_line_inbound_message(msg_dict, str(phone_number_id).strip(), contact_name)

@@ -21,6 +21,7 @@ const ROUTE_TO_MODULE: Record<string, string> = {
   '/presupuestos': 'presupuestos',
   '/pacientes': 'pacientes',
   '/estudios-tecnicos': 'estudios-tecnicos',
+  '/optica-vortix': 'optica-vortix',
   '/logs': 'logs',
   '/ajustes': 'ajustes',
   '/ayuda': 'ayuda',

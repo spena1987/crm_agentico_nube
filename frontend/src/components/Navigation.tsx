@@ -28,6 +28,10 @@ import {
   UserCheck,
   Eye,
   EyeOff,
+  Glasses,
+  Sparkles,
+  Megaphone,
+  Cpu,
   HelpCircle,
   KeyRound,
   CheckCircle2,
@@ -82,6 +86,18 @@ const allNavItems: NavItem[] = [
   { code: 'presupuestos', label: 'Presupuestos', href: '/presupuestos', icon: FileText },
   { code: 'pacientes', label: 'Pacientes', href: '/pacientes', icon: Users },
   { code: 'estudios-tecnicos', label: 'Estudios (Técnicos)', href: '/estudios-tecnicos', icon: Eye },
+  {
+    code: 'optica-vortix',
+    label: 'Óptica Vortix',
+    href: '/optica-vortix/chat',
+    icon: Glasses,
+    subItems: [
+      { code: 'optica-vortix', label: 'Chat Comercial', href: '/optica-vortix/chat', icon: MessageSquare },
+      { code: 'optica-vortix', label: 'Oportunidades del Día', href: '/optica-vortix/oportunidades', icon: Sparkles },
+      { code: 'optica-vortix', label: 'Campañas & Placas', href: '/optica-vortix/campanas', icon: Megaphone },
+      { code: 'optica-vortix', label: 'Automatismos & Línea', href: '/optica-vortix/automatizaciones', icon: Cpu },
+    ]
+  },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },
   { code: 'ajustes', label: 'Ajustes', href: '/ajustes', icon: Settings },
   { code: 'ayuda', label: 'Centro de Ayuda', href: '/ayuda', icon: HelpCircle },
@@ -98,10 +114,13 @@ export default function Navigation() {
   const [mobileOpen, setMobileOpen] = useState(false)
   // Contador de chats con mensajes no leídos
   const [unreadChatCount, setUnreadChatCount] = useState<number>(0)
+  // Contador de mensajes no leídos de Óptica Vortix
+  const [unreadOpticaCount, setUnreadOpticaCount] = useState<number>(0)
   // Contador de recontactos quirúrgicos pendientes del día o vencidos
   const [recontactosPendientesCount, setRecontactosPendientesCount] = useState<number>(0)
   const [quirofanoMenuOpen, setQuirofanoMenuOpen] = useState(true)
   const [asesoriaMenuOpen, setAsesoriaMenuOpen] = useState(true)
+  const [opticaMenuOpen, setOpticaMenuOpen] = useState(true)
   const [clinicLogo, setClinicLogo] = useState<string | null>(null)
   const [clinicName, setClinicName] = useState<string>('Centro Médico Nube')
 
@@ -172,6 +191,16 @@ export default function Navigation() {
         const dataR = await resR.json()
         setRecontactosPendientesCount(dataR.total || 0)
       }
+      try {
+        const { data: optRows } = await (supabase as any)
+          .from('optica_conversaciones')
+          .select('no_leidos')
+          .gt('no_leidos', 0)
+        if (Array.isArray(optRows)) {
+          const sum = optRows.reduce((acc: number, r: any) => acc + (Number(r.no_leidos) || 0), 0)
+          setUnreadOpticaCount(sum)
+        }
+      } catch {}
     } catch (e) {}
   }
 
@@ -252,6 +281,13 @@ export default function Navigation() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'asesorias_quirurgicas' },
+        () => {
+          fetchUnreadMetrics()
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'optica_conversaciones' },
         () => {
           fetchUnreadMetrics()
         }
@@ -363,14 +399,18 @@ export default function Navigation() {
 
             const isAsesoria = item.code === 'pipeline-quirurgico'
             const isAsesoriaActive = pathname === '/pipeline-quirurgico' || pathname === '/asesoramiento-recepcion'
+
+            const isOptica = item.code === 'optica-vortix'
+            const isOpticaActive = pathname.startsWith('/optica-vortix')
             
-            const isGroupActive = isQuirofano ? isQuirofanoActive : isAsesoria ? isAsesoriaActive : isActive
+            const isGroupActive = isQuirofano ? isQuirofanoActive : isAsesoria ? isAsesoriaActive : isOptica ? isOpticaActive : isActive
 
             if (item.subItems && !isCollapsed) {
-              const isMenuOpen = isQuirofano ? quirofanoMenuOpen : asesoriaMenuOpen
+              const isMenuOpen = isQuirofano ? quirofanoMenuOpen : isAsesoria ? asesoriaMenuOpen : opticaMenuOpen
               const toggleMenu = () => {
                 if (isQuirofano) setQuirofanoMenuOpen(!quirofanoMenuOpen)
                 else if (isAsesoria) setAsesoriaMenuOpen(!asesoriaMenuOpen)
+                else if (isOptica) setOpticaMenuOpen(!opticaMenuOpen)
               }
 
               return (
@@ -394,6 +434,11 @@ export default function Navigation() {
                           🔥 {recontactosPendientesCount}
                         </span>
                       )}
+                      {isOptica && unreadOpticaCount > 0 && (
+                        <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-emerald-500 text-white flex items-center gap-0.5" title={`${unreadOpticaCount} mensajes sin leer en Óptica Vortix`}>
+                          {unreadOpticaCount > 99 ? '99+' : unreadOpticaCount}
+                        </span>
+                      )}
                       <ChevronDown
                         size={14}
                         className={`text-slate-400 transition-transform duration-200 ${isMenuOpen ? 'rotate-180 text-blue-600' : ''}`}
@@ -407,6 +452,7 @@ export default function Navigation() {
                         const SubIcon = sub.icon || Activity
                         const isSubActive = pathname === sub.href
                         const esPipeline = sub.code === 'pipeline-quirurgico'
+                        const esOpticaChat = sub.href === '/optica-vortix/chat'
                         return (
                           <Link
                             key={sub.href}
@@ -425,6 +471,11 @@ export default function Navigation() {
                             {esPipeline && recontactosPendientesCount > 0 && (
                               <span className={`px-1.5 py-0.2 text-[9.5px] font-bold rounded-full ${isSubActive ? 'bg-white text-blue-700' : 'bg-purple-500 text-white animate-pulse'}`}>
                                 {recontactosPendientesCount}
+                              </span>
+                            )}
+                            {esOpticaChat && unreadOpticaCount > 0 && (
+                              <span className={`px-1.5 py-0.2 text-[9.5px] font-bold rounded-full ${isSubActive ? 'bg-white text-blue-700' : 'bg-emerald-500 text-white animate-pulse'}`}>
+                                {unreadOpticaCount > 99 ? '99+' : unreadOpticaCount}
                               </span>
                             )}
                           </Link>
