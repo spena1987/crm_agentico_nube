@@ -1713,6 +1713,51 @@ def forward_message_api(payload: ForwardMessageRequest):
                         filename=file_name,
                         conversacion_id=dest_conv_id
                     )
+
+                    if "error" in disp_res and not disp_res.get("enviado_real", False) and not disp_res.get("success", False):
+                        destinos_resultados.append({
+                            "conversacion_id": dest_conv_id,
+                            "paciente_nombre": paciente_nombre,
+                            "telefono": clean_tel_dest,
+                            "success": False,
+                            "error": disp_res.get("error", "Error enviando multimedia a WhatsApp"),
+                            "ventana_24h": "ABIERTA"
+                        })
+                        continue
+
+                    wamid = disp_res.get("wamid") or disp_res.get("message_id")
+                    meta_fwd = {
+                        **meta_orig,
+                        "tipo": media_tipo,
+                        "media_url": media_url,
+                        "file_name": file_name,
+                        "caption": caption or "",
+                        "wamid": wamid,
+                        "whatsapp_message_id": wamid,
+                        "es_reenviado": True,
+                        "reenviado_desde_mensaje_id": payload.mensaje_id,
+                        "operador_nombre": payload.usuario_nombre,
+                        "operador_id": payload.usuario_id,
+                        "delivery_status": "enviado",
+                        "provider": disp_res.get("provider", "meta_cloud_api")
+                    }
+                    msg_guardado = guardar_mensaje(
+                        conversacion_id=dest_conv_id,
+                        emisor="operador",
+                        contenido=caption or contenido_orig or (f"[{file_name}]" if file_name else f"[{media_tipo.upper()}]"),
+                        whatsapp_message_id=wamid,
+                        metadata_json=meta_fwd
+                    )
+
+                    destinos_resultados.append({
+                        "conversacion_id": dest_conv_id,
+                        "paciente_nombre": paciente_nombre,
+                        "telefono": clean_tel_dest,
+                        "success": True,
+                        "tipo_envio": "WHATSAPP_REAL",
+                        "ventana_24h": "ABIERTA",
+                        "mensaje_id": msg_guardado.get("id") if msg_guardado else None
+                    })
                 else:
                     disp_res = whatsapp_manager.enviar_mensaje(
                         telefono_o_jid=clean_tel_dest,
@@ -1723,25 +1768,26 @@ def forward_message_api(payload: ForwardMessageRequest):
                         usuario_nombre=payload.usuario_nombre
                     )
 
-                # Marcar metadata_json con es_reenviado
-                msg_creado = disp_res.get("mensaje") or {}
-                if msg_creado and msg_creado.get("id"):
-                    m_id_new = msg_creado.get("id")
-                    meta_new = msg_creado.get("metadata_json") or {}
-                    meta_new["es_reenviado"] = True
-                    meta_new["reenviado_desde_mensaje_id"] = payload.mensaje_id
-                    meta_new["operador_nombre"] = payload.usuario_nombre
-                    meta_new["operador_id"] = payload.usuario_id
-                    supabase.table("mensajes").update({"metadata_json": meta_new}).eq("id", m_id_new).execute()
+                    # Marcar metadata_json con es_reenviado
+                    msg_creado = disp_res.get("mensaje") or {}
+                    if msg_creado and msg_creado.get("id"):
+                        m_id_new = msg_creado.get("id")
+                        meta_new = msg_creado.get("metadata_json") or {}
+                        meta_new["es_reenviado"] = True
+                        meta_new["reenviado_desde_mensaje_id"] = payload.mensaje_id
+                        meta_new["operador_nombre"] = payload.usuario_nombre
+                        meta_new["operador_id"] = payload.usuario_id
+                        supabase.table("mensajes").update({"metadata_json": meta_new}).eq("id", m_id_new).execute()
 
-                destinos_resultados.append({
-                    "conversacion_id": dest_conv_id,
-                    "paciente_nombre": paciente_nombre,
-                    "telefono": clean_tel_dest,
-                    "success": True,
-                    "tipo_envio": "WHATSAPP_REAL",
-                    "ventana_24h": "ABIERTA"
-                })
+                    destinos_resultados.append({
+                        "conversacion_id": dest_conv_id,
+                        "paciente_nombre": paciente_nombre,
+                        "telefono": clean_tel_dest,
+                        "success": True,
+                        "tipo_envio": "WHATSAPP_REAL",
+                        "ventana_24h": "ABIERTA",
+                        "mensaje_id": msg_creado.get("id") if msg_creado else None
+                    })
             else:
                 # Caso B: Ventana de 24h cerrada o sin teléfono
                 if payload.como_nota_interna_si_cerrada:
@@ -1781,15 +1827,17 @@ def forward_message_api(payload: ForwardMessageRequest):
                         "ventana_24h": "CERRADA"
                     })
 
-            # Actualizar último mensaje de la conversación destino
-            preview_txt = (contenido_orig[:40] + "...") if len(contenido_orig) > 40 else contenido_orig
-            if not preview_txt and media_url:
-                preview_txt = f"[{file_name or media_tipo}]"
-            supabase.table("conversaciones").update({
-                "ultimo_mensaje": f"↗️ Reenviado: {preview_txt}",
-                "ultimo_mensaje_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }).eq("id", dest_conv_id).execute()
+            # Actualizar último mensaje de la conversación destino únicamente si el reenvío fue exitoso
+            if destinos_resultados and destinos_resultados[-1].get("success"):
+                preview_txt = (contenido_orig[:40] + "...") if len(contenido_orig) > 40 else contenido_orig
+                if not preview_txt and media_url:
+                    preview_txt = f"[{file_name or media_tipo}]"
+                now_iso = datetime.now(timezone.utc).isoformat()
+                supabase.table("conversaciones").update({
+                    "ultimo_mensaje": f"↗️ Reenviado: {preview_txt}",
+                    "ultimo_mensaje_at": now_iso,
+                    "updated_at": now_iso
+                }).eq("id", dest_conv_id).execute()
 
         except Exception as dest_err:
             logger.error(f"Error reenviando mensaje a conversación {dest_conv_id}: {dest_err}")
@@ -1977,13 +2025,17 @@ async def send_media_api(
     try:
         content = await file.read()
         mime_type = file.content_type or "application/octet-stream"
-        original_name = file.filename or "archivo"
+        raw_original_name = file.filename or "archivo"
+        # Sanitizar nombre para almacenamiento y URLs seguras sin espacios ni caracteres conflictivos
+        clean_ext = os.path.splitext(raw_original_name)[1]
+        clean_base = re.sub(r'[^a-zA-Z0-9_-]+', '_', os.path.splitext(raw_original_name)[0]).strip('_') or "adjunto"
+        original_name = f"{clean_base}{clean_ext}"
         
         subfolder = "images" if "image" in mime_type else "documents"
         tipo = "imagen" if "image" in mime_type else "audio" if "audio" in mime_type else "documento"
         media_type_baileys = "image" if "image" in mime_type else "audio" if "audio" in mime_type else "document"
 
-        # Guardar en almacenamiento estático
+        # Guardar en almacenamiento estático y Supabase Storage canónico
         saved = media_service.save_media_bytes(
             data=content,
             subfolder=subfolder,
@@ -1992,20 +2044,20 @@ async def send_media_api(
             prefix="crm_out"
         )
         
-        media_url_final = saved["media_url"]
+        media_url_final = (saved.get("storage_url") or saved.get("media_url") or "").rstrip("?")
 
-        # Intentar subir a Supabase Storage Bucket whatsapp-media
-        if supabase:
+        # Si aún no tiene URL de Supabase Storage, intentar subir como respaldo con nombre saneado
+        if supabase and ("supabase.co" not in media_url_final):
             try:
-                storage_path = f"media/{int(time.time())}_{original_name}"
-                res = supabase.storage.from_("whatsapp-media").upload(
+                storage_path = f"{subfolder}/{int(time.time())}_{original_name}"
+                supabase.storage.from_("whatsapp-media").upload(
                     file=content,
                     path=storage_path,
                     file_options={"content-type": mime_type, "upsert": "true"}
                 )
                 public_res = supabase.storage.from_("whatsapp-media").get_public_url(storage_path)
                 if public_res:
-                    media_url_final = public_res
+                    media_url_final = public_res.rstrip("?")
             except Exception as sup_err:
                 logger.warning(f"No se pudo subir a Supabase Storage, usando URL local: {sup_err}")
 
@@ -2030,14 +2082,15 @@ async def send_media_api(
                 guardar_mensaje(
                     conversacion_id=conversacion_id,
                     emisor="operador",
-                    contenido=caption or original_name,
+                    contenido=caption or raw_original_name,
                     whatsapp_message_id=wamid,
                     metadata_json={
                         "wamid": wamid,
                         "tipo": tipo,
                         "media_url": media_url_final,
                         "relative_url": saved.get("relative_url"),
-                        "file_name": original_name,
+                        "file_name": raw_original_name,
+                        "safe_file_name": original_name,
                         "mime_type": mime_type,
                         "file_size_bytes": len(content),
                         "caption": caption or "",

@@ -34,9 +34,12 @@ class GeclisaClient:
         raw_pass = os.getenv("GECLISA_PASSWORD", "")
         self.password = raw_pass.strip().strip("'\"") if raw_pass else None
         
-        # Sesión HTTP persistente con SSL verify desactivado para compatibilidad con puerto :98
+        # Sesión HTTP persistente con SSL verify desactivado y pool ampliado para concurrencia
         self.session = requests.Session()
         self.session.verify = False
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=2)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
         
         # Caché de Token y Cerrojo Concurrente
         self._token = None
@@ -808,7 +811,7 @@ class GeclisaClient:
             if items_del_dia:
                 tids = [t.get("turnoId") or t.get("id") for t in items_del_dia if (t.get("turnoId") or t.get("id"))]
                 if tids:
-                    with ThreadPoolExecutor(max_workers=min(10, len(tids))) as executor:
+                    with ThreadPoolExecutor(max_workers=min(6, len(tids))) as executor:
                         future_to_tid = {executor.submit(self.obtener_turno_por_id, tid): tid for tid in tids}
                         for future in as_completed(future_to_tid):
                             tid = future_to_tid[future]
@@ -963,10 +966,23 @@ class GeclisaClient:
             ]
         
         all_turnos = []
-        with ThreadPoolExecutor(max_workers=12) as executor:
+        def _es_prestador_asistencial(p: dict) -> bool:
+            nombre = str(p.get("nombre") or "").upper().strip()
+            if not nombre:
+                return False
+            excluir_prefix = ("A RECEPCION", "ARCHIVADO", "ADMINISTRACION", "SECRETARIA", "SISTEMAS", "MANTENIMIENTO", "PRUEBA")
+            if any(nombre.startswith(pref) for pref in excluir_prefix):
+                return False
+            if "ARCHIVAD" in nombre or "NO USAR" in nombre:
+                return False
+            return True
+
+        prestadores_a_consultar = [p for p in prestadores if _es_prestador_asistencial(p)] or prestadores
+
+        with ThreadPoolExecutor(max_workers=16) as executor:
             future_to_pre = {
                 executor.submit(self.obtener_agenda_prestador, p.get("pre_id"), fecha_iso): p 
-                for p in prestadores if p.get("pre_id")
+                for p in prestadores_a_consultar if p.get("pre_id")
             }
             for future in as_completed(future_to_pre):
                 try:

@@ -7,13 +7,14 @@ y Configuración / Vinculación de la Línea 3 de WhatsApp Cloud API.
 
 import os
 import re
+import time
 import uuid
 import random
 import asyncio
 import logging
 import httpx
 from datetime import datetime, date, timedelta, timezone
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Tuple
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Body, Request
 from pydantic import BaseModel
@@ -2226,160 +2227,244 @@ def _enriquecer_campana_optica_frontend(c: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Caché en memoria para audiencia de Geclisa con cerrojo para evitar ráfagas duplicadas
+_AUDIENCIA_GECLISA_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_AUDIENCIA_CACHE_LOCK = asyncio.Lock()
+AUDIENCIA_CACHE_TTL_SECONDS = 300  # 5 minutos
+
+
 @optica_vortix_router.get("/campanas/audiencia-geclisa")
 async def obtener_audiencia_geclisa_campana(
     fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD del turno en Geclisa"),
     dias_anticipacion: int = Query(1, ge=0, le=14),
-    prestador_id: Optional[str] = Query(None)
+    prestador_id: Optional[str] = Query(None),
+    force_refresh: bool = Query(False, description="Forzar recarga omitiendo la caché en memoria")
 ):
     """
     Consulta en tiempo real la agenda global de Centrovisión vía GeclisaClient para la fecha solicitada,
     aplica filtros de prácticas no quirúrgicas, enriquece teléfonos móviles de Mendoza (+549261...),
     cruza con el estado de Cooldown de 30 días y Opt-Out en Supabase,
     y devuelve la nómina granular de pacientes con la lista de prestadores disponibles para selección interactiva.
+    Implementa caché en memoria de 5 minutos y cerrojo contra ráfagas concurrentes.
     """
     now_mza = get_mendoza_now()
-    if fecha and re.match(r"^\d{4}-\d{2}-\d{2}$", str(fecha).strip()):
+    d_anticipacion = 1
+    try:
+        d_anticipacion = int(dias_anticipacion) if not hasattr(dias_anticipacion, "default") else 1
+    except Exception:
+        d_anticipacion = 1
+
+    p_id_str: Optional[str] = None
+    if prestador_id is not None and not hasattr(prestador_id, "default"):
+        raw_p = str(prestador_id).strip()
+        if raw_p and raw_p != "TODOS":
+            p_id_str = raw_p
+
+    f_refresh: bool = False
+    if force_refresh is not None and not hasattr(force_refresh, "default"):
+        f_refresh = bool(force_refresh)
+
+    if fecha and not hasattr(fecha, "default") and re.match(r"^\d{4}-\d{2}-\d{2}$", str(fecha).strip()):
         fecha_obj = str(fecha).strip()
     else:
-        fecha_obj = (now_mza.date() + timedelta(days=dias_anticipacion)).isoformat()
+        fecha_obj = (now_mza.date() + timedelta(days=d_anticipacion)).isoformat()
 
-    # Ejecutar sincronización en modo dry_run=True (sin escribir en BD)
-    res_dry = await asyncio.to_thread(
-        sincronizar_turnos_proximos_optica,
-        dias_anticipacion,
-        True,
-        False,
-        fecha_obj
-    )
+    now_ts = time.time()
 
-    elegibles_raw = res_dry.get("elegibles") or []
-    excluidos_raw = res_dry.get("excluidos") or []
+    # 1. Servir desde caché si no se solicita force_refresh
+    if not f_refresh and fecha_obj in _AUDIENCIA_GECLISA_CACHE:
+        cached_ts, cached_payload = _AUDIENCIA_GECLISA_CACHE[fecha_obj]
+        if now_ts - cached_ts < AUDIENCIA_CACHE_TTL_SECONDS:
+            logger.info(f"[AudienciaGeclisa] Sirviendo fecha {fecha_obj} desde caché en memoria.")
+            pacs = list(cached_payload.get("pacientes") or [])
+            if p_id_str:
+                pacs = [p for p in pacs if str(p.get("prestador_id")) == p_id_str]
+            return {
+                **cached_payload,
+                "cached": True,
+                "total_turnos": len(pacs),
+                "elegibles_count": sum(1 for p in pacs if p.get("estado_envio") == "ELEGIBLE"),
+                "cooldown_count": sum(1 for p in pacs if p.get("estado_envio") == "COOLDOWN_ACTIVO"),
+                "opt_out_count": sum(1 for p in pacs if p.get("estado_envio") == "OPT_OUT"),
+                "sin_telefono_count": sum(1 for p in pacs if p.get("estado_envio") == "SIN_CELULAR"),
+                "pacientes": pacs
+            }
 
-    # Cargar set de opt_out y set de cooldown 30d
-    now_utc = datetime.now(timezone.utc)
-    since_30d = (now_utc - timedelta(days=30)).isoformat()
-    telefonos_cooldown: Set[str] = set()
-    telefonos_optout: Set[str] = set()
+    # 2. Obtener cerrojo para evitar que peticiones concurrentes barran Geclisa al mismo tiempo
+    async with _AUDIENCIA_CACHE_LOCK:
+        now_ts = time.time()
+        if not f_refresh and fecha_obj in _AUDIENCIA_GECLISA_CACHE:
+            cached_ts, cached_payload = _AUDIENCIA_GECLISA_CACHE[fecha_obj]
+            if now_ts - cached_ts < AUDIENCIA_CACHE_TTL_SECONDS:
+                pacs = list(cached_payload.get("pacientes") or [])
+                if p_id_str:
+                    pacs = [p for p in pacs if str(p.get("prestador_id")) == p_id_str]
+                return {
+                    **cached_payload,
+                    "cached": True,
+                    "total_turnos": len(pacs),
+                    "elegibles_count": sum(1 for p in pacs if p.get("estado_envio") == "ELEGIBLE"),
+                    "cooldown_count": sum(1 for p in pacs if p.get("estado_envio") == "COOLDOWN_ACTIVO"),
+                    "opt_out_count": sum(1 for p in pacs if p.get("estado_envio") == "OPT_OUT"),
+                    "sin_telefono_count": sum(1 for p in pacs if p.get("estado_envio") == "SIN_CELULAR"),
+                    "pacientes": pacs
+                }
 
-    if supabase:
-        try:
-            res_cd = (
-                supabase.table("optica_envios_programados")
-                .select("telefono")
-                .gte("programado_para", since_30d)
-                .in_("estado", ["enviado", "pendiente", "entregado", "leido"])
-                .limit(2000)
-                .execute()
-            )
-            for r in (res_cd.data or []):
-                t = str(r.get("telefono") or "").strip()
-                if t:
-                    telefonos_cooldown.add(t)
+        # Ejecutar sincronización en modo dry_run=True (sin escribir en BD)
+        res_dry = await asyncio.to_thread(
+            sincronizar_turnos_proximos_optica,
+            dias_anticipacion,
+            True,
+            False,
+            fecha_obj
+        )
 
-            res_oo = supabase.table("optica_contactos").select("telefono").eq("opt_out", True).execute()
-            for r in (res_oo.data or []):
-                t = str(r.get("telefono") or "").strip()
-                if t:
-                    telefonos_optout.add(t)
-        except Exception as e_s:
-            logger.warning(f"[AudienciaGeclisa] Error consultando cooldown/optout: {e_s}")
+        elegibles_raw = res_dry.get("elegibles") or []
+        excluidos_raw = res_dry.get("excluidos") or []
 
-    prestadores_dict: Dict[str, str] = {}
-    todos_pacientes: List[Dict[str, Any]] = []
+        # Cargar set de opt_out y set de cooldown 30d
+        now_utc = datetime.now(timezone.utc)
+        since_30d = (now_utc - timedelta(days=30)).isoformat()
+        telefonos_cooldown: Set[str] = set()
+        telefonos_optout: Set[str] = set()
 
-    for el in elegibles_raw:
-        pid = str(el.get("prestador_id") or "").strip()
-        pnombre = str(el.get("prestador_nombre") or "").strip()
-        if pid and pnombre and pid not in prestadores_dict:
-            prestadores_dict[pid] = pnombre
+        if supabase:
+            try:
+                res_cd = (
+                    supabase.table("optica_envios_programados")
+                    .select("telefono")
+                    .gte("programado_para", since_30d)
+                    .in_("estado", ["enviado", "pendiente", "entregado", "leido"])
+                    .limit(2000)
+                    .execute()
+                )
+                for r in (res_cd.data or []):
+                    t = str(r.get("telefono") or "").strip()
+                    if t:
+                        telefonos_cooldown.add(t)
 
-        tel = str(el.get("telefono") or "").strip()
-        nombre_pac = str(el.get("paciente_nombre") or "Paciente").title().strip()
+                res_oo = supabase.table("optica_contactos").select("telefono").eq("opt_out", True).execute()
+                for r in (res_oo.data or []):
+                    t = str(r.get("telefono") or "").strip()
+                    if t:
+                        telefonos_optout.add(t)
+            except Exception as e_s:
+                logger.warning(f"[AudienciaGeclisa] Error consultando cooldown/optout: {e_s}")
 
-        estado_envio = "ELEGIBLE"
-        motivo_bloqueo = None
-        if tel in telefonos_optout:
-            estado_envio = "OPT_OUT"
-            motivo_bloqueo = "Paciente solicitó no recibir avisos de óptica"
-        elif tel in telefonos_cooldown:
-            estado_envio = "EN_COOLDOWN"
-            motivo_bloqueo = "Ya contactado en los últimos 30 días (Escudo Anti-Spam)"
-        elif not tel:
-            estado_envio = "SIN_CELULAR"
-            motivo_bloqueo = "No posee teléfono móvil registrado en Geclisa"
+        prestadores_dict: Dict[str, Dict[str, Any]] = {}
+        todos_pacientes: List[Dict[str, Any]] = []
 
-        item = {
-            "turno_id": str(el.get("turno_geclisa_id") or el.get("turno_id") or ""),
-            "ficha_id": str(el.get("ficha_geclisa_id") or el.get("ficha_id") or ""),
-            "paciente_nombre": nombre_pac,
-            "dni": str(el.get("dni") or "").strip(),
-            "telefono": tel,
-            "hora_turno": str(el.get("hora_turno") or "09:00").strip(),
-            "fecha_turno": str(el.get("fecha_turno") or fecha_obj),
-            "prestador_id": pid,
-            "prestador_nombre": pnombre or "Profesional Centrovisión",
-            "servicio_practica": str(el.get("servicio_practica") or "Consulta").strip(),
-            "obra_social": str(el.get("obra_social") or "Particular").strip(),
-            "codigo_beneficio": str(el.get("codigo_beneficio") or generar_codigo_beneficio_vortix(tel, fecha_obj)),
-            "estado_envio": estado_envio,
-            "motivo_bloqueo": motivo_bloqueo,
-            "seleccionado": estado_envio == "ELEGIBLE"
+        for el in elegibles_raw:
+            pid = str(el.get("prestador_id") or "").strip()
+            pnombre = str(el.get("prestador_nombre") or "").strip()
+            if pid and pnombre:
+                if pid not in prestadores_dict:
+                    prestadores_dict[pid] = {"id": pid, "nombre": pnombre, "cantidad_turnos": 0}
+                prestadores_dict[pid]["cantidad_turnos"] += 1
+
+            tel = str(el.get("telefono") or "").strip()
+            nombre_pac = str(el.get("paciente_nombre") or "Paciente").title().strip()
+
+            estado_envio = "ELEGIBLE"
+            motivo_exclusion = None
+            if tel in telefonos_optout:
+                estado_envio = "OPT_OUT"
+                motivo_exclusion = "Paciente solicitó no recibir avisos de óptica"
+            elif tel in telefonos_cooldown:
+                estado_envio = "COOLDOWN_ACTIVO"
+                motivo_exclusion = "Ya contactado en los últimos 30 días (Escudo Anti-Spam)"
+            elif not tel:
+                estado_envio = "SIN_CELULAR"
+                motivo_exclusion = "No posee teléfono móvil registrado en Geclisa"
+
+            item = {
+                "turno_id": str(el.get("turno_geclisa_id") or el.get("turno_id") or ""),
+                "ficha_id": str(el.get("ficha_geclisa_id") or el.get("ficha_id") or ""),
+                "paciente_nombre": nombre_pac,
+                "dni": str(el.get("dni") or "").strip(),
+                "telefono": tel,
+                "hora_turno": str(el.get("hora_turno") or "09:00").strip(),
+                "fecha_turno": str(el.get("fecha_turno") or fecha_obj),
+                "prestador_id": pid,
+                "prestador_nombre": pnombre or "Profesional Centrovisión",
+                "servicio_practica": str(el.get("servicio_practica") or "Consulta").strip(),
+                "obra_social": str(el.get("obra_social") or "Particular").strip(),
+                "codigo_beneficio": str(el.get("codigo_beneficio") or generar_codigo_beneficio_vortix(tel, fecha_obj)),
+                "estado_envio": estado_envio,
+                "motivo_exclusion": motivo_exclusion,
+                "seleccionado": estado_envio == "ELEGIBLE"
+            }
+            todos_pacientes.append(item)
+
+        for ex in excluidos_raw:
+            pid = str(ex.get("prestador_id") or "").strip()
+            pnombre = str(ex.get("prestador_nombre") or "").strip()
+            if pid and pnombre:
+                if pid not in prestadores_dict:
+                    prestadores_dict[pid] = {"id": pid, "nombre": pnombre, "cantidad_turnos": 0}
+                prestadores_dict[pid]["cantidad_turnos"] += 1
+
+            motivo = str(ex.get("motivo_exclusion") or "EXCLUIDO").upper()
+            if "CANCELADO" in motivo:
+                continue
+
+            st_envio = "SIN_CELULAR" if "TELEFONO" in motivo else ("OPT_OUT" if "OPT_OUT" in motivo else "COOLDOWN_ACTIVO")
+            item_ex = {
+                "turno_id": str(ex.get("turno_id") or ""),
+                "ficha_id": str(ex.get("ficha_id") or ""),
+                "paciente_nombre": str(ex.get("paciente_nombre") or "Paciente").title().strip(),
+                "dni": str(ex.get("dni") or "").strip(),
+                "telefono": str(ex.get("telefono") or ex.get("telefono_raw") or "").strip(),
+                "hora_turno": str(ex.get("hora_turno") or "00:00").strip(),
+                "fecha_turno": fecha_obj,
+                "prestador_id": pid,
+                "prestador_nombre": pnombre or "Profesional Centrovisión",
+                "servicio_practica": str(ex.get("servicio_practica") or "Práctica").strip(),
+                "obra_social": str(ex.get("obra_social") or "Particular").strip(),
+                "codigo_beneficio": "#VORTIX",
+                "estado_envio": st_envio,
+                "motivo_exclusion": ex.get("motivo_exclusion"),
+                "seleccionado": False
+            }
+            todos_pacientes.append(item_ex)
+
+        todos_pacientes.sort(key=lambda x: str(x.get("hora_turno") or "99:99"))
+
+        prestadores_list = sorted(prestadores_dict.values(), key=lambda x: str(x["nombre"]))
+        elegibles_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "ELEGIBLE")
+        cooldown_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "COOLDOWN_ACTIVO")
+        opt_out_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "OPT_OUT")
+        sin_tel_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "SIN_CELULAR")
+
+        full_payload = {
+            "success": True,
+            "fecha_objetivo": fecha_obj,
+            "total_turnos": len(todos_pacientes),
+            "elegibles_count": elegibles_count,
+            "cooldown_count": cooldown_count,
+            "opt_out_count": opt_out_count,
+            "sin_telefono_count": sin_tel_count,
+            "prestadores": prestadores_list,
+            "pacientes": todos_pacientes
         }
-        todos_pacientes.append(item)
 
-    for ex in excluidos_raw:
-        pid = str(ex.get("prestador_id") or "").strip()
-        pnombre = str(ex.get("prestador_nombre") or "").strip()
-        if pid and pnombre and pid not in prestadores_dict:
-            prestadores_dict[pid] = pnombre
+        # Guardar en caché global en memoria
+        _AUDIENCIA_GECLISA_CACHE[fecha_obj] = (time.time(), full_payload)
 
-        motivo = str(ex.get("motivo_exclusion") or "EXCLUIDO").upper()
-        if "CANCELADO" in motivo:
-            continue
+        # Filtrar por prestador si fue solicitado
+        pacs_result = todos_pacientes
+        if p_id_str:
+            pacs_result = [p for p in pacs_result if str(p.get("prestador_id")) == p_id_str]
 
-        st_envio = "SIN_CELULAR" if "TELEFONO" in motivo else ("OPT_OUT" if "OPT_OUT" in motivo else "EN_COOLDOWN")
-        item_ex = {
-            "turno_id": str(ex.get("turno_id") or ""),
-            "ficha_id": str(ex.get("ficha_id") or ""),
-            "paciente_nombre": str(ex.get("paciente_nombre") or "Paciente").title().strip(),
-            "dni": str(ex.get("dni") or "").strip(),
-            "telefono": str(ex.get("telefono") or ex.get("telefono_raw") or "").strip(),
-            "hora_turno": str(ex.get("hora_turno") or "00:00").strip(),
-            "fecha_turno": fecha_obj,
-            "prestador_id": pid,
-            "prestador_nombre": pnombre or "Profesional Centrovisión",
-            "servicio_practica": str(ex.get("servicio_practica") or "Práctica").strip(),
-            "obra_social": str(ex.get("obra_social") or "Particular").strip(),
-            "codigo_beneficio": "#VORTIX",
-            "estado_envio": st_envio,
-            "motivo_bloqueo": ex.get("motivo_exclusion"),
-            "seleccionado": False
+        return {
+            **full_payload,
+            "total_turnos": len(pacs_result),
+            "elegibles_count": sum(1 for p in pacs_result if p.get("estado_envio") == "ELEGIBLE"),
+            "cooldown_count": sum(1 for p in pacs_result if p.get("estado_envio") == "COOLDOWN_ACTIVO"),
+            "opt_out_count": sum(1 for p in pacs_result if p.get("estado_envio") == "OPT_OUT"),
+            "sin_telefono_count": sum(1 for p in pacs_result if p.get("estado_envio") == "SIN_CELULAR"),
+            "pacientes": pacs_result
         }
-        todos_pacientes.append(item_ex)
-
-    todos_pacientes.sort(key=lambda x: str(x.get("hora_turno") or "99:99"))
-
-    if prestador_id and prestador_id.strip():
-        todos_pacientes = [p for p in todos_pacientes if str(p.get("prestador_id")) == prestador_id.strip()]
-
-    prestadores_list = [{"id": k, "nombre": v} for k, v in sorted(prestadores_dict.items(), key=lambda x: x[1])]
-    elegibles_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "ELEGIBLE")
-    cooldown_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "EN_COOLDOWN")
-    opt_out_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "OPT_OUT")
-    sin_tel_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "SIN_CELULAR")
-
-    return {
-        "success": True,
-        "fecha_objetivo": fecha_obj,
-        "total_turnos": len(todos_pacientes),
-        "elegibles_count": elegibles_count,
-        "cooldown_count": cooldown_count,
-        "opt_out_count": opt_out_count,
-        "sin_telefono_count": sin_tel_count,
-        "prestadores": prestadores_list,
-        "pacientes": todos_pacientes
-    }
 
 
 @optica_vortix_router.get("/campanas")

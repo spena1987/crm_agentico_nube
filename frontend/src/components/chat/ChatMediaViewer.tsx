@@ -28,7 +28,7 @@ import {
 import { BACKEND_URL } from '@/lib/api'
 
 interface MediaMetadata {
-  tipo?: 'imagen' | 'audio' | 'documento' | 'sticker' | 'video' | 'ubicacion' | 'contacto' | 'texto' | 'reaction'
+  tipo?: 'imagen' | 'audio' | 'documento' | 'sticker' | 'video' | 'ubicacion' | 'contacto' | 'texto' | 'text' | 'image' | 'document' | 'reaction'
   media_url?: string
   relative_url?: string
   file_name?: string
@@ -78,6 +78,9 @@ export default function ChatMediaViewer({
   // Inferencia defensiva: Si metadata no tiene tipo pero el contenido o metadata indica un archivo
   let metadata: MediaMetadata = { ...(propMetadata || {}) }
   
+  if ((metadata.tipo as string) === 'image') metadata.tipo = 'imagen'
+  if ((metadata.tipo as string) === 'document') metadata.tipo = 'documento'
+
   if (!metadata.tipo && contenidoTexto) {
     const txt = contenidoTexto.trim()
     if (txt.toLowerCase().endsWith('.pdf') || txt.toLowerCase().includes('.pdf')) {
@@ -98,7 +101,7 @@ export default function ChatMediaViewer({
     }
   }
 
-  if (!metadata || !metadata.tipo || metadata.tipo === 'texto' || metadata.tipo === 'reaction') {
+  if (!metadata || !metadata.tipo || metadata.tipo === 'texto' || metadata.tipo === 'text' || metadata.tipo === 'reaction') {
     return null
   }
 
@@ -115,10 +118,14 @@ export default function ChatMediaViewer({
       if (cleanUrl.includes('localhost') || cleanUrl.includes('127.0.0.1')) {
         const match = cleanUrl.match(/\/static\/.+/)
         if (match) {
-          return `${BACKEND_URL}${match[0]}`
+          cleanUrl = `${BACKEND_URL}${match[0]}`
         }
       }
-      return cleanUrl
+      try {
+        return encodeURI(decodeURI(cleanUrl))
+      } catch {
+        return cleanUrl
+      }
     }
 
     // 2. Fallback a ruta relativa del backend local
@@ -130,11 +137,20 @@ export default function ChatMediaViewer({
     target = target.replace(/\?+$/, '')
 
     if (target.startsWith('http://') || target.startsWith('https://')) {
-      return target
+      try {
+        return encodeURI(decodeURI(target))
+      } catch {
+        return target
+      }
     }
 
     const cleanRel = target.startsWith('/') ? target : `/${target}`
-    return `${BACKEND_URL}${cleanRel}`
+    const finalRelUrl = `${BACKEND_URL}${cleanRel}`
+    try {
+      return encodeURI(decodeURI(finalRelUrl))
+    } catch {
+      return finalRelUrl
+    }
   }
 
   const mediaUrl = getFullUrl(metadata.media_url, metadata.relative_url, metadata.data_uri || metadata.base64)

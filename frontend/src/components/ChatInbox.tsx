@@ -1844,9 +1844,18 @@ export default function ChatInbox() {
         )
       }
 
+      // Invalidar caché de mensajes de esta conversación para forzar refresco real
+      if (selectedConvId && messagesCacheRef.current[selectedConvId]) {
+        delete messagesCacheRef.current[selectedConvId]
+      }
+      fetchMensajes(selectedConvId)
+
       setTimeout(() => {
-        fetchMensajes(selectedConvId)
-      }, 600)
+        if (selectedConvId) {
+          delete messagesCacheRef.current[selectedConvId]
+          fetchMensajes(selectedConvId)
+        }
+      }, 800)
     } catch (err) {
       console.error('Error subiendo archivo:', err)
       alert('No se pudo enviar el archivo adjunto.')
@@ -3938,7 +3947,10 @@ export default function ChatInbox() {
           currentUserName={currentUserName}
           onForwardSuccess={() => {
             fetchConversaciones(true)
-            if (selectedConvId) fetchMensajes(selectedConvId)
+            if (selectedConvId) {
+              delete messagesCacheRef.current[selectedConvId]
+              fetchMensajes(selectedConvId)
+            }
           }}
         />
       )}

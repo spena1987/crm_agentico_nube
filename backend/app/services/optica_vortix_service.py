@@ -1001,7 +1001,10 @@ def sincronizar_turnos_proximos_optica(
     encola los envíos en `optica_envios_programados`.
     """
     cfg = get_optica_vortix_full_config()
-    dias = int(dias_anticipacion if dias_anticipacion is not None else cfg.get("dias_anticipacion_turno", 1))
+    try:
+        dias = int(dias_anticipacion) if dias_anticipacion is not None and not hasattr(dias_anticipacion, "default") else int(cfg.get("dias_anticipacion_turno", 1))
+    except Exception:
+        dias = 1
     now_mza = get_mendoza_now()
 
     if fecha_objetivo_override and re.match(r"^\d{4}-\d{2}-\d{2}$", str(fecha_objetivo_override).strip()):
@@ -1084,9 +1087,10 @@ def sincronizar_turnos_proximos_optica(
             })
             continue
 
-        # 3. Enriquecer desde ficha completa de Geclisa si falta teléfono o DNI
+        # 3. Enriquecer desde ficha completa de Geclisa ÚNICAMENTE si falta teléfono móvil válido
         celular_ficha = None
-        if ficha_id and (not raw_tel or len("".join(filter(str.isdigit, raw_tel))) < 7 or not dni):
+        digits_tel = "".join(filter(str.isdigit, raw_tel))
+        if ficha_id and len(digits_tel) < 7:
             ficha_data = obtener_ficha_geclisa_con_cache(ficha_id)
             if ficha_data:
                 celular_ficha = ficha_data.get("celular")

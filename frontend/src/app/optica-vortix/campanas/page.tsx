@@ -94,6 +94,7 @@ export default function OpticaCampanasPage() {
   const [prestadorFiltroId, setPrestadorFiltroId] = useState<string>('TODOS')
   const [searchPaciente, setSearchPaciente] = useState<string>('')
   const [loadingTurnos, setLoadingTurnos] = useState(false)
+  const [errorTurnos, setErrorTurnos] = useState<string | null>(null)
   const [pacientePreview, setPacientePreview] = useState<PacienteTurnoGeclisa | null>(null)
 
   // Pasos 3, 4 y 5: Estrategia, Plantilla, Jitter y Confirmación
@@ -172,14 +173,16 @@ export default function OpticaCampanasPage() {
     }
   }
 
-  const fetchAudienciaGeclisa = async (fechaParam?: string, prestadorParam?: string) => {
+  const fetchAudienciaGeclisa = async (fechaParam?: string, prestadorParam?: string, forceRefresh: boolean = false) => {
     setLoadingTurnos(true)
+    setErrorTurnos(null)
     const targetFecha = fechaParam || fechaTurnoFiltro
     const targetPrest = prestadorParam !== undefined ? prestadorParam : prestadorFiltroId
     try {
       const q = new URLSearchParams()
       if (targetFecha) q.set('fecha', targetFecha)
       if (targetPrest && targetPrest !== 'TODOS') q.set('prestador_id', targetPrest)
+      if (forceRefresh) q.set('force_refresh', 'true')
 
       const res = await apiFetch(`/api/optica-vortix/campanas/audiencia-geclisa?${q.toString()}`, {
         cache: 'no-store',
@@ -197,9 +200,12 @@ export default function OpticaCampanasPage() {
         } else {
           setPacientePreview(null)
         }
+      } else {
+        const errJson = await res.json().catch(() => null)
+        setErrorTurnos(errJson?.detail || 'No se pudo conectar con la agenda de Geclisa. Por favor reintenta.')
       }
-    } catch {
-      // ignore
+    } catch (err: any) {
+      setErrorTurnos(err?.message || 'Error de conexión o tiempo de espera al consultar Geclisa.')
     } finally {
       setLoadingTurnos(false)
     }
@@ -388,12 +394,7 @@ export default function OpticaCampanasPage() {
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => {
-                      setStep(2)
-                      if (turnosGeclisa.length === 0) {
-                        fetchAudienciaGeclisa()
-                      }
-                    }}
+                    onClick={() => setStep(2)}
                     className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors"
                   >
                     Siguiente: Seleccionar Pacientes (Geclisa) →
@@ -415,7 +416,7 @@ export default function OpticaCampanasPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => fetchAudienciaGeclisa()}
+                    onClick={() => fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId, true)}
                     disabled={loadingTurnos}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                   >
@@ -423,6 +424,22 @@ export default function OpticaCampanasPage() {
                     <span>Actualizar Turnos</span>
                   </button>
                 </div>
+
+                {errorTurnos && (
+                  <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-xs flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle size={16} className="shrink-0 text-rose-500" />
+                      <span>{errorTurnos}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId, true)}
+                      className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] hover:bg-rose-700 transition-colors shrink-0"
+                    >
+                      Reintentar
+                    </button>
+                  </div>
+                )}
 
                 {/* Filtros de Fecha, Prestador y Buscador */}
                 <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
