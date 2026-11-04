@@ -160,6 +160,7 @@ async def test_handle_inbound_text_message_resilience():
     
     # Mocking supabase table calls to avoid touching production data during test
     with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sup, \
+         patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=("1289373670929621", "token_123")), \
          patch("app.services.logger_service.log_event") as mock_log:
         
         mock_sup.table().select().eq().execute.return_value.data = [{"id": "pac-123", "nombre": "Peña, Juan"}]
@@ -193,6 +194,7 @@ async def test_handle_inbound_document_pdf_resilience():
     }
     
     with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sup, \
+         patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=("1289373670929621", "token_123")), \
          patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.download_media_bytes", side_effect=Exception("Timeout simulado Meta")):
         
         mock_sup.table().select().eq().execute.return_value.data = [{"id": "pac-123", "nombre": "Peña, Juan"}]
@@ -362,6 +364,7 @@ async def test_download_media_bytes_size_limit_protection():
     }
 
     with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sup, \
+         patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=("1289373670929621", "token_123")), \
          patch("app.services.whatsapp_cloud.client.WhatsAppCloudClient.download_media_bytes", side_effect=MediaPayloadTooLargeError(25000000, 20971520)), \
          patch("app.services.logger_service.log_event") as mock_log:
 

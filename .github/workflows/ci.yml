@@ -42,6 +42,7 @@ jobs:
         env:
           SUPABASE_JWT_SECRET: "super-secret-jwt-key-for-test-2026-audit"
           EVOLUTION_API_KEY: "test-evolution-ci-token"
+          META_WA_PHONE_NUMBER_ID: "1289373670929621"
         run: |
           python -m pytest
 

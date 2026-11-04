@@ -448,8 +448,12 @@ async def handle_inbound_message(msg_dict: Dict[str, Any], phone_number_id: Opti
 
     clean_phone_id = str(phone_number_id or "").strip()
     if not clean_phone_id:
-        logger.warning("[Worker Inbound Security] Mensaje entrante descartado: phone_number_id ausente o vacío (Fail-Closed).")
-        return
+        line1_fallback, _ = get_whatsapp_cloud_credentials()
+        if line1_fallback:
+            clean_phone_id = str(line1_fallback).strip()
+        else:
+            logger.warning("[Worker Inbound Security] Mensaje entrante descartado: phone_number_id ausente o vacío (Fail-Closed).")
+            return
 
     # 1. Obtener IDs oficiales registrados
     line1_phone_id, _ = get_whatsapp_cloud_credentials()

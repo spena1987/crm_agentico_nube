@@ -178,6 +178,10 @@ async def test_inbound_reapertura_conversacion_resuelta():
         "entry": [{
             "changes": [{
                 "value": {
+                    "metadata": {
+                        "phone_number_id": "1289373670929621",
+                        "display_phone_number": "5492614703230"
+                    },
                     "messages": [{
                         "from": "5492614703230",
                         "id": "wamid.TEST_INBOUND_REOPEN",
@@ -195,6 +199,7 @@ async def test_inbound_reapertura_conversacion_resuelta():
     }
 
     with patch("app.services.whatsapp_cloud.worker.supabase") as mock_sb, \
+         patch("app.services.whatsapp_cloud.client.get_whatsapp_cloud_credentials", return_value=("1289373670929621", "token_123")), \
          patch("app.db.es_bot_activo_globalmente", return_value=False):
         
         # Simular paciente
@@ -249,6 +254,10 @@ async def test_inbound_reapertura_conversacion_resuelta():
             "entry": [{
                 "changes": [{
                     "value": {
+                        "metadata": {
+                            "phone_number_id": "1289373670929621",
+                            "display_phone_number": "5492614703230"
+                        },
                         "messages": [{
                             "from": "5492614703230",
                             "id": "wamid.TEST_INBOUND_REOPEN_CASO_B",

@@ -747,6 +747,60 @@ def validar_reglas_meta_plantilla(body_text: str) -> Optional[str]:
     return None
 
 
+SAMPLE_VALUES_BY_VAR_NAME: Dict[str, str] = {
+    "paciente_nombre": "Mariana Pérez",
+    "prestador_nombre": "Dr. Bonanno",
+    "turno_fecha_hora": "15/11/2026 a las 10:30 hs",
+    "porcentaje_descuento": "20% OFF",
+    "codigo_beneficio": "#VORTIX-8A4F",
+    "detalle_trabajo": "Multifocales Antirreflex",
+    "horario_atencion": "Lunes a Viernes de 9 a 20 hs"
+}
+
+SAMPLE_VALUES_BY_INDEX: Dict[int, str] = {
+    1: "Mariana Pérez",
+    2: "Dr. Bonanno",
+    3: "20% OFF",
+    4: "#VORTIX-8A4F",
+    5: "Multifocales Antirreflex",
+    6: "Lunes a Viernes de 9 a 20 hs"
+}
+
+
+def generar_body_example_meta(
+    body_text: str,
+    custom_samples: Optional[List[str]] = None,
+    variable_mappings: Optional[Dict[str, str]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Genera el bloque obligatorio 'example' para el componente BODY en Meta Cloud API v21+.
+    Detecta todas las variables {{1}}, {{2}}, etc. y asegura que haya exactamente una
+    muestra para cada variable presente. Si no hay variables, retorna None.
+    """
+    matches = re.findall(r'\{\{(\d+)\}\}', body_text or "")
+    if not matches:
+        return None
+
+    unique_vars = sorted(list(set(int(m) for m in matches)))
+    sample_list = []
+
+    for idx, var_num in enumerate(unique_vars):
+        if custom_samples and idx < len(custom_samples) and custom_samples[idx] and str(custom_samples[idx]).strip():
+            sample_list.append(str(custom_samples[idx]).strip())
+            continue
+
+        var_key = None
+        if variable_mappings:
+            var_key = variable_mappings.get(str(var_num)) or variable_mappings.get(var_num)
+        if var_key and var_key in SAMPLE_VALUES_BY_VAR_NAME:
+            sample_list.append(SAMPLE_VALUES_BY_VAR_NAME[var_key])
+            continue
+
+        sample_list.append(SAMPLE_VALUES_BY_INDEX.get(var_num, f"Muestra{var_num}"))
+
+    return {"body_text": [sample_list]}
+
+
 @optica_vortix_router.post("/plantillas")
 async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
     """
@@ -776,8 +830,9 @@ async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
         components.append({"type": "HEADER", "format": "DOCUMENT"})
 
     body_comp: Dict[str, Any] = {"type": "BODY", "text": payload.body_text}
-    if payload.sample_values and len(payload.sample_values) > 0:
-        body_comp["example"] = {"body_text": [payload.sample_values]}
+    example_obj = generar_body_example_meta(payload.body_text, payload.sample_values, payload.variable_mappings)
+    if example_obj:
+        body_comp["example"] = example_obj
     components.append(body_comp)
 
     if payload.footer_text:
