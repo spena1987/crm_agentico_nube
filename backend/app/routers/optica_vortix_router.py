@@ -1587,7 +1587,55 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
         # 3. Envío de Plantilla Homologada
         if payload.template_name:
             tpl_name = payload.template_name.strip()
-            params_list = [{"type": "text", "text": str(p)} for p in (payload.parameters or [])]
+
+            # Buscar template en whatsapp_templates o catálogo para saber exactamente cuántas variables requiere
+            tpl_body = ""
+            try:
+                t_res = supabase.table("whatsapp_templates").select("body_text").eq("name", tpl_name).limit(1).execute()
+                if t_res.data and t_res.data[0].get("body_text"):
+                    tpl_body = t_res.data[0]["body_text"]
+            except Exception as e_t:
+                logger.warning(f"[OpticaChat] Error consultando template {tpl_name}: {e_t}")
+
+            if not tpl_body:
+                cat_match = next((c for c in OPTICA_VORTIX_TEMPLATES_CATALOG if c["name"] == tpl_name), None)
+                if cat_match:
+                    tpl_body = cat_match.get("body_text") or ""
+
+            var_matches = re.findall(r'\{\{(\d+)\}\}', tpl_body)
+            num_vars = len(set(var_matches)) if var_matches else (len(payload.parameters) if payload.parameters else 1)
+
+            # Extraer o autocompletar datos del contacto
+            cfg = get_optica_vortix_full_config()
+            descuento = str(cfg.get("porcentaje_descuento_turno") or "20% OFF")
+            cupon = str(contacto.get("codigo_cupon_activo") or generar_codigo_beneficio_vortix(to_phone))
+
+            incoming_params = [str(p) for p in (payload.parameters or []) if str(p).strip()]
+            if len(incoming_params) >= num_vars and num_vars > 0:
+                final_param_texts = incoming_params[:num_vars]
+            else:
+                # Autocompletado inteligente según la plantilla y num_vars para Meta Cloud API
+                if num_vars == 1:
+                    final_param_texts = [nombre_pac]
+                elif num_vars == 2:
+                    final_param_texts = [nombre_pac, cupon]
+                elif num_vars == 3:
+                    if "retiro" in tpl_name or "listos" in tpl_name:
+                        final_param_texts = [nombre_pac, "anteojos recetados", "08:30 a 20:00 hs"]
+                    elif "contacto" in tpl_name:
+                        final_param_texts = [nombre_pac, "el especialista", cupon]
+                    else:
+                        final_param_texts = [nombre_pac, "esta semana", cupon]
+                else:
+                    # 4 variables
+                    if "receta" in tpl_name:
+                        final_param_texts = [nombre_pac, "nuestro equipo de oftalmólogos", descuento, cupon]
+                    else:
+                        final_param_texts = [nombre_pac, "esta semana", descuento, cupon]
+                    for extra_i in range(5, num_vars + 1):
+                        final_param_texts.append(f"Beneficio {extra_i}")
+
+            params_list = [{"type": "text", "text": p_txt} for p_txt in final_param_texts]
             components: List[Dict[str, Any]] = []
             if payload.media_url:
                 m_id = await obtener_o_subir_placa_media_id(wa_client, payload.media_url)
@@ -1602,7 +1650,15 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
                 language_code=payload.template_language or "es_AR",
                 components=components
             )
-            body_preview = texto_final or f"📋 Plantilla enviada: {tpl_name}"
+
+            # Generar vista previa textual enriquecida reemplazando {{1}}, {{2}}...
+            body_preview = tpl_body
+            if body_preview:
+                for idx_v, val_v in enumerate(final_param_texts, start=1):
+                    body_preview = body_preview.replace(f"{{{{{idx_v}}}}}", val_v)
+            else:
+                body_preview = texto_final or f"📋 Plantilla enviada: {tpl_name}"
+
             saved = _enriquecer_mensaje_optica_frontend(
                 _record_optica_outbound_msg(
                     conv_id, contacto_id, s_res.get("wamid"), "template", body_preview,

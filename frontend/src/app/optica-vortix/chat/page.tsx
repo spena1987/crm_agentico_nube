@@ -33,6 +33,7 @@ import {
   BellRing,
   SlidersHorizontal,
   Wand2,
+  AlertTriangle,
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
@@ -252,9 +253,15 @@ export default function OpticaVortixChatPage() {
   const [showConfirmListoRetirar, setShowConfirmListoRetirar] = useState(false)
   const [cotizadorError, setCotizadorError] = useState<string | null>(null)
 
+  // Referencias estables para evitar pestañeo (flickering) y salto involuntario de conversación
+  const selectedConvIdRef = useRef<string | null>(null)
+  const hasInitialSelectedRef = useRef<boolean>(false)
+  const [sendingTemplate, setSendingTemplate] = useState<string | null>(null)
+  const [templateError, setTemplateError] = useState<string | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
-  const fetchConversaciones = async () => {
+  const fetchConversaciones = async (isBackground = false) => {
     try {
       const params = new URLSearchParams()
       if (filtroEtapa !== 'TODAS') params.set('etapa_comercial', filtroEtapa)
@@ -266,21 +273,31 @@ export default function OpticaVortixChatPage() {
         const data = await res.json()
         const list: OpticaConversacion[] = Array.isArray(data) ? data : data.items || []
         setConversaciones(list)
-        if (!selectedConv && list.length > 0) {
+
+        // Auto-selección única inicial: solo se ejecuta la primera vez que carga la página
+        // y nunca más se sobreescribe durante el polling periódico de fondo
+        if (!selectedConvIdRef.current && !hasInitialSelectedRef.current && list.length > 0) {
+          hasInitialSelectedRef.current = true
           const match = initialConvId ? list.find((c) => c.id === initialConvId) : list[0]
-          if (match) handleSelectConv(match)
+          if (match) {
+            handleSelectConv(match, false)
+          }
         }
       }
     } catch {
       // ignore
     } finally {
-      setLoadingConvs(false)
+      if (!isBackground) {
+        setLoadingConvs(false)
+      }
     }
   }
 
   useEffect(() => {
-    fetchConversaciones()
-    const interval = setInterval(fetchConversaciones, 12000)
+    fetchConversaciones(false)
+    const interval = setInterval(() => {
+      fetchConversaciones(true)
+    }, 12000)
     return () => clearInterval(interval)
   }, [filtroEtapa, searchQuery])
 
@@ -356,9 +373,15 @@ export default function OpticaVortixChatPage() {
     }
   }, [selectedConv?.id])
 
-  const handleSelectConv = async (conv: OpticaConversacion) => {
+  const handleSelectConv = async (conv: OpticaConversacion, isSilent = false) => {
+    const isDifferentConv = conv.id !== selectedConvIdRef.current
+    selectedConvIdRef.current = conv.id
     setSelectedConv(conv)
-    setLoadingMsgs(true)
+
+    if (isDifferentConv && !isSilent) {
+      setLoadingMsgs(true)
+    }
+
     if (conv.graduacion_actual_json) {
       setGraduacion({ ...EMPTY_GRADUACION, ...conv.graduacion_actual_json })
     } else {
@@ -384,7 +407,9 @@ export default function OpticaVortixChatPage() {
     } catch {
       // ignore
     } finally {
-      setLoadingMsgs(false)
+      if (isDifferentConv && !isSilent) {
+        setLoadingMsgs(false)
+      }
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
     }
   }
@@ -593,11 +618,21 @@ export default function OpticaVortixChatPage() {
 
   const openTemplatesModal = async () => {
     setShowTemplatesModal(true)
+    setTemplateError(null)
     try {
-      const res = await apiFetch('/api/optica-vortix/salud-linea')
+      const res = await apiFetch('/api/optica-vortix/plantillas', { cache: 'no-store' })
       if (res.ok) {
         const data = await res.json()
-        setTemplatesMeta(data.templates || [])
+        const listT: OpticaTemplateMeta[] = Array.isArray(data)
+          ? data
+          : data.plantillas || data.items || []
+        setTemplatesMeta(listT)
+      } else {
+        const resAlt = await apiFetch('/api/optica-vortix/salud-linea', { cache: 'no-store' })
+        if (resAlt.ok) {
+          const dataAlt = await resAlt.json()
+          setTemplatesMeta(dataAlt.plantillas_optica || dataAlt.templates || [])
+        }
       }
     } catch {}
   }
@@ -1778,80 +1813,168 @@ export default function OpticaVortixChatPage() {
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <h3 className="text-sm font-black text-[var(--foreground)]">
-                📋 Enviar Plantilla Oficial Meta (Línea 3 Óptica)
-              </h3>
-              <button type="button" onClick={() => setShowTemplatesModal(false)}>
+              <div>
+                <h3 className="text-sm font-black text-[var(--foreground)]">
+                  📋 Enviar Plantilla Oficial Meta (Línea 3 Óptica)
+                </h3>
+                <p className="text-xs text-[var(--secondary)]">
+                  Abre o continúa la conversación con plantillas aprobadas por Meta Cloud API
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowTemplatesModal(false)
+                  setTemplateError(null)
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-[var(--foreground)]"
+              >
                 <X size={18} />
               </button>
             </div>
+
+            {templateError && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle size={15} className="shrink-0" />
+                <span>{templateError}</span>
+              </div>
+            )}
+
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {(templatesMeta.length > 0
                 ? templatesMeta
                 : [
                     {
-                      name: 'optica_vortix_beneficio_turno',
+                      name: 'vortix_beneficio_turno_v1',
+                      titulo_amigable: 'Óptica Vortix • Voucher Descuento por Turno',
                       status: 'APPROVED',
-                      category: 'UTILITY',
+                      category: 'MARKETING',
                       language: 'es_AR',
-                      preview_body:
-                        'Hola {{1}}, te recordamos que con tu turno de mañana en la clínica tenés un beneficio exclusivo en Óptica Vortix.',
+                      body_text:
+                        'Hola {{1}}, vimos que tenes un turno programado en la clinica para el {{2}}. Por ser paciente, tenes activado un beneficio exclusivo de {{3}} en *Optica Vortix* presentando tu codigo {{4}} luego de tu consulta.',
                     },
                     {
-                      name: 'optica_vortix_receta_consulta',
+                      name: 'vortix_receta_lentes_aereos_v1',
+                      titulo_amigable: 'Óptica Vortix • Cotización Receta Lentes Aéreos',
                       status: 'APPROVED',
                       category: 'UTILITY',
                       language: 'es_AR',
-                      preview_body:
-                        'Hola {{1}}, vimos que hoy te atendiste con el Dr/a. {{2}}. Si querés cotizar tus lentes sin compromiso respondé este mensaje.',
+                      body_text:
+                        'Hola {{1}}, esperamos que haya salido muy bien tu consulta de hoy con {{2}}. En *Optica Vortix* ya podemos cotizar tu nueva receta de anteojos por WhatsApp con tu descuento de paciente ({{3}}) - Codigo {{4}}.',
                     },
                     {
-                      name: 'optica_vortix_lentes_listos',
+                      name: 'vortix_receta_lentes_contacto_v1',
+                      titulo_amigable: 'Óptica Vortix • Lentes de Contacto y Adaptación',
                       status: 'APPROVED',
                       category: 'UTILITY',
                       language: 'es_AR',
-                      preview_body:
-                        '¡Hola {{1}}! Tus lentes ya están listos y controlados por nuestro laboratorio en Óptica Vortix.',
+                      body_text:
+                        'Hola {{1}}, vimos que en tu consulta con {{2}} se evaluaron Lentes de Contacto. En *Optica Vortix* contamos con stock de lentes blandos esfericos, toricos y multifocales con beneficio exclusivo (Codigo {{3}}).',
+                    },
+                    {
+                      name: 'vortix_lentes_listos_retiro_v1',
+                      titulo_amigable: 'Óptica Vortix • Aviso de Lentes Listos para Retirar',
+                      status: 'APPROVED',
+                      category: 'UTILITY',
+                      language: 'es_AR',
+                      body_text:
+                        '¡Hola {{1}}! Te escribimos desde *Optica Vortix* para avisarte que tu pedido ({{2}}) ya salio del laboratorio, paso el control de calidad optico y esta *listo para retirar* en el horario de {{3}}.',
                     },
                   ]
-              ).map((tpl) => (
-                <div
-                  key={tpl.name}
-                  className="p-3 rounded-2xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between gap-3"
-                >
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black text-[var(--foreground)]">{tpl.name}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/15 text-emerald-600">
-                        {tpl.status}
-                      </span>
-                    </div>
-                    {tpl.preview_body && (
-                      <p className="text-[11px] text-[var(--secondary)]">{tpl.preview_body}</p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!selectedConv) return
-                      setShowTemplatesModal(false)
-                      await apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}/enviar`, {
-                        method: 'POST',
-                        body: JSON.stringify({
-                          tipo: 'template',
-                          template_name: tpl.name,
-                          contenido: `[Plantilla Meta: ${tpl.name}]`,
-                          parameters: [selectedConv.nombre_paciente || 'Paciente'],
-                        }),
-                      })
-                      handleSelectConv(selectedConv)
-                    }}
-                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shrink-0"
+              ).map((tpl: any) => {
+                const isApproved = tpl.status === 'APPROVED'
+                const isPending = tpl.status === 'PENDING'
+                const badgeColor = isApproved
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  : isPending
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  : 'bg-slate-500/15 text-slate-500'
+
+                const isSendingThis = sendingTemplate === tpl.name
+
+                return (
+                  <div
+                    key={tpl.name}
+                    className="p-3.5 rounded-2xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-500/30 transition-all"
                   >
-                    Enviar
-                  </button>
-                </div>
-              ))}
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-black text-[var(--foreground)]">
+                          {tpl.titulo_amigable || tpl.name}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          ({tpl.name})
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${badgeColor}`}>
+                          {tpl.status || 'OFFICIAL'}
+                        </span>
+                      </div>
+                      {(tpl.body_text || tpl.preview_body) && (
+                        <p className="text-[11px] text-[var(--secondary)] line-clamp-2 leading-relaxed">
+                          {tpl.body_text || tpl.preview_body}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isSendingThis || Boolean(sendingTemplate)}
+                      onClick={async () => {
+                        if (!selectedConv || sendingTemplate) return
+                        setSendingTemplate(tpl.name)
+                        setTemplateError(null)
+
+                        try {
+                          const res = await apiFetch(
+                            `/api/optica-vortix/conversaciones/${selectedConv.id}/enviar`,
+                            {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                tipo: 'template',
+                                template_name: tpl.name,
+                                template_language: tpl.language || 'es_AR',
+                                contenido: tpl.body_text || tpl.preview_body || `[Plantilla Meta: ${tpl.name}]`,
+                                parameters: [selectedConv.nombre_paciente || 'Paciente'],
+                              }),
+                            }
+                          )
+
+                          if (res.ok) {
+                            const resData = await res.json()
+                            if (resData.mensaje) {
+                              setMensajes((prev) => [...prev, resData.mensaje])
+                            }
+                            setShowTemplatesModal(false)
+                            handleSelectConv(selectedConv, true) // refresco silencioso sin spinner
+                          } else {
+                            const errData = await res.json().catch(() => null)
+                            setTemplateError(
+                              errData?.detail ||
+                                'Meta Cloud API rechazó el envío de la plantilla. Verifica que esté aprobada.'
+                            )
+                          }
+                        } catch (err: any) {
+                          setTemplateError(err?.message || 'Error de conexión enviando plantilla')
+                        } finally {
+                          setSendingTemplate(null)
+                        }
+                      }}
+                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold shrink-0 flex items-center justify-center gap-1.5 shadow-sm transition-all"
+                    >
+                      {isSendingThis ? (
+                        <>
+                          <Loader2 size={13} className="animate-spin" />
+                          <span>Enviando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send size={13} />
+                          <span>Enviar a WhatsApp</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>
