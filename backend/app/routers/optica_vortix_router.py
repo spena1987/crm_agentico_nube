@@ -13,7 +13,7 @@ import asyncio
 import logging
 import httpx
 from datetime import datetime, date, timedelta, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Set
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Body, Request
 from pydantic import BaseModel
@@ -2247,8 +2247,12 @@ async def crear_campana_optica(payload: CrearCampanaOpticaPayload):
 @optica_vortix_router.post("/campanas/{camp_id}/lanzar")
 async def lanzar_campana_optica(camp_id: str):
     """
-    Construye la audiencia elegible (excluyendo `opt_out=True`), encola los envíos con goteo
-    en `public.optica_envios_programados` y pasa la campaña a estado `en_curso`.
+    Construye la audiencia elegible aplicando:
+    1. Filtrado clínico por segmento (recetas aéreos, lentes de contacto, turnos próximos con descuento).
+    2. Exclusión estricta de pacientes con `opt_out = True`.
+    3. Ventana Anti-Bloqueo Cooldown de 30 días (omite contactos con envíos recientes).
+    4. Mapeo dinámico y exacto de variables según el template seleccionado en Meta.
+    Encola los envíos con cadencia humanizada (jitter aleatorio y lotes) en `public.optica_envios_programados`.
     """
     if not supabase:
         raise HTTPException(status_code=500, detail="Supabase no disponible")
@@ -2265,16 +2269,97 @@ async def lanzar_campana_optica(camp_id: str):
     lote_sz = max(1, int(goteo.get("lote_size", 30)))
     pausa_min = int(goteo.get("pausa_lote_min", 5))
 
-    # Consultar contactos elegibles en optica_contactos (sin opt_out)
-    cont_q = supabase.table("optica_contactos").select("*").eq("opt_out", False)
-    if filtro.get("obra_social"):
-        cont_q = cont_q.ilike("obra_social", f"%{filtro['obra_social']}%")
-    cont_res = cont_q.limit(500).execute()
-    contactos = cont_res.data or []
+    tpl_name = camp.get("template_name") or "vortix_beneficio_turno_v1"
+    segmento = str(filtro.get("segmento") or camp.get("tipo") or "TURNOS_PROXIMOS_CON_DESCUENTO").upper()
 
     now_utc = datetime.now(timezone.utc)
     cfg = get_optica_vortix_full_config()
     descuento = str(filtro.get("descuento_texto") or cfg.get("porcentaje_descuento_turno") or "20% OFF")
+
+    # 1. Determinar número de variables del template para mapeo dinámico estricto
+    tpl_body = ""
+    try:
+        t_res = supabase.table("whatsapp_templates").select("body_text").eq("name", tpl_name).limit(1).execute()
+        if t_res.data and t_res.data[0].get("body_text"):
+            tpl_body = t_res.data[0]["body_text"]
+    except Exception as e_t:
+        logger.warning(f"[CampanaOptica] Error consultando template {tpl_name}: {e_t}")
+
+    if not tpl_body:
+        cat_match = next((c for c in OPTICA_VORTIX_TEMPLATES_CATALOG if c["name"] == tpl_name), None)
+        if cat_match:
+            tpl_body = cat_match.get("body_text") or ""
+
+    var_matches = re.findall(r'\{\{(\d+)\}\}', tpl_body)
+    num_vars = len(set(var_matches)) if var_matches else 4
+
+    # 2. Escudo Anti-Bloqueo: Teléfonos en ventana de Cooldown (últimos 30 días)
+    telefonos_cooldown: Set[str] = set()
+    since_30d = (now_utc - timedelta(days=30)).isoformat()
+    try:
+        res_cd = (
+            supabase.table("optica_envios_programados")
+            .select("telefono")
+            .gte("programado_para", since_30d)
+            .in_("estado", ["enviado", "pendiente", "entregado", "leido"])
+            .limit(2000)
+            .execute()
+        )
+        for r in (res_cd.data or []):
+            t_val = str(r.get("telefono") or "").strip()
+            if t_val:
+                telefonos_cooldown.add(t_val)
+    except Exception as e_cd:
+        logger.warning(f"[CampanaOptica] Error consultando cooldown 30d: {e_cd}")
+
+    # 3. Filtrado de audiencia según segmento clínico
+    contactos_ids_segmento: Optional[Set[str]] = None
+
+    if "AEREO" in segmento or "RECETA" in segmento:
+        try:
+            opp_res = (
+                supabase.table("optica_oportunidades_geclisa")
+                .select("contacto_id, telefono")
+                .in_("tipo_oportunidad", ["indicacion_lentes_aereos", "indicacion_ambos"])
+                .limit(500)
+                .execute()
+            )
+            c_ids = {str(r.get("contacto_id")) for r in (opp_res.data or []) if r.get("contacto_id")}
+            if c_ids:
+                contactos_ids_segmento = c_ids
+        except Exception as e_opp:
+            logger.warning(f"[CampanaOptica] Error consultando oportunidades aéreos: {e_opp}")
+
+    elif "CONTACTO" in segmento:
+        try:
+            opp_res = (
+                supabase.table("optica_oportunidades_geclisa")
+                .select("contacto_id, telefono")
+                .in_("tipo_oportunidad", ["indicacion_lentes_contacto", "indicacion_ambos"])
+                .limit(500)
+                .execute()
+            )
+            c_ids = {str(r.get("contacto_id")) for r in (opp_res.data or []) if r.get("contacto_id")}
+            if c_ids:
+                contactos_ids_segmento = c_ids
+        except Exception as e_opp:
+            logger.warning(f"[CampanaOptica] Error consultando oportunidades contacto: {e_opp}")
+
+    cont_q = supabase.table("optica_contactos").select("*").eq("opt_out", False)
+    if filtro.get("obra_social"):
+        cont_q = cont_q.ilike("obra_social", f"%{filtro['obra_social']}%")
+
+    if contactos_ids_segmento:
+        cont_q = cont_q.in_("id", list(contactos_ids_segmento))
+
+    cont_res = cont_q.limit(500).execute()
+    contactos = cont_res.data or []
+
+    # Fallback seguro: si el segmento específico no tiene contactos aún, no dejar la campaña vacía
+    if not contactos and not contactos_ids_segmento:
+        cont_fallback = supabase.table("optica_contactos").select("*").eq("opt_out", False).limit(500).execute()
+        contactos = cont_fallback.data or []
+
     accumulated_delay = 0
     encolados = 0
 
@@ -2282,7 +2367,11 @@ async def lanzar_campana_optica(camp_id: str):
         tel = str(ct.get("telefono") or "").strip()
         if not tel:
             continue
-        if idx > 0 and idx % lote_sz == 0:
+        # Protección estricta: Cooldown de 30 días
+        if tel in telefonos_cooldown:
+            continue
+
+        if encolados > 0 and encolados % lote_sz == 0:
             accumulated_delay += pausa_min * 60
         accumulated_delay += random.randint(int_min, max(int_min + 1, int_max))
 
@@ -2290,20 +2379,43 @@ async def lanzar_campana_optica(camp_id: str):
         nombre_corto = str(ct.get("nombre") or "Paciente").split(",")[0].title().strip()
         cupon = str(ct.get("codigo_cupon_activo") or generar_codigo_beneficio_vortix(tel))
 
-        tpl_name = camp.get("template_name") or "vortix_beneficio_turno_v1"
-        if "contacto" in tpl_name:
+        # Construcción dinámica de parámetros según num_vars exacto de la plantilla Meta
+        if num_vars == 1:
+            params = [{"type": "text", "text": nombre_corto}]
+        elif num_vars == 2:
             params = [
                 {"type": "text", "text": nombre_corto},
-                {"type": "text", "text": "nuestro equipo de oftalmólogos"},
                 {"type": "text", "text": cupon}
             ]
+        elif num_vars == 3:
+            if "retiro" in tpl_name or "listos" in tpl_name:
+                params = [
+                    {"type": "text", "text": nombre_corto},
+                    {"type": "text", "text": "anteojos recetados"},
+                    {"type": "text", "text": "09:00 a 19:30 hs"}
+                ]
+            elif "contacto" in tpl_name:
+                params = [
+                    {"type": "text", "text": nombre_corto},
+                    {"type": "text", "text": "el Dr. Arago"},
+                    {"type": "text", "text": cupon}
+                ]
+            else:
+                params = [
+                    {"type": "text", "text": nombre_corto},
+                    {"type": "text", "text": "esta semana"},
+                    {"type": "text", "text": cupon}
+                ]
         else:
+            # 4 variables (default para beneficio_turno y receta_aereos)
             params = [
                 {"type": "text", "text": nombre_corto},
                 {"type": "text", "text": "esta semana"},
                 {"type": "text", "text": descuento},
                 {"type": "text", "text": cupon}
             ]
+            for extra_idx in range(5, num_vars + 1):
+                params.append({"type": "text", "text": f"Beneficio {extra_idx}"})
 
         dedup = f"camp:{camp_id}:{tel}"
         try:
@@ -2323,6 +2435,7 @@ async def lanzar_campana_optica(camp_id: str):
                 "updated_at": now_utc.isoformat()
             }, on_conflict="dedup_key").execute()
             encolados += 1
+            telefonos_cooldown.add(tel)
         except Exception as e_q:
             logger.debug(f"[CampanaOptica] Error encolando {tel}: {e_q}")
 

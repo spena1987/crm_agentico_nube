@@ -21,10 +21,21 @@ import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
 import { OpticaCampana, OpticaPlaca, OpticaSaludLinea } from '@/types/optica'
 
+interface PlantillaOptica {
+  id?: string
+  name: string
+  titulo_amigable?: string
+  category?: string
+  status?: string
+  body_text?: string
+  buttons?: Array<{ type?: string; text?: string; url?: string }>
+}
+
 export default function OpticaCampanasPage() {
   const [salud, setSalud] = useState<OpticaSaludLinea | null>(null)
   const [placas, setPlacas] = useState<OpticaPlaca[]>([])
   const [campanas, setCampanas] = useState<OpticaCampana[]>([])
+  const [plantillas, setPlantillas] = useState<PlantillaOptica[]>([])
   const [loading, setLoading] = useState(true)
 
   // Subida de nueva placa promocional
@@ -38,7 +49,7 @@ export default function OpticaCampanasPage() {
   const [campNombre, setCampNombre] = useState('Campaña Voucher 20% OFF Pacientes Consultorio')
   const [campSegmento, setCampSegmento] = useState('TURNOS_PROXIMOS_CON_DESCUENTO')
   const [campEstrategia, setCampEstrategia] = useState<'DOBLE_PASO' | 'DIRECTA_IMAGEN'>('DOBLE_PASO')
-  const [campTemplate, setCampTemplate] = useState('optica_vortix_beneficio_turno')
+  const [campTemplate, setCampTemplate] = useState('vortix_beneficio_turno_v1')
   const [campPlacaUrl, setCampPlacaUrl] = useState('')
   const [campDescuento, setCampDescuento] = useState('20% OFF en Cristales y Armazones')
   const [jitterMin, setJitterMin] = useState(35)
@@ -49,10 +60,11 @@ export default function OpticaCampanasPage() {
   const loadAll = async () => {
     setLoading(true)
     try {
-      const [resS, resP, resC] = await Promise.all([
+      const [resS, resP, resC, resT] = await Promise.all([
         apiFetch('/api/optica-vortix/salud-linea', { cache: 'no-store' }).catch(() => null),
         apiFetch('/api/optica-vortix/placas', { cache: 'no-store' }).catch(() => null),
         apiFetch('/api/optica-vortix/campanas', { cache: 'no-store' }).catch(() => null),
+        apiFetch('/api/optica-vortix/plantillas', { cache: 'no-store' }).catch(() => null),
       ])
       if (resS?.ok) setSalud(await resS.json())
       if (resP?.ok) {
@@ -64,6 +76,18 @@ export default function OpticaCampanasPage() {
       if (resC?.ok) {
         const dc = await resC.json()
         setCampanas(Array.isArray(dc) ? dc : dc.items || [])
+      }
+      if (resT?.ok) {
+        const dt = await resT.json()
+        const listT: PlantillaOptica[] = Array.isArray(dt) ? dt : dt.plantillas || dt.items || []
+        setPlantillas(listT)
+        if (listT.length > 0) {
+          const yaExiste = listT.some((p) => p.name === campTemplate)
+          if (!yaExiste) {
+            const preferida = listT.find((p) => p.status === 'APPROVED') || listT[0]
+            setCampTemplate(preferida.name)
+          }
+        }
       }
     } catch {
     } finally {
@@ -301,12 +325,44 @@ export default function OpticaCampanasPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-bold mb-1">Plantilla Oficial Meta</label>
-                    <input
-                      type="text"
+                    <select
                       value={campTemplate}
                       onChange={(e) => setCampTemplate(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)]"
-                    />
+                      className="w-full px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)] font-bold text-[var(--foreground)]"
+                    >
+                      {plantillas.length > 0 ? (
+                        plantillas.map((p) => {
+                          const badge =
+                            p.status === 'APPROVED'
+                              ? '✅ Aprobada'
+                              : p.status === 'PENDING'
+                              ? '⏳ En Revisión'
+                              : p.status === 'REJECTED'
+                              ? '❌ Rechazada'
+                              : '⚙️ Sin aprovisionar'
+                          return (
+                            <option key={p.name} value={p.name}>
+                              {p.titulo_amigable || p.name} ({badge})
+                            </option>
+                          )
+                        })
+                      ) : (
+                        <>
+                          <option value="vortix_beneficio_turno_v1">
+                            Óptica Vortix • Voucher Descuento por Turno (✅ Base Oficial)
+                          </option>
+                          <option value="vortix_receta_lentes_aereos_v1">
+                            Óptica Vortix • Cotización Receta Lentes Aéreos (✅ Base Oficial)
+                          </option>
+                          <option value="vortix_receta_lentes_contacto_v1">
+                            Óptica Vortix • Lentes de Contacto y Adaptación (✅ Base Oficial)
+                          </option>
+                          <option value="vortix_lentes_listos_retiro_v1">
+                            Óptica Vortix • Aviso de Lentes Listos para Retirar (✅ Base Oficial)
+                          </option>
+                        </>
+                      )}
+                    </select>
                   </div>
                   <div>
                     <label className="block text-xs font-bold mb-1">Beneficio / Voucher</label>
@@ -458,7 +514,7 @@ export default function OpticaCampanasPage() {
                 <span className="text-xs font-black">Previsualización WhatsApp Paciente</span>
               </div>
               <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
-                Óptica Vortix
+                {campTemplate}
               </span>
             </div>
 
@@ -473,25 +529,77 @@ export default function OpticaCampanasPage() {
                 </div>
               )}
               <div className="bg-[#005c4b] text-white rounded-xl p-3 space-y-1.5 text-[11px] leading-relaxed">
-                <p>
-                  ¡Hola <strong>María</strong>! 👋 Te escribimos de <strong>Óptica Vortix</strong> (en Planta Baja de la clínica).
-                </p>
-                <p>
-                  Por tu atención en el centro contás con un voucher exclusivo:{' '}
-                  <strong>{campDescuento}</strong> código <strong>#VORTIX-20OFF</strong>.
-                </p>
+                {(() => {
+                  const tpl = plantillas.find((p) => p.name === campTemplate)
+                  if (!tpl?.body_text) {
+                    return (
+                      <>
+                        <p>
+                          ¡Hola <strong>María</strong>! 👋 Te escribimos de <strong>Óptica Vortix</strong> (en Planta Baja de la clínica).
+                        </p>
+                        <p>
+                          Por tu atención en el centro contás con un voucher exclusivo:{' '}
+                          <strong>{campDescuento}</strong> código <strong>#VORTIX-20OFF</strong>.
+                        </p>
+                      </>
+                    )
+                  }
+                  const isRetiro = campTemplate.includes('retiro') || campTemplate.includes('listos')
+                  const isContacto = campTemplate.includes('contacto')
+                  let preview = tpl.body_text
+                    .replace(/\{\{1\}\}/g, 'María')
+                    .replace(/\{\{2\}\}/g, isRetiro ? 'anteojos monofocales' : isContacto ? 'el Dr. Arago' : 'esta semana')
+                    .replace(/\{\{3\}\}/g, isRetiro ? '09:00 a 19:30 hs' : isContacto ? '#VORTIX-LC' : campDescuento)
+                    .replace(/\{\{4\}\}/g, '#VORTIX-20OFF')
+
+                  return (
+                    <div className="space-y-1 whitespace-pre-line">
+                      {preview}
+                    </div>
+                  )
+                })()}
               </div>
-              <div className="grid grid-cols-1 gap-1 pt-1">
-                <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-cyan-400 font-bold text-[11px]">
-                  🎟️ Quiero mi voucher de descuento
-                </div>
-                <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-cyan-400 font-bold text-[11px]">
-                  👓 Cotizar mi receta por WhatsApp
-                </div>
-                <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-slate-400 font-semibold text-[10px]">
-                  No recibir avisos de óptica
-                </div>
-              </div>
+
+              {(() => {
+                const tpl = plantillas.find((p) => p.name === campTemplate)
+                if (tpl?.buttons && Array.isArray(tpl.buttons) && tpl.buttons.length > 0) {
+                  return (
+                    <div className="grid grid-cols-1 gap-1 pt-1">
+                      {tpl.buttons.map((btn: any, bIdx: number) => {
+                        const btnText = typeof btn === 'string' ? btn : btn.text || `Opción ${bIdx + 1}`
+                        const isOptOut =
+                          btnText.toLowerCase().includes('baja') ||
+                          btnText.toLowerCase().includes('no recibir')
+                        return (
+                          <div
+                            key={bIdx}
+                            className={`py-1.5 text-center rounded-lg font-bold text-[11px] ${
+                              isOptOut
+                                ? 'bg-[#202c33] text-slate-400 text-[10px]'
+                                : 'bg-[#202c33] text-cyan-400'
+                            }`}
+                          >
+                            {btnText}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                return (
+                  <div className="grid grid-cols-1 gap-1 pt-1">
+                    <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-cyan-400 font-bold text-[11px]">
+                      🎟️ Quiero mi voucher de descuento
+                    </div>
+                    <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-cyan-400 font-bold text-[11px]">
+                      👓 Cotizar mi receta por WhatsApp
+                    </div>
+                    <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-slate-400 font-semibold text-[10px]">
+                      No recibir avisos de óptica
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
         </div>
