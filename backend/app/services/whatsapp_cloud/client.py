@@ -43,6 +43,11 @@ class AuthenticationError(MetaAPIError):
     pass
 
 
+class TemplateHydratedTextTooLongError(MetaAPIError):
+    """Código 132005: El texto del cuerpo de la plantilla con las variables hidratadas supera el límite de 1024 caracteres de Meta."""
+    pass
+
+
 class MediaPayloadTooLargeError(Exception):
     """Lanzada cuando un archivo multimedia recibido excede el límite seguro (20 MB)."""
     def __init__(self, file_size: int, max_size: int):
@@ -518,6 +523,11 @@ class WhatsAppCloudClient:
                 # Error 100: Parámetros inválidos
                 if code == 100:
                     raise InvalidParameterError(code, subcode, msg, fbtrace)
+
+                # Error 132005: Translated text too long (cuerpo hidratado supera 1024 caracteres)
+                if code == 132005 or subcode == 132005:
+                    error_desc = "El texto del mensaje excede el límite máximo de 1.024 caracteres permitido por Meta WhatsApp (Error 132005). Reduzca la longitud de las indicaciones de preparación."
+                    raise TemplateHydratedTextTooLongError(code, subcode, error_desc, fbtrace)
 
                 # 429 Rate Limit o 5xx Server Error -> Reintentar con Backoff + Jitter
                 if code in (130429, 131042) or response.status_code in (429, 500, 502, 503, 504):

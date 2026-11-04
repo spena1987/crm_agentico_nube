@@ -4998,7 +4998,8 @@ async def enviar_recordatorio_whatsapp_endpoint(
     from app.services.whatsapp_cloud.client import (
         WhatsAppCloudClient,
         get_whatsapp_cloud_credentials,
-        ConversationWindowClosedError
+        ConversationWindowClosedError,
+        TemplateHydratedTextTooLongError
     )
     from app.services.whatsapp_cloud.worker import record_outbound_audit_message
 
@@ -5075,6 +5076,19 @@ async def enviar_recordatorio_whatsapp_endpoint(
         ]
         components = [{"type": "body", "parameters": body_params}]
 
+    # Validar límite estricto de Meta: el cuerpo total hidratado no puede superar 1024 caracteres (Error 132005)
+    if template_name == "recordatorio_cirugia_preparacion_v1":
+        cuerpo_estimado = (
+            f"Hola {p_nombre}, le recordamos que su cirugía de {p_cirugia} está programada para el día {p_fecha} "
+            f"a las {p_hora} hs en Centrovisión.\n\n📋 Indicaciones de preparación:\n{p_prep}\n\n"
+            f"Por favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición."
+        )
+        if len(cuerpo_estimado) > 1024:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El mensaje de la plantilla supera el límite máximo de 1.024 caracteres exigido por Meta WhatsApp (Longitud actual: {len(cuerpo_estimado)} caracteres). Por favor sintetice o recorte las indicaciones de preparación para poder emitirlo."
+            )
+
     client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)
     try:
         result = await client.send_template(
@@ -5129,6 +5143,11 @@ async def enviar_recordatorio_whatsapp_endpoint(
 
     except HTTPException:
         raise
+    except TemplateHydratedTextTooLongError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=str(e)
+        )
     except ConversationWindowClosedError:
         raise HTTPException(
             status_code=400,

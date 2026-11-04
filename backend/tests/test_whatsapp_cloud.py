@@ -530,6 +530,45 @@ async def test_handle_automated_text_action_non_affirmative_returns_false():
         assert handled is False
 
 
+@pytest.mark.asyncio
+async def test_template_hydrated_text_too_long_error_handling():
+    from app.services.whatsapp_cloud.client import (
+        WhatsAppCloudClient,
+        TemplateHydratedTextTooLongError
+    )
+
+    client = WhatsAppCloudClient(phone_number_id="123456789", access_token="token_mock")
+
+    # Simular respuesta 400 de Meta con código 132005
+    mock_resp = MagicMock()
+    mock_resp.status_code = 400
+    mock_resp.json.return_value = {
+        "error": {
+            "message": "(#132005) Translated text too long",
+            "type": "OAuthException",
+            "code": 132005,
+            "error_data": {"messaging_product": "whatsapp", "details": "Param text cannot exceed limit"},
+            "fbtrace_id": "TRACE_TEST_132005"
+        }
+    }
+
+    with patch.object(client, "get_http_client") as mock_get_client:
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_resp
+        mock_get_client.return_value = mock_http
+
+        with pytest.raises(TemplateHydratedTextTooLongError) as exc_info:
+            await client.send_template(
+                to_phone="5492614703230",
+                template_name="recordatorio_cirugia_preparacion_v1",
+                components=[{"type": "body", "parameters": [{"type": "text", "text": "A" * 1200}]}]
+            )
+
+        assert "132005" in str(exc_info.value)
+        assert "1.024 caracteres" in str(exc_info.value)
+
+
+
 
 
 

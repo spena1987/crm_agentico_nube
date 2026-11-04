@@ -316,6 +316,34 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   const templateStatus = templateActualInfo ? templateActualInfo.status : 'NO_REGISTRADA'
   const isAprobadaMeta = templateStatus === 'APPROVED'
 
+  // Sanitizar texto como lo procesa Meta al inyectar parámetros
+  const sanitizeMetaText = (v: string) => {
+    const s = (v || '').trim()
+    const lines = s.split('\n').map((l) => l.trim()).filter(Boolean)
+    const joined = lines.length > 1 ? lines.join(' • ') : s
+    return joined.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim()
+  }
+
+  // Límite estricto de Meta WhatsApp Cloud API (1.024 caracteres para el body hidratado)
+  const LIMITE_CARACTERES_META = 1024
+
+  const calcularLongitudHidratada = () => {
+    if (plantillaSeleccionada === 'turno_cirug_a') {
+      return templateActualInfo?.body_text?.length || 200
+    }
+    const sNombre = sanitizeMetaText(pacienteNombre) || 'Estimado/a'
+    const sCirugia = sanitizeMetaText(cirugia) || 'Cirugía Oftalmológica'
+    const sFecha = sanitizeMetaText(fecha) || 'fecha a confirmar'
+    const sHora = sanitizeMetaText(hora) || 'horario a confirmar'
+    const sPrep = sanitizeMetaText(preparacion) || 'Concurrir con DNI y en ayunas.'
+
+    const textoBaseEstimado = `Hola ${sNombre}, le recordamos que su cirugía de ${sCirugia} está programada para el día ${sFecha} a las ${sHora} hs en Centrovisión.\n\n📋 Indicaciones de preparación:\n${sPrep}\n\nPor favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.`
+    return textoBaseEstimado.length
+  }
+
+  const longitudTotalMensaje = calcularLongitudHidratada()
+  const isExcedidoLongitud = longitudTotalMensaje > LIMITE_CARACTERES_META
+
   // Generar texto completo del mensaje para previsualización
   const cuerpoTextoRenderizado = `Hola ${pacienteNombre || '[Paciente]'}, le recordamos que su cirugía de ${cirugia || '[Procedimiento]'} está programada para el día ${fecha || '[Fecha]'} a las ${hora || '[Horario]'} hs en Centrovisión.
 
@@ -333,6 +361,11 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
 
     if (!isAprobadaMeta) {
       setErrorMsg(`La plantilla seleccionada se encuentra en estado "${templateStatus}". Solo se pueden emitir plantillas autorizadas (APPROVED) por Meta.`)
+      return
+    }
+
+    if (isExcedidoLongitud) {
+      setErrorMsg(`El cuerpo del mensaje supera el límite de 1.024 caracteres de Meta WhatsApp (actual: ${longitudTotalMensaje} caracteres). Por favor resuma las indicaciones de preparación para poder emitirlo.`)
       return
     }
 
@@ -744,19 +777,44 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
 
               {/* Variable 5: Preparación y Ayuno */}
               <div>
-                <label className="block text-[11px] font-bold text-gray-400 mb-1 flex items-center justify-between">
-                  <span>Indicaciones de Preparación & Ayuno {`{{5}}`}:</span>
-                  <span className="text-[10px] text-gray-500 font-normal">
-                    Desde Nomenclador de Prácticas
-                  </span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-[11px] font-bold text-gray-400">
+                    Indicaciones de Preparación & Ayuno {`{{5}}`}:
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded-md border ${
+                        isExcedidoLongitud
+                          ? 'bg-rose-950/80 text-rose-300 border-rose-500/50 font-bold animate-pulse'
+                          : longitudTotalMensaje > 900
+                          ? 'bg-amber-950/70 text-amber-300 border-amber-500/40'
+                          : 'bg-emerald-950/50 text-emerald-300 border-emerald-500/30'
+                      }`}
+                      title="Longitud calculada del mensaje final hidratado. Meta impone un límite máximo de 1.024 caracteres."
+                    >
+                      {longitudTotalMensaje} / 1024 car.
+                    </span>
+                  </div>
+                </div>
                 <textarea
                   rows={4}
                   value={preparacion}
                   onChange={(e) => setPreparacion(e.target.value)}
                   placeholder="Detallar horas de ayuno, vestimenta, acompañante y estudios requeridos..."
-                  className="w-full px-3 py-2 text-xs bg-neutral-900 border border-[var(--border)] rounded-lg text-white focus:outline-none focus:border-blue-500 leading-relaxed font-sans"
+                  className={`w-full px-3 py-2 text-xs bg-neutral-900 border rounded-lg text-white focus:outline-none leading-relaxed font-sans ${
+                    isExcedidoLongitud
+                      ? 'border-rose-500 focus:border-rose-400'
+                      : 'border-[var(--border)] focus:border-blue-500'
+                  }`}
                 />
+                {isExcedidoLongitud && (
+                  <div className="mt-1.5 p-2 rounded-lg bg-rose-950/50 border border-rose-500/40 text-[11px] text-rose-200 flex items-start gap-1.5">
+                    <AlertCircle size={14} className="text-rose-400 shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Límite de Meta excedido:</strong> El cuerpo del mensaje tiene <strong>{longitudTotalMensaje}</strong> caracteres (el tope de WhatsApp es <strong>1.024</strong>). Por favor resuma las indicaciones para habilitar el envío.
+                    </span>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -895,18 +953,29 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
             <button
               type="button"
               onClick={handleEnviarWhatsApp}
-              disabled={enviando || cargando || !isAprobadaMeta}
+              disabled={enviando || cargando || !isAprobadaMeta || isExcedidoLongitud}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 ${
-                isAprobadaMeta
+                isAprobadaMeta && !isExcedidoLongitud
                   ? 'bg-gradient-to-r from-indigo-600 via-blue-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white cursor-pointer'
                   : 'bg-neutral-800 text-gray-500 border border-neutral-700 cursor-not-allowed opacity-80'
               }`}
-              title={!isAprobadaMeta ? 'La plantilla debe estar autorizada por Meta para poder ser enviada.' : undefined}
+              title={
+                !isAprobadaMeta
+                  ? 'La plantilla debe estar autorizada por Meta para poder ser enviada.'
+                  : isExcedidoLongitud
+                  ? 'El texto del mensaje excede los 1.024 caracteres permitidos por WhatsApp.'
+                  : undefined
+              }
             >
               {enviando ? (
                 <>
                   <Loader2 size={14} className="animate-spin" />
                   <span>Despachando a Meta...</span>
+                </>
+              ) : isExcedidoLongitud ? (
+                <>
+                  <AlertCircle size={14} className="text-rose-400" />
+                  <span>Texto demasiado largo ({longitudTotalMensaje}/1024)</span>
                 </>
               ) : !isAprobadaMeta ? (
                 <>
