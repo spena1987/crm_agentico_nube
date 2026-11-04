@@ -348,6 +348,24 @@ export default function OpticaTemplatesManager() {
 
     const cleanButtons = buttons.filter(b => b.text && b.text.trim())
 
+    // Generar muestras exactas para Meta en base a la cantidad de variables {{N}}
+    const varMatches = trimmedBody.match(/\{\{(\d+)\}\}/g) || []
+    const uniqueVars = Array.from(new Set(varMatches.map(m => parseInt(m.replace(/\D/g, ''), 10)))).sort((a, b) => a - b)
+    const defaultSamples = [
+      'Mariana Pérez',
+      'Dr. Bonanno',
+      '20% OFF',
+      '#VORTIX-8A4F',
+      'Multifocales Antirreflex',
+      'Lunes a Viernes de 9 a 20 hs'
+    ]
+    const sampleValues = uniqueVars.map((vNum, i) => {
+      if (editingTemplate?.sample_values && editingTemplate.sample_values[i]) {
+        return editingTemplate.sample_values[i]
+      }
+      return defaultSamples[i] || `Muestra ${vNum}`
+    })
+
     try {
       const res = await apiFetch(endpoint, {
         method,
@@ -359,9 +377,10 @@ export default function OpticaTemplatesManager() {
           language: 'es_AR',
           header_type: headerType,
           header_content: headerType === 'TEXT' ? headerContent.trim() : undefined,
-          body_text: bodyText.trim(),
+          body_text: trimmedBody,
           footer_text: footerText.trim() || undefined,
-          buttons: cleanButtons
+          buttons: cleanButtons,
+          sample_values: sampleValues
         })
       })
       const data = await res.json()

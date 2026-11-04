@@ -960,8 +960,9 @@ async def editar_plantilla_optica(name: str, payload: EditarPlantillaOpticaPaylo
         components.append({"type": "HEADER", "format": "DOCUMENT"})
 
     body_comp: Dict[str, Any] = {"type": "BODY", "text": payload.body_text}
-    if payload.sample_values and len(payload.sample_values) > 0:
-        body_comp["example"] = {"body_text": [payload.sample_values]}
+    example_obj = generar_body_example_meta(payload.body_text, payload.sample_values, payload.variable_mappings)
+    if example_obj:
+        body_comp["example"] = example_obj
     components.append(body_comp)
 
     if payload.footer_text:
@@ -1109,8 +1110,13 @@ async def aprovisionar_plantilla_individual(name: str):
         components.append({"type": "HEADER", "format": "DOCUMENT"})
 
     body_comp: Dict[str, Any] = {"type": "BODY", "text": spec["body_text"]}
-    sample_vals = spec.get("sample_values") or ["Mariana", "10:30 hs", "20% OFF", "#VORTIX-8A4F"]
-    body_comp["example"] = {"body_text": [sample_vals]}
+    example_obj = generar_body_example_meta(
+        spec["body_text"],
+        spec.get("sample_values"),
+        spec.get("variable_mappings")
+    )
+    if example_obj:
+        body_comp["example"] = example_obj
     components.append(body_comp)
 
     if spec.get("footer_text"):
