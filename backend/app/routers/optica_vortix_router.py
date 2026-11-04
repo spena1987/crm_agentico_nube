@@ -185,6 +185,7 @@ class CrearCampanaOpticaPayload(BaseModel):
     lote_max_hora: Optional[int] = None
     variables_mapeo: Optional[List[str]] = None
     filtro_audiencia: Optional[Dict[str, Any]] = None
+    destinatarios_seleccionados: Optional[List[Dict[str, Any]]] = None
     config_goteo_json: Optional[Dict[str, Any]] = None
     programada_para: Optional[str] = None
     lanzar_ahora: bool = False
@@ -2225,6 +2226,162 @@ def _enriquecer_campana_optica_frontend(c: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+@optica_vortix_router.get("/campanas/audiencia-geclisa")
+async def obtener_audiencia_geclisa_campana(
+    fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD del turno en Geclisa"),
+    dias_anticipacion: int = Query(1, ge=0, le=14),
+    prestador_id: Optional[str] = Query(None)
+):
+    """
+    Consulta en tiempo real la agenda global de Centrovisión vía GeclisaClient para la fecha solicitada,
+    aplica filtros de prácticas no quirúrgicas, enriquece teléfonos móviles de Mendoza (+549261...),
+    cruza con el estado de Cooldown de 30 días y Opt-Out en Supabase,
+    y devuelve la nómina granular de pacientes con la lista de prestadores disponibles para selección interactiva.
+    """
+    now_mza = get_mendoza_now()
+    if fecha and re.match(r"^\d{4}-\d{2}-\d{2}$", str(fecha).strip()):
+        fecha_obj = str(fecha).strip()
+    else:
+        fecha_obj = (now_mza.date() + timedelta(days=dias_anticipacion)).isoformat()
+
+    # Ejecutar sincronización en modo dry_run=True (sin escribir en BD)
+    res_dry = await asyncio.to_thread(
+        sincronizar_turnos_proximos_optica,
+        dias_anticipacion,
+        True,
+        False,
+        fecha_obj
+    )
+
+    elegibles_raw = res_dry.get("elegibles") or []
+    excluidos_raw = res_dry.get("excluidos") or []
+
+    # Cargar set de opt_out y set de cooldown 30d
+    now_utc = datetime.now(timezone.utc)
+    since_30d = (now_utc - timedelta(days=30)).isoformat()
+    telefonos_cooldown: Set[str] = set()
+    telefonos_optout: Set[str] = set()
+
+    if supabase:
+        try:
+            res_cd = (
+                supabase.table("optica_envios_programados")
+                .select("telefono")
+                .gte("programado_para", since_30d)
+                .in_("estado", ["enviado", "pendiente", "entregado", "leido"])
+                .limit(2000)
+                .execute()
+            )
+            for r in (res_cd.data or []):
+                t = str(r.get("telefono") or "").strip()
+                if t:
+                    telefonos_cooldown.add(t)
+
+            res_oo = supabase.table("optica_contactos").select("telefono").eq("opt_out", True).execute()
+            for r in (res_oo.data or []):
+                t = str(r.get("telefono") or "").strip()
+                if t:
+                    telefonos_optout.add(t)
+        except Exception as e_s:
+            logger.warning(f"[AudienciaGeclisa] Error consultando cooldown/optout: {e_s}")
+
+    prestadores_dict: Dict[str, str] = {}
+    todos_pacientes: List[Dict[str, Any]] = []
+
+    for el in elegibles_raw:
+        pid = str(el.get("prestador_id") or "").strip()
+        pnombre = str(el.get("prestador_nombre") or "").strip()
+        if pid and pnombre and pid not in prestadores_dict:
+            prestadores_dict[pid] = pnombre
+
+        tel = str(el.get("telefono") or "").strip()
+        nombre_pac = str(el.get("paciente_nombre") or "Paciente").title().strip()
+
+        estado_envio = "ELEGIBLE"
+        motivo_bloqueo = None
+        if tel in telefonos_optout:
+            estado_envio = "OPT_OUT"
+            motivo_bloqueo = "Paciente solicitó no recibir avisos de óptica"
+        elif tel in telefonos_cooldown:
+            estado_envio = "EN_COOLDOWN"
+            motivo_bloqueo = "Ya contactado en los últimos 30 días (Escudo Anti-Spam)"
+        elif not tel:
+            estado_envio = "SIN_CELULAR"
+            motivo_bloqueo = "No posee teléfono móvil registrado en Geclisa"
+
+        item = {
+            "turno_id": str(el.get("turno_geclisa_id") or el.get("turno_id") or ""),
+            "ficha_id": str(el.get("ficha_geclisa_id") or el.get("ficha_id") or ""),
+            "paciente_nombre": nombre_pac,
+            "dni": str(el.get("dni") or "").strip(),
+            "telefono": tel,
+            "hora_turno": str(el.get("hora_turno") or "09:00").strip(),
+            "fecha_turno": str(el.get("fecha_turno") or fecha_obj),
+            "prestador_id": pid,
+            "prestador_nombre": pnombre or "Profesional Centrovisión",
+            "servicio_practica": str(el.get("servicio_practica") or "Consulta").strip(),
+            "obra_social": str(el.get("obra_social") or "Particular").strip(),
+            "codigo_beneficio": str(el.get("codigo_beneficio") or generar_codigo_beneficio_vortix(tel, fecha_obj)),
+            "estado_envio": estado_envio,
+            "motivo_bloqueo": motivo_bloqueo,
+            "seleccionado": estado_envio == "ELEGIBLE"
+        }
+        todos_pacientes.append(item)
+
+    for ex in excluidos_raw:
+        pid = str(ex.get("prestador_id") or "").strip()
+        pnombre = str(ex.get("prestador_nombre") or "").strip()
+        if pid and pnombre and pid not in prestadores_dict:
+            prestadores_dict[pid] = pnombre
+
+        motivo = str(ex.get("motivo_exclusion") or "EXCLUIDO").upper()
+        if "CANCELADO" in motivo:
+            continue
+
+        st_envio = "SIN_CELULAR" if "TELEFONO" in motivo else ("OPT_OUT" if "OPT_OUT" in motivo else "EN_COOLDOWN")
+        item_ex = {
+            "turno_id": str(ex.get("turno_id") or ""),
+            "ficha_id": str(ex.get("ficha_id") or ""),
+            "paciente_nombre": str(ex.get("paciente_nombre") or "Paciente").title().strip(),
+            "dni": str(ex.get("dni") or "").strip(),
+            "telefono": str(ex.get("telefono") or ex.get("telefono_raw") or "").strip(),
+            "hora_turno": str(ex.get("hora_turno") or "00:00").strip(),
+            "fecha_turno": fecha_obj,
+            "prestador_id": pid,
+            "prestador_nombre": pnombre or "Profesional Centrovisión",
+            "servicio_practica": str(ex.get("servicio_practica") or "Práctica").strip(),
+            "obra_social": str(ex.get("obra_social") or "Particular").strip(),
+            "codigo_beneficio": "#VORTIX",
+            "estado_envio": st_envio,
+            "motivo_bloqueo": ex.get("motivo_exclusion"),
+            "seleccionado": False
+        }
+        todos_pacientes.append(item_ex)
+
+    todos_pacientes.sort(key=lambda x: str(x.get("hora_turno") or "99:99"))
+
+    if prestador_id and prestador_id.strip():
+        todos_pacientes = [p for p in todos_pacientes if str(p.get("prestador_id")) == prestador_id.strip()]
+
+    prestadores_list = [{"id": k, "nombre": v} for k, v in sorted(prestadores_dict.items(), key=lambda x: x[1])]
+    elegibles_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "ELEGIBLE")
+    cooldown_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "EN_COOLDOWN")
+    opt_out_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "OPT_OUT")
+    sin_tel_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "SIN_CELULAR")
+
+    return {
+        "success": True,
+        "fecha_objetivo": fecha_obj,
+        "total_turnos": len(todos_pacientes),
+        "elegibles_count": elegibles_count,
+        "cooldown_count": cooldown_count,
+        "opt_out_count": opt_out_count,
+        "sin_telefono_count": sin_tel_count,
+        "prestadores": prestadores_list,
+        "pacientes": todos_pacientes
+    }
+
+
 @optica_vortix_router.get("/campanas")
 async def listar_campanas_optica():
     """Lista todas las campañas promocionales de Óptica Vortix y el resumen de la cola."""
@@ -2268,6 +2425,8 @@ async def crear_campana_optica(payload: CrearCampanaOpticaPayload):
         filtro_aud["segmento"] = payload.segmento
     if payload.descuento_texto:
         filtro_aud["descuento_texto"] = payload.descuento_texto
+    if payload.destinatarios_seleccionados is not None:
+        filtro_aud["destinatarios_seleccionados"] = payload.destinatarios_seleccionados
 
     tpl_final = (payload.template_name or "").strip() or str(cfg.get("template_turno_descuento") or "vortix_beneficio_turno_v1")
     placa_final = payload.placa_imagen_url or payload.placa_url or None
@@ -2368,53 +2527,76 @@ async def lanzar_campana_optica(camp_id: str):
     except Exception as e_cd:
         logger.warning(f"[CampanaOptica] Error consultando cooldown 30d: {e_cd}")
 
-    # 3. Filtrado de audiencia según segmento clínico
-    contactos_ids_segmento: Optional[Set[str]] = None
+    # 3. Filtrado de audiencia: Priorizar selección manual granular si fue provista en el asistente
+    dest_manuales = filtro.get("destinatarios_seleccionados") or []
+    if dest_manuales and isinstance(dest_manuales, list):
+        contactos = []
+        for d in dest_manuales:
+            tel_d = str(d.get("telefono") or "").strip()
+            if not tel_d or tel_d in telefonos_cooldown:
+                continue
+            try:
+                ct_rec = upsert_optica_contacto(
+                    telefono=tel_d,
+                    nombre=str(d.get("paciente_nombre") or d.get("nombre") or "Paciente"),
+                    dni=str(d.get("dni") or "").strip() or None,
+                    obra_social=str(d.get("obra_social") or "Particular").strip(),
+                    ficha_geclisa_id=str(d.get("ficha_id") or "").strip() or None
+                )
+                if ct_rec and not ct_rec.get("opt_out"):
+                    if d.get("codigo_beneficio"):
+                        ct_rec["codigo_cupon_activo"] = d.get("codigo_beneficio")
+                    contactos.append(ct_rec)
+            except Exception as e_up:
+                logger.debug(f"[CampanaOptica] Error registrando contacto seleccionado {tel_d}: {e_up}")
+    else:
+        # Lógica automática según segmento clínico en BD
+        contactos_ids_segmento: Optional[Set[str]] = None
 
-    if "AEREO" in segmento or "RECETA" in segmento:
-        try:
-            opp_res = (
-                supabase.table("optica_oportunidades_geclisa")
-                .select("contacto_id, telefono")
-                .in_("tipo_oportunidad", ["indicacion_lentes_aereos", "indicacion_ambos"])
-                .limit(500)
-                .execute()
-            )
-            c_ids = {str(r.get("contacto_id")) for r in (opp_res.data or []) if r.get("contacto_id")}
-            if c_ids:
-                contactos_ids_segmento = c_ids
-        except Exception as e_opp:
-            logger.warning(f"[CampanaOptica] Error consultando oportunidades aéreos: {e_opp}")
+        if "AEREO" in segmento or "RECETA" in segmento:
+            try:
+                opp_res = (
+                    supabase.table("optica_oportunidades_geclisa")
+                    .select("contacto_id, telefono")
+                    .in_("tipo_oportunidad", ["indicacion_lentes_aereos", "indicacion_ambos"])
+                    .limit(500)
+                    .execute()
+                )
+                c_ids = {str(r.get("contacto_id")) for r in (opp_res.data or []) if r.get("contacto_id")}
+                if c_ids:
+                    contactos_ids_segmento = c_ids
+            except Exception as e_opp:
+                logger.warning(f"[CampanaOptica] Error consultando oportunidades aéreos: {e_opp}")
 
-    elif "CONTACTO" in segmento:
-        try:
-            opp_res = (
-                supabase.table("optica_oportunidades_geclisa")
-                .select("contacto_id, telefono")
-                .in_("tipo_oportunidad", ["indicacion_lentes_contacto", "indicacion_ambos"])
-                .limit(500)
-                .execute()
-            )
-            c_ids = {str(r.get("contacto_id")) for r in (opp_res.data or []) if r.get("contacto_id")}
-            if c_ids:
-                contactos_ids_segmento = c_ids
-        except Exception as e_opp:
-            logger.warning(f"[CampanaOptica] Error consultando oportunidades contacto: {e_opp}")
+        elif "CONTACTO" in segmento:
+            try:
+                opp_res = (
+                    supabase.table("optica_oportunidades_geclisa")
+                    .select("contacto_id, telefono")
+                    .in_("tipo_oportunidad", ["indicacion_lentes_contacto", "indicacion_ambos"])
+                    .limit(500)
+                    .execute()
+                )
+                c_ids = {str(r.get("contacto_id")) for r in (opp_res.data or []) if r.get("contacto_id")}
+                if c_ids:
+                    contactos_ids_segmento = c_ids
+            except Exception as e_opp:
+                logger.warning(f"[CampanaOptica] Error consultando oportunidades contacto: {e_opp}")
 
-    cont_q = supabase.table("optica_contactos").select("*").eq("opt_out", False)
-    if filtro.get("obra_social"):
-        cont_q = cont_q.ilike("obra_social", f"%{filtro['obra_social']}%")
+        cont_q = supabase.table("optica_contactos").select("*").eq("opt_out", False)
+        if filtro.get("obra_social"):
+            cont_q = cont_q.ilike("obra_social", f"%{filtro['obra_social']}%")
 
-    if contactos_ids_segmento:
-        cont_q = cont_q.in_("id", list(contactos_ids_segmento))
+        if contactos_ids_segmento:
+            cont_q = cont_q.in_("id", list(contactos_ids_segmento))
 
-    cont_res = cont_q.limit(500).execute()
-    contactos = cont_res.data or []
+        cont_res = cont_q.limit(500).execute()
+        contactos = cont_res.data or []
 
-    # Fallback seguro: si el segmento específico no tiene contactos aún, no dejar la campaña vacía
-    if not contactos and not contactos_ids_segmento:
-        cont_fallback = supabase.table("optica_contactos").select("*").eq("opt_out", False).limit(500).execute()
-        contactos = cont_fallback.data or []
+        # Fallback seguro: si el segmento específico no tiene contactos aún, no dejar la campaña vacía
+        if not contactos and not contactos_ids_segmento:
+            cont_fallback = supabase.table("optica_contactos").select("*").eq("opt_out", False).limit(500).execute()
+            contactos = cont_fallback.data or []
 
     accumulated_delay = 0
     encolados = 0

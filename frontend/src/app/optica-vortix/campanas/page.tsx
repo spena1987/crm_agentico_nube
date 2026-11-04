@@ -16,6 +16,14 @@ import {
   Loader2,
   Plus,
   AlertTriangle,
+  Calendar,
+  Filter,
+  CheckSquare,
+  Square,
+  User,
+  Clock,
+  RefreshCw,
+  Search,
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
@@ -31,6 +39,30 @@ interface PlantillaOptica {
   buttons?: Array<{ type?: string; text?: string; url?: string }>
 }
 
+interface PacienteTurnoGeclisa {
+  turno_id: string
+  ficha_id: string
+  paciente_nombre: string
+  dni: string
+  telefono: string
+  hora_turno: string
+  fecha_turno: string
+  prestador_id: string
+  prestador_nombre: string
+  servicio_practica: string
+  obra_social: string
+  codigo_beneficio: string
+  estado_envio: 'ELEGIBLE' | 'COOLDOWN_ACTIVO' | 'OPT_OUT' | 'SIN_CELULAR'
+  motivo_exclusion?: string | null
+  seleccionado: boolean
+}
+
+interface PrestadorFiltro {
+  id: string
+  nombre: string
+  cantidad_turnos?: number
+}
+
 export default function OpticaCampanasPage() {
   const [salud, setSalud] = useState<OpticaSaludLinea | null>(null)
   const [placas, setPlacas] = useState<OpticaPlaca[]>([])
@@ -44,10 +76,27 @@ export default function OpticaCampanasPage() {
   const [nuevaPlacaCat, setNuevaPlacaCat] = useState('VOUCHER_TURNO')
   const [uploadingPlaca, setUploadingPlaca] = useState(false)
 
-  // Wizard de 4 pasos para Crear Campaña Anti-Bloqueo
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
+  // Wizard de 5 pasos para Crear Campaña Anti-Bloqueo
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1)
   const [campNombre, setCampNombre] = useState('Campaña Voucher 20% OFF Pacientes Consultorio')
   const [campSegmento, setCampSegmento] = useState('TURNOS_PROXIMOS_CON_DESCUENTO')
+
+  // Paso 2: Selección Granular de Turnos de Geclisa
+  const getFechaOffsetStr = (diasOffset: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + diasOffset)
+    return d.toISOString().split('T')[0]
+  }
+
+  const [fechaTurnoFiltro, setFechaTurnoFiltro] = useState<string>(getFechaOffsetStr(1))
+  const [turnosGeclisa, setTurnosGeclisa] = useState<PacienteTurnoGeclisa[]>([])
+  const [prestadoresDisponibles, setPrestadoresDisponibles] = useState<PrestadorFiltro[]>([])
+  const [prestadorFiltroId, setPrestadorFiltroId] = useState<string>('TODOS')
+  const [searchPaciente, setSearchPaciente] = useState<string>('')
+  const [loadingTurnos, setLoadingTurnos] = useState(false)
+  const [pacientePreview, setPacientePreview] = useState<PacienteTurnoGeclisa | null>(null)
+
+  // Pasos 3, 4 y 5: Estrategia, Plantilla, Jitter y Confirmación
   const [campEstrategia, setCampEstrategia] = useState<'DOBLE_PASO' | 'DIRECTA_IMAGEN'>('DOBLE_PASO')
   const [campTemplate, setCampTemplate] = useState('vortix_beneficio_turno_v1')
   const [campPlacaUrl, setCampPlacaUrl] = useState('')
@@ -123,9 +172,63 @@ export default function OpticaCampanasPage() {
     }
   }
 
+  const fetchAudienciaGeclisa = async (fechaParam?: string, prestadorParam?: string) => {
+    setLoadingTurnos(true)
+    const targetFecha = fechaParam || fechaTurnoFiltro
+    const targetPrest = prestadorParam !== undefined ? prestadorParam : prestadorFiltroId
+    try {
+      const q = new URLSearchParams()
+      if (targetFecha) q.set('fecha', targetFecha)
+      if (targetPrest && targetPrest !== 'TODOS') q.set('prestador_id', targetPrest)
+
+      const res = await apiFetch(`/api/optica-vortix/campanas/audiencia-geclisa?${q.toString()}`, {
+        cache: 'no-store',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        const pacs: PacienteTurnoGeclisa[] = data.pacientes || []
+        setTurnosGeclisa(pacs)
+        if (data.prestadores) {
+          setPrestadoresDisponibles(data.prestadores)
+        }
+        if (pacs.length > 0) {
+          const primerElegible = pacs.find((p) => p.estado_envio === 'ELEGIBLE') || pacs[0]
+          setPacientePreview(primerElegible)
+        } else {
+          setPacientePreview(null)
+        }
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingTurnos(false)
+    }
+  }
+
+  useEffect(() => {
+    if (step === 2) {
+      fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId)
+    }
+  }, [step, fechaTurnoFiltro, prestadorFiltroId])
+
+  const toggleSeleccionarPaciente = (turnoId: string) => {
+    setTurnosGeclisa((prev) =>
+      prev.map((p) => (p.turno_id === turnoId ? { ...p, seleccionado: !p.seleccionado } : p))
+    )
+  }
+
+  const toggleSeleccionarTodos = (seleccionar: boolean) => {
+    setTurnosGeclisa((prev) =>
+      prev.map((p) =>
+        p.estado_envio === 'ELEGIBLE' ? { ...p, seleccionado: seleccionar } : p
+      )
+    )
+  }
+
   const handleCrearYLanzarCampana = async () => {
     setCreatingCamp(true)
     try {
+      const seleccionados = turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE')
       const res = await apiFetch('/api/optica-vortix/campanas', {
         method: 'POST',
         body: JSON.stringify({
@@ -138,6 +241,18 @@ export default function OpticaCampanasPage() {
           jitter_min_seg: jitterMin,
           jitter_max_seg: jitterMax,
           lote_max_hora: loteMaxHora,
+          destinatarios_seleccionados: seleccionados.map((p) => ({
+            telefono: p.telefono,
+            paciente_nombre: p.paciente_nombre,
+            dni: p.dni,
+            obra_social: p.obra_social,
+            ficha_id: p.ficha_id,
+            codigo_beneficio: p.codigo_beneficio,
+            hora_turno: p.hora_turno,
+            fecha_turno: p.fecha_turno,
+            prestador_nombre: p.prestador_nombre,
+            servicio_practica: p.servicio_practica,
+          })),
         }),
       })
       if (res.ok) {
@@ -216,15 +331,15 @@ export default function OpticaCampanasPage() {
                 </p>
               </div>
               <div className="flex items-center gap-1">
-                {[1, 2, 3, 4].map((s) => (
+                {[1, 2, 3, 4, 5].map((s) => (
                   <button
                     key={s}
                     type="button"
                     onClick={() => setStep(s as any)}
                     className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
                       step === s
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)]'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)]'
                     }`}
                   >
                     {s}
@@ -257,7 +372,7 @@ export default function OpticaCampanasPage() {
                     className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)] font-bold"
                   >
                     <option value="TURNOS_PROXIMOS_CON_DESCUENTO">
-                      🎟️ Pacientes con Turno de Consultorio Próximo (Voucher Descuento)
+                      🎟️ Pacientes con Turno de Consultorio Próximo (Voucher Descuento Cortesía)
                     </option>
                     <option value="RECETAS_AEREOS_ULTIMOS_7_DIAS">
                       👓 Pacientes con Indicación de Lentes Aéreos (Últimos 7 días sin compra)
@@ -273,10 +388,15 @@ export default function OpticaCampanasPage() {
                 <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={() => setStep(2)}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+                    onClick={() => {
+                      setStep(2)
+                      if (turnosGeclisa.length === 0) {
+                        fetchAudienciaGeclisa()
+                      }
+                    }}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors"
                   >
-                    Siguiente: Estrategia & Placa →
+                    Siguiente: Seleccionar Pacientes (Geclisa) →
                   </button>
                 </div>
               </div>
@@ -284,8 +404,350 @@ export default function OpticaCampanasPage() {
 
             {step === 2 && (
               <div className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
+                      Paso 2 • Audiencia y Selección Granular de Pacientes (Geclisa Centrovisión)
+                    </h3>
+                    <p className="text-[11px] text-[var(--secondary)] mt-0.5">
+                      Filtra por fecha y profesional. Selecciona individualmente o en lote cuidando las protecciones anti-bloqueo.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => fetchAudienciaGeclisa()}
+                    disabled={loadingTurnos}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    <RefreshCw size={13} className={loadingTurnos ? 'animate-spin' : ''} />
+                    <span>Actualizar Turnos</span>
+                  </button>
+                </div>
+
+                {/* Filtros de Fecha, Prestador y Buscador */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
+                  {/* Atajos Rápidos de Fecha */}
+                  <div className="sm:col-span-5 flex items-center gap-1.5">
+                    {(() => {
+                      const hoy = new Date().toISOString().split('T')[0]
+                      const manana = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+                      const pasado = new Date(Date.now() + 172800000).toISOString().split('T')[0]
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setFechaTurnoFiltro(hoy)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              fechaTurnoFiltro === hoy
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                            }`}
+                          >
+                            Hoy
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFechaTurnoFiltro(manana)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              fechaTurnoFiltro === manana
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                            }`}
+                          >
+                            Mañana
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setFechaTurnoFiltro(pasado)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              fechaTurnoFiltro === pasado
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                            }`}
+                          >
+                            Pasado
+                          </button>
+                          <input
+                            type="date"
+                            value={fechaTurnoFiltro}
+                            onChange={(e) => setFechaTurnoFiltro(e.target.value)}
+                            className="flex-1 px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                          />
+                        </>
+                      )
+                    })()}
+                  </div>
+
+                  {/* Dropdown de Prestador */}
+                  <div className="sm:col-span-4">
+                    <select
+                      value={prestadorFiltroId}
+                      onChange={(e) => setPrestadorFiltroId(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                    >
+                      <option value="TODOS">🩺 Todos los Profesionales</option>
+                      {prestadoresDisponibles.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre} {p.cantidad_turnos !== undefined ? `(${p.cantidad_turnos})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Input de Búsqueda */}
+                  <div className="sm:col-span-3 relative">
+                    <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--secondary)]" />
+                    <input
+                      type="text"
+                      placeholder="Buscar paciente..."
+                      value={searchPaciente}
+                      onChange={(e) => setSearchPaciente(e.target.value)}
+                      className="w-full pl-7 pr-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Métricas y Badges de Resumen Anti-Bloqueo */}
+                {(() => {
+                  const aptos = turnosGeclisa.filter((t) => t.estado_envio === 'ELEGIBLE').length
+                  const selec = turnosGeclisa.filter((t) => t.seleccionado && t.estado_envio === 'ELEGIBLE').length
+                  const cooldown = turnosGeclisa.filter((t) => t.estado_envio === 'COOLDOWN_ACTIVO').length
+                  const optout = turnosGeclisa.filter((t) => t.estado_envio === 'OPT_OUT').length
+                  const sinCel = turnosGeclisa.filter((t) => t.estado_envio === 'SIN_CELULAR').length
+
+                  return (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-[var(--border)] font-bold">
+                        Total turnos: <strong>{turnosGeclisa.length}</strong>
+                      </span>
+                      <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
+                        Aptos para envío: <strong>{aptos}</strong>
+                      </span>
+                      <span className="px-2.5 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-extrabold">
+                        Seleccionados: <strong>{selec}</strong> de {aptos}
+                      </span>
+                      {cooldown > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-medium">
+                          Cooldown 30d: <strong>{cooldown}</strong>
+                        </span>
+                      )}
+                      {optout > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 font-medium">
+                          Opt-Out: <strong>{optout}</strong>
+                        </span>
+                      )}
+                      {sinCel > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl bg-slate-500/10 border border-slate-500/20 text-slate-500 font-medium">
+                          Sin móvil: <strong>{sinCel}</strong>
+                        </span>
+                      )}
+
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleSeleccionarTodos(true)}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 transition-colors"
+                        >
+                          Seleccionar todos los aptos
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleSeleccionarTodos(false)}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:bg-slate-200 transition-colors"
+                        >
+                          Deseleccionar
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Tabla de Pacientes */}
+                <div className="border border-[var(--border)] rounded-2xl overflow-hidden max-h-80 overflow-y-auto">
+                  {loadingTurnos ? (
+                    <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-[var(--secondary)]">
+                      <Loader2 size={24} className="animate-spin text-indigo-600" />
+                      <span>Consultando agenda de Geclisa Centrovisión...</span>
+                    </div>
+                  ) : (
+                    (() => {
+                      const filtrados = turnosGeclisa.filter((t) => {
+                        if (!searchPaciente.trim()) return true
+                        const s = searchPaciente.toLowerCase()
+                        return (
+                          t.paciente_nombre.toLowerCase().includes(s) ||
+                          t.dni.includes(s) ||
+                          t.telefono.includes(s) ||
+                          t.prestador_nombre.toLowerCase().includes(s) ||
+                          t.obra_social.toLowerCase().includes(s)
+                        )
+                      })
+
+                      if (filtrados.length === 0) {
+                        return (
+                          <div className="py-12 text-center text-xs text-[var(--secondary)]">
+                            No se encontraron turnos en Geclisa para la fecha y filtros seleccionados.
+                          </div>
+                        )
+                      }
+
+                      const aptosFiltrados = filtrados.filter((t) => t.estado_envio === 'ELEGIBLE')
+                      const todosSeleccionados =
+                        aptosFiltrados.length > 0 && aptosFiltrados.every((t) => t.seleccionado)
+
+                      return (
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-slate-100 dark:bg-slate-800/80 sticky top-0 text-[11px] font-black text-[var(--secondary)] border-b border-[var(--border)] z-10">
+                            <tr>
+                              <th className="py-2.5 px-3 w-10 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleSeleccionarTodos(!todosSeleccionados)}
+                                  className="text-indigo-600 dark:text-indigo-400 hover:opacity-80"
+                                >
+                                  {todosSeleccionados ? <CheckSquare size={16} /> : <Square size={16} />}
+                                </button>
+                              </th>
+                              <th className="py-2.5 px-2 w-16">Hora</th>
+                              <th className="py-2.5 px-3">Paciente & DNI</th>
+                              <th className="py-2.5 px-3">WhatsApp / Móvil</th>
+                              <th className="py-2.5 px-3">Médico / Especialidad</th>
+                              <th className="py-2.5 px-3">Obra Social</th>
+                              <th className="py-2.5 px-3 text-right">Estado Anti-Bloqueo</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-[var(--border)]">
+                            {filtrados.map((t) => {
+                              const isEligible = t.estado_envio === 'ELEGIBLE'
+                              const isSelected = !!t.seleccionado && isEligible
+                              const isCurrentPreview = pacientePreview?.turno_id === t.turno_id
+
+                              return (
+                                <tr
+                                  key={t.turno_id}
+                                  onClick={() => setPacientePreview(t)}
+                                  className={`cursor-pointer transition-colors ${
+                                    isCurrentPreview
+                                      ? 'bg-indigo-50/80 dark:bg-indigo-950/40'
+                                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                                  }`}
+                                >
+                                  <td
+                                    className="py-2 px-3 text-center"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      if (isEligible) toggleSeleccionarPaciente(t.turno_id)
+                                    }}
+                                  >
+                                    <button
+                                      type="button"
+                                      disabled={!isEligible}
+                                      className={`transition-opacity ${
+                                        !isEligible
+                                          ? 'opacity-30 cursor-not-allowed text-slate-400'
+                                          : isSelected
+                                          ? 'text-indigo-600 dark:text-indigo-400'
+                                          : 'text-slate-400 hover:text-slate-600'
+                                      }`}
+                                    >
+                                      {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+                                    </button>
+                                  </td>
+                                  <td className="py-2 px-2 font-mono font-bold text-slate-700 dark:text-slate-300">
+                                    {t.hora_turno || '--:--'}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="font-bold text-[var(--foreground)]">
+                                      {t.paciente_nombre}
+                                    </div>
+                                    <div className="text-[10px] text-[var(--secondary)]">
+                                      DNI: {t.dni || 'S/D'} • Ficha: #{t.ficha_id || '0'}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-[11px]">
+                                    {t.telefono ? (
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
+                                        +{t.telefono}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 italic text-[10px]">Sin teléfono</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="font-semibold text-slate-800 dark:text-slate-200">
+                                      {t.prestador_nombre}
+                                    </div>
+                                    <div className="text-[10px] text-[var(--secondary)] truncate max-w-[140px]">
+                                      {t.servicio_practica}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-[11px] text-[var(--secondary)] truncate max-w-[120px]">
+                                    {t.obra_social || 'Particular'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    {t.estado_envio === 'ELEGIBLE' && (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                        Apto para Envío
+                                      </span>
+                                    )}
+                                    {t.estado_envio === 'COOLDOWN_ACTIVO' && (
+                                      <span
+                                        title={t.motivo_exclusion || undefined}
+                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                      >
+                                        Cooldown 30d
+                                      </span>
+                                    )}
+                                    {t.estado_envio === 'OPT_OUT' && (
+                                      <span
+                                        title={t.motivo_exclusion || undefined}
+                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                      >
+                                        Opt-Out Activo
+                                      </span>
+                                    )}
+                                    {t.estado_envio === 'SIN_CELULAR' && (
+                                      <span
+                                        title={t.motivo_exclusion || undefined}
+                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/15 text-slate-500 border border-slate-500/20"
+                                      >
+                                        Sin Celular
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )
+                    })()
+                  )}
+                </div>
+
+                <div className="flex justify-between items-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setStep(1)}
+                    className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    ← Anterior
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors"
+                  >
+                    Siguiente: Estrategia & Plantilla (Paso 3) →
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {step === 3 && (
+              <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
-                  Paso 2 • Estrategia Anti-Bloqueo, Plantilla Meta y Placa Gráfica
+                  Paso 3 • Estrategia Anti-Bloqueo, Plantilla Meta y Placa Gráfica
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
@@ -391,26 +853,26 @@ export default function OpticaCampanasPage() {
                 <div className="flex justify-between">
                   <button
                     type="button"
-                    onClick={() => setStep(1)}
+                    onClick={() => setStep(2)}
                     className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold"
                   >
-                    ← Anterior
+                    ← Anterior (Paso 2)
                   </button>
                   <button
                     type="button"
-                    onClick={() => setStep(3)}
+                    onClick={() => setStep(4)}
                     className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
                   >
-                    Siguiente: Cadencia & Jitter →
+                    Siguiente: Cadencia & Jitter (Paso 4) →
                   </button>
                 </div>
               </div>
             )}
 
-            {step === 3 && (
+            {step === 4 && (
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
-                  Paso 3 • Configuración de Goteo, Jitter Aleatorio y Ventana Horaria
+                  Paso 4 • Configuración de Goteo, Jitter Aleatorio y Ventana Horaria
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
@@ -444,62 +906,77 @@ export default function OpticaCampanasPage() {
                 <div className="flex justify-between">
                   <button
                     type="button"
-                    onClick={() => setStep(2)}
+                    onClick={() => setStep(3)}
                     className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold"
                   >
-                    ← Anterior
+                    ← Anterior (Paso 3)
                   </button>
                   <button
                     type="button"
-                    onClick={() => setStep(4)}
+                    onClick={() => setStep(5)}
                     className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
                   >
-                    Siguiente: Confirmar y Lanzar →
+                    Siguiente: Confirmar y Lanzar (Paso 5) →
                   </button>
                 </div>
               </div>
             )}
 
-            {step === 4 && (
+            {step === 5 && (
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-emerald-600">
-                  Paso 4 • Resumen de Protección y Lanzamiento
+                  Paso 5 • Resumen de Protección y Lanzamiento
                 </h3>
-                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] text-xs space-y-1.5">
-                  <p>
-                    <strong>Campaña:</strong> {campNombre}
-                  </p>
-                  <p>
-                    <strong>Segmento:</strong> {campSegmento}
-                  </p>
-                  <p>
-                    <strong>Estrategia:</strong> {campEstrategia} ({campTemplate})
-                  </p>
-                  <p>
-                    <strong>Cadencia:</strong> 1 envío cada {jitterMin}s–{jitterMax}s (máx.{' '}
-                    {loteMaxHora}/hora en horario comercial 09:00 a 20:00 hs).
-                  </p>
-                </div>
-                <div className="flex justify-between">
+                {(() => {
+                  const seleccionados = turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE')
+                  return (
+                    <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] text-xs space-y-2">
+                      <p>
+                        <strong>Campaña:</strong> {campNombre}
+                      </p>
+                      <p>
+                        <strong>Segmento:</strong> {campSegmento}
+                      </p>
+                      <p>
+                        <strong>Destinatarios Seleccionados:</strong>{' '}
+                        <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                          {seleccionados.length} pacientes de Geclisa
+                        </span>{' '}
+                        para la fecha {fechaTurnoFiltro}.
+                      </p>
+                      <p>
+                        <strong>Estrategia:</strong> {campEstrategia} ({campTemplate})
+                      </p>
+                      <p>
+                        <strong>Cadencia Humanizada:</strong> 1 envío cada {jitterMin}s–{jitterMax}s (máx.{' '}
+                        {loteMaxHora}/hora en horario comercial 09:00 a 20:00 hs).
+                      </p>
+                    </div>
+                  )
+                })()}
+                <div className="flex justify-between items-center">
                   <button
                     type="button"
-                    onClick={() => setStep(3)}
+                    onClick={() => setStep(4)}
                     className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold"
                   >
-                    ← Anterior
+                    ← Anterior (Paso 4)
                   </button>
                   <button
                     type="button"
                     onClick={handleCrearYLanzarCampana}
-                    disabled={creatingCamp}
-                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black flex items-center gap-2 shadow-md"
+                    disabled={
+                      creatingCamp ||
+                      turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE').length === 0
+                    }
+                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black flex items-center gap-2 shadow-md transition-all"
                   >
                     {creatingCamp ? (
                       <Loader2 size={14} className="animate-spin" />
                     ) : (
                       <Play size={14} />
                     )}
-                    Iniciar Campaña en Cola Anti-Bloqueo
+                    Iniciar Campaña para {turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE').length} Pacientes
                   </button>
                 </div>
               </div>
@@ -518,6 +995,17 @@ export default function OpticaCampanasPage() {
               </span>
             </div>
 
+            {pacientePreview && (
+              <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-xl bg-slate-800/60 border border-slate-700/50 text-slate-300">
+                <span className="truncate max-w-[170px] font-bold text-emerald-300">
+                  👤 {pacientePreview.paciente_nombre}
+                </span>
+                <span className="font-mono text-[10px] text-slate-400">
+                  {pacientePreview.hora_turno ? `Turno: ${pacientePreview.hora_turno} hs` : ''}
+                </span>
+              </div>
+            )}
+
             <div className="bg-[#0b141a] rounded-2xl p-3.5 space-y-2.5 text-xs border border-slate-800/80">
               {campPlacaUrl && (
                 <div className="rounded-xl overflow-hidden bg-slate-800 max-h-36 flex items-center justify-center">
@@ -531,26 +1019,36 @@ export default function OpticaCampanasPage() {
               <div className="bg-[#005c4b] text-white rounded-xl p-3 space-y-1.5 text-[11px] leading-relaxed">
                 {(() => {
                   const tpl = plantillas.find((p) => p.name === campTemplate)
+                  const nombreVisual = pacientePreview?.paciente_nombre
+                    ? pacientePreview.paciente_nombre.split(' ')[0]
+                    : 'María'
+                  const voucherCodigo = pacientePreview?.codigo_beneficio || '#VORTIX-20OFF'
+
                   if (!tpl?.body_text) {
                     return (
                       <>
                         <p>
-                          ¡Hola <strong>María</strong>! 👋 Te escribimos de <strong>Óptica Vortix</strong> (en Planta Baja de la clínica).
+                          ¡Hola <strong>{nombreVisual}</strong>! 👋 Te escribimos de <strong>Óptica Vortix</strong> (en Planta Baja de la clínica).
                         </p>
                         <p>
                           Por tu atención en el centro contás con un voucher exclusivo:{' '}
-                          <strong>{campDescuento}</strong> código <strong>#VORTIX-20OFF</strong>.
+                          <strong>{campDescuento}</strong> código <strong>{voucherCodigo}</strong>.
                         </p>
                       </>
                     )
                   }
                   const isRetiro = campTemplate.includes('retiro') || campTemplate.includes('listos')
                   const isContacto = campTemplate.includes('contacto')
+                  const prestadorVisual = pacientePreview?.prestador_nombre || 'el Dr. Arago'
+                  const turnoVisual = pacientePreview?.hora_turno
+                    ? `tu turno de las ${pacientePreview.hora_turno} hs`
+                    : 'esta semana'
+
                   let preview = tpl.body_text
-                    .replace(/\{\{1\}\}/g, 'María')
-                    .replace(/\{\{2\}\}/g, isRetiro ? 'anteojos monofocales' : isContacto ? 'el Dr. Arago' : 'esta semana')
+                    .replace(/\{\{1\}\}/g, nombreVisual)
+                    .replace(/\{\{2\}\}/g, isRetiro ? 'anteojos monofocales' : isContacto ? prestadorVisual : turnoVisual)
                     .replace(/\{\{3\}\}/g, isRetiro ? '09:00 a 19:30 hs' : isContacto ? '#VORTIX-LC' : campDescuento)
-                    .replace(/\{\{4\}\}/g, '#VORTIX-20OFF')
+                    .replace(/\{\{4\}\}/g, voucherCodigo)
 
                   return (
                     <div className="space-y-1 whitespace-pre-line">
