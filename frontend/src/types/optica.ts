@@ -243,4 +243,19 @@ export interface OpticaConfig {
   antibloqueo_ventana_horaria_inicio: string
   antibloqueo_ventana_horaria_fin: string
   antibloqueo_pausa_calidad_amarilla: boolean
+  // Clasificación Oficial Geclisa (Sedes y Servicios)
+  sedes_habilitadas_campana?: string[]
+  servicios_habilitados_campana?: string[]
+}
+
+export interface UbicacionFiltro {
+  id: string
+  nombre: string
+  cantidad_turnos?: number
+}
+
+export interface ServicioFiltro {
+  id: string
+  nombre: string
+  cantidad_turnos?: number
 }

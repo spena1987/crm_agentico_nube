@@ -49,6 +49,12 @@ interface PacienteTurnoGeclisa {
   fecha_turno: string
   prestador_id: string
   prestador_nombre: string
+  ubicacion?: string
+  ubicacion_id?: string
+  consultorio?: string
+  servicio?: string
+  servicio_id?: string
+  practica?: string
   servicio_practica: string
   obra_social: string
   codigo_beneficio: string
@@ -58,6 +64,18 @@ interface PacienteTurnoGeclisa {
 }
 
 interface PrestadorFiltro {
+  id: string
+  nombre: string
+  cantidad_turnos?: number
+}
+
+interface UbicacionFiltro {
+  id: string
+  nombre: string
+  cantidad_turnos?: number
+}
+
+interface ServicioFiltro {
   id: string
   nombre: string
   cantidad_turnos?: number
@@ -92,6 +110,10 @@ export default function OpticaCampanasPage() {
   const [turnosGeclisa, setTurnosGeclisa] = useState<PacienteTurnoGeclisa[]>([])
   const [prestadoresDisponibles, setPrestadoresDisponibles] = useState<PrestadorFiltro[]>([])
   const [prestadorFiltroId, setPrestadorFiltroId] = useState<string>('TODOS')
+  const [ubicacionesDisponibles, setUbicacionesDisponibles] = useState<UbicacionFiltro[]>([])
+  const [ubicacionFiltroId, setUbicacionFiltroId] = useState<string>('TODAS')
+  const [serviciosDisponibles, setServiciosDisponibles] = useState<ServicioFiltro[]>([])
+  const [servicioFiltroId, setServicioFiltroId] = useState<string>('TODOS')
   const [searchPaciente, setSearchPaciente] = useState<string>('')
   const [loadingTurnos, setLoadingTurnos] = useState(false)
   const [errorTurnos, setErrorTurnos] = useState<string | null>(null)
@@ -173,15 +195,25 @@ export default function OpticaCampanasPage() {
     }
   }
 
-  const fetchAudienciaGeclisa = async (fechaParam?: string, prestadorParam?: string, forceRefresh: boolean = false) => {
+  const fetchAudienciaGeclisa = async (
+    fechaParam?: string,
+    prestadorParam?: string,
+    ubicacionParam?: string,
+    servicioParam?: string,
+    forceRefresh: boolean = false
+  ) => {
     setLoadingTurnos(true)
     setErrorTurnos(null)
     const targetFecha = fechaParam || fechaTurnoFiltro
     const targetPrest = prestadorParam !== undefined ? prestadorParam : prestadorFiltroId
+    const targetUbic = ubicacionParam !== undefined ? ubicacionParam : ubicacionFiltroId
+    const targetServ = servicioParam !== undefined ? servicioParam : servicioFiltroId
     try {
       const q = new URLSearchParams()
       if (targetFecha) q.set('fecha', targetFecha)
       if (targetPrest && targetPrest !== 'TODOS') q.set('prestador_id', targetPrest)
+      if (targetUbic && targetUbic !== 'TODAS') q.set('ubicacion_id', targetUbic)
+      if (targetServ && targetServ !== 'TODOS') q.set('servicio_id', targetServ)
       if (forceRefresh) q.set('force_refresh', 'true')
 
       const res = await apiFetch(`/api/optica-vortix/campanas/audiencia-geclisa?${q.toString()}`, {
@@ -193,6 +225,12 @@ export default function OpticaCampanasPage() {
         setTurnosGeclisa(pacs)
         if (data.prestadores) {
           setPrestadoresDisponibles(data.prestadores)
+        }
+        if (data.ubicaciones) {
+          setUbicacionesDisponibles(data.ubicaciones)
+        }
+        if (data.servicios) {
+          setServiciosDisponibles(data.servicios)
         }
         if (pacs.length > 0) {
           const primerElegible = pacs.find((p) => p.estado_envio === 'ELEGIBLE') || pacs[0]
@@ -213,9 +251,9 @@ export default function OpticaCampanasPage() {
 
   useEffect(() => {
     if (step === 2) {
-      fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId)
+      fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId, ubicacionFiltroId, servicioFiltroId)
     }
-  }, [step, fechaTurnoFiltro, prestadorFiltroId])
+  }, [step, fechaTurnoFiltro, prestadorFiltroId, ubicacionFiltroId, servicioFiltroId])
 
   const toggleSeleccionarPaciente = (turnoId: string) => {
     setTurnosGeclisa((prev) =>
@@ -228,6 +266,26 @@ export default function OpticaCampanasPage() {
       prev.map((p) =>
         p.estado_envio === 'ELEGIBLE' ? { ...p, seleccionado: seleccionar } : p
       )
+    )
+  }
+
+  const seleccionarSoloSedeCentral = () => {
+    setTurnosGeclisa((prev) =>
+      prev.map((p) => {
+        if (p.estado_envio !== 'ELEGIBLE') return p
+        const esCentral = (p.ubicacion || '').includes('540') || p.ubicacion_id === '3'
+        return { ...p, seleccionado: esCentral }
+      })
+    )
+  }
+
+  const seleccionarSoloConsultas = () => {
+    setTurnosGeclisa((prev) =>
+      prev.map((p) => {
+        if (p.estado_envio !== 'ELEGIBLE') return p
+        const esConsulta = (p.servicio || '').toUpperCase().includes('CONSULTA')
+        return { ...p, seleccionado: esConsulta }
+      })
     )
   }
 
@@ -416,7 +474,15 @@ export default function OpticaCampanasPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId, true)}
+                    onClick={() =>
+                      fetchAudienciaGeclisa(
+                        fechaTurnoFiltro,
+                        prestadorFiltroId,
+                        ubicacionFiltroId,
+                        servicioFiltroId,
+                        true
+                      )
+                    }
                     disabled={loadingTurnos}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                   >
@@ -433,7 +499,15 @@ export default function OpticaCampanasPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId, true)}
+                      onClick={() =>
+                        fetchAudienciaGeclisa(
+                          fechaTurnoFiltro,
+                          prestadorFiltroId,
+                          ubicacionFiltroId,
+                          servicioFiltroId,
+                          true
+                        )
+                      }
                       className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] hover:bg-rose-700 transition-colors shrink-0"
                     >
                       Reintentar
@@ -441,86 +515,123 @@ export default function OpticaCampanasPage() {
                   </div>
                 )}
 
-                {/* Filtros de Fecha, Prestador y Buscador */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)]">
-                  {/* Atajos Rápidos de Fecha */}
-                  <div className="sm:col-span-5 flex items-center gap-1.5">
-                    {(() => {
-                      const hoy = new Date().toISOString().split('T')[0]
-                      const manana = new Date(Date.now() + 86400000).toISOString().split('T')[0]
-                      const pasado = new Date(Date.now() + 172800000).toISOString().split('T')[0]
-                      return (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setFechaTurnoFiltro(hoy)}
-                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                              fechaTurnoFiltro === hoy
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
-                            }`}
-                          >
-                            Hoy
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFechaTurnoFiltro(manana)}
-                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                              fechaTurnoFiltro === manana
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
-                            }`}
-                          >
-                            Mañana
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setFechaTurnoFiltro(pasado)}
-                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                              fechaTurnoFiltro === pasado
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
-                            }`}
-                          >
-                            Pasado
-                          </button>
-                          <input
-                            type="date"
-                            value={fechaTurnoFiltro}
-                            onChange={(e) => setFechaTurnoFiltro(e.target.value)}
-                            className="flex-1 px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
-                          />
-                        </>
-                      )
-                    })()}
+                {/* Filtros de Fecha, Prestador, Ubicación, Servicio y Buscador */}
+                <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                    {/* Atajos Rápidos de Fecha */}
+                    <div className="sm:col-span-7 flex items-center gap-1.5">
+                      {(() => {
+                        const hoy = new Date().toISOString().split('T')[0]
+                        const manana = new Date(Date.now() + 86400000).toISOString().split('T')[0]
+                        const pasado = new Date(Date.now() + 172800000).toISOString().split('T')[0]
+                        return (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setFechaTurnoFiltro(hoy)}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                fechaTurnoFiltro === hoy
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                              }`}
+                            >
+                              Hoy
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFechaTurnoFiltro(manana)}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                fechaTurnoFiltro === manana
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                              }`}
+                            >
+                              Mañana
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setFechaTurnoFiltro(pasado)}
+                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                fechaTurnoFiltro === pasado
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                              }`}
+                            >
+                              Pasado
+                            </button>
+                            <input
+                              type="date"
+                              value={fechaTurnoFiltro}
+                              onChange={(e) => setFechaTurnoFiltro(e.target.value)}
+                              className="flex-1 px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                            />
+                          </>
+                        )
+                      })()}
+                    </div>
+
+                    {/* Input de Búsqueda */}
+                    <div className="sm:col-span-5 relative">
+                      <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--secondary)]" />
+                      <input
+                        type="text"
+                        placeholder="Buscar paciente, DNI, médico..."
+                        value={searchPaciente}
+                        onChange={(e) => setSearchPaciente(e.target.value)}
+                        className="w-full pl-7 pr-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-medium"
+                      />
+                    </div>
                   </div>
 
-                  {/* Dropdown de Prestador */}
-                  <div className="sm:col-span-4">
-                    <select
-                      value={prestadorFiltroId}
-                      onChange={(e) => setPrestadorFiltroId(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
-                    >
-                      <option value="TODOS">🩺 Todos los Profesionales</option>
-                      {prestadoresDisponibles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.nombre} {p.cantidad_turnos !== undefined ? `(${p.cantidad_turnos})` : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {/* Fila 2: Selectores de Sede, Servicio y Prestador */}
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-1.5 border-t border-[var(--border)]/60">
+                    {/* Dropdown de Sede / Ubicación */}
+                    <div className="sm:col-span-4">
+                      <select
+                        value={ubicacionFiltroId}
+                        onChange={(e) => setUbicacionFiltroId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
+                      >
+                        <option value="TODAS">🏢 Todas las Sedes Geclisa</option>
+                        {ubicacionesDisponibles.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            📍 {u.nombre.split('-')[0].trim()} {u.cantidad_turnos !== undefined ? `(${u.cantidad_turnos})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                  {/* Input de Búsqueda */}
-                  <div className="sm:col-span-3 relative">
-                    <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--secondary)]" />
-                    <input
-                      type="text"
-                      placeholder="Buscar paciente..."
-                      value={searchPaciente}
-                      onChange={(e) => setSearchPaciente(e.target.value)}
-                      className="w-full pl-7 pr-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-medium"
-                    />
+                    {/* Dropdown de Servicio Clínico */}
+                    <div className="sm:col-span-4">
+                      <select
+                        value={servicioFiltroId}
+                        onChange={(e) => setServicioFiltroId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
+                      >
+                        <option value="TODOS">🔬 Todos los Servicios</option>
+                        {serviciosDisponibles.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            🩺 {s.nombre} {s.cantidad_turnos !== undefined ? `(${s.cantidad_turnos})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Dropdown de Prestador */}
+                    <div className="sm:col-span-4">
+                      <select
+                        value={prestadorFiltroId}
+                        onChange={(e) => setPrestadorFiltroId(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
+                      >
+                        <option value="TODOS">👨‍⚕️ Todos los Profesionales</option>
+                        {prestadoresDisponibles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.nombre} {p.cantidad_turnos !== undefined ? `(${p.cantidad_turnos})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -559,13 +670,29 @@ export default function OpticaCampanasPage() {
                         </span>
                       )}
 
-                      <div className="ml-auto flex items-center gap-1.5">
+                      <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={seleccionarSoloSedeCentral}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 transition-colors"
+                          title="Seleccionar únicamente pacientes con turno en Mitre 540 (Planta Baja Óptica)"
+                        >
+                          📍 Solo Mitre 540 (PB)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={seleccionarSoloConsultas}
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 hover:bg-purple-100 border border-purple-200 dark:border-purple-800 transition-colors"
+                          title="Seleccionar únicamente consultas oftalmológicas generales y pediátricas"
+                        >
+                          🩺 Solo Consultas
+                        </button>
                         <button
                           type="button"
                           onClick={() => toggleSeleccionarTodos(true)}
-                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 transition-colors"
+                          className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 transition-colors"
                         >
-                          Seleccionar todos los aptos
+                          Todos los aptos
                         </button>
                         <button
                           type="button"
@@ -596,6 +723,8 @@ export default function OpticaCampanasPage() {
                           t.dni.includes(s) ||
                           t.telefono.includes(s) ||
                           t.prestador_nombre.toLowerCase().includes(s) ||
+                          (t.ubicacion && t.ubicacion.toLowerCase().includes(s)) ||
+                          (t.servicio && t.servicio.toLowerCase().includes(s)) ||
                           t.obra_social.toLowerCase().includes(s)
                         )
                       })
@@ -628,7 +757,8 @@ export default function OpticaCampanasPage() {
                               <th className="py-2.5 px-2 w-16">Hora</th>
                               <th className="py-2.5 px-3">Paciente & DNI</th>
                               <th className="py-2.5 px-3">WhatsApp / Móvil</th>
-                              <th className="py-2.5 px-3">Médico / Especialidad</th>
+                              <th className="py-2.5 px-3">Médico & Servicio</th>
+                              <th className="py-2.5 px-3">Sede & Consultorio</th>
                               <th className="py-2.5 px-3">Obra Social</th>
                               <th className="py-2.5 px-3 text-right">Estado Anti-Bloqueo</th>
                             </tr>
@@ -694,9 +824,30 @@ export default function OpticaCampanasPage() {
                                     <div className="font-semibold text-slate-800 dark:text-slate-200">
                                       {t.prestador_nombre}
                                     </div>
-                                    <div className="text-[10px] text-[var(--secondary)] truncate max-w-[140px]">
-                                      {t.servicio_practica}
+                                    <div className="flex items-center gap-1 mt-0.5">
+                                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-medium">
+                                        {t.servicio || 'CONSULTAS'}
+                                      </span>
+                                      <span className="text-[10px] text-[var(--secondary)] truncate max-w-[120px]">
+                                        {t.practica || t.servicio_practica}
+                                      </span>
                                     </div>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="flex items-center gap-1">
+                                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                        (t.ubicacion || '').includes('540')
+                                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                                          : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'
+                                      }`}>
+                                        📍 {(t.ubicacion || 'Mitre 540').split('-')[0].trim()}
+                                      </span>
+                                    </div>
+                                    {t.consultorio && (
+                                      <div className="text-[10px] text-[var(--secondary)] mt-0.5 truncate max-w-[130px]">
+                                        {t.consultorio}
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="py-2 px-3 text-[11px] text-[var(--secondary)] truncate max-w-[120px]">
                                     {t.obra_social || 'Particular'}

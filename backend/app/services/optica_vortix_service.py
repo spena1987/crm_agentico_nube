@@ -84,6 +84,15 @@ DEFAULT_OPTICA_CONFIG: Dict[str, Any] = {
         "CIRUGIA", "QUIROFANO", "ANESTESIA", "ASESORAMIENTO QUIRURGICO",
         "POSOPERATORIO", "POSTOPERATORIO"
     ],
+    # Clasificación oficial Geclisa para Campañas y Automatismos
+    "sedes_habilitadas_campana": [
+        "Mitre 540 - Ciudad de Mendoza",
+        "Mitre 538 3er Piso Dpto 4 - Ciudad de Mendoza"
+    ],
+    "servicios_habilitados_campana": [
+        "CONSULTAS",
+        "ASESORAMIENTO"
+    ],
 
     # Automatismo 2: Seguimiento de Recetas / Indicaciones de Lentes del Día
     "auto_recetas_lentes_enabled": False,
@@ -249,6 +258,12 @@ def _sincronizar_aliases_config_optica(cfg: Dict[str, Any]) -> Dict[str, Any]:
     msg_fh = str(res.get("auto_respuesta_fuera_horario") or res.get("mensaje_fuera_horario") or DEFAULT_OPTICA_CONFIG["mensaje_fuera_horario"]).strip()
     res["mensaje_fuera_horario"] = msg_fh
     res["auto_respuesta_fuera_horario"] = msg_fh
+
+    # Clasificación oficial Geclisa (Sedes y Servicios para Campañas)
+    if "sedes_habilitadas_campana" not in res or not isinstance(res.get("sedes_habilitadas_campana"), list):
+        res["sedes_habilitadas_campana"] = list(DEFAULT_OPTICA_CONFIG["sedes_habilitadas_campana"])
+    if "servicios_habilitados_campana" not in res or not isinstance(res.get("servicios_habilitados_campana"), list):
+        res["servicios_habilitados_campana"] = list(DEFAULT_OPTICA_CONFIG["servicios_habilitados_campana"])
 
     return res
 
@@ -1053,8 +1068,13 @@ def sincronizar_turnos_proximos_optica(
         ficha_id = str(t.get("ficha_id") or "").strip()
         paciente_nombre = str(t.get("paciente") or "").strip()
         hora_turno = str(t.get("hora") or "00:00").strip()
-        servicio = str(t.get("servicio") or "Consulta").strip()
+        servicio = str(t.get("servicio_nombre") or t.get("servicio") or "CONSULTAS").strip().upper()
+        servicio_id = str(t.get("servicio_id") or "")
         practica = str(t.get("practica") or "").strip()
+        ubicacion = str(t.get("ubicacion_nombre") or t.get("ubicacion") or "Mitre 540 - Ciudad de Mendoza").strip()
+        ubicacion_id = str(t.get("ubicacion_id") or "")
+        consultorio = str(t.get("consultorio_nombre") or t.get("consultorio") or "").strip()
+        consultorio_id = str(t.get("consultorio_id") or "")
         prestador_id = str(t.get("prestador_id") or "").strip()
         prestador_nombre = str(t.get("prestador_nombre") or "").strip()
         dni = str(t.get("dni") or "").strip()
@@ -1068,6 +1088,15 @@ def sincronizar_turnos_proximos_optica(
                 "ficha_id": ficha_id,
                 "paciente_nombre": paciente_nombre,
                 "hora_turno": hora_turno,
+                "servicio": servicio,
+                "servicio_id": servicio_id,
+                "practica": practica,
+                "ubicacion": ubicacion,
+                "ubicacion_id": ubicacion_id,
+                "consultorio": consultorio,
+                "consultorio_id": consultorio_id,
+                "prestador_id": prestador_id,
+                "prestador_nombre": prestador_nombre,
                 "servicio_practica": f"{servicio} - {practica}".strip(" -"),
                 "motivo_exclusion": "TURNO_CANCELADO"
             })
@@ -1082,6 +1111,15 @@ def sincronizar_turnos_proximos_optica(
                 "ficha_id": ficha_id,
                 "paciente_nombre": paciente_nombre,
                 "hora_turno": hora_turno,
+                "servicio": servicio,
+                "servicio_id": servicio_id,
+                "practica": practica,
+                "ubicacion": ubicacion,
+                "ubicacion_id": ubicacion_id,
+                "consultorio": consultorio,
+                "consultorio_id": consultorio_id,
+                "prestador_id": prestador_id,
+                "prestador_nombre": prestador_nombre,
                 "servicio_practica": f"{servicio} - {practica}".strip(" -"),
                 "motivo_exclusion": f"SERVICIO_EXCLUIDO ({hit_kw})"
             })
@@ -1114,6 +1152,15 @@ def sincronizar_turnos_proximos_optica(
                 "paciente_nombre": paciente_nombre,
                 "telefono_raw": raw_tel,
                 "hora_turno": hora_turno,
+                "servicio": servicio,
+                "servicio_id": servicio_id,
+                "practica": practica,
+                "ubicacion": ubicacion,
+                "ubicacion_id": ubicacion_id,
+                "consultorio": consultorio,
+                "consultorio_id": consultorio_id,
+                "prestador_id": prestador_id,
+                "prestador_nombre": prestador_nombre,
                 "servicio_practica": f"{servicio} - {practica}".strip(" -"),
                 "motivo_exclusion": err_tel or "SIN_TELEFONO_MOVIL"
             })
@@ -1127,6 +1174,15 @@ def sincronizar_turnos_proximos_optica(
                 "paciente_nombre": paciente_nombre,
                 "telefono": tel_norm,
                 "hora_turno": hora_turno,
+                "servicio": servicio,
+                "servicio_id": servicio_id,
+                "practica": practica,
+                "ubicacion": ubicacion,
+                "ubicacion_id": ubicacion_id,
+                "consultorio": consultorio,
+                "consultorio_id": consultorio_id,
+                "prestador_id": prestador_id,
+                "prestador_nombre": prestador_nombre,
                 "servicio_practica": f"{servicio} - {practica}".strip(" -"),
                 "motivo_exclusion": "DUPLICADO_MISMO_DIA"
             })
@@ -1140,6 +1196,15 @@ def sincronizar_turnos_proximos_optica(
                 "paciente_nombre": paciente_nombre,
                 "telefono": tel_norm,
                 "hora_turno": hora_turno,
+                "servicio": servicio,
+                "servicio_id": servicio_id,
+                "practica": practica,
+                "ubicacion": ubicacion,
+                "ubicacion_id": ubicacion_id,
+                "consultorio": consultorio,
+                "consultorio_id": consultorio_id,
+                "prestador_id": prestador_id,
+                "prestador_nombre": prestador_nombre,
                 "servicio_practica": f"{servicio} - {practica}".strip(" -"),
                 "motivo_exclusion": "OPT_OUT_BAJA"
             })
@@ -1152,6 +1217,15 @@ def sincronizar_turnos_proximos_optica(
                 "paciente_nombre": paciente_nombre,
                 "telefono": tel_norm,
                 "hora_turno": hora_turno,
+                "servicio": servicio,
+                "servicio_id": servicio_id,
+                "practica": practica,
+                "ubicacion": ubicacion,
+                "ubicacion_id": ubicacion_id,
+                "consultorio": consultorio,
+                "consultorio_id": consultorio_id,
+                "prestador_id": prestador_id,
+                "prestador_nombre": prestador_nombre,
                 "servicio_practica": f"{servicio} - {practica}".strip(" -"),
                 "motivo_exclusion": f"COOLDOWN_{cooldown_dias}_DIAS"
             })
@@ -1177,6 +1251,13 @@ def sincronizar_turnos_proximos_optica(
             "hora_turno": hora_turno,
             "prestador_id": prestador_id,
             "prestador_nombre": prestador_nombre,
+            "servicio": servicio,
+            "servicio_id": servicio_id,
+            "practica": practica,
+            "ubicacion": ubicacion,
+            "ubicacion_id": ubicacion_id,
+            "consultorio": consultorio,
+            "consultorio_id": consultorio_id,
             "servicio_practica": f"{servicio} - {practica}".strip(" -"),
             "fuente_deteccion": "agenda_geclisa",
             "codigo_beneficio": cupon

@@ -2238,13 +2238,15 @@ async def obtener_audiencia_geclisa_campana(
     fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD del turno en Geclisa"),
     dias_anticipacion: int = Query(1, ge=0, le=14),
     prestador_id: Optional[str] = Query(None),
+    ubicacion_id: Optional[str] = Query(None),
+    servicio_id: Optional[str] = Query(None),
     force_refresh: bool = Query(False, description="Forzar recarga omitiendo la caché en memoria")
 ):
     """
     Consulta en tiempo real la agenda global de Centrovisión vía GeclisaClient para la fecha solicitada,
     aplica filtros de prácticas no quirúrgicas, enriquece teléfonos móviles de Mendoza (+549261...),
     cruza con el estado de Cooldown de 30 días y Opt-Out en Supabase,
-    y devuelve la nómina granular de pacientes con la lista de prestadores disponibles para selección interactiva.
+    y devuelve la nómina granular de pacientes con la lista de prestadores, ubicaciones y servicios oficiales de Geclisa.
     Implementa caché en memoria de 5 minutos y cerrojo contra ráfagas concurrentes.
     """
     now_mza = get_mendoza_now()
@@ -2260,6 +2262,18 @@ async def obtener_audiencia_geclisa_campana(
         if raw_p and raw_p != "TODOS":
             p_id_str = raw_p
 
+    u_id_str: Optional[str] = None
+    if ubicacion_id is not None and not hasattr(ubicacion_id, "default"):
+        raw_u = str(ubicacion_id).strip()
+        if raw_u and raw_u != "TODOS":
+            u_id_str = raw_u
+
+    s_id_str: Optional[str] = None
+    if servicio_id is not None and not hasattr(servicio_id, "default"):
+        raw_s = str(servicio_id).strip()
+        if raw_s and raw_s != "TODOS":
+            s_id_str = raw_s
+
     f_refresh: bool = False
     if force_refresh is not None and not hasattr(force_refresh, "default"):
         f_refresh = bool(force_refresh)
@@ -2271,14 +2285,22 @@ async def obtener_audiencia_geclisa_campana(
 
     now_ts = time.time()
 
+    def _aplicar_filtros_pacs(pacs_list: list) -> list:
+        res = pacs_list
+        if p_id_str:
+            res = [p for p in res if str(p.get("prestador_id")) == p_id_str]
+        if u_id_str:
+            res = [p for p in res if str(p.get("ubicacion_id")) == u_id_str or str(p.get("ubicacion")) == u_id_str]
+        if s_id_str:
+            res = [p for p in res if str(p.get("servicio_id")) == s_id_str or str(p.get("servicio")) == s_id_str]
+        return res
+
     # 1. Servir desde caché si no se solicita force_refresh
     if not f_refresh and fecha_obj in _AUDIENCIA_GECLISA_CACHE:
         cached_ts, cached_payload = _AUDIENCIA_GECLISA_CACHE[fecha_obj]
         if now_ts - cached_ts < AUDIENCIA_CACHE_TTL_SECONDS:
             logger.info(f"[AudienciaGeclisa] Sirviendo fecha {fecha_obj} desde caché en memoria.")
-            pacs = list(cached_payload.get("pacientes") or [])
-            if p_id_str:
-                pacs = [p for p in pacs if str(p.get("prestador_id")) == p_id_str]
+            pacs = _aplicar_filtros_pacs(list(cached_payload.get("pacientes") or []))
             return {
                 **cached_payload,
                 "cached": True,
@@ -2296,9 +2318,7 @@ async def obtener_audiencia_geclisa_campana(
         if not f_refresh and fecha_obj in _AUDIENCIA_GECLISA_CACHE:
             cached_ts, cached_payload = _AUDIENCIA_GECLISA_CACHE[fecha_obj]
             if now_ts - cached_ts < AUDIENCIA_CACHE_TTL_SECONDS:
-                pacs = list(cached_payload.get("pacientes") or [])
-                if p_id_str:
-                    pacs = [p for p in pacs if str(p.get("prestador_id")) == p_id_str]
+                pacs = _aplicar_filtros_pacs(list(cached_payload.get("pacientes") or []))
                 return {
                     **cached_payload,
                     "cached": True,
@@ -2352,6 +2372,8 @@ async def obtener_audiencia_geclisa_campana(
                 logger.warning(f"[AudienciaGeclisa] Error consultando cooldown/optout: {e_s}")
 
         prestadores_dict: Dict[str, Dict[str, Any]] = {}
+        ubicaciones_dict: Dict[str, Dict[str, Any]] = {}
+        servicios_dict: Dict[str, Dict[str, Any]] = {}
         todos_pacientes: List[Dict[str, Any]] = []
 
         for el in elegibles_raw:
@@ -2361,6 +2383,20 @@ async def obtener_audiencia_geclisa_campana(
                 if pid not in prestadores_dict:
                     prestadores_dict[pid] = {"id": pid, "nombre": pnombre, "cantidad_turnos": 0}
                 prestadores_dict[pid]["cantidad_turnos"] += 1
+
+            unombre = str(el.get("ubicacion") or "Mitre 540 - Ciudad de Mendoza").strip()
+            uid = str(el.get("ubicacion_id") or ("3" if "540" in unombre else ("6" if "538" in unombre else ("4" if "Roca" in unombre else "7"))))
+            if unombre:
+                if uid not in ubicaciones_dict:
+                    ubicaciones_dict[uid] = {"id": uid, "nombre": unombre, "cantidad_turnos": 0}
+                ubicaciones_dict[uid]["cantidad_turnos"] += 1
+
+            snombre = str(el.get("servicio") or "CONSULTAS").strip().upper()
+            sid = str(el.get("servicio_id") or snombre)
+            if snombre:
+                if sid not in servicios_dict:
+                    servicios_dict[sid] = {"id": sid, "nombre": snombre, "cantidad_turnos": 0}
+                servicios_dict[sid]["cantidad_turnos"] += 1
 
             tel = str(el.get("telefono") or "").strip()
             nombre_pac = str(el.get("paciente_nombre") or "Paciente").title().strip()
@@ -2387,6 +2423,12 @@ async def obtener_audiencia_geclisa_campana(
                 "fecha_turno": str(el.get("fecha_turno") or fecha_obj),
                 "prestador_id": pid,
                 "prestador_nombre": pnombre or "Profesional Centrovisión",
+                "ubicacion": unombre,
+                "ubicacion_id": uid,
+                "consultorio": str(el.get("consultorio") or ""),
+                "servicio": snombre,
+                "servicio_id": sid,
+                "practica": str(el.get("practica") or ""),
                 "servicio_practica": str(el.get("servicio_practica") or "Consulta").strip(),
                 "obra_social": str(el.get("obra_social") or "Particular").strip(),
                 "codigo_beneficio": str(el.get("codigo_beneficio") or generar_codigo_beneficio_vortix(tel, fecha_obj)),
@@ -2404,6 +2446,20 @@ async def obtener_audiencia_geclisa_campana(
                     prestadores_dict[pid] = {"id": pid, "nombre": pnombre, "cantidad_turnos": 0}
                 prestadores_dict[pid]["cantidad_turnos"] += 1
 
+            unombre = str(ex.get("ubicacion") or "Mitre 540 - Ciudad de Mendoza").strip()
+            uid = str(ex.get("ubicacion_id") or ("3" if "540" in unombre else ("6" if "538" in unombre else ("4" if "Roca" in unombre else "7"))))
+            if unombre:
+                if uid not in ubicaciones_dict:
+                    ubicaciones_dict[uid] = {"id": uid, "nombre": unombre, "cantidad_turnos": 0}
+                ubicaciones_dict[uid]["cantidad_turnos"] += 1
+
+            snombre = str(ex.get("servicio") or "CONSULTAS").strip().upper()
+            sid = str(ex.get("servicio_id") or snombre)
+            if snombre:
+                if sid not in servicios_dict:
+                    servicios_dict[sid] = {"id": sid, "nombre": snombre, "cantidad_turnos": 0}
+                servicios_dict[sid]["cantidad_turnos"] += 1
+
             motivo = str(ex.get("motivo_exclusion") or "EXCLUIDO").upper()
             if "CANCELADO" in motivo:
                 continue
@@ -2419,6 +2475,12 @@ async def obtener_audiencia_geclisa_campana(
                 "fecha_turno": fecha_obj,
                 "prestador_id": pid,
                 "prestador_nombre": pnombre or "Profesional Centrovisión",
+                "ubicacion": unombre,
+                "ubicacion_id": uid,
+                "consultorio": str(ex.get("consultorio") or ""),
+                "servicio": snombre,
+                "servicio_id": sid,
+                "practica": str(ex.get("practica") or ""),
                 "servicio_practica": str(ex.get("servicio_practica") or "Práctica").strip(),
                 "obra_social": str(ex.get("obra_social") or "Particular").strip(),
                 "codigo_beneficio": "#VORTIX",
@@ -2431,6 +2493,9 @@ async def obtener_audiencia_geclisa_campana(
         todos_pacientes.sort(key=lambda x: str(x.get("hora_turno") or "99:99"))
 
         prestadores_list = sorted(prestadores_dict.values(), key=lambda x: str(x["nombre"]))
+        ubicaciones_list = sorted(ubicaciones_dict.values(), key=lambda x: str(x["nombre"]))
+        servicios_list = sorted(servicios_dict.values(), key=lambda x: str(x["nombre"]))
+
         elegibles_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "ELEGIBLE")
         cooldown_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "COOLDOWN_ACTIVO")
         opt_out_count = sum(1 for p in todos_pacientes if p["estado_envio"] == "OPT_OUT")
@@ -2445,16 +2510,16 @@ async def obtener_audiencia_geclisa_campana(
             "opt_out_count": opt_out_count,
             "sin_telefono_count": sin_tel_count,
             "prestadores": prestadores_list,
+            "ubicaciones": ubicaciones_list,
+            "servicios": servicios_list,
             "pacientes": todos_pacientes
         }
 
         # Guardar en caché global en memoria
         _AUDIENCIA_GECLISA_CACHE[fecha_obj] = (time.time(), full_payload)
 
-        # Filtrar por prestador si fue solicitado
-        pacs_result = todos_pacientes
-        if p_id_str:
-            pacs_result = [p for p in pacs_result if str(p.get("prestador_id")) == p_id_str]
+        # Filtrar por prestador, ubicación y servicio si fueron solicitados
+        pacs_result = _aplicar_filtros_pacs(todos_pacientes)
 
         return {
             **full_payload,

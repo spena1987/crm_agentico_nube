@@ -98,6 +98,7 @@ const allNavItems: NavItem[] = [
       { code: 'optica-vortix', label: 'Campañas & Placas', href: '/optica-vortix/campanas', icon: Megaphone },
       { code: 'optica-vortix', label: 'Automatismos & Línea', href: '/optica-vortix/automatizaciones', icon: Cpu },
       { code: 'optica-vortix', label: 'Plantillas WhatsApp', href: '/optica-vortix/plantillas', icon: MessageSquareText },
+      { code: 'optica-vortix', label: 'Ajustes de Óptica', href: '/optica-vortix/ajustes', icon: Settings },
     ]
   },
   { code: 'logs', label: 'Logs & Auditoría', href: '/logs', icon: ScrollText },

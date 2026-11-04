@@ -14,6 +14,7 @@ import {
   Radio,
   RefreshCw,
   MessageSquareText,
+  Settings,
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { OpticaSaludLinea } from '@/types/optica'
@@ -53,6 +54,13 @@ const SUB_TABS = [
     shortLabel: 'Plantillas Meta',
     icon: MessageSquareText,
     badgeColor: 'bg-blue-500',
+  },
+  {
+    href: '/optica-vortix/ajustes',
+    label: 'Ajustes de Óptica',
+    shortLabel: 'Ajustes',
+    icon: Settings,
+    badgeColor: 'bg-slate-500',
   },
 ]
 

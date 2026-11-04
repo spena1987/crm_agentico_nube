@@ -878,31 +878,37 @@ class GeclisaClient:
                     else:
                         practica_str = det.get("servNombre") or t.get("servicioNombre") or "Consulta Médica"
 
-                # Desglosar consultorio y ubicación
+                # Desglosar consultorio, servicio y ubicación oficiales de Geclisa
                 raw_cons = (
                     det.get("consNombre")
                     or t.get("nombreConsultorio")
                     or t.get("consultorio")
-                    or "MENDOZA Mitre 540"
+                    or "MENDOZA"
                 ).strip()
-                if "Mitre 540" in raw_cons or "MENDOZA" in raw_cons.upper():
-                    consultorio_str = "Consultorio Mendoza"
-                    ubicacion_str = "Sede Central (Mitre 540)"
-                elif "Boedo" in raw_cons or "LUJAN" in raw_cons.upper():
-                    consultorio_str = "Consultorio Luján"
-                    ubicacion_str = "Sede Luján de Cuyo"
-                elif "Mitre 538" in raw_cons or "3er Piso" in raw_cons:
-                    consultorio_str = "Consultorio Estudios (3er Piso)"
-                    ubicacion_str = "Sede Mitre 538"
-                elif "Palmares" in raw_cons.upper():
-                    consultorio_str = "Consultorio Palmares"
-                    ubicacion_str = "Sede Palmares"
-                elif "Roca" in raw_cons:
-                    consultorio_str = "Consultorio Roca"
-                    ubicacion_str = "Sede Roca (Luján)"
-                else:
-                    consultorio_str = raw_cons
-                    ubicacion_str = det.get("ubicNombre") or "CentroVisión Mendoza"
+
+                ubic_id = det.get("ubicId")
+                ubic_nombre = (det.get("ubicNombre") or "").strip()
+                if not ubic_nombre:
+                    if "Mitre 540" in raw_cons or "MENDOZA" in raw_cons.upper():
+                        ubic_id = ubic_id or 3
+                        ubic_nombre = "Mitre 540 - Ciudad de Mendoza"
+                    elif "Mitre 538" in raw_cons or "3er Piso" in raw_cons or "ESTUDIOS" in raw_cons.upper():
+                        ubic_id = ubic_id or 6
+                        ubic_nombre = "Mitre 538 3er Piso Dpto 4 - Ciudad de Mendoza"
+                    elif "Roca" in raw_cons:
+                        ubic_id = ubic_id or 4
+                        ubic_nombre = "Roca 71 - Luján de Cuyo"
+                    elif "Boedo" in raw_cons or "LUJAN" in raw_cons.upper():
+                        ubic_id = ubic_id or 7
+                        ubic_nombre = "Boedo 2879 Oficina Q (portero 18) - Lujan de Cuyo"
+                    else:
+                        ubic_id = ubic_id or 3
+                        ubic_nombre = "Mitre 540 - Ciudad de Mendoza"
+
+                consultorio_str = raw_cons
+                ubicacion_str = ubic_nombre
+                serv_id = det.get("servId")
+                serv_nombre = (det.get("servNombre") or t.get("servicioNombre") or t.get("servicio") or "CONSULTAS").strip().upper()
 
                 # Datos del paciente combinados
                 dni_val = str(det.get("pacNroDoc") or t.get("nroDoc") or "").strip() or None
@@ -921,10 +927,16 @@ class GeclisaClient:
                     "telefono": tel_val,
                     "email": email_val,
                     "obra_social": os_plan_val or "Particular",
-                    "servicio": det.get("servNombre") or t.get("servicioNombre") or "Consultas",
+                    "servicio": serv_nombre,
+                    "servicio_id": serv_id,
+                    "servicio_nombre": serv_nombre,
                     "practica": practica_str,
                     "consultorio": consultorio_str,
+                    "consultorio_id": det.get("consId"),
+                    "consultorio_nombre": consultorio_str,
                     "ubicacion": ubicacion_str,
+                    "ubicacion_id": ubic_id,
+                    "ubicacion_nombre": ubicacion_str,
                     "sala_id": det.get("salaId"),
                     "sala_nombre": det.get("salaNombre"),
                     "prestador_id": t.get("preId") or det.get("preId") or pre_id,
