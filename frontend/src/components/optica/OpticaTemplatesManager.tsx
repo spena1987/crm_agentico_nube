@@ -319,8 +319,23 @@ export default function OpticaTemplatesManager() {
 
   const handleGuardarPlantillaSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!nombrePlantilla.trim() || !bodyText.trim()) {
+    const trimmedBody = bodyText.trim()
+    if (!nombrePlantilla.trim() || !trimmedBody) {
       alert('Ingresa el nombre y el cuerpo del mensaje de la plantilla.')
+      return
+    }
+
+    // Validación preventiva de reglas de Meta (Error 2388299)
+    if (/^\s*\{\{\d+\}\}/.test(trimmedBody)) {
+      alert(
+        "Regla de Meta WhatsApp (Error 2388299): La plantilla no puede comenzar directamente con una variable {{N}}. Debes anteponer texto fijo al inicio (ej: 'Hola {{1}}...')."
+      )
+      return
+    }
+    if (/\{\{\d+\}\}[\s\.\!\?\:\;]*$/.test(trimmedBody)) {
+      alert(
+        "Regla de Meta WhatsApp (Error 2388299): La plantilla no puede terminar con una variable {{N}} al final. Debes incluir texto fijo de cierre después de la variable (ej: '...en el horario de {{3}}. ¡Te esperamos!')."
+      )
       return
     }
 
@@ -1012,6 +1027,9 @@ export default function OpticaTemplatesManager() {
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-blue-500 leading-relaxed font-sans"
                   required
                 />
+                <p className="text-[11px] text-slate-400">
+                  💡 <strong className="text-slate-300">Regla de Meta:</strong> Las variables <code className="text-blue-300 font-mono">{"{{N}}"}</code> deben estar rodeadas de texto (no pueden ser la primera ni la última palabra del mensaje).
+                </p>
               </div>
 
               {/* Pie de Página (Footer) */}

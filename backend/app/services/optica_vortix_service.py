@@ -2789,7 +2789,8 @@ OPTICA_VORTIX_TEMPLATES_CATALOG: List[Dict[str, Any]] = [
         "header_content": "Tus Lentes estan Listos en Optica Vortix",
         "body_text": (
             "¡Hola {{1}}! Te escribimos desde *Optica Vortix* para avisarte que tu pedido ({{2}}) "
-            "ya salio del laboratorio, paso el control de calidad optico y esta *listo para retirar* en el horario de {{3}}."
+            "ya salio del laboratorio, paso el control de calidad optico y esta *listo para retirar* en el horario de {{3}}. "
+            "¡Te esperamos en nuestro local para coordinar la entrega!"
         ),
         "footer_text": "Optica Vortix • Te esperamos",
         "buttons": [

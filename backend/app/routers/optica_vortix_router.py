@@ -722,12 +722,41 @@ async def aprovisionar_plantillas_endpoint():
     return await aprovisionar_plantillas_base_optica()
 
 
+def validar_reglas_meta_plantilla(body_text: str) -> Optional[str]:
+    """
+    Valida las reglas algorítmicas de Meta WhatsApp Cloud API para parámetros en plantillas:
+    - No se permite que una plantilla empiece directamente con una variable {{N}} (Error 2388299).
+    - No se permite que una plantilla termine con una variable {{N}} al final (Error 2388299).
+    - Variables no pueden ser consecutivas sin texto intermedio.
+    """
+    t = (body_text or "").strip()
+    if not t:
+        return "El cuerpo del mensaje no puede estar vacío."
+    if re.match(r'^\s*\{\{\d+\}\}', t):
+        return (
+            "Regla de Meta WhatsApp (Error 2388299): La plantilla no puede comenzar directamente con una variable {{N}}. "
+            "Debes anteponer texto fijo al inicio (ej: 'Hola {{1}}...')."
+        )
+    if re.search(r'\{\{\d+\}\}[\s\.\!\?\:\;]*$', t):
+        return (
+            "Regla de Meta WhatsApp (Error 2388299): La plantilla no puede terminar con una variable {{N}} al final. "
+            "Debes incluir texto fijo de cierre después de la última variable (ej: '...en el horario de {{3}}. ¡Te esperamos!')."
+        )
+    if re.search(r'\{\{\d+\}\}\s*\{\{\d+\}\}', t):
+        return "Regla de Meta WhatsApp: No se permiten variables consecutivas sin texto en el medio (ej: '{{1}} {{2}}'). Debes separarlas con palabras."
+    return None
+
+
 @optica_vortix_router.post("/plantillas")
 async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
     """
     Crea una nueva plantilla para Óptica Vortix y la envía a revisión en Meta Graph API.
     Asegura prefijo `vortix_` y aislamiento fail-closed respecto al resto del CRM.
     """
+    err_meta = validar_reglas_meta_plantilla(payload.body_text)
+    if err_meta:
+        raise HTTPException(status_code=400, detail=err_meta)
+
     clean_name = re.sub(r"[^a-z0-9_]", "", payload.name.lower().strip())
     if not clean_name.startswith("vortix_"):
         clean_name = f"vortix_{clean_name}"
@@ -832,6 +861,10 @@ async def editar_plantilla_optica(name: str, payload: EditarPlantillaOpticaPaylo
     - Si la plantilla aún no estaba en Meta (NOT_PROVISIONED), actualiza su contenido localmente.
     - Sincroniza los cambios en public.whatsapp_templates en Supabase.
     """
+    err_meta = validar_reglas_meta_plantilla(payload.body_text)
+    if err_meta:
+        raise HTTPException(status_code=400, detail=err_meta)
+
     clean_name = name.strip().lower()
     waba_id = get_whatsapp_waba_id() or os.getenv("META_WA_WABA_ID") or "3731563350343089"
     _, token = get_whatsapp_cloud_credentials()
@@ -990,14 +1023,27 @@ async def aprovisionar_plantilla_individual(name: str):
     if not waba_id or not token:
         raise HTTPException(status_code=400, detail="Credenciales WABA o Token de Meta no configurados.")
 
-    spec = next((c for c in OPTICA_VORTIX_TEMPLATES_CATALOG if c["name"] == clean_name), None)
-    if not spec and supabase:
-        res = supabase.table("whatsapp_templates").select("*").eq("name", clean_name).limit(1).execute()
-        if res.data and len(res.data) > 0:
-            spec = res.data[0]
+    # 1. Priorizar la base de datos Supabase para usar cualquier edición personalizada del usuario
+    spec = None
+    if supabase:
+        try:
+            res = supabase.table("whatsapp_templates").select("*").eq("name", clean_name).limit(1).execute()
+            if res.data and len(res.data) > 0:
+                spec = res.data[0]
+        except Exception as e:
+            logger.warning(f"[OpticaTemplates] Error consultando spec en DB para {clean_name}: {e}")
+
+    # 2. Fallback al catálogo si aún no estaba en BD
+    if not spec:
+        spec = next((c for c in OPTICA_VORTIX_TEMPLATES_CATALOG if c["name"] == clean_name), None)
 
     if not spec:
         raise HTTPException(status_code=404, detail=f"No se encontró la especificación de la plantilla '{clean_name}'.")
+
+    # 3. Validación de Reglas de Meta antes de despachar a la Graph API
+    err_meta = validar_reglas_meta_plantilla(spec.get("body_text", ""))
+    if err_meta:
+        raise HTTPException(status_code=400, detail=err_meta)
 
     components: List[Dict[str, Any]] = []
     if spec.get("header_type") == "TEXT" and spec.get("header_content"):
