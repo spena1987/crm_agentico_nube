@@ -6826,7 +6826,6 @@ async def subir_firma_prestador_endpoint(prestador_id: str, file: UploadFile = F
     try:
         from app.db import supabase, actualizar_prestador
         from PIL import Image, ImageOps
-        import numpy as np
         import io
 
         if not file.content_type or not file.content_type.startswith("image/"):
@@ -6840,15 +6839,16 @@ async def subir_firma_prestador_endpoint(prestador_id: str, file: UploadFile = F
             # 1. Normalizar orientación EXIF
             img = ImageOps.exif_transpose(pil_img).convert('RGBA')
 
-            # 2. Conversión a transparencia (eliminar fondo de papel)
-            data = np.array(img, dtype=np.float32)
-            r, g, b = data[:,:,0], data[:,:,1], data[:,:,2]
-            luminance = 0.299 * r + 0.587 * g + 0.114 * b
-
+            # 2. Conversión a transparencia (eliminar fondo de papel con Pillow nativo en C)
+            gray = img.convert('L')
             # Fondos claros (>215) se vuelven transparentes, trazos oscuros (<140) 100% opacos
-            alpha = np.clip((215 - luminance) / (215 - 140), 0.0, 1.0) * 255.0
-            data[:,:,3] = alpha
-            result = Image.fromarray(data.astype(np.uint8), mode='RGBA')
+            lut = [
+                255 if lum <= 140 else 0 if lum >= 215 else int(round((215 - lum) / (215 - 140) * 255))
+                for lum in range(256)
+            ]
+            alpha = gray.point(lut, mode='L')
+            result = img.copy()
+            result.putalpha(alpha)
 
             # 3. Auto-crop de márgenes
             bbox = result.getbbox()
