@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import {
   Stethoscope,
   TrendingUp,
@@ -47,7 +47,7 @@ import RecepcionPacientesDia from '@/components/pipeline/RecepcionPacientesDia'
 import VistaVerticalPipeline from '@/components/pipeline/VistaVerticalPipeline'
 import ModalQuickRecontacto from '@/components/asesoria/ModalQuickRecontacto'
 import { usePipelineSessionState } from '@/hooks/usePipelineSessionState'
-import { Columns3, AlignJustify } from 'lucide-react'
+import { Columns3, AlignJustify, ChevronsUpDown, FoldVertical } from 'lucide-react'
 import { Radio, Users, BellRing, FileCheck2, BarChart2, PauseCircle, Flame, Pill } from 'lucide-react'
 
 export interface PacienteData {
@@ -274,6 +274,25 @@ export default function PipelineQuirurgicoPage() {
   const [casoParaQuickRecontacto, setCasoParaQuickRecontacto] = useState<AsesoriaCasoPipeline | null>(null)
   const [filtroSoloRecontactos, setFiltroSoloRecontactos] = useState<boolean>(false)
   const [metricasRecontactos, setMetricasRecontactos] = useState<{ hoy: number; vencidos: number; total_pendientes: number } | null>(null)
+
+  // Referencia y altura reactiva del toolbar sticky para compensar los encabezados de etapas
+  const filterBarRef = useRef<HTMLDivElement>(null)
+  const [filterBarHeight, setFilterBarHeight] = useState<number>(58)
+
+  useEffect(() => {
+    if (!filterBarRef.current) return
+    const updateHeight = () => {
+      if (filterBarRef.current) {
+        setFilterBarHeight(Math.round(filterBarRef.current.getBoundingClientRect().height))
+      }
+    }
+    updateHeight()
+    const observer = new ResizeObserver(() => {
+      updateHeight()
+    })
+    observer.observe(filterBarRef.current)
+    return () => observer.disconnect()
+  }, [])
 
   // Cargar Pipeline (con apiFetch autenticado y fallback resiliente a Supabase)
   const fetchPipeline = async () => {
@@ -1079,9 +1098,13 @@ export default function PipelineQuirurgicoPage() {
       </div>
 
       {/* ==================================================================== */}
-      {/* 2. BARRA DE HERRAMIENTAS Y FILTROS COMPACTA (FILA ÚNICA) */}
+      {/* 2. BARRA DE HERRAMIENTAS Y FILTROS COMPACTA (STICKY TOP-0 NIVEL 1) */}
       {/* ==================================================================== */}
-      <div className="p-2.5 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-2">
+      <div
+        ref={filterBarRef}
+        className="sticky top-0 z-30 -mx-4 md:-mx-6 px-4 md:px-6 py-2 bg-neutral-950/95 backdrop-blur-md border-b border-[var(--border)] shadow-md shadow-black/40"
+      >
+        <div className="p-2.5 rounded-2xl bg-neutral-900/80 border border-[var(--border)] space-y-2">
         <div className="flex items-center justify-between flex-wrap gap-2">
           
           {/* Buscador de Texto */}
@@ -1302,6 +1325,30 @@ export default function PipelineQuirurgicoPage() {
             </div>
           )}
 
+          {/* Controles Rápidos de Acordeones (Sticky Opción A) */}
+          {vistaActual === 'activos' && modoVisualizacion === 'vertical' && (
+            <div className="flex items-center gap-1.5 pl-2 border-l border-[var(--border)]/70 shrink-0">
+              <button
+                type="button"
+                onClick={() => expandirTodasEtapas(ETAPAS_COLUMNAS_ACTIVAS.map((c) => c.id))}
+                className="px-2.5 py-1 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                title="Desplegar todas las etapas del pipeline"
+              >
+                <ChevronsUpDown size={12} className="text-blue-400" />
+                <span className="hidden sm:inline">Expandir todas</span>
+              </button>
+              <button
+                type="button"
+                onClick={colapsarTodasEtapas}
+                className="px-2.5 py-1 rounded-xl bg-neutral-950 hover:bg-neutral-800 text-gray-300 hover:text-white border border-[var(--border)] text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                title="Contraer todas las etapas para vista compacta"
+              >
+                <FoldVertical size={12} className="text-gray-400" />
+                <span className="hidden sm:inline">Colapsar todas</span>
+              </button>
+            </div>
+          )}
+
         </div>
 
         {/* Fila 2: Selector de Rango de Fechas Personalizado (si está activo) */}
@@ -1344,6 +1391,7 @@ export default function PipelineQuirurgicoPage() {
           </div>
         )}
 
+        </div>
       </div>
 
       {/* Aviso informativo contextual cuando hay casos postergados ocultos por filtro 'activos' */}
@@ -1372,6 +1420,7 @@ export default function PipelineQuirurgicoPage() {
         <VistaVerticalPipeline
           columnasEtapas={ETAPAS_COLUMNAS_ACTIVAS}
           etapasActivasFiltradas={etapasActivasFiltradas}
+          stickyOffset={filterBarHeight}
           onCambiarEtapa={handleSeleccionarEtapa}
           onAbrirWhatsApp={handleAbrirWhatsApp}
           onAbrirRecordatorioQx={handleAbrirRecordatorioQx}

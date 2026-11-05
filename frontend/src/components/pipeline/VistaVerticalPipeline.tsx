@@ -42,6 +42,7 @@ interface ColumnaInfo {
 interface VistaVerticalPipelineProps {
   columnasEtapas: ColumnaInfo[]
   etapasActivasFiltradas: Record<string, AsesoriaCasoPipeline[]>
+  stickyOffset?: number
   onCambiarEtapa: (caso: AsesoriaCasoPipeline, nuevaEtapa: string) => Promise<void>
   onAbrirWhatsApp: (caso: AsesoriaCasoPipeline) => void
   onAbrirRecordatorioQx?: (caso: AsesoriaCasoPipeline) => void
@@ -60,6 +61,7 @@ interface VistaVerticalPipelineProps {
 export default function VistaVerticalPipeline({
   columnasEtapas,
   etapasActivasFiltradas,
+  stickyOffset = 58,
   onCambiarEtapa,
   onAbrirWhatsApp,
   onAbrirRecordatorioQx,
@@ -173,18 +175,21 @@ export default function VistaVerticalPipeline({
         return (
           <div
             key={col.id}
-            className="rounded-2xl border border-[var(--border)] bg-neutral-950/70 overflow-hidden shadow-sm transition-all"
+            className="rounded-2xl border border-[var(--border)] bg-neutral-950/70 shadow-sm transition-all"
           >
-            {/* Header del Acordeón de la Etapa */}
+            {/* Header del Acordeón de la Etapa Sticky */}
             <button
               type="button"
               onClick={() => toggleColapso(col.id)}
-              className={`w-full flex items-center justify-between p-3.5 sm:px-5 transition-colors border-b ${
-                isColapsada ? 'border-transparent hover:bg-neutral-900/60' : 'border-[var(--border)] bg-neutral-900/40 hover:bg-neutral-900/80'
+              style={{ top: `${stickyOffset}px` }}
+              className={`sticky z-20 w-full flex items-center justify-between p-3.5 sm:px-5 transition-all border-b backdrop-blur-md group ${
+                isColapsada
+                  ? 'rounded-2xl border-transparent bg-neutral-900/90 hover:bg-neutral-900'
+                  : 'rounded-t-2xl border-[var(--border)] bg-neutral-900/95 hover:bg-neutral-900 shadow-md'
               }`}
             >
               <div className="flex items-center gap-3">
-                <div className="text-gray-400">
+                <div className="text-gray-400 group-hover:text-white transition-colors">
                   {isColapsada ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
                 </div>
                 <div className="flex items-center gap-2">
@@ -196,6 +201,9 @@ export default function VistaVerticalPipeline({
                   {casos.length} {casos.length === 1 ? 'cirugía' : 'cirugías'}
                 </span>
               </div>
+              <span className="text-[11px] text-gray-500 group-hover:text-gray-300 font-medium hidden sm:inline">
+                {isColapsada ? 'Click para desplegar' : 'Click para contraer'}
+              </span>
             </button>
 
             {/* Contenedor de Casos Desplegable */}
