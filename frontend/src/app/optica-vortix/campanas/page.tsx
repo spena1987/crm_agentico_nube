@@ -32,6 +32,7 @@ import {
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
 import { OpticaCampana, OpticaPlaca, OpticaSaludLinea } from '@/types/optica'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface PlantillaOptica {
   id?: string
@@ -1400,7 +1401,7 @@ export default function OpticaCampanasPage() {
                         <span className="text-emerald-600 dark:text-emerald-400 font-black">
                           {seleccionados.length} pacientes de Geclisa
                         </span>{' '}
-                        para la fecha {fechaTurnoFiltro}.
+                        para la fecha {formatDateArg(fechaTurnoFiltro)}.
                       </p>
                       <p>
                         <strong>Estrategia:</strong> {campEstrategia} ({campTemplate})

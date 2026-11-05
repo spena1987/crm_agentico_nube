@@ -17,6 +17,7 @@ import { BACKEND_URL } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { supabase } from '@/lib/supabase'
 import { normalizePhoneNumber } from '@/lib/phoneUtils'
+import { formatDateArg } from '@/lib/dateUtils'
 
 export interface PlantillaWhatsAppItem {
   id: string
@@ -126,8 +127,10 @@ export default function ModalPlantillasWhatsAppQuirurgicas({
       /{monto}/g,
       montoExtra ? `$ ${Number(montoExtra).toLocaleString()} ${monedaExtra}` : 'cotizado'
     )
-    t = t.replace(/{fecha_probable}/g, fechaProbable || 'a coordinar')
-    t = t.replace(/{fecha_definitiva}/g, fechaDefinitiva || fechaProbable || 'a coordinar')
+    const fechaProbableStr = fechaProbable ? formatDateArg(fechaProbable) : 'a coordinar'
+    const fechaDefinitivaStr = fechaDefinitiva ? formatDateArg(fechaDefinitiva) : (fechaProbable ? formatDateArg(fechaProbable) : 'a coordinar')
+    t = t.replace(/{fecha_probable}/g, fechaProbableStr)
+    t = t.replace(/{fecha_definitiva}/g, fechaDefinitivaStr)
     return t
   }
 

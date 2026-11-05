@@ -23,6 +23,7 @@ import {
   MessageSquare
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
+import { formatDateArg } from '@/lib/dateUtils'
 
 export default function ConsentimientoPublicoPage() {
   const params = useParams()
@@ -337,7 +338,7 @@ export default function ConsentimientoPublicoPage() {
           <div className="p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-left space-y-2 text-xs">
             <div className="flex items-center gap-2 font-bold text-blue-900">
               <Calendar size={16} />
-              <span>Fecha de Cirugía: {turno?.fecha_cirugia}</span>
+              <span>Fecha de Cirugía: {turno?.fecha_cirugia_formateada || formatDateArg(turno?.fecha_cirugia)}</span>
             </div>
             <div className="flex items-center gap-2 font-bold text-blue-900">
               <Clock size={16} />
@@ -429,7 +430,7 @@ export default function ConsentimientoPublicoPage() {
             {(() => {
               const clinicaWa = datos?.clinica?.whatsapp_telefono || '5492616859303'
               const cleanWa = String(clinicaWa).replace(/\D/g, '')
-              const waText = encodeURIComponent(`Hola, acabo de firmar mi consentimiento informado para mi cirugía del ${turno?.fecha_cirugia || ''}.`)
+              const waText = encodeURIComponent(`Hola, acabo de firmar mi consentimiento informado para mi cirugía del ${turno?.fecha_cirugia_formateada || formatDateArg(turno?.fecha_cirugia) || ''}.`)
               return (
                 <a
                   href={`https://wa.me/${cleanWa}?text=${waText}`}

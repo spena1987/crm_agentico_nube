@@ -133,7 +133,15 @@ def generar_pdf_indicacion_medica(
             logger.warning(f"Aviso resolviendo prestador en indicaciones_pdf_service: {e_p}")
 
     firma_local_path = obtener_o_cachear_firma_local(firma_url) if mostrar_firma else None
-    fecha_emision = datos_emision.get("fecha") or datetime.now().strftime("%d/%m/%Y")
+    raw_fecha = datos_emision.get("fecha")
+    if raw_fecha and "-" in str(raw_fecha):
+        p_f = str(raw_fecha).split("T")[0].split("-")
+        if len(p_f) == 3 and len(p_f[0]) == 4:
+            fecha_emision = f"{p_f[2]}/{p_f[1]}/{p_f[0]}"
+        else:
+            fecha_emision = str(raw_fecha)
+    else:
+        fecha_emision = str(raw_fecha) if raw_fecha else datetime.now().strftime("%d/%m/%Y")
     hora_emision = datos_emision.get("hora") or datetime.now().strftime("%H:%M")
     geclisa_im_id = datos_emision.get("geclisa_im_id")
 

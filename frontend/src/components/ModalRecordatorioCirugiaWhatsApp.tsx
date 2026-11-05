@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface TemplateInfo {
   id?: string
@@ -333,7 +334,7 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     }
     const sNombre = sanitizeMetaText(pacienteNombre) || 'Estimado/a'
     const sCirugia = sanitizeMetaText(cirugia) || 'Cirugía Oftalmológica'
-    const sFecha = sanitizeMetaText(fecha) || 'fecha a confirmar'
+    const sFecha = sanitizeMetaText(formatDateArg(fecha, fecha)) || 'fecha a confirmar'
     const sHora = sanitizeMetaText(hora) || 'horario a confirmar'
     const sPrep = sanitizeMetaText(preparacion) || 'Concurrir con DNI y en ayunas.'
 
@@ -345,7 +346,8 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   const isExcedidoLongitud = longitudTotalMensaje > LIMITE_CARACTERES_META
 
   // Generar texto completo del mensaje para previsualización
-  const cuerpoTextoRenderizado = `Hola ${pacienteNombre || '[Paciente]'}, le recordamos que su cirugía de ${cirugia || '[Procedimiento]'} está programada para el día ${fecha || '[Fecha]'} a las ${hora || '[Horario]'} hs en Centrovisión.
+  const fechaVisual = formatDateArg(fecha, fecha || '[Fecha]')
+  const cuerpoTextoRenderizado = `Hola ${pacienteNombre || '[Paciente]'}, le recordamos que su cirugía de ${cirugia || '[Procedimiento]'} está programada para el día ${fechaVisual} a las ${hora || '[Horario]'} hs en Centrovisión.
 
 📋 Indicaciones de preparación:
 ${preparacion || '[Pautas de preparación y ayuno]'}
@@ -542,7 +544,7 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                     </div>
                     <div className="flex items-center gap-1 text-[11px] text-indigo-300 font-medium">
                       <Calendar size={12} className="text-indigo-400 shrink-0" />
-                      <span>{datosOriginales.primer_ojo?.fecha || 'Fecha a confirmar'}</span>
+                      <span>{formatDateArg(datosOriginales.primer_ojo?.fecha, 'Fecha a confirmar')}</span>
                     </div>
                     <div className="text-[10.5px] text-gray-400 flex items-center justify-between">
                       <span className="truncate">{datosOriginales.primer_ojo?.quirofano_nombre || 'Quirófano'}</span>
@@ -568,7 +570,7 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                     </div>
                     <div className="flex items-center gap-1 text-[11px] text-purple-300 font-medium">
                       <Calendar size={12} className="text-purple-400 shrink-0" />
-                      <span>{datosOriginales.segundo_ojo?.fecha || 'Fecha a confirmar'}</span>
+                      <span>{formatDateArg(datosOriginales.segundo_ojo?.fecha, 'Fecha a confirmar')}</span>
                     </div>
                     <div className="text-[10.5px] text-gray-400 flex items-center justify-between">
                       <span className="truncate">{datosOriginales.segundo_ojo?.quirofano_nombre || 'Quirófano'}</span>
@@ -881,7 +883,7 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                   
                   {/* Cuerpo del Mensaje */}
                   <div className="text-[11.5px] leading-relaxed whitespace-pre-line text-white">
-                    Hola <span className="font-bold text-emerald-200">{pacienteNombre || 'Paciente'}</span>, le recordamos que su cirugía de <span className="font-bold text-emerald-200">{cirugia || 'Cirugía Oftalmológica'}</span> está programada para el día <span className="font-bold text-emerald-200">{fecha || 'Fecha'}</span> a las <span className="font-bold text-emerald-200">{hora || 'Horario'}</span> hs en Centrovisión.
+                    Hola <span className="font-bold text-emerald-200">{pacienteNombre || 'Paciente'}</span>, le recordamos que su cirugía de <span className="font-bold text-emerald-200">{cirugia || 'Cirugía Oftalmológica'}</span> está programada para el día <span className="font-bold text-emerald-200">{formatDateArg(fecha, 'Fecha')}</span> a las <span className="font-bold text-emerald-200">{hora || 'Horario'}</span> hs en Centrovisión.
                     <br /><br />
                     📋 <span className="font-bold underline">Indicaciones de preparación:</span>
                     <br />

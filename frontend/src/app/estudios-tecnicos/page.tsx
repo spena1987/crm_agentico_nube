@@ -38,6 +38,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
+import { formatDateArg } from '@/lib/dateUtils'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import {
@@ -1207,7 +1208,7 @@ export default function EstudiosTecnicosPage() {
                           </div>
                         )}
                         <div className="text-slate-400 text-[10px]">
-                          DNI: {pedido.pacientes?.dni || '-'} · Fecha: {pedido.fecha ? pedido.fecha.slice(0, 10) : '-'}
+                          DNI: {pedido.pacientes?.dni || '-'} · Fecha: {formatDateArg(pedido.fecha)}
                         </div>
                       </div>
 
@@ -1408,7 +1409,7 @@ export default function EstudiosTecnicosPage() {
                                 {arc.titulo || `Archivo #${arc.as_id}`}
                               </p>
                               <p className="text-[10px] text-[var(--secondary)]">
-                                {arc.fecha} • AS_ID #{arc.as_id}
+                                {formatDateArg(arc.fecha)} • AS_ID #{arc.as_id}
                               </p>
                             </div>
                             <div className="flex items-center gap-1.5 shrink-0">

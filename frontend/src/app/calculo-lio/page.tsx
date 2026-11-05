@@ -45,7 +45,7 @@ import {
   Calculator
 } from 'lucide-react'
 import { apiFetch, BACKEND_URL } from '@/lib/api'
-import { formatearHoraDesdeIso } from '@/lib/dateUtils'
+import { formatearHoraDesdeIso, formatDateArg } from '@/lib/dateUtils'
 import { useDebounce } from '@/lib/useDebounce'
 import ModalAsistenteSRKT from '@/components/calculo-lio/ModalAsistenteSRKT'
 import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
@@ -873,7 +873,7 @@ export default function CalculoLioPage() {
                         </span>
                       </div>
                       <span className="text-[11px] font-bold text-[var(--secondary)]">
-                        {p.fecha_cx} {p.hora_cx ? `(${p.hora_cx}hs)` : ''}
+                        {formatDateArg(p.fecha_cx)} {p.hora_cx ? `(${p.hora_cx}hs)` : ''}
                       </span>
                       <span
                         className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
@@ -942,7 +942,7 @@ export default function CalculoLioPage() {
                       {pacienteActivo.sub_ojo_etiqueta ? `👁️ ${pacienteActivo.sub_ojo_etiqueta.toUpperCase()}` : (pacienteActivo.ojo === 'OI' ? '👁️ OJO IZQUIERDO (OI)' : '👁️ OJO DERECHO (OD)')}
                     </span>
                     <span className="text-xs text-[var(--secondary)] font-bold">
-                      Fecha Qx: {pacienteActivo.fecha_cx}
+                      Fecha Qx: {formatDateArg(pacienteActivo.fecha_cx)}
                     </span>
                     <span
                       className={`text-xs font-black px-2.5 py-0.5 rounded-full ${

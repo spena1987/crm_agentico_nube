@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
+import { formatDateArg } from '@/lib/dateUtils'
 import type { RelacionPracticaPresupuesto } from './ModalSmartBundleSugerencias'
 
 interface ItemPresupuestoForm {
@@ -729,7 +730,7 @@ export default function ModalCrearPresupuestoPaciente({
                         ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
                         : 'bg-neutral-900 border-[var(--border)] text-emerald-400 hover:bg-emerald-950/30'
                     }`}
-                    title={`Fijar a fecha de cirugía: ${fechaCirugia.split('T')[0]}`}
+                    title={`Fijar a fecha de cirugía: ${formatDateArg(fechaCirugia)}`}
                   >
                     Fecha Cirugía
                   </button>

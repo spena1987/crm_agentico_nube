@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 
 import type { AsesoriaCasoPipeline } from '@/app/pipeline-quirurgico/page'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface ColumnaInfo {
   id: string
@@ -389,7 +390,7 @@ export default function VistaVerticalPipeline({
                               {caso.fecha_definitiva_cirugia ? (
                                 <div className="flex items-center gap-1.5 text-cyan-300 font-mono font-bold bg-cyan-950/40 px-2 py-1 rounded border border-cyan-500/30 truncate">
                                   <CalendarClock size={13} className="shrink-0 text-cyan-400" />
-                                  <span className="truncate">Definitiva: {caso.fecha_definitiva_cirugia}</span>
+                                  <span className="truncate">Definitiva: {formatDateArg(caso.fecha_definitiva_cirugia)}</span>
                                   {caso.turno_quirofano_info?.hora && (
                                     <span className="text-[10px] text-gray-400 font-normal shrink-0">
                                       ({caso.turno_quirofano_info.hora}hs)
@@ -399,7 +400,7 @@ export default function VistaVerticalPipeline({
                               ) : caso.fecha_probable_cirugia ? (
                                 <div className="flex items-center gap-1.5 text-gray-300 font-mono text-[11px] truncate">
                                   <Calendar size={13} className="shrink-0 text-amber-400" />
-                                  <span className="truncate">Probable: {caso.fecha_probable_cirugia}</span>
+                                  <span className="truncate">Probable: {formatDateArg(caso.fecha_probable_cirugia)}</span>
                                 </div>
                               ) : (
                                 <span className="text-gray-500 text-[11px] italic">Sin fecha quirúrgica pautada</span>

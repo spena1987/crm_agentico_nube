@@ -239,3 +239,78 @@ export const formatFullDateTimeTooltip = (isoStr?: string | null): string => {
     return ''
   }
 }
+
+/**
+ * Convierte cualquier fecha (YYYY-MM-DD, ISO string, Date o timestamp)
+ * al formato estándar argentino: DD/MM/YYYY.
+ * Evita desfasaje por zona horaria UTC-3 analizando directamente los componentes año/mes/día.
+ */
+export const formatDateArg = (fechaInput?: string | Date | null, fallback: string = '-'): string => {
+  if (!fechaInput) return fallback
+  try {
+    if (typeof fechaInput === 'string') {
+      const limpia = fechaInput.trim()
+      if (!limpia) return fallback
+      // Si ya viene en formato DD/MM/YYYY o DD-MM-YYYY
+      if (/^\d{2}[\/-]\d{2}[\/-]\d{4}/.test(limpia)) {
+        return limpia.slice(0, 10).replace(/-/g, '/')
+      }
+      // Formato YYYY-MM-DD o YYYY/MM/DD (con o sin parte de tiempo)
+      if (/^\d{4}[\/-]\d{2}[\/-]\d{2}/.test(limpia)) {
+        const parteFecha = limpia.split('T')[0].split(' ')[0]
+        const [y, m, d] = parteFecha.split(/[\/-]/)
+        if (y && m && d) return `${d}/${m}/${y}`
+      }
+    }
+    const d = typeof fechaInput === 'string' ? new Date(fechaInput) : fechaInput
+    if (isNaN(d.getTime())) return String(fechaInput).slice(0, 10) || fallback
+    const dia = String(d.getDate()).padStart(2, '0')
+    const mes = String(d.getMonth() + 1).padStart(2, '0')
+    const anio = d.getFullYear()
+    return `${dia}/${mes}/${anio}`
+  } catch {
+    return fallback
+  }
+}
+
+/**
+ * Convierte a formato DD/MM/YYYY HH:mm hs (estándar argentino)
+ */
+export const formatDateTimeArg = (fechaInput?: string | Date | null, fallback: string = '-'): string => {
+  if (!fechaInput) return fallback
+  const dmy = formatDateArg(fechaInput, '')
+  if (!dmy) return fallback
+  const isoStr = typeof fechaInput === 'string' ? fechaInput : (fechaInput instanceof Date ? fechaInput.toISOString() : '')
+  const hora = formatearHoraDesdeIso(isoStr, '')
+  return hora && hora !== '--:--' ? `${dmy} ${hora}` : dmy
+}
+
+/**
+ * Convierte a formato compacto DD/MM (para badges, timeline y cabeceras de columnas)
+ */
+export const formatShortDateArg = (fechaInput?: string | Date | null, fallback: string = '-'): string => {
+  const dmy = formatDateArg(fechaInput, '')
+  if (!dmy || dmy.length < 5) return fallback
+  return dmy.slice(0, 5) // DD/MM
+}
+
+/**
+ * Convierte a formato verbal extendido argentino (ej: "Viernes 20 de Noviembre de 2026")
+ */
+export const formatDateVerboseArg = (fechaInput?: string | Date | null, fallback: string = '-'): string => {
+  if (!fechaInput) return fallback
+  try {
+    let d: Date
+    if (typeof fechaInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fechaInput.trim())) {
+      const [y, m, day] = fechaInput.trim().split('-').map(Number)
+      d = new Date(y, m - 1, day, 12, 0, 0)
+    } else {
+      d = typeof fechaInput === 'string' ? new Date(fechaInput) : fechaInput
+    }
+    if (isNaN(d.getTime())) return formatDateArg(fechaInput, fallback)
+    const texto = d.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    return texto.charAt(0).toUpperCase() + texto.slice(1)
+  } catch {
+    return formatDateArg(fechaInput, fallback)
+  }
+}

@@ -33,6 +33,7 @@ import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import { formatDateArg } from '@/lib/dateUtils'
 import { usePermissions } from '@/hooks/usePermissions'
 
 function ProgramacionQuirurgicaContent() {
@@ -572,8 +573,8 @@ function ProgramacionQuirurgicaContent() {
             <CalendarIcon size={16} className="text-blue-600" />
             <span className="text-xs font-bold text-[var(--foreground)]">
               {modoVista === 'dia'
-                ? `Día: ${fechaSeleccionada}`
-                : `Semana: ${fechaInicioVisible} al ${fechaFinVisible}${!mostrarDiasInhabiles && diasVisibles.length < 7 ? ` (${diasVisibles.length} días hábiles)` : ''}`}
+                ? `Día: ${formatDateArg(fechaSeleccionada)}`
+                : `Semana: ${formatDateArg(fechaInicioVisible)} al ${formatDateArg(fechaFinVisible)}${!mostrarDiasInhabiles && diasVisibles.length < 7 ? ` (${diasVisibles.length} días hábiles)` : ''}`}
             </span>
           </div>
         </div>
@@ -749,7 +750,7 @@ function ProgramacionQuirurgicaContent() {
                           <p>🛡 Obra Social: {c.cobertura_obra_social}</p>
                         )}
                         {fechaPactada && (
-                          <p className="font-mono text-blue-600 font-bold">🗓 Fecha pactada: {fechaPactada}</p>
+                          <p className="font-mono text-blue-600 font-bold">🗓 Fecha pactada: {formatDateArg(fechaPactada)}</p>
                         )}
                       </div>
 

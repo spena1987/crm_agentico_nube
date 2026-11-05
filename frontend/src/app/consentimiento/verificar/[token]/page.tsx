@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 
 import { BACKEND_URL } from '@/lib/api'
+import { formatDateArg } from '@/lib/dateUtils'
 
 export default function PaginaVerificarConsentimiento() {
   const params = useParams()
@@ -174,7 +175,7 @@ export default function PaginaVerificarConsentimiento() {
                 <Calendar size={13} />
                 <span>Fecha Prevista de Cirugía</span>
               </div>
-              <div className="text-slate-200 font-semibold">{cirugia?.fecha}</div>
+              <div className="text-slate-200 font-semibold">{formatDateArg(cirugia?.fecha)}</div>
               <div className="text-slate-400 text-[11px]">{cirugia?.hora ? `${cirugia.hora} hs` : 'Horario a confirmar'}</div>
             </div>
           </div>

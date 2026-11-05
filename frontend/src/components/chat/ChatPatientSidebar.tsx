@@ -31,6 +31,7 @@ import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import { formatPhoneDisplay } from '@/lib/phoneUtils'
 import ModalBuscarGeclisa from '@/components/ModalBuscarGeclisa'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface PatientSidebarProps {
   paciente: any
@@ -482,7 +483,7 @@ export default function ChatPatientSidebar({
                   casosQuirurgicos.map((caso) => {
                     const chk = caso.checklist_prequirurgico || {}
                     const rec = chk._recordatorio_qx || {}
-                    const fechaQx = caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || 'Sin fecha'
+                    const fechaQx = formatDateArg(caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia, 'Sin fecha')
                     const recEstado = rec.estado || 'no_enviado'
 
                     return (

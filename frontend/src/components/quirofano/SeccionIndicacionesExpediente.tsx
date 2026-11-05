@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { BACKEND_URL as API_BASE_URL, apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface SeccionIndicacionesExpedienteProps {
   asesoriaId?: string | null
@@ -785,10 +786,10 @@ export default function SeccionIndicacionesExpediente({
                             {/* Fecha de emisión / Vigencia médica */}
                             <span
                               className="text-[10px] font-medium text-[var(--foreground)] px-2 py-0.5 rounded-md bg-[var(--hover-bg)] border border-[var(--border-color)]"
-                              title={em.fecha_emision ? `Fecha Documento: ${em.fecha_emision} | Generado: ${new Date(em.created_at).toLocaleString('es-AR')}` : undefined}
+                              title={em.fecha_emision ? `Fecha Documento: ${formatDateArg(em.fecha_emision)} | Generado: ${new Date(em.created_at).toLocaleString('es-AR')}` : undefined}
                             >
                               📅 {em.fecha_emision
-                                ? (em.fecha_emision.includes('-') ? em.fecha_emision.split('-').reverse().join('/') : em.fecha_emision)
+                                ? formatDateArg(em.fecha_emision)
                                 : (em.created_at ? new Date(em.created_at).toLocaleDateString('es-AR') : '-')}
                             </span>
                           </div>
@@ -987,7 +988,7 @@ export default function SeccionIndicacionesExpediente({
                           ? 'bg-emerald-600 text-white border-emerald-600'
                           : 'bg-[var(--card-bg)] text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10'
                       }`}
-                      title={`Fijar a fecha de cirugía: ${fechaCirugia.split('T')[0]}`}
+                      title={`Fijar a fecha de cirugía: ${formatDateArg(fechaCirugia)}`}
                     >
                       Fecha Cirugía
                     </button>

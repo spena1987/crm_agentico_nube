@@ -9,6 +9,7 @@ import {
   RecetaFarmacos, 
   PedidoEstudios 
 } from '../types'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface PrintContainerProps {
   tipo: 'ficha' | 'receta_anteojos' | 'receta_farmacos' | 'pedido_estudios' | 'indicaciones' | 'evolucion'
@@ -58,7 +59,7 @@ export default function PrintContainer({
           <div><strong>Obra Social:</strong> {paciente.obra_social || 'Particular'}</div>
           <div><strong>Plan:</strong> {paciente.plan_cobertura || '—'}</div>
           <div><strong>Afiliado:</strong> {paciente.nro_afiliado || '—'}</div>
-          <div><strong>Fecha Nac.:</strong> {paciente.fecha_nacimiento ? paciente.fecha_nacimiento.slice(0, 10) : '—'}</div>
+          <div><strong>Fecha Nac.:</strong> {paciente.fecha_nacimiento ? formatDateArg(paciente.fecha_nacimiento) : '—'}</div>
         </div>
       </div>
 
@@ -71,7 +72,7 @@ export default function PrintContainer({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <strong>Fecha de consulta:</strong> {consulta.fecha ? consulta.fecha.slice(0, 10) : ''}
+              <strong>Fecha de consulta:</strong> {consulta.fecha ? formatDateArg(consulta.fecha) : ''}
             </div>
             <div>
               <strong>Profesional actuante:</strong> {consulta.profesional_nombre || '—'}

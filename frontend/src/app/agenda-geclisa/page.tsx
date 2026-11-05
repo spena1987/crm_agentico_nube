@@ -36,6 +36,7 @@ import { BACKEND_URL } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
 import { usePermissions } from '@/hooks/usePermissions'
 import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface Prestador {
   pre_id: number
@@ -737,7 +738,7 @@ export default function AgendaGeclisaPage() {
           <Calendar size={42} className="mx-auto opacity-40 text-blue-500" />
           <p className="text-sm font-bold text-[var(--foreground)]">No hay turnos registrados</p>
           <p className="text-xs text-[var(--secondary)]">
-            No se encontraron turnos para la fecha ({fecha}) con los filtros actuales.
+            No se encontraron turnos para la fecha ({formatDateArg(fecha)}) con los filtros actuales.
           </p>
           {hayFiltrosActivos && (
             <button

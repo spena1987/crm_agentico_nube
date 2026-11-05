@@ -1806,7 +1806,15 @@ async def handle_automated_interactive_action(
                     try:
                         from app.db import crear_evolucion_asesoria
                         ojo_txt = f" ({t_ojo})" if t_ojo else ""
-                        fecha_txt = (turno_data.get("fecha_cirugia") if turno_data else "") or ""
+                        fecha_txt_raw = (turno_data.get("fecha_cirugia") if turno_data else "") or ""
+                        fecha_txt = fecha_txt_raw
+                        if fecha_txt_raw and "-" in fecha_txt_raw:
+                            try:
+                                p_f = fecha_txt_raw.split("T")[0].split("-")
+                                if len(p_f) == 3 and len(p_f[0]) == 4:
+                                    fecha_txt = f"{p_f[2]}/{p_f[1]}/{p_f[0]}"
+                            except Exception:
+                                pass
                         hora_txt = str(turno_data.get("hora_inicio") or "")[:5] if turno_data else ""
                         hora_str_ev = f" ({hora_txt} hs)" if hora_txt else ""
                         practica_desc = (turno_data.get("practica_nombre") if turno_data else as_row.get("practica_nombre")) or "Cirugía"
@@ -2027,7 +2035,15 @@ async def handle_automated_interactive_action(
                     try:
                         from app.db import crear_evolucion_asesoria
                         ojo_txt = f" ({t_ojo})" if t_ojo else ""
-                        fecha_txt = (turno_data.get("fecha_cirugia") if turno_data else "") or ""
+                        fecha_txt_raw = (turno_data.get("fecha_cirugia") if turno_data else "") or ""
+                        fecha_txt = fecha_txt_raw
+                        if fecha_txt_raw and "-" in fecha_txt_raw:
+                            try:
+                                p_f = fecha_txt_raw.split("T")[0].split("-")
+                                if len(p_f) == 3 and len(p_f[0]) == 4:
+                                    fecha_txt = f"{p_f[2]}/{p_f[1]}/{p_f[0]}"
+                            except Exception:
+                                pass
                         practica_desc = (turno_data.get("practica_nombre") if turno_data else as_row.get("practica_nombre")) or "Cirugía"
                         crear_evolucion_asesoria({
                             "asesoria_id": as_id,

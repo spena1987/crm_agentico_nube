@@ -1599,7 +1599,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                         onClick={(e) => {
                           e.stopPropagation()
                           if (fecha !== getFechaHoyLocal()) {
-                            if (!window.confirm(`Atención: La fecha de la pizarra (${fecha}) no coincide con el día de hoy (${getFechaHoyLocal()}). ¿Confirmar recepción anticipada para este paciente?`)) {
+                            if (!window.confirm(`Atención: La fecha de la pizarra (${formatDateArg(fecha)}) no coincide con el día de hoy (${formatDateArg(getFechaHoyLocal())}). ¿Confirmar recepción anticipada para este paciente?`)) {
                               return
                             }
                           }

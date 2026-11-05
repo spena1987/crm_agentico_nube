@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { AsesoriaQuirurgica, PresupuestoPaciente } from '@/components/ItemCasoQuirurgicoAcordeon'
 import TimelineEvolucionesAsesoria from '@/components/TimelineEvolucionesAsesoria'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface CasoFichaResumenProps {
   caso: AsesoriaQuirurgica
@@ -154,7 +155,7 @@ export default function CasoFichaResumen({
                 Fecha Quirúrgica
               </div>
               <div className="text-xs font-mono font-bold text-emerald-300 mt-1">
-                {caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia || 'Sin fecha fijada'}
+                {formatDateArg(caso.fecha_definitiva_cirugia || caso.fecha_probable_cirugia, 'Sin fecha fijada')}
               </div>
             </div>
 

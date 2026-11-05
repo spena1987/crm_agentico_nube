@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { Lock, Users, FileCheck2, Send, Clock, User, Eye, UserCheck, Timer, CalendarX } from 'lucide-react'
+import { formatDateArg, formatShortDateArg } from '@/lib/dateUtils'
 
 interface TurneroGridProps {
   modo: 'dia' | 'semana'
@@ -114,7 +115,7 @@ export default function TurneroGrid({
           Quirófanos fuera de servicio para esta fecha
         </h3>
         <p className="text-xs text-[var(--secondary)] max-w-md mx-auto leading-relaxed">
-          Ninguna sala de quirófano se encuentra operativa habitualmente para la fecha seleccionada ({fechaSeleccionada}).
+          Ninguna sala de quirófano se encuentra operativa habitualmente para la fecha seleccionada ({formatDateArg(fechaSeleccionada)}).
         </p>
         <div className="pt-2">
           <button
@@ -223,7 +224,7 @@ export default function TurneroGrid({
                             )}
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5">
-                            <p className="text-[10px] font-mono opacity-80">{d.fecha.slice(5)}</p>
+                            <p className="text-[10px] font-mono opacity-80">{formatShortDateArg(d.fecha)}</p>
                             {turnosEsteDia.length > 0 ? (
                               <span className="text-[9px] font-mono font-bold px-1.5 py-0.2 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                                 {turnosEsteDia.length} {turnosEsteDia.length === 1 ? 'cirugía' : 'cirugías'}

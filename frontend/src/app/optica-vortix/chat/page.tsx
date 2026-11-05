@@ -56,6 +56,7 @@ import ModalSelectorPlantillasMeta from '@/components/chat/ModalSelectorPlantill
 import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
 import { apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
+import { formatDateArg } from '@/lib/dateUtils'
 import {
   EtapaComercialOptica,
   OpticaConversacion,
@@ -2176,7 +2177,7 @@ export default function OpticaVortixChatPage() {
                   </span>
                   {evolucionHoy?.fecha && (
                     <span className="text-[10px] text-[var(--secondary)] font-semibold">
-                      {evolucionHoy.fecha}
+                      {formatDateArg(evolucionHoy.fecha)}
                     </span>
                   )}
                 </div>

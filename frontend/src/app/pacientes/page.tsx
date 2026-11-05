@@ -40,6 +40,7 @@ import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
 import PanelAsesoriaQuirurgica from '@/components/PanelAsesoriaQuirurgica'
 import { getAuthHeaders, BACKEND_URL } from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
+import { formatDateArg } from '@/lib/dateUtils'
 
 
 interface Paciente {
@@ -1130,7 +1131,7 @@ function PacientesContent() {
                       <div className="flex items-center gap-2">
                         <span className="text-gray-500 font-medium">Nacimiento:</span>
                         <span>
-                          {pacienteSeleccionado.fecha_nacimiento}{' '}
+                          {formatDateArg(pacienteSeleccionado.fecha_nacimiento)}{' '}
                           {calcularEdad(pacienteSeleccionado.fecha_nacimiento) && (
                             <span className="text-gray-400 font-semibold">
                               ({calcularEdad(pacienteSeleccionado.fecha_nacimiento)})

@@ -31,6 +31,7 @@ import {
 } from 'lucide-react'
 import { apiFetch } from '@/lib/api'
 import { useAuth } from '@/context/AuthContext'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface TemplateInfo {
   id?: string
@@ -283,26 +284,30 @@ export default function ModalEnviarConsentimientoWhatsApp({
   const cuerpoTextoRenderizado = modoEnvio === 'template' && plantillaSeleccionada === 'apertura_conversacion'
     ? `Hola ${pacienteNombre || '[Paciente]'}, nos comunicamos de Centrovisión respecto a su cirugía programada. Por favor responda a este mensaje para activar el canal y enviarle la documentación prequirúrgica.`
     : (() => {
+        const fechaTextoSegura = formatDateArg(fecha, fecha || '[Fecha]')
         if (datosOriginales?.whatsapp_mensaje_envio && datosOriginales.whatsapp_mensaje_envio.trim()) {
           let custom = datosOriginales.whatsapp_mensaje_envio
           custom = custom.replaceAll('{paciente}', pacienteNombre || '[Paciente]')
           custom = custom.replaceAll('{cirugia}', cirugia || '[Cirugía]')
           custom = custom.replaceAll('{ojo_intervenido}', datosOriginales.ojo_desc || '[Ojo]')
           custom = custom.replaceAll('{ojo}', datosOriginales.ojo_desc || '[Ojo]')
-          custom = custom.replaceAll('{fecha_cirugia}', fecha || '[Fecha]')
-          custom = custom.replaceAll('{fecha}', fecha || '[Fecha]')
+          custom = custom.replaceAll('{fecha_cirugia}', fechaTextoSegura)
+          custom = custom.replaceAll('{fecha}', fechaTextoSegura)
           custom = custom.replaceAll('{cirujano}', cirujanoNombre || '[Cirujano]')
           custom = custom.replaceAll('{enlace_firma}', enlaceFirma || '[Enlace de firma]')
           return custom
         }
-        return `Hola ${pacienteNombre || '[Paciente]'}, le escribimos de Centrovisión respecto a su cirugía de ${cirugia || '[Cirugía]'} programada para el día ${fecha || '[Fecha]'} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, le compartimos su Consentimiento Informado oficial:\n${enlaceFirma || '[Enlace de firma]'}\n\nAnte cualquier consulta, estamos a su disposición.`
+        return `Hola ${pacienteNombre || '[Paciente]'}, le escribimos de Centrovisión respecto a su cirugía de ${cirugia || '[Cirugía]'} programada para el día ${fechaTextoSegura} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Para que pueda leerlo con tranquilidad y firmarlo digitalmente desde su celular antes de asistir a la clínica, le compartimos su Consentimiento Informado oficial:\n${enlaceFirma || '[Enlace de firma]'}\n\nAnte cualquier consulta, estamos a su disposición.`
       })()
 
   // Mensaje secundario en caso de previsualizar envío de ambos
   const cuerpoTextoSegundoMensaje = datosOriginales?.es_bilateral_escalonada && datosOriginales.segundo_ojo
-    ? (modoEnvio === 'template' && plantillaSeleccionada === 'apertura_conversacion'
-        ? `[2° Acto Quirúrgico] Apertura para ${datosOriginales.segundo_ojo.cirugia} programada para el ${datosOriginales.segundo_ojo.fecha}.`
-        : `Hola ${pacienteNombre || '[Paciente]'}, le compartimos también el Consentimiento Informado para el 2° Acto Quirúrgico (${datosOriginales.segundo_ojo.cirugia}) programado para el día ${datosOriginales.segundo_ojo.fecha} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Enlace oficial para firma digital:\n${datosOriginales.segundo_ojo.enlace_firma}\n\nMuchas gracias.`)
+    ? (() => {
+        const fecha2doOjoTexto = formatDateArg(datosOriginales.segundo_ojo.fecha, datosOriginales.segundo_ojo.fecha || '[Fecha]')
+        return (modoEnvio === 'template' && plantillaSeleccionada === 'apertura_conversacion'
+          ? `[2° Acto Quirúrgico] Apertura para ${datosOriginales.segundo_ojo.cirugia} programada para el ${fecha2doOjoTexto}.`
+          : `Hola ${pacienteNombre || '[Paciente]'}, le compartimos también el Consentimiento Informado para el 2° Acto Quirúrgico (${datosOriginales.segundo_ojo.cirugia}) programado para el día ${fecha2doOjoTexto} con el/la Dr/a. ${cirujanoNombre || '[Cirujano]'}.\n\n📄 Enlace oficial para firma digital:\n${datosOriginales.segundo_ojo.enlace_firma}\n\nMuchas gracias.`)
+      })()
     : ''
 
   const handleEnviar = async () => {
@@ -506,7 +511,7 @@ export default function ModalEnviarConsentimientoWhatsApp({
                           1° {datosOriginales.primer_ojo?.ojo_desc || 'Primer Ojo'}
                         </div>
                         <div className={`text-[10px] truncate ${ojoSeleccionado === 'primer_ojo' ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
-                          📅 {datosOriginales.primer_ojo?.fecha || 'Sin fecha'}
+                          📅 {formatDateArg(datosOriginales.primer_ojo?.fecha, 'Sin fecha')}
                         </div>
                       </button>
 
@@ -523,7 +528,7 @@ export default function ModalEnviarConsentimientoWhatsApp({
                           2° {datosOriginales.segundo_ojo?.ojo_desc || 'Segundo Ojo'}
                         </div>
                         <div className={`text-[10px] truncate ${ojoSeleccionado === 'segundo_ojo' ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
-                          📅 {datosOriginales.segundo_ojo?.fecha || 'Sin fecha'}
+                          📅 {formatDateArg(datosOriginales.segundo_ojo?.fecha, 'Sin fecha')}
                         </div>
                       </button>
 

@@ -48,6 +48,7 @@ import SeccionIndicacionesExpediente from '@/components/quirofano/SeccionIndicac
 import { apiFetch, BACKEND_URL } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/context/AuthContext'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface PrestadorGeclisa {
   pre_id: number
@@ -3158,10 +3159,10 @@ export default function CasoFormularioActivo({
                               </span>
                               <span
                                 className="text-[10px] text-gray-300 font-medium"
-                                title={p.fecha_emision ? `Fecha Emisión: ${p.fecha_emision} | Auditoría: ${new Date(p.created_at).toLocaleDateString('es-AR')}` : undefined}
+                                title={p.fecha_emision ? `Fecha Emisión: ${formatDateArg(p.fecha_emision)} | Auditoría: ${new Date(p.created_at).toLocaleDateString('es-AR')}` : undefined}
                               >
                                 📅 {p.fecha_emision
-                                  ? (p.fecha_emision.includes('-') ? p.fecha_emision.split('-').reverse().join('/') : p.fecha_emision)
+                                  ? formatDateArg(p.fecha_emision)
                                   : new Date(p.created_at).toLocaleDateString('es-AR')}
                               </span>
                               {p.validez_dias && (
@@ -3592,7 +3593,7 @@ export default function CasoFormularioActivo({
                       </div>
                       <div className="text-[10px] text-gray-400 flex items-center gap-1">
                         <Calendar size={11} className="text-gray-500" />
-                        <span>{primerOjoConsentimiento?.fecha_cirugia || primerOjoConsentimiento?.fecha || fechaDefinitiva || fechaProbable || 'Fecha no definida'}</span>
+                        <span>{formatDateArg(primerOjoConsentimiento?.fecha_cirugia || primerOjoConsentimiento?.fecha || fechaDefinitiva || fechaProbable, 'Fecha no definida')}</span>
                       </div>
                     </div>
 
@@ -3674,7 +3675,7 @@ export default function CasoFormularioActivo({
                       </div>
                       <div className="text-[10px] text-gray-400 flex items-center gap-1">
                         <Calendar size={11} className="text-gray-500" />
-                        <span>{segundoOjoConsentimiento?.fecha_cirugia || segundoOjoConsentimiento?.fecha || fechaDefinitiva2doOjo || fechaProbable2doOjo || 'Fecha no definida'}</span>
+                        <span>{formatDateArg(segundoOjoConsentimiento?.fecha_cirugia || segundoOjoConsentimiento?.fecha || fechaDefinitiva2doOjo || fechaProbable2doOjo, 'Fecha no definida')}</span>
                       </div>
                     </div>
 
@@ -4004,7 +4005,7 @@ export default function CasoFormularioActivo({
                             Ojo {ojoTexto}
                           </span>
                           <span className="font-semibold text-white">
-                            {t.fecha_cirugia || 'Fecha a confirmar'}
+                            {formatDateArg(t.fecha_cirugia, 'Fecha a confirmar')}
                           </span>
                           <span className="text-gray-400 font-mono text-[11px]">
                             ({t.hora_inicio ? t.hora_inicio.slice(0, 5) : '08:30'} hs)

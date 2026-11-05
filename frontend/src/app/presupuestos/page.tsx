@@ -7,6 +7,7 @@ import { ModalAnaliticaCausasQuirurgicas } from '@/components/pipeline/ModalAnal
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL } from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
+import { formatDateArg } from '@/lib/dateUtils'
 import {
   FileText,
   Trash2,
@@ -413,7 +414,7 @@ export default function PresupuestosPage() {
                                 <option value="rechazado">Rechazado</option>
                               </select>
                               {pres.asesorias_quirurgicas?.estado && ['confirmado', 'fecha_programada', 'programado', 'operado'].includes(pres.asesorias_quirurgicas.estado) && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5" title={`Caso Quirúrgico: ${pres.asesorias_quirurgicas.estado.toUpperCase()}${pres.asesorias_quirurgicas.fecha_definitiva_cirugia ? ` (Qx: ${pres.asesorias_quirurgicas.fecha_definitiva_cirugia})` : ''}`}>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5" title={`Caso Quirúrgico: ${pres.asesorias_quirurgicas.estado.toUpperCase()}${pres.asesorias_quirurgicas.fecha_definitiva_cirugia ? ` (Qx: ${formatDateArg(pres.asesorias_quirurgicas.fecha_definitiva_cirugia)})` : ''}`}>
                                   Qx {pres.asesorias_quirurgicas.estado === 'operado' ? 'Operado' : 'Programado'}
                                 </span>
                               )}
@@ -429,7 +430,7 @@ export default function PresupuestosPage() {
                                 {pres.estado.toUpperCase()}
                               </span>
                               {pres.asesorias_quirurgicas?.estado && ['confirmado', 'fecha_programada', 'programado', 'operado'].includes(pres.asesorias_quirurgicas.estado) && (
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5" title={`Caso Quirúrgico: ${pres.asesorias_quirurgicas.estado.toUpperCase()}${pres.asesorias_quirurgicas.fecha_definitiva_cirugia ? ` (Qx: ${pres.asesorias_quirurgicas.fecha_definitiva_cirugia})` : ''}`}>
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 flex items-center gap-0.5" title={`Caso Quirúrgico: ${pres.asesorias_quirurgicas.estado.toUpperCase()}${pres.asesorias_quirurgicas.fecha_definitiva_cirugia ? ` (Qx: ${formatDateArg(pres.asesorias_quirurgicas.fecha_definitiva_cirugia)})` : ''}`}>
                                   Qx {pres.asesorias_quirurgicas.estado === 'operado' ? 'Operado' : 'Programado'}
                                 </span>
                               )}

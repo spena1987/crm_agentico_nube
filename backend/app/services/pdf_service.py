@@ -1238,7 +1238,7 @@ def generar_pdf_consentimiento_informado(
     
     cirujano = turno.get("cirujano_nombre") or "Médico Cirujano"
     quirofano = turno.get("quirofano_nombre") or "Quirófano Central"
-    fecha = str(turno.get("fecha_cirugia") or "")
+    fecha = parse_and_format_date(turno.get("fecha_cirugia"))
     hora = str(turno.get("hora_inicio") or "")[:5]
     tipo_anestesia = turno.get("tipo_anestesia") or "Local Asistida"
 
@@ -1643,7 +1643,7 @@ def generar_pdf_parte_quirurgico(turno: dict, paciente: dict) -> str:
     ojo = turno.get("ojo") or "OD"
     ojo_desc = "OJO DERECHO (OD)" if ojo == "OD" else "OJO IZQUIERDO (OI)" if ojo == "OI" else "AMBOS OJOS (AO)"
     quirofano = turno.get("quirofano_nombre") or "Quirófano Principal"
-    fecha = str(turno.get("fecha_cirugia") or "")
+    fecha = parse_and_format_date(turno.get("fecha_cirugia"))
     anestesia = turno.get("tipo_anestesia") or "Tópica + Sedación"
 
     hora_llegada = parsear_hora_argentina(turno.get("llegada_at"), fallback="--:--")

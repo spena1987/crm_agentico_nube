@@ -42,6 +42,7 @@ import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import { Printer } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface FichaTurnoModalProps {
   turno?: any
@@ -1266,7 +1267,7 @@ export default function FichaTurnoModal({
               </div>
               <div className="flex items-center gap-1.5 font-bold text-[var(--foreground)]">
                 <Calendar size={15} className="text-indigo-600 shrink-0" />
-                <span>Fecha: <span className="text-indigo-600 font-extrabold">{diaSeleccionadoNombre}, {formData.fecha_cirugia || 'Sin fecha'}</span></span>
+                <span>Fecha: <span className="text-indigo-600 font-extrabold">{diaSeleccionadoNombre}, {formatDateArg(formData.fecha_cirugia, 'Sin fecha')}</span></span>
               </div>
               <div className="flex items-center gap-1.5">
                 <Clock size={15} className="text-blue-600 shrink-0" />
@@ -1386,7 +1387,7 @@ export default function FichaTurnoModal({
               <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200 font-semibold">
                 <CheckCircle2 size={16} className="text-blue-600 shrink-0" />
                 <span>
-                  Asignación activa: <b>{quirofanoActual?.nombre}</b> • <b>{diaSeleccionadoNombre} {formData.fecha_cirugia}</b> • <span className="font-mono text-blue-700 dark:text-blue-300 font-bold">{formData.hora_inicio} hs a {calcularHoraFin()} hs ({formData.duracion_minutos}m)</span>
+                  Asignación activa: <b>{quirofanoActual?.nombre}</b> • <b>{diaSeleccionadoNombre} {formatDateArg(formData.fecha_cirugia)}</b> • <span className="font-mono text-blue-700 dark:text-blue-300 font-bold">{formData.hora_inicio} hs a {calcularHoraFin()} hs ({formData.duracion_minutos}m)</span>
                 </span>
               </div>
               {slotSeleccionado && (

@@ -36,6 +36,7 @@ import Link from 'next/link'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import { usePermissions } from '@/hooks/usePermissions'
+import { formatDateArg } from '@/lib/dateUtils'
 import ModalPlantillasWhatsAppQuirurgicas from '@/components/ModalPlantillasWhatsAppQuirurgicas'
 import ModalRecordatorioCirugiaWhatsApp from '@/components/ModalRecordatorioCirugiaWhatsApp'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
@@ -1577,8 +1578,8 @@ export default function PipelineQuirurgicoPage() {
                                   <Calendar size={11} className="text-amber-400 shrink-0" />
                                   <span className="truncate">
                                     {caso.fecha_definitiva_cirugia
-                                      ? `Definitiva: ${caso.fecha_definitiva_cirugia}`
-                                      : `Probable: ${caso.fecha_probable_cirugia}`}
+                                      ? `Definitiva: ${formatDateArg(caso.fecha_definitiva_cirugia)}`
+                                      : `Probable: ${formatDateArg(caso.fecha_probable_cirugia)}`}
                                   </span>
                                 </div>
                               )}

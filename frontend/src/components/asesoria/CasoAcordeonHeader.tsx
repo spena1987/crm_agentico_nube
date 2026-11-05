@@ -16,6 +16,7 @@ import {
   Tag
 } from 'lucide-react'
 import { AsesoriaQuirurgica } from '@/components/ItemCasoQuirurgicoAcordeon'
+import { formatDateArg } from '@/lib/dateUtils'
 
 interface CasoAcordeonHeaderProps {
   caso: AsesoriaQuirurgica
@@ -273,7 +274,7 @@ export default function CasoAcordeonHeader({
                 title={salaStr ? `Asignado en ${salaStr}` : 'Fecha fijada en Quirófano'}
               >
                 <Calendar size={12} className="text-emerald-400" />
-                <span>{caso.fecha_definitiva_cirugia}</span>
+                <span>{formatDateArg(caso.fecha_definitiva_cirugia)}</span>
                 {horaStr && (
                   <span className="text-emerald-400 font-sans font-semibold text-[11px] bg-emerald-900/60 px-1 rounded">
                     {horaStr}
@@ -292,7 +293,7 @@ export default function CasoAcordeonHeader({
             return (
               <span className="text-xs font-mono px-2 py-1 rounded-xl bg-neutral-800 text-amber-300 border border-amber-500/20 flex items-center gap-1.5">
                 <Calendar size={12} className="text-amber-400" />
-                Probable: {caso.fecha_probable_cirugia}
+                Probable: {formatDateArg(caso.fecha_probable_cirugia)}
               </span>
             )
           }

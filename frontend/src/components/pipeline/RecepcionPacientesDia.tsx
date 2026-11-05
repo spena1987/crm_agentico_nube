@@ -36,7 +36,7 @@ import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepAlerta, reproducirBeepScan } from '@/lib/audioFeedback'
 import { Printer, QrCode, Camera, Barcode, Undo2 } from 'lucide-react'
-import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, getFechaHoyLocal } from '@/lib/dateUtils'
+import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, getFechaHoyLocal, formatDateArg } from '@/lib/dateUtils'
 
 interface TurnoRecepcion {
   id: string
@@ -332,7 +332,7 @@ export default function RecepcionPacientesDia() {
   // Recepcionar Paciente: Pasa a 'en_espera'
   const handleRecepcionar = async (turnoId: string) => {
     if (fecha !== getFechaHoyLocal()) {
-      const confirmar = window.confirm(`Atención: La fecha seleccionada (${fecha}) no coincide con el día de hoy (${getFechaHoyLocal()}). ¿Deseas registrar la llegada de este paciente de todas formas?`)
+      const confirmar = window.confirm(`Atención: La fecha seleccionada (${formatDateArg(fecha)}) no coincide con el día de hoy (${formatDateArg(getFechaHoyLocal())}). ¿Deseas registrar la llegada de este paciente de todas formas?`)
       if (!confirmar) return
     }
     try {
@@ -804,7 +804,7 @@ export default function RecepcionPacientesDia() {
               ? 'No hay pacientes operados registrados para esta fecha.'
               : !filtrosEstado.includes('todos')
               ? 'No hay pacientes en los estados operativos seleccionados para hoy.'
-              : `No hay cirugías programadas para el día ${fecha}.`}
+              : `No hay cirugías programadas para el día ${formatDateArg(fecha)}.`}
           </p>
           {(!filtrosEstado.includes('todos') || busqueda) && (
             <button
