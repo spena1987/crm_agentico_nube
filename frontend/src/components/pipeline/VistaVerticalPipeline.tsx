@@ -269,11 +269,14 @@ export default function VistaVerticalPipeline({
                             : 'border-[var(--border)] hover:border-blue-500/40'
                         }`}
                       >
-                        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1.6fr)] gap-4 items-center">
+                        {/* ==================================================================== */}
+                        {/* NIVEL SUPERIOR: GRID DE DATOS CLÍNICOS Y FINANCIEROS (4 COLUMNAS)   */}
+                        {/* ==================================================================== */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1.15fr)_minmax(0,1.05fr)_minmax(0,0.85fr)] gap-4 items-center">
                           {/* ==================================================================== */}
-                          {/* COLUMNA 1: PACIENTE & IDENTIFICACIÓN (21.5% de ancho) */}
+                          {/* COLUMNA 1: PACIENTE & IDENTIFICACIÓN (27.4% de ancho) */}
                           {/* ==================================================================== */}
-                          <div className="min-w-0 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
+                          <div className="min-w-0 space-y-1.5 border-b md:border-b-0 md:border-r border-[var(--border)] pb-3 md:pb-0 md:pr-3">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-950/90 text-blue-300 border border-blue-500/40">
                                 {caso.codigo_caso || 'QX-26-0001'}
@@ -338,7 +341,7 @@ export default function VistaVerticalPipeline({
                           </div>
 
                           {/* ==================================================================== */}
-                          {/* COLUMNA 2: CLÍNICA, CIRUJANO & OBRA SOCIAL (27.5% de ancho) */}
+                          {/* COLUMNA 2: CLÍNICA, CIRUJANO & OBRA SOCIAL (27.4% de ancho) */}
                           {/* ==================================================================== */}
                           <div className="min-w-0 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3">
                             <div className="flex items-start gap-1.5 text-xs text-gray-100 font-medium">
@@ -382,9 +385,9 @@ export default function VistaVerticalPipeline({
                           </div>
 
                           {/* ==================================================================== */}
-                          {/* COLUMNA 3: FECHAS & PRÓXIMA ACCIÓN PROGRAMADA (17.6% de ancho) */}
+                          {/* COLUMNA 3: FECHAS & CHECKLIST PREQUIRÚRGICO (25.0% de ancho) */}
                           {/* ==================================================================== */}
-                          <div className="min-w-0 space-y-1.5 border-b lg:border-b-0 lg:border-r border-[var(--border)] pb-3 lg:pb-0 lg:pr-3 overflow-hidden">
+                          <div className="min-w-0 space-y-1.5 border-b md:border-b-0 md:border-r border-[var(--border)] pb-3 md:pb-0 md:pr-3 overflow-hidden">
                             {/* Fecha de Cirugía */}
                             <div className="text-xs">
                               {caso.fecha_definitiva_cirugia ? (
@@ -407,7 +410,7 @@ export default function VistaVerticalPipeline({
                               )}
                             </div>
 
-                            {/* Mini Checklist de Preparación */}
+                            {/* Mini Checklist de Preparación y Consentimiento Oficial */}
                             <div className="flex items-center gap-1.5 text-[10px] text-gray-400 pt-0.5 flex-wrap">
                               <span
                                 className={`px-1.5 py-0.5 rounded border ${
@@ -431,26 +434,29 @@ export default function VistaVerticalPipeline({
                                 <button
                                   type="button"
                                   onClick={() => onAbrirConsentimientoQx?.(caso)}
-                                  className={`px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                                  className={`px-2 py-0.5 rounded border transition-colors cursor-pointer flex items-center gap-1 shadow-xs ${
                                     checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                      ? 'bg-emerald-950/70 text-emerald-300 border-emerald-500/50 font-bold hover:bg-emerald-900'
+                                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/50 font-bold hover:bg-emerald-900 hover:text-white'
                                       : caso.consentimiento_info?.estado === 'enviado_whatsapp' || caso.consentimiento_info?.estado === 'esperando_apertura' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                      ? 'bg-amber-950/70 text-amber-300 border-amber-500/50 font-semibold hover:bg-amber-900'
-                                      : 'bg-neutral-800 text-gray-400 border-neutral-700 hover:text-white hover:border-gray-500'
+                                      ? 'bg-amber-950/80 text-amber-300 border-amber-500/50 font-semibold hover:bg-amber-900 hover:text-white'
+                                      : 'bg-teal-950/80 text-teal-300 border-teal-500/40 hover:bg-teal-900 hover:text-white'
                                   }`}
                                   title={
                                     checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                      ? 'Consentimiento firmado digitalmente o en papel'
+                                      ? 'Consentimiento informado firmado digitalmente o en papel. Clic para ver o gestionar'
                                       : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                      ? 'Consentimiento enviado por WhatsApp (esperando firma del paciente)'
-                                      : 'Enviar Consentimiento Informado al paciente'
+                                      ? 'Consentimiento enviado por WhatsApp (esperando firma del paciente). Clic para reenviar'
+                                      : 'Enviar Consentimiento Informado al paciente por WhatsApp con firma digital'
                                   }
                                 >
-                                  {checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                    ? '✓ C.I. Firmado'
-                                    : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                    ? '⏳ C.I. Enviado'
-                                    : 'C.I.'}
+                                  <FileCheck2 size={11} className={checklist.consentimiento_firmado || caso.consentimiento_info?.firmado ? "text-emerald-400" : "text-teal-400"} />
+                                  <span>
+                                    {checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
+                                      ? '✓ C.I. Firmado'
+                                      : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
+                                      ? '⏳ C.I. Enviado'
+                                      : 'Consentimiento'}
+                                  </span>
                                 </button>
                               ) : (
                                 <span
@@ -461,54 +467,101 @@ export default function VistaVerticalPipeline({
                                 </span>
                               )}
                             </div>
+                          </div>
 
-                            {/* Badge Semáforo de Recordatorio Quirúrgico de WhatsApp */}
-                            <div className="pt-0.5">
-                              {recInfo.estado === 'confirmado' ? (
-                                <div
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 font-mono text-[10px] font-bold shadow-xs truncate"
-                                  title={`Confirmado por el paciente${recInfo.respondido_at ? ` el ${new Date(recInfo.respondido_at).toLocaleDateString()} a las ${new Date(recInfo.respondido_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`}
-                                >
-                                  <CheckCheck size={12} className="text-emerald-400 shrink-0" />
-                                  <span className="truncate">Confirmó cirugía</span>
-                                  {recInfo.respondido_at && (
-                                    <span className="text-[9px] text-emerald-400/80 font-normal shrink-0">
-                                      ({new Date(recInfo.respondido_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}hs)
-                                    </span>
-                                  )}
-                                </div>
-                              ) : recInfo.estado === 'enviado' ? (
-                                <div
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-950/70 text-amber-300 border border-amber-500/40 font-mono text-[10px] font-semibold shadow-xs truncate"
-                                  title={`Recordatorio oficial enviado${recInfo.enviado_at ? ` el ${new Date(recInfo.enviado_at).toLocaleDateString()}` : ''}. Esperando confirmación del paciente.`}
-                                >
-                                  <Clock size={11} className="text-amber-400 shrink-0 animate-pulse" />
-                                  <span className="truncate">Recordatorio enviado • Esperando</span>
-                                </div>
-                              ) : recInfo.estado === 'con_consulta' ? (
-                                <div
-                                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-purple-950/80 text-purple-200 border border-purple-500/50 font-mono text-[10px] font-bold shadow-xs truncate"
-                                  title="El paciente indicó que tiene consultas sobre la cirugía tras el recordatorio. Requiere atención asistencial."
-                                >
-                                  <AlertCircle size={12} className="text-purple-400 shrink-0" />
-                                  <span className="truncate">Tiene consulta • Requiere atención</span>
-                                </div>
-                              ) : (caso.estado === 'confirmado' || caso.estado === 'programado') ? (
-                                <div
-                                  className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-neutral-800/70 text-gray-400 border border-neutral-700/60 font-mono text-[9.5px] truncate"
-                                  title="Aún no se ha enviado el recordatorio oficial al paciente"
-                                >
-                                  <BellRing size={10} className="text-gray-500 shrink-0" />
-                                  <span className="truncate">Sin recordatorio enviado</span>
-                                </div>
-                              ) : null}
+                          {/* ==================================================================== */}
+                          {/* COLUMNA 4: PRESUPUESTO & SELECTOR DE ETAPA (20.2% de ancho)          */}
+                          {/* ==================================================================== */}
+                          <div className="min-w-0 flex flex-col items-start lg:items-end justify-center gap-1.5">
+                            <div className="flex items-center gap-1.5 text-xs font-mono font-bold min-w-0">
+                              <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold shrink-0">
+                                Presupuesto:
+                              </span>
+                              {Number(caso.monto_extra || 0) > 0 ? (
+                                caso.moneda_extra === 'USD' ? (
+                                  <span className="text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30 truncate">
+                                    USD {Number(caso.monto_extra).toLocaleString('es-AR')}
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 truncate">
+                                    ${Number(caso.monto_extra).toLocaleString('es-AR')} ARS
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-gray-500 font-normal text-[11px]">Sin cotizar</span>
+                              )}
                             </div>
+
+                            {/* Selector para mover de etapa */}
+                            <select
+                              value={estadoSelectValue}
+                              disabled={actualizandoCasoId === caso.id}
+                              onChange={(e) => onCambiarEtapa(caso, e.target.value)}
+                              className="text-[11px] font-semibold bg-neutral-800 hover:bg-neutral-750 border border-[var(--border)] text-gray-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-blue-500 cursor-pointer shadow-xs shrink-0 w-full max-w-[155px]"
+                            >
+                              <option value="derivado">1. Derivado</option>
+                              <option value="en_asesoramiento">2. Asesoramiento</option>
+                              <option value="en_analisis">3. Análisis</option>
+                              <option value="confirmado">4. Confirmado</option>
+                              <option value="programado">5. Programado</option>
+                              <option disabled>──────────</option>
+                              <option value="operado">✔ Operado (Cerrar)</option>
+                              <option value="cancelado">✖ Cancelar (Cerrar)</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* ==================================================================== */}
+                        {/* NIVEL INFERIOR: FOOTER OPERATIVO DEDICADO DE ANCHO COMPLETO (100%)    */}
+                        {/* ==================================================================== */}
+                        <div className="border-t border-neutral-800/80 pt-2.5 mt-3 flex flex-wrap items-center justify-between gap-2.5">
+                          {/* Lado Izquierdo: Estado de Seguimiento y Recordatorio Quirúrgico */}
+                          <div className="flex items-center gap-2 flex-wrap min-w-0">
+                            {/* Badge Semáforo de Recordatorio Quirúrgico de WhatsApp */}
+                            {recInfo.estado === 'confirmado' ? (
+                              <div
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-emerald-950/80 text-emerald-300 border border-emerald-500/50 font-mono text-[10px] font-bold shadow-xs truncate"
+                                title={`Confirmado por el paciente${recInfo.respondido_at ? ` el ${new Date(recInfo.respondido_at).toLocaleDateString()} a las ${new Date(recInfo.respondido_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`}
+                              >
+                                <CheckCheck size={12} className="text-emerald-400 shrink-0" />
+                                <span className="truncate">Confirmó cirugía</span>
+                                {recInfo.respondido_at && (
+                                  <span className="text-[9px] text-emerald-400/80 font-normal shrink-0">
+                                    ({new Date(recInfo.respondido_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}hs)
+                                  </span>
+                                )}
+                              </div>
+                            ) : recInfo.estado === 'enviado' ? (
+                              <div
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-950/70 text-amber-300 border border-amber-500/40 font-mono text-[10px] font-semibold shadow-xs truncate"
+                                title={`Recordatorio oficial enviado${recInfo.enviado_at ? ` el ${new Date(recInfo.enviado_at).toLocaleDateString()}` : ''}. Esperando confirmación del paciente.`}
+                              >
+                                <Clock size={11} className="text-amber-400 shrink-0 animate-pulse" />
+                                <span className="truncate">Recordatorio enviado • Esperando respuesta</span>
+                              </div>
+                            ) : recInfo.estado === 'con_consulta' ? (
+                              <div
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-purple-950/80 text-purple-200 border border-purple-500/50 font-mono text-[10px] font-bold shadow-xs truncate"
+                                title="El paciente indicó que tiene consultas sobre la cirugía tras el recordatorio. Requiere atención asistencial."
+                              >
+                                <AlertCircle size={12} className="text-purple-400 shrink-0" />
+                                <span className="truncate">Tiene consulta médica • Requiere atención</span>
+                              </div>
+                            ) : (caso.estado === 'confirmado' || caso.estado === 'programado') ? (
+                              <div
+                                className="flex items-center gap-1 px-2 py-1 rounded-md bg-neutral-800/70 text-gray-400 border border-neutral-700/60 font-mono text-[9.5px] truncate"
+                                title="Aún no se ha enviado el recordatorio oficial al paciente"
+                              >
+                                <BellRing size={10} className="text-gray-500 shrink-0" />
+                                <span className="truncate">Sin recordatorio enviado</span>
+                              </div>
+                            ) : null}
 
                             {/* Próxima Acción Programada */}
                             {Boolean(caso.proxima_accion_fecha || caso.proxima_accion_texto) && (
                               <div
                                 onClick={() => onAbrirQuickRecontacto?.(caso)}
-                                className={`p-1.5 rounded-lg border text-[10.5px] flex items-start gap-1.5 transition-all ${
+                                className={`px-2 py-1 rounded-md border text-[10.5px] flex items-center gap-1.5 transition-all max-w-sm truncate ${
                                   onAbrirQuickRecontacto ? 'cursor-pointer hover:opacity-90 active:scale-[0.99]' : ''
                                 } ${
                                   esAccionVencida
@@ -519,7 +572,7 @@ export default function VistaVerticalPipeline({
                                 }`}
                                 title={onAbrirQuickRecontacto ? "Clic para gestionar seguimiento y registrar recontacto" : undefined}
                               >
-                                <Clock size={11} className="shrink-0 mt-0.5" />
+                                <Clock size={11} className="shrink-0" />
                                 <div className="min-w-0 flex-1 truncate">
                                   <div className="flex items-center gap-1 truncate">
                                     {caso.proxima_accion_fecha && (
@@ -536,186 +589,122 @@ export default function VistaVerticalPipeline({
                             )}
                           </div>
 
-                          {/* ==================================================================== */}
-                          {/* COLUMNA 4: PRESUPUESTO & ACCIONES RÁPIDAS EN DOS NIVELES (31.4% ancho) */}
-                          {/* ==================================================================== */}
-                          <div className="min-w-0 flex flex-col justify-between gap-2.5">
-                            {/* Nivel Superior: Presupuesto (Izquierda) + Selector de Etapa (Derecha) */}
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-1.5 text-xs font-mono font-bold min-w-0">
-                                <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold shrink-0">
-                                  Presupuesto:
-                                </span>
-                                {Number(caso.monto_extra || 0) > 0 ? (
-                                  caso.moneda_extra === 'USD' ? (
-                                    <span className="text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-500/30 truncate">
-                                      USD {Number(caso.monto_extra).toLocaleString('es-AR')}
-                                    </span>
-                                  ) : (
-                                    <span className="text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30 truncate">
-                                      ${Number(caso.monto_extra).toLocaleString('es-AR')} ARS
-                                    </span>
-                                  )
-                                ) : (
-                                  <span className="text-gray-500 font-normal text-[11px]">Sin cotizar</span>
-                                )}
-                              </div>
-
-                              {/* Selector para mover de etapa */}
-                              <select
-                                value={estadoSelectValue}
-                                disabled={actualizandoCasoId === caso.id}
-                                onChange={(e) => onCambiarEtapa(caso, e.target.value)}
-                                className="text-[11px] font-semibold bg-neutral-800 hover:bg-neutral-750 border border-[var(--border)] text-gray-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-blue-500 cursor-pointer shadow-xs shrink-0 max-w-[140px]"
+                          {/* Lado Derecho: Barra de Acciones Rápidas (Alineadas con espacio amplio) */}
+                          <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0">
+                            {/* Botón Agendar si está Confirmado o Turno Qx si está Programado */}
+                            {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
+                              <Link
+                                href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
+                                className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-sm transition-all shrink-0"
+                                title="Asignar o editar turno en el Quirófano"
                               >
-                                <option value="derivado">1. Derivado</option>
-                                <option value="en_asesoramiento">2. Asesoramiento</option>
-                                <option value="en_analisis">3. Análisis</option>
-                                <option value="confirmado">4. Confirmado</option>
-                                <option value="programado">5. Programado</option>
-                                <option disabled>──────────</option>
-                                <option value="operado">✔ Operado (Cerrar)</option>
-                                <option value="cancelado">✖ Cancelar (Cerrar)</option>
-                              </select>
-                            </div>
+                                <CalendarClock size={13} />
+                                <span>{caso.estado === 'programado' ? 'Turno Qx' : 'Agendar'}</span>
+                              </Link>
+                            )}
 
-                            {/* Nivel Inferior: Barra de Acciones Rápidas (Alineada a la Derecha) */}
-                            <div className="flex items-center justify-end gap-1.5 pt-0.5 flex-wrap sm:flex-nowrap">
-                              {/* Botón Agendar si está Confirmado o Turno Qx si está Programado */}
-                              {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
-                                <Link
-                                  href={`/programacion-quirurgica?asesoria_id=${caso.id}&paciente_id=${caso.paciente_id}`}
-                                  className="px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-[11px] flex items-center gap-1.5 shadow-sm transition-all shrink-0"
-                                  title="Asignar o editar turno en el Quirófano"
-                                >
-                                  <CalendarClock size={13} />
-                                  <span>{caso.estado === 'programado' ? 'Turno Qx' : 'Agendar'}</span>
-                                </Link>
-                              )}
+                            {/* Botón Acción Rápida: Indicaciones Médicas Quirúrgicas (Geclisa + WhatsApp) */}
+                            <button
+                              type="button"
+                              onClick={() => onAbrirIndicacionesQx?.(caso)}
+                              className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
+                                caso.indicacion_geclisa_im_id
+                                  ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
+                                  : 'bg-blue-950/80 hover:bg-blue-900 border-blue-500/40 text-blue-300 hover:text-white'
+                              }`}
+                              title={
+                                caso.indicacion_geclisa_im_id
+                                  ? `Indicación médica emitida en Geclisa #${caso.indicacion_geclisa_im_id}. Clic para ver o reenviar`
+                                  : 'Emitir Indicaciones Médicas a Geclisa y enviar WhatsApp'
+                              }
+                            >
+                              <Pill size={13} className={caso.indicacion_geclisa_im_id ? 'text-emerald-400' : 'text-blue-400'} />
+                              <span>{caso.indicacion_geclisa_im_id ? `Ind. #${caso.indicacion_geclisa_im_id}` : 'Indicaciones Qx'}</span>
+                            </button>
 
-                              {/* Botón Acción Rápida: Consentimiento Informado (WhatsApp / Digital) - Solo Programados */}
-                              {(['programado', 'en_espera', 'pre_quirofano', 'en_operacion'].includes(caso.estado)) && (
-                                <button
-                                  type="button"
-                                  onClick={() => onAbrirConsentimientoQx?.(caso)}
-                                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
-                                    checklist.consentimiento_firmado || caso.consentimiento_info?.firmado
-                                      ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/50 text-emerald-300 hover:text-white'
-                                      : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp'
-                                      ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/50 text-amber-300 hover:text-white'
-                                      : 'bg-teal-950/80 hover:bg-teal-900 border-teal-500/40 text-teal-300 hover:text-white'
-                                  }`}
-                                  title="Enviar o verificar Consentimiento Informado por WhatsApp con firma digital"
-                                >
-                                  <FileCheck2 size={13} className={checklist.consentimiento_firmado || caso.consentimiento_info?.firmado ? "text-emerald-400" : "text-teal-400"} />
-                                  <span>{checklist.consentimiento_firmado || caso.consentimiento_info?.firmado ? 'C.I. Firmado' : caso.consentimiento_info?.estado === 'enviado_whatsapp' || checklist._consentimiento_qx?.estado === 'enviado_whatsapp' ? 'C.I. Enviado' : 'Consentimiento'}</span>
-                                </button>
-                              )}
-
-                              {/* Botón Acción Rápida: Indicaciones Médicas Quirúrgicas (Geclisa + WhatsApp) */}
+                            {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado (Solo Confirmados y Programados) */}
+                            {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
                               <button
                                 type="button"
-                                onClick={() => onAbrirIndicacionesQx?.(caso)}
+                                onClick={() => onAbrirRecordatorioQx?.(caso)}
                                 className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
-                                  caso.indicacion_geclisa_im_id
+                                  recInfo.estado === 'confirmado'
                                     ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
-                                    : 'bg-blue-950/80 hover:bg-blue-900 border-blue-500/40 text-blue-300 hover:text-white'
+                                    : recInfo.estado === 'enviado'
+                                    ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/40 text-amber-300 hover:text-white'
+                                    : recInfo.estado === 'con_consulta'
+                                    ? 'bg-purple-950/80 hover:bg-purple-900 border-purple-500/50 text-purple-300 hover:text-white'
+                                    : 'bg-indigo-950/80 hover:bg-indigo-900 border-indigo-500/40 text-indigo-300 hover:text-white'
                                 }`}
                                 title={
-                                  caso.indicacion_geclisa_im_id
-                                    ? `Indicación médica emitida en Geclisa #${caso.indicacion_geclisa_im_id}. Clic para ver o reenviar`
-                                    : 'Emitir Indicaciones Médicas a Geclisa y enviar WhatsApp'
+                                  recInfo.estado === 'confirmado'
+                                    ? 'Paciente confirmó cirugía por WhatsApp. Clic para ver o reenviar recordatorio'
+                                    : recInfo.estado === 'enviado'
+                                    ? 'Recordatorio oficial enviado (esperando respuesta). Clic para reenviar'
+                                    : recInfo.estado === 'con_consulta'
+                                    ? 'El paciente tiene consultas sobre la cirugía. Clic para gestionar'
+                                    : 'Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)'
                                 }
                               >
-                                <Pill size={13} className={caso.indicacion_geclisa_im_id ? 'text-emerald-400' : 'text-blue-400'} />
-                                <span>{caso.indicacion_geclisa_im_id ? `Ind. #${caso.indicacion_geclisa_im_id}` : 'Indicaciones Qx'}</span>
+                                {recInfo.estado === 'confirmado' ? (
+                                  <>
+                                    <CheckCheck size={13} className="text-emerald-400" />
+                                    <span>Confirmado</span>
+                                  </>
+                                ) : recInfo.estado === 'enviado' ? (
+                                  <>
+                                    <Clock size={13} className="text-amber-400" />
+                                    <span>Enviado</span>
+                                  </>
+                                ) : recInfo.estado === 'con_consulta' ? (
+                                  <>
+                                    <AlertCircle size={13} className="text-purple-400" />
+                                    <span>Con Consulta</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <BellRing size={13} className="text-indigo-400" />
+                                    <span>Recordatorio Qx</span>
+                                  </>
+                                )}
                               </button>
+                            )}
 
-                              {/* Botón Acción Rápida: Recordatorio Qx (Meta UTILITY) reactivo al estado (Solo Confirmados y Programados) */}
-                              {(caso.estado === 'confirmado' || caso.estado === 'programado') && (
-                                <button
-                                  type="button"
-                                  onClick={() => onAbrirRecordatorioQx?.(caso)}
-                                  className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0 ${
-                                    recInfo.estado === 'confirmado'
-                                      ? 'bg-emerald-950/80 hover:bg-emerald-900 border-emerald-500/40 text-emerald-300 hover:text-white'
-                                      : recInfo.estado === 'enviado'
-                                      ? 'bg-amber-950/80 hover:bg-amber-900 border-amber-500/40 text-amber-300 hover:text-white'
-                                      : recInfo.estado === 'con_consulta'
-                                      ? 'bg-purple-950/80 hover:bg-purple-900 border-purple-500/50 text-purple-300 hover:text-white'
-                                      : 'bg-indigo-950/80 hover:bg-indigo-900 border-indigo-500/40 text-indigo-300 hover:text-white'
-                                  }`}
-                                  title={
-                                    recInfo.estado === 'confirmado'
-                                      ? 'Paciente confirmó cirugía por WhatsApp. Clic para ver o reenviar recordatorio'
-                                      : recInfo.estado === 'enviado'
-                                      ? 'Recordatorio oficial enviado (esperando respuesta). Clic para reenviar'
-                                      : recInfo.estado === 'con_consulta'
-                                      ? 'El paciente tiene consultas sobre la cirugía. Clic para gestionar'
-                                      : 'Enviar recordatorio oficial de fecha de cirugía y preparación por WhatsApp (Meta UTILITY)'
-                                  }
-                                >
-                                  {recInfo.estado === 'confirmado' ? (
-                                    <>
-                                      <CheckCheck size={13} className="text-emerald-400" />
-                                      <span>Confirmado</span>
-                                    </>
-                                  ) : recInfo.estado === 'enviado' ? (
-                                    <>
-                                      <Clock size={13} className="text-amber-400" />
-                                      <span>Enviado</span>
-                                    </>
-                                  ) : recInfo.estado === 'con_consulta' ? (
-                                    <>
-                                      <AlertCircle size={13} className="text-purple-400" />
-                                      <span>Con Consulta</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <BellRing size={13} className="text-indigo-400" />
-                                      <span>Recordatorio Qx</span>
-                                    </>
-                                  )}
-                                </button>
-                              )}
-
-                              {/* Botón Acción Rápida: Seguimiento y Recontacto Asistido */}
-                              {onAbrirQuickRecontacto && (caso.estado === 'en_analisis' || Boolean(caso.proxima_accion_fecha) || esAccionHoy || esAccionVencida) && (
-                                <button
-                                  type="button"
-                                  onClick={() => onAbrirQuickRecontacto(caso)}
-                                  className="px-2.5 py-1 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-300 hover:text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs shrink-0"
-                                  title="Gestionar recontacto asistido: WhatsApp + registro rápido de resolución (reprogramar, confirmar, no responde, desiste)"
-                                >
-                                  <Phone size={12} className="text-amber-400" />
-                                  <span>Recontactar</span>
-                                </button>
-                              )}
-
-                              {/* Botón WhatsApp */}
+                            {/* Botón Acción Rápida: Seguimiento y Recontacto Asistido */}
+                            {onAbrirQuickRecontacto && (caso.estado === 'en_analisis' || Boolean(caso.proxima_accion_fecha) || esAccionHoy || esAccionVencida) && (
                               <button
                                 type="button"
-                                onClick={() => onAbrirWhatsApp(caso)}
-                                className="px-2.5 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs shrink-0"
-                                title="Enviar mensaje de WhatsApp al paciente"
+                                onClick={() => onAbrirQuickRecontacto(caso)}
+                                className="px-2.5 py-1 rounded-lg bg-amber-950/70 hover:bg-amber-900 border border-amber-500/40 text-amber-300 hover:text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs shrink-0"
+                                title="Gestionar recontacto asistido: WhatsApp + registro rápido de resolución (reprogramar, confirmar, no responde, desiste)"
                               >
-                                <MessageSquare size={13} />
-                                <span>WhatsApp</span>
+                                <Phone size={12} className="text-amber-400" />
+                                <span>Recontactar</span>
                               </button>
+                            )}
 
-                              {/* Botón Contactado Hoy */}
-                              <button
-                                type="button"
-                                onClick={() => onMarcarContactadoHoy(caso)}
-                                disabled={actualizandoCasoId === caso.id}
-                                className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-[var(--border)] text-gray-300 hover:text-blue-400 transition-colors shadow-xs shrink-0"
-                                title="Registrar contacto hoy (reinicia SLA)"
-                              >
-                                <Check size={13} />
-                              </button>
-                            </div>
+                            {/* Botón WhatsApp */}
+                            <button
+                              type="button"
+                              onClick={() => onAbrirWhatsApp(caso)}
+                              className="px-2.5 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-400 hover:text-emerald-300 text-[11px] font-bold flex items-center gap-1.5 transition-colors shadow-xs shrink-0"
+                              title="Enviar mensaje de WhatsApp al paciente"
+                            >
+                              <MessageSquare size={13} />
+                              <span>WhatsApp</span>
+                            </button>
+
+                            {/* Botón Contactado Hoy */}
+                            <button
+                              type="button"
+                              onClick={() => onMarcarContactadoHoy(caso)}
+                              disabled={actualizandoCasoId === caso.id}
+                              className="p-1.5 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-[var(--border)] text-gray-300 hover:text-blue-400 transition-colors shadow-xs shrink-0"
+                              title="Registrar contacto hoy (reinicia SLA)"
+                            >
+                              <Check size={13} />
+                            </button>
                           </div>
-
                         </div>
                       </div>
                     )
