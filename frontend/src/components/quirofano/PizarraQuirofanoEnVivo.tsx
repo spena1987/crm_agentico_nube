@@ -60,7 +60,7 @@ import ModalGuiaEscanerS224 from '@/components/quirofano/ModalGuiaEscanerS224'
 import { useSmartScannerEngine } from '@/hooks/useSmartScannerEngine'
 import { reproducirBeepExito, reproducirBeepScan, reproducirBeepAlerta } from '@/lib/audioFeedback'
 import { Printer, QrCode, Camera } from 'lucide-react'
-import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, formatearTiempoEsperaSeguro, getFechaHoyLocal } from '@/lib/dateUtils'
+import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, formatearTiempoEsperaSeguro, getFechaHoyLocal, formatDateArg } from '@/lib/dateUtils'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
 
@@ -420,9 +420,15 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         { event: '*', schema: 'public', table: 'turnos_quirofano' },
         (payload: any) => {
           if (payload.eventType === 'UPDATE' && payload.new?.id) {
-            // Actualización delta reactiva en memoria sin refetch masivo HTTP
+            // Actualización delta reactiva en memoria preservando joins de pacientes y quirofanos
             setTurnos((prev) =>
-              prev.map((t) => (t.id === payload.new.id ? { ...t, ...payload.new } : t))
+              prev.map((t) => (t.id === payload.new.id ? {
+                ...t,
+                ...payload.new,
+                pacientes: t.pacientes,
+                quirofanos: t.quirofanos,
+                asesorias_quirurgicas: t.asesorias_quirurgicas
+              } : t))
             )
           } else {
             fetchTurnosDia(true)
@@ -1253,7 +1259,7 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
         </div>
       ) : turnos.length === 0 ? (
         <div className="p-12 text-center text-xs text-[var(--secondary)] bg-[var(--card)] border border-dashed rounded-2xl">
-          No hay turnos quirúrgicos programados para la fecha seleccionada ({fecha}).
+          No hay turnos quirúrgicos programados para la fecha seleccionada ({formatDateArg(fecha)}).
         </div>
       ) : turnosFiltrados.length === 0 ? (
         <div className="p-10 text-center bg-[var(--card)] border border-dashed border-[var(--border)] rounded-2xl space-y-3">
@@ -1777,8 +1783,26 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
           turno={turnoModalDetalle}
           quirofanos={quirofanos}
           onTurnoGuardado={(tUpd) => {
-            setTurnos((prev) => prev.map((t) => (t.id === tUpd.id ? { ...t, ...tUpd } : t)))
-            setTurnoModalDetalle(tUpd)
+            setTurnos((prev) =>
+              prev.map((t) =>
+                t.id === tUpd.id
+                  ? {
+                      ...t,
+                      ...tUpd,
+                      pacientes: tUpd.pacientes || t.pacientes,
+                      quirofanos: tUpd.quirofanos || t.quirofanos,
+                      asesorias_quirurgicas: tUpd.asesorias_quirurgicas || t.asesorias_quirurgicas
+                    }
+                  : t
+              )
+            )
+            setTurnoModalDetalle((prev: any) => ({
+              ...prev,
+              ...tUpd,
+              pacientes: tUpd.pacientes || prev?.pacientes,
+              quirofanos: tUpd.quirofanos || prev?.quirofanos,
+              asesorias_quirurgicas: tUpd.asesorias_quirurgicas || prev?.asesorias_quirurgicas
+            }))
           }}
         />
       )}

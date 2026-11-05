@@ -128,6 +128,7 @@ from app.db import (
     get_turno_quirofano_by_id,
     crear_turno_quirofano,
     actualizar_turno_quirofano,
+    actualizar_notas_intraoperatorias_turno,
     eliminar_turno_quirofano,
     verificar_solapamiento_turno_quirofano,
     get_consentimiento_by_token,
@@ -6102,6 +6103,27 @@ def actualizar_turno(turno_id: str, payload: Dict[str, Any] = Body(...)):
         logger.error(f"Error al actualizar turno de quirófano {turno_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+class ActualizarNotasIntraoperatoriasPayload(BaseModel):
+    observaciones_intraoperatorias: str
+
+@app.put("/api/turnos-quirofano/{turno_id}/notas-intraoperatorias")
+@app.patch("/api/turnos-quirofano/{turno_id}/notas-intraoperatorias")
+def actualizar_notas_intraoperatorias_api(turno_id: str, payload: ActualizarNotasIntraoperatoriasPayload):
+    """
+    Actualiza exclusivamente las notas intraoperatorias (técnica y hallazgos) de un turno quirúrgico,
+    garantizando su persistencia clínica sin disparar comprobaciones de agenda ni reprogramación.
+    """
+    try:
+        res = actualizar_notas_intraoperatorias_turno(turno_id, payload.observaciones_intraoperatorias)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error") or "Error al actualizar notas intraoperatorias")
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error en endpoint notas intraoperatorias {turno_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/api/turnos-quirofano/{turno_id}")
 def eliminar_turno(turno_id: str):
     try:
@@ -6368,6 +6390,15 @@ def obtener_datos_consentimiento_publico(token: str):
             except Exception:
                 pass
 
+        fecha_cirugia_formateada = fecha_cirugia_val
+        if fecha_cirugia_val and "-" in fecha_cirugia_val:
+            try:
+                p_f = fecha_cirugia_val.split("T")[0].split("-")
+                if len(p_f) == 3 and len(p_f[0]) == 4:
+                    fecha_cirugia_formateada = f"{p_f[2]}/{p_f[1]}/{p_f[0]}"
+            except Exception:
+                pass
+
         cuerpo_renderizado = render_consent_template(
             cuerpo_template,
             {
@@ -6380,8 +6411,8 @@ def obtener_datos_consentimiento_publico(token: str):
                 "ojo_intervenido": ojo_desc,
                 "ojo": ojo_desc,
                 "quirofano": (turno.get("quirofanos") or {}).get("nombre") or "Quirófano Central",
-                "fecha": fecha_cirugia_val,
-                "fecha_cirugia": fecha_cirugia_val,
+                "fecha": fecha_cirugia_formateada,
+                "fecha_cirugia": fecha_cirugia_formateada,
                 "hora_cirugia": str(turno.get("hora_inicio") or "")[:5],
                 "hora_inicio": str(turno.get("hora_inicio") or "")[:5]
             }
@@ -6399,6 +6430,7 @@ def obtener_datos_consentimiento_publico(token: str):
             "turno": {
                 "id": turno.get("id"),
                 "fecha_cirugia": fecha_cirugia_val,
+                "fecha_cirugia_formateada": fecha_cirugia_formateada,
                 "hora_inicio": turno.get("hora_inicio"),
                 "practica_nombre": turno.get("practica_nombre"),
                 "ojo": turno.get("ojo"),
@@ -6739,6 +6771,16 @@ def verificar_consentimiento_endpoint(token: str):
     from app.db import resolver_descripcion_ojo_clinico
     ojo_desc = resolver_descripcion_ojo_clinico(t)
 
+    f_cx_raw = str(t.get("fecha_cirugia") or "")
+    f_cx_ar = f_cx_raw
+    if f_cx_raw and "-" in f_cx_raw:
+        try:
+            p_f = f_cx_raw.split("T")[0].split("-")
+            if len(p_f) == 3 and len(p_f[0]) == 4:
+                f_cx_ar = f"{p_f[2]}/{p_f[1]}/{p_f[0]}"
+        except Exception:
+            pass
+
     return {
         "success": True,
         "autentico": t.get("consentimiento_estado") == "firmado_digital",
@@ -6755,7 +6797,8 @@ def verificar_consentimiento_endpoint(token: str):
             "practica": t.get("practica_nombre"),
             "ojo": ojo_desc,
             "cirujano": t.get("cirujano_nombre"),
-            "fecha": str(t.get("fecha_cirugia") or ""),
+            "fecha": f_cx_ar,
+            "fecha_iso": f_cx_raw,
             "hora": str(t.get("hora_inicio") or "")[:5],
             "quirofano": (t.get("quirofanos") or {}).get("nombre") or "Quirófano Central"
         },

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   X,
   Calendar,
@@ -101,35 +101,50 @@ export default function ModalDetalleCirugiaEnVivo({
   const [guardandoProg, setGuardandoProg] = useState(false)
   const [mensajeExitoProg, setMensajeExitoProg] = useState<string | null>(null)
   const [modelosLio, setModelosLio] = useState<any[]>([])
+  const [guardandoNotasIntra, setGuardandoNotasIntra] = useState(false)
+  const [mensajeExitoNotasIntra, setMensajeExitoNotasIntra] = useState<string | null>(null)
+  const ultimoTurnoIdRef = useRef<string | null>(null)
 
-  // Sincronizar datos al abrir o cambiar turno
+  // Sincronizar datos al abrir o cambiar turno (protegido contra sobreescritura reactiva destructiva)
   useEffect(() => {
     if (turno) {
-      setTurnoLocal(turno)
-      setFormData({
-        quirofano_id: turno.quirofano_id || '',
-        fecha_cirugia: turno.fecha_cirugia || '',
-        hora_inicio: String(turno.hora_inicio || '').slice(0, 5),
-        duracion_minutos: turno.duracion_minutos || 20,
-        ojo: turno.ojo || 'OD',
-        cirujano_nombre: turno.cirujano_nombre || '',
-        ayudante_nombre: turno.ayudante_nombre || '',
-        anestesiologo_nombre: turno.anestesiologo_nombre || '',
-        instrumentador_nombre: turno.instrumentador_nombre || '',
-        medico_derivador_nombre: turno.medico_derivador_nombre || '',
-        lleva_lente: turno.lleva_lente || false,
-        lente_tipo: turno.lente_tipo || '',
-        lente_dioptria: turno.lente_dioptria || '',
-        es_torico: turno.es_torico || false,
-        lente_torico_valor: turno.lente_torico_valor || 0,
-        lente_torico_eje: turno.lente_torico_eje || 90,
-        lente_lote: turno.lente_lote || '',
-        lente_serie: turno.lente_serie || '',
-        lente_vencimiento: turno.lente_vencimiento || '',
-        tipo_anestesia: turno.tipo_anestesia || 'Tópica + Sedación',
-        observaciones: turno.observaciones || '',
-        observaciones_intraoperatorias: turno.observaciones_intraoperatorias || ''
-      })
+      const esNuevoTurno = ultimoTurnoIdRef.current !== turno.id
+      ultimoTurnoIdRef.current = turno.id
+
+      setTurnoLocal((prev: any) => ({
+        ...prev,
+        ...turno,
+        pacientes: turno.pacientes || prev?.pacientes,
+        quirofanos: turno.quirofanos || prev?.quirofanos
+      }))
+
+      // Solo resetear el formulario completo si realmente se abrió otro turno distinto
+      if (esNuevoTurno) {
+        setFormData({
+          quirofano_id: turno.quirofano_id || '',
+          fecha_cirugia: turno.fecha_cirugia || '',
+          hora_inicio: String(turno.hora_inicio || '').slice(0, 5),
+          duracion_minutos: turno.duracion_minutos || 20,
+          ojo: turno.ojo || 'OD',
+          cirujano_nombre: turno.cirujano_nombre || '',
+          ayudante_nombre: turno.ayudante_nombre || '',
+          anestesiologo_nombre: turno.anestesiologo_nombre || '',
+          instrumentador_nombre: turno.instrumentador_nombre || '',
+          medico_derivador_nombre: turno.medico_derivador_nombre || '',
+          lleva_lente: turno.lleva_lente || false,
+          lente_tipo: turno.lente_tipo || '',
+          lente_dioptria: turno.lente_dioptria || '',
+          es_torico: turno.es_torico || false,
+          lente_torico_valor: turno.lente_torico_valor || 0,
+          lente_torico_eje: turno.lente_torico_eje || 90,
+          lente_lote: turno.lente_lote || '',
+          lente_serie: turno.lente_serie || '',
+          lente_vencimiento: turno.lente_vencimiento || '',
+          tipo_anestesia: turno.tipo_anestesia || 'Tópica + Sedación',
+          observaciones: turno.observaciones || '',
+          observaciones_intraoperatorias: turno.observaciones_intraoperatorias || ''
+        })
+      }
     }
   }, [turno])
 
@@ -310,8 +325,14 @@ export default function ModalDetalleCirugiaEnVivo({
       const data = await res.json()
       if (res.ok && data.success) {
         setMensajeExitoProg('Cambios guardados con éxito en Quirófano y Asesoría.')
-        setTurnoLocal(data.turno)
-        if (onTurnoGuardado) onTurnoGuardado(data.turno)
+        const turnoCompleto = {
+          ...turnoLocal,
+          ...data.turno,
+          pacientes: data.turno?.pacientes || turnoLocal?.pacientes,
+          quirofanos: data.turno?.quirofanos || turnoLocal?.quirofanos
+        }
+        setTurnoLocal(turnoCompleto)
+        if (onTurnoGuardado) onTurnoGuardado(turnoCompleto)
         setTimeout(() => setMensajeExitoProg(null), 3000)
       } else {
         alert(data.detail || 'Error al guardar cambios de programación')
@@ -320,6 +341,42 @@ export default function ModalDetalleCirugiaEnVivo({
       console.error('Error guardando programación:', err)
     } finally {
       setGuardandoProg(false)
+    }
+  }
+
+  // Guardado dedicado e independiente de Notas Intraoperatorias
+  const handleGuardarNotasIntraoperatorias = async (notas: string) => {
+    try {
+      setGuardandoNotasIntra(true)
+      setMensajeExitoNotasIntra(null)
+      const res = await apiFetch(`/api/turnos-quirofano/${turnoLocal.id}/notas-intraoperatorias`, {
+        method: 'PUT',
+        body: JSON.stringify({ observaciones_intraoperatorias: notas })
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setMensajeExitoNotasIntra('Notas intraoperatorias guardadas.')
+        const turnoCompleto = {
+          ...turnoLocal,
+          ...data.turno,
+          pacientes: data.turno?.pacientes || turnoLocal?.pacientes,
+          quirofanos: data.turno?.quirofanos || turnoLocal?.quirofanos,
+          observaciones_intraoperatorias: notas
+        }
+        setTurnoLocal(turnoCompleto)
+        setFormData((prev: any) => ({ ...prev, observaciones_intraoperatorias: notas }))
+        if (onTurnoGuardado) onTurnoGuardado(turnoCompleto)
+        setTimeout(() => setMensajeExitoNotasIntra(null), 3500)
+        return true
+      } else {
+        alert(data.detail || data.error || 'Error al guardar notas intraoperatorias')
+        return false
+      }
+    } catch (err) {
+      console.error('Error al guardar notas intraoperatorias:', err)
+      return false
+    } finally {
+      setGuardandoNotasIntra(false)
     }
   }
 
@@ -445,6 +502,9 @@ export default function ModalDetalleCirugiaEnVivo({
               guardando={guardandoProg}
               onGuardar={handleGuardarProgramacion}
               mensajeExito={mensajeExitoProg}
+              onGuardarNotasIntra={handleGuardarNotasIntraoperatorias}
+              guardandoNotasIntra={guardandoNotasIntra}
+              mensajeExitoNotasIntra={mensajeExitoNotasIntra}
             />
           )}
 

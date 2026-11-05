@@ -43,6 +43,9 @@ interface TabProgramacionLioProps {
   guardando: boolean
   onGuardar: (e: React.FormEvent) => void
   mensajeExito: string | null
+  onGuardarNotasIntra?: (notas: string) => Promise<boolean>
+  guardandoNotasIntra?: boolean
+  mensajeExitoNotasIntra?: string | null
 }
 
 export default function TabProgramacionLio({
@@ -53,7 +56,10 @@ export default function TabProgramacionLio({
   modelosLio,
   guardando,
   onGuardar,
-  mensajeExito
+  mensajeExito,
+  onGuardarNotasIntra,
+  guardandoNotasIntra = false,
+  mensajeExitoNotasIntra = null
 }: TabProgramacionLioProps) {
   const paciente = turno.pacientes || {}
   const opcionesCalculadas = turno.lio_calculo_opciones || []
@@ -957,10 +963,24 @@ export default function TabProgramacionLio({
         </div>
 
         <div>
-          <label className="block font-bold text-[var(--foreground)] mb-1 flex items-center gap-1.5 text-purple-700 dark:text-purple-300">
-            <Scissors size={14} />
-            <span>Notas Intraoperatorias (Técnica y Hallazgos)</span>
-          </label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="font-bold text-[var(--foreground)] flex items-center gap-1.5 text-purple-700 dark:text-purple-300">
+              <Scissors size={14} />
+              <span>Notas Intraoperatorias (Técnica y Hallazgos)</span>
+            </label>
+            {onGuardarNotasIntra && (
+              <button
+                type="button"
+                onClick={() => onGuardarNotasIntra(formData.observaciones_intraoperatorias || '')}
+                disabled={guardandoNotasIntra}
+                className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1.5 transition shadow-xs disabled:opacity-50 cursor-pointer"
+                title="Guardar observaciones intraoperatorias de forma directa e independiente"
+              >
+                {guardandoNotasIntra ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
+                <span>Guardar Nota</span>
+              </button>
+            )}
+          </div>
           <textarea
             rows={3}
             value={formData.observaciones_intraoperatorias || ''}
@@ -968,6 +988,11 @@ export default function TabProgramacionLio({
             placeholder="Detalle de la técnica quirúrgica, rotura capsular, suturas, complicaciones..."
             className="w-full p-3 rounded-xl border border-purple-300 dark:border-purple-800 bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-purple-500 resize-none"
           />
+          {mensajeExitoNotasIntra && (
+            <p className="mt-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+              <CheckCircle2 size={12} /> {mensajeExitoNotasIntra}
+            </p>
+          )}
         </div>
       </div>
 

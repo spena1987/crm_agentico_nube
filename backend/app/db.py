@@ -7164,11 +7164,62 @@ def actualizar_turno_quirofano(turno_id: str, datos: Dict[str, Any]) -> Dict[str
             # Preservar el estado existente o el provisto en el payload sin forzar 'programado'
             estado_destino = payload.get("estado") or turno_actualizado.get("estado")
             sincronizar_asesoria_desde_quirofano(asesoria_id, payload, nuevo_estado=estado_destino)
-            
+
+        # Enriquecer retorno con relaciones completas para preservar pacientes y quirofanos en el frontend
+        try:
+            res_full = supabase.table("turnos_quirofano") \
+                .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(*)") \
+                .eq("id", turno_id).limit(1).execute()
+            if res_full.data and len(res_full.data) > 0:
+                return res_full.data[0]
+        except Exception as e_full:
+            logger.warning(f"Aviso recuperando joins de turno {turno_id}: {e_full}")
+
         return turno_actualizado
     except Exception as e:
         logger.error(f"Error al actualizar turno de quirófano: {e}")
         return {}
+
+def actualizar_notas_intraoperatorias_turno(turno_id: str, notas: str) -> Dict[str, Any]:
+    """
+    Actualiza exclusivamente las notas intraoperatorias (técnica y hallazgos) de un turno quirúrgico
+    sin disparar validaciones de agenda o reprogramación, preservando la trazabilidad clínica y enriqueciendo el retorno.
+    """
+    if not supabase or not turno_id:
+        return {"success": False, "error": "No database connection"}
+    try:
+        upd = {
+            "observaciones_intraoperatorias": notas,
+            "updated_at": "now()"
+        }
+        resp = supabase.table("turnos_quirofano").update(upd).eq("id", turno_id).execute()
+        if not resp.data or len(resp.data) == 0:
+            return {"success": False, "error": "Turno no encontrado"}
+        
+        turno_db = resp.data[0]
+        asesoria_id = turno_db.get("asesoria_id")
+        if asesoria_id:
+            try:
+                supabase.table("asesorias_quirurgicas").update({
+                    "observaciones_intraoperatorias": notas,
+                    "updated_at": "now()"
+                }).eq("id", asesoria_id).execute()
+            except Exception as e_as:
+                logger.warning(f"Aviso actualizando notas en asesoría {asesoria_id}: {e_as}")
+
+        try:
+            res_full = supabase.table("turnos_quirofano") \
+                .select("*, pacientes(*), quirofanos(id, nombre, codigo, color, duracion_slot_minutos, mostrar_en_pizarra, mostrar_en_recepcion, tipo_sala), asesorias_quirurgicas(*)") \
+                .eq("id", turno_id).limit(1).execute()
+            if res_full.data and len(res_full.data) > 0:
+                return {"success": True, "turno": res_full.data[0]}
+        except Exception as e_full:
+            logger.warning(f"Aviso recuperando joins de turno {turno_id}: {e_full}")
+        
+        return {"success": True, "turno": turno_db}
+    except Exception as e:
+        logger.error(f"Error al actualizar notas intraoperatorias del turno {turno_id}: {e}")
+        return {"success": False, "error": str(e)}
 
 def eliminar_turno_quirofano(turno_id: str) -> bool:
     if not supabase or not turno_id:
