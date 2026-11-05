@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
   Megaphone,
   ShieldCheck,
@@ -24,6 +24,10 @@ import {
   Clock,
   RefreshCw,
   Search,
+  Trash2,
+  X,
+  FileImage,
+  Check,
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
@@ -88,11 +92,21 @@ export default function OpticaCampanasPage() {
   const [plantillas, setPlantillas] = useState<PlantillaOptica[]>([])
   const [loading, setLoading] = useState(true)
 
-  // Subida de nueva placa promocional
+  // Subida de nueva placa promocional desde PC (Galería)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
   const [nuevaPlacaTitulo, setNuevaPlacaTitulo] = useState('')
-  const [nuevaPlacaUrl, setNuevaPlacaUrl] = useState('')
   const [nuevaPlacaCat, setNuevaPlacaCat] = useState('VOUCHER_TURNO')
   const [uploadingPlaca, setUploadingPlaca] = useState(false)
+  const [uploadFeedback, setUploadFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [deletingPlacaId, setDeletingPlacaId] = useState<string | null>(null)
+
+  // Subida directa desde Paso 3 del Constructor
+  const step3FileInputRef = useRef<HTMLInputElement | null>(null)
+  const [uploadingStep3Placa, setUploadingStep3Placa] = useState(false)
+  const [step3UploadFeedback, setStep3UploadFeedback] = useState<string | null>(null)
 
   // Wizard de 5 pasos para Crear Campaña Anti-Bloqueo
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1)
@@ -171,27 +185,176 @@ export default function OpticaCampanasPage() {
     loadAll()
   }, [])
 
-  const handleUploadPlaca = async (e: React.FormEvent) => {
+  const handleFilePicked = (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setUploadFeedback({ type: 'error', text: 'El archivo seleccionado debe ser una imagen (PNG, JPG, JPEG o WEBP).' })
+      return
+    }
+    if (filePreviewUrl) {
+      URL.revokeObjectURL(filePreviewUrl)
+    }
+    setSelectedFile(file)
+    setFilePreviewUrl(URL.createObjectURL(file))
+    setUploadFeedback(null)
+    const cleanName = file.name
+      .replace(/\.[^/.]+$/, '')
+      .replace(/[-_]/g, ' ')
+      .trim()
+    setNuevaPlacaTitulo(cleanName.charAt(0).toUpperCase() + cleanName.slice(1))
+  }
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) handleFilePicked(file)
+  }
+
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
-    if (!nuevaPlacaTitulo.trim() || !nuevaPlacaUrl.trim()) return
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) handleFilePicked(file)
+  }
+
+  const handleClearSelectedFile = () => {
+    if (filePreviewUrl) {
+      URL.revokeObjectURL(filePreviewUrl)
+    }
+    setSelectedFile(null)
+    setFilePreviewUrl(null)
+    setNuevaPlacaTitulo('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleUploadPlaca = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!selectedFile) {
+      setUploadFeedback({ type: 'error', text: 'Por favor selecciona una imagen de tu computadora primero.' })
+      return
+    }
+    const tituloFinal = nuevaPlacaTitulo.trim() || selectedFile.name.replace(/\.[^/.]+$/, '')
     setUploadingPlaca(true)
+    setUploadFeedback(null)
     try {
+      const formData = new FormData()
+      formData.append('archivo', selectedFile)
+      formData.append('titulo', tituloFinal)
+      formData.append('categoria', nuevaPlacaCat)
+
       const res = await apiFetch('/api/optica-vortix/placas/upload', {
         method: 'POST',
-        body: JSON.stringify({
-          titulo: nuevaPlacaTitulo.trim(),
-          url_imagen: nuevaPlacaUrl.trim(),
-          categoria: nuevaPlacaCat,
-        }),
+        body: formData,
       })
+
       if (res.ok) {
-        setNuevaPlacaTitulo('')
-        setNuevaPlacaUrl('')
+        const data = await res.json()
+        const newUrl = data.url_imagen || data.url || data.placa?.url_imagen
+        if (newUrl && !campPlacaUrl) {
+          setCampPlacaUrl(newUrl)
+        }
+        setUploadFeedback({ type: 'success', text: `¡Placa "${tituloFinal}" subida con éxito a Supabase Storage!` })
+        handleClearSelectedFile()
         await loadAll()
+        setTimeout(() => setUploadFeedback(null), 5000)
+      } else {
+        const errData = await res.json().catch(() => null)
+        setUploadFeedback({
+          type: 'error',
+          text: errData?.detail || 'Error al subir la placa al almacenamiento.',
+        })
       }
-    } catch {
+    } catch (err: any) {
+      setUploadFeedback({
+        type: 'error',
+        text: err?.message || 'Error de conexión al subir la placa.',
+      })
     } finally {
       setUploadingPlaca(false)
+    }
+  }
+
+  const handleStep3FileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      alert('El archivo seleccionado debe ser una imagen válida (PNG, JPG, WEBP).')
+      return
+    }
+    setUploadingStep3Placa(true)
+    setStep3UploadFeedback(null)
+    try {
+      const cleanName = file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[-_]/g, ' ')
+        .trim()
+      const tituloFinal = cleanName ? cleanName.charAt(0).toUpperCase() + cleanName.slice(1) : 'Placa de Campaña'
+
+      const formData = new FormData()
+      formData.append('archivo', file)
+      formData.append('titulo', tituloFinal)
+      formData.append('categoria', 'VOUCHER_TURNO')
+
+      const res = await apiFetch('/api/optica-vortix/placas/upload', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        const newUrl = data.url_imagen || data.url || data.placa?.url_imagen
+        if (newUrl) {
+          setCampPlacaUrl(newUrl)
+        }
+        setStep3UploadFeedback(`¡Placa "${tituloFinal}" subida a Storage y seleccionada para esta campaña!`)
+        await loadAll()
+        setTimeout(() => setStep3UploadFeedback(null), 5000)
+      } else {
+        const errData = await res.json().catch(() => null)
+        alert(errData?.detail || 'Error al subir la placa desde la PC.')
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Error de conexión al subir la placa.')
+    } finally {
+      setUploadingStep3Placa(false)
+      if (step3FileInputRef.current) step3FileInputRef.current.value = ''
+    }
+  }
+
+  const handleDeletePlaca = async (e: React.MouseEvent, pl: OpticaPlaca) => {
+    e.stopPropagation()
+    const confirma = window.confirm(`¿Estás seguro de eliminar la placa promocional "${pl.titulo}" de la galería?`)
+    if (!confirma) return
+
+    setDeletingPlacaId(pl.id)
+    try {
+      await apiFetch(`/api/optica-vortix/placas/${encodeURIComponent(pl.id)}`, {
+        method: 'DELETE',
+      })
+      if (campPlacaUrl === pl.url_imagen) {
+        setCampPlacaUrl('')
+      }
+      setPlacas((prev) => prev.filter((item) => item.id !== pl.id))
+      await loadAll()
+    } catch (err) {
+      console.warn('Error al invocar eliminación de placa:', err)
+      setPlacas((prev) => prev.filter((item) => item.id !== pl.id))
+      if (campPlacaUrl === pl.url_imagen) {
+        setCampPlacaUrl('')
+      }
+    } finally {
+      setDeletingPlacaId(null)
     }
   }
 
@@ -1005,17 +1168,144 @@ export default function OpticaCampanasPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold mb-1">
-                    URL de Placa Gráfica Seleccionada
-                  </label>
-                  <input
-                    type="text"
-                    value={campPlacaUrl}
-                    onChange={(e) => setCampPlacaUrl(e.target.value)}
-                    placeholder="https://.../placa-vortix-descuento.jpg"
-                    className="w-full px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)]"
-                  />
+                {/* Sección de Placa Gráfica Promocional con Galería Compacta y Subida Directa */}
+                <div className="space-y-3 pt-2 border-t border-[var(--border)]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <label className="block text-xs font-bold text-[var(--foreground)]">
+                        Placa Gráfica Promocional (Supabase Storage)
+                      </label>
+                      <p className="text-[11px] text-[var(--secondary)]">
+                        Selecciona una placa de la galería o sube una nueva directamente desde tu computadora.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="file"
+                        ref={step3FileInputRef}
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={handleStep3FileUpload}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => step3FileInputRef.current?.click()}
+                        disabled={uploadingStep3Placa}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition-colors"
+                      >
+                        {uploadingStep3Placa ? (
+                          <>
+                            <Loader2 size={13} className="animate-spin" />
+                            <span>Subiendo a Storage...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus size={13} />
+                            <span>➕ Subir Nueva Placa desde mi PC</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setCampPlacaUrl('')}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1 ${
+                          !campPlacaUrl
+                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 font-extrabold'
+                            : 'border-[var(--border)] text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <X size={12} />
+                        <span>✖️ Sin Placa (Solo Mensaje de Texto)</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {step3UploadFeedback && (
+                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
+                      <CheckCircle2 size={14} className="shrink-0" />
+                      <span>{step3UploadFeedback}</span>
+                    </div>
+                  )}
+
+                  {/* Cuadrícula visual compacta de placas disponibles */}
+                  {placas.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2.5 max-h-56 overflow-y-auto p-1.5 border border-[var(--border)] rounded-2xl bg-slate-50/50 dark:bg-slate-800/20">
+                      {placas.map((pl) => {
+                        const isSelected = campPlacaUrl === pl.url_imagen
+                        return (
+                          <div
+                            key={pl.id}
+                            onClick={() => setCampPlacaUrl(pl.url_imagen)}
+                            className={`group relative cursor-pointer rounded-xl border p-2 transition-all flex flex-col justify-between gap-1.5 ${
+                              isSelected
+                                ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 ring-2 ring-indigo-500/30 shadow-xs'
+                                : 'border-[var(--border)] bg-white dark:bg-slate-800/80 hover:border-slate-400 dark:hover:border-slate-600'
+                            }`}
+                          >
+                            <div className="h-16 w-full rounded-lg bg-slate-200 dark:bg-slate-700 overflow-hidden flex items-center justify-center relative">
+                              <img
+                                src={pl.url_imagen}
+                                alt={pl.titulo}
+                                className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
+                              />
+                              {isSelected && (
+                                <div className="absolute top-1 right-1 bg-indigo-600 text-white rounded-full p-0.5 shadow-sm">
+                                  <Check size={12} strokeWidth={3} />
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-bold truncate text-[var(--foreground)]" title={pl.titulo}>
+                                {pl.titulo}
+                              </p>
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-700 text-[var(--secondary)] truncate block font-medium">
+                                {pl.categoria || 'VOUCHER'}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="p-4 rounded-xl border border-dashed border-[var(--border)] text-center text-xs text-[var(--secondary)] space-y-1">
+                      <p>No hay placas disponibles en la galería todavía.</p>
+                      <p className="text-[11px]">Usa el botón &ldquo;➕ Subir Nueva Placa desde mi PC&rdquo; para agregar una.</p>
+                    </div>
+                  )}
+
+                  {/* Estado de Placa Seleccionada y URL opcional */}
+                  <div className="flex items-center justify-between text-xs px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-[var(--border)]">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="font-bold text-[var(--secondary)]">Placa activa:</span>
+                      {campPlacaUrl ? (
+                        <div className="flex items-center gap-2 truncate">
+                          <img
+                            src={campPlacaUrl}
+                            alt="Placa seleccionada"
+                            className="w-6 h-6 rounded-md object-cover border border-[var(--border)] shrink-0"
+                          />
+                          <span className="font-mono text-[11px] text-indigo-600 dark:text-indigo-400 truncate">
+                            {campPlacaUrl}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-amber-600 dark:text-amber-400 italic">
+                          Sin placa (Se enviará únicamente la plantilla oficial de texto)
+                        </span>
+                      )}
+                    </div>
+                    {campPlacaUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setCampPlacaUrl('')}
+                        className="text-[11px] text-rose-500 hover:text-rose-700 font-bold shrink-0 ml-2"
+                      >
+                        Quitar placa
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex justify-between">
@@ -1175,13 +1465,23 @@ export default function OpticaCampanasPage() {
             )}
 
             <div className="bg-[#0b141a] rounded-2xl p-3.5 space-y-2.5 text-xs border border-slate-800/80">
-              {campPlacaUrl && (
-                <div className="rounded-xl overflow-hidden bg-slate-800 max-h-36 flex items-center justify-center">
+              {campPlacaUrl ? (
+                <div className="rounded-xl overflow-hidden bg-slate-800 border border-slate-700/60 max-h-44 flex items-center justify-center relative shadow-inner">
                   <img
                     src={campPlacaUrl}
-                    alt="Preview Placa"
-                    className="max-h-36 w-full object-cover"
+                    alt="Preview Placa WhatsApp"
+                    className="max-h-44 w-full object-cover"
                   />
+                  <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-xs text-[10px] text-white px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-sm">
+                    <ImageIcon size={10} className="text-emerald-400" />
+                    <span>Encabezado HD</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-2.5 rounded-xl bg-slate-800/40 border border-slate-700/40 text-center">
+                  <span className="text-[11px] text-slate-400 italic">
+                    💬 Mensaje sin placa gráfica adjunta (Envío solo texto)
+                  </span>
                 </div>
               )}
               <div className="bg-[#005c4b] text-white rounded-xl p-3 space-y-1.5 text-[11px] leading-relaxed">
@@ -1270,69 +1570,252 @@ export default function OpticaCampanasPage() {
           </div>
         </div>
 
-        {/* Galería de Placas Gráficas Promocionales + Subida */}
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Galería de Placas Gráficas Promocionales + Subida Real desde PC */}
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-4">
             <div>
               <h3 className="text-sm font-black text-[var(--foreground)] flex items-center gap-2">
-                <ImageIcon size={17} className="text-amber-500" />
-                Galería de Placas Gráficas Promocionales
+                <ImageIcon size={18} className="text-amber-500" />
+                Galería de Placas Gráficas Promocionales (Supabase Storage)
               </h3>
-              <p className="text-xs text-[var(--secondary)]">
-                Placas listas para usar en la Automatización de Turnos o en el Chat Comercial
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Sube imágenes HD desde tu PC y úsalas en campañas masivas, automatizaciones de turnos o en el chat directo
               </p>
             </div>
-
-            <form onSubmit={handleUploadPlaca} className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                placeholder="Título de la placa..."
-                value={nuevaPlacaTitulo}
-                onChange={(e) => setNuevaPlacaTitulo(e.target.value)}
-                className="px-3 py-1.5 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)]"
-              />
-              <input
-                type="text"
-                placeholder="URL de imagen (JPG/PNG)..."
-                value={nuevaPlacaUrl}
-                onChange={(e) => setNuevaPlacaUrl(e.target.value)}
-                className="px-3 py-1.5 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)]"
-              />
-              <button
-                type="submit"
-                disabled={uploadingPlaca}
-                className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs flex items-center gap-1.5"
-              >
-                <Upload size={13} /> Subir Placa
-              </button>
-            </form>
+            <span className="px-3 py-1 rounded-xl text-xs font-bold bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400">
+              {placas.length} {placas.length === 1 ? 'placa guardada' : 'placas guardadas'}
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {placas.map((pl) => (
+          {/* Zona de Subida Real desde PC con Drag & Drop y Previsualización */}
+          <div className="bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] rounded-2xl p-4 space-y-3">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/png,image/jpeg,image/webp"
+              onChange={handleFileInputChange}
+              className="hidden"
+            />
+
+            {!selectedFile ? (
               <div
-                key={pl.id}
-                onClick={() => setCampPlacaUrl(pl.url_imagen)}
-                className={`cursor-pointer rounded-2xl border p-3 transition-all flex flex-col justify-between gap-2 ${
-                  campPlacaUrl === pl.url_imagen
-                    ? 'border-indigo-600 bg-indigo-500/10'
-                    : 'border-[var(--border)] bg-slate-50 dark:bg-slate-800/40'
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                  isDragging
+                    ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40'
+                    : 'border-slate-300 dark:border-slate-700 hover:border-indigo-500 hover:bg-slate-100/60 dark:hover:bg-slate-800/60'
                 }`}
               >
-                <div className="h-28 rounded-xl bg-slate-200 dark:bg-slate-700 overflow-hidden flex items-center justify-center">
-                  <img
-                    src={pl.url_imagen}
-                    alt={pl.titulo}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <div>
-                  <p className="text-xs font-bold truncate">{pl.titulo}</p>
-                  <p className="text-[10px] text-[var(--secondary)]">{pl.categoria}</p>
+                <div className="flex flex-col items-center justify-center gap-2">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shadow-xs">
+                    <Upload size={22} />
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-black text-[var(--foreground)]">
+                      📁 Elegir Imagen de mi PC <span className="font-normal text-[var(--secondary)]">o arrastra y suelta aquí</span>
+                    </p>
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      Formatos soportados: PNG, JPG, JPEG, WEBP (hasta 10 MB). Subida directa a Supabase Storage bucket.
+                    </p>
+                  </div>
                 </div>
               </div>
-            ))}
+            ) : (
+              <div className="border border-indigo-500/30 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-2xl p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+                    <FileImage size={15} />
+                    <span>Imagen seleccionada lista para subir</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearSelectedFile}
+                    className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                    title="Descartar archivo"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                  {/* Miniatura de previsualización */}
+                  <div className="md:col-span-3">
+                    {filePreviewUrl && (
+                      <div className="h-28 w-full rounded-xl overflow-hidden bg-slate-900 border border-[var(--border)] flex items-center justify-center shadow-xs relative">
+                        <img
+                          src={filePreviewUrl}
+                          alt="Previsualización"
+                          className="h-full w-full object-cover"
+                        />
+                        <span className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
+                          {selectedFile.size > 1024 * 1024
+                            ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`
+                            : `${Math.round(selectedFile.size / 1024)} KB`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Campos de Título y Categoría */}
+                  <div className="md:col-span-6 space-y-2.5">
+                    <div>
+                      <label className="block text-[11px] font-bold mb-1 text-[var(--foreground)]">
+                        Título de la Placa
+                      </label>
+                      <input
+                        type="text"
+                        value={nuevaPlacaTitulo}
+                        onChange={(e) => setNuevaPlacaTitulo(e.target.value)}
+                        placeholder="Ej: Voucher 20% OFF Turno Consulta"
+                        className="w-full px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold mb-1 text-[var(--foreground)]">
+                        Categoría Promocional
+                      </label>
+                      <select
+                        value={nuevaPlacaCat}
+                        onChange={(e) => setNuevaPlacaCat(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                      >
+                        <option value="VOUCHER_TURNO">🎟️ Voucher Descuento por Turno</option>
+                        <option value="LENTES_AEREOS">👓 Lentes Aéreos y Receta</option>
+                        <option value="LENTES_CONTACTO">💧 Lentes de Contacto y Soluciones</option>
+                        <option value="PROMO_ARMAZONES">✨ Promoción Armazones y Estilos</option>
+                        <option value="PROMO_TEMPORADA">🌞 Promo Temporada / Sol</option>
+                        <option value="OTRO">📁 Otra Categoría</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Botón de Subida */}
+                  <div className="md:col-span-3 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleUploadPlaca()}
+                      disabled={uploadingPlaca}
+                      className="w-full px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-md transition-all"
+                    >
+                      {uploadingPlaca ? (
+                        <>
+                          <Loader2 size={15} className="animate-spin" />
+                          <span>Subiendo a Storage...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload size={15} />
+                          <span>⬆️ Subir a Storage</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearSelectedFile}
+                      disabled={uploadingPlaca}
+                      className="w-full px-3 py-1.5 rounded-xl border border-[var(--border)] text-xs text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Feedback Toast */}
+            {uploadFeedback && (
+              <div
+                className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 ${
+                  uploadFeedback.type === 'success'
+                    ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold'
+                    : 'bg-rose-500/15 border border-rose-500/30 text-rose-600 dark:text-rose-400 font-medium'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {uploadFeedback.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                  <span>{uploadFeedback.text}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUploadFeedback(null)}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Grilla de Placas en Galería */}
+          {placas.length === 0 ? (
+            <div className="py-10 text-center text-xs text-[var(--secondary)] border border-dashed border-[var(--border)] rounded-2xl">
+              <ImageIcon size={32} className="mx-auto mb-2 text-slate-400 opacity-60" />
+              <p className="font-bold text-[var(--foreground)]">No hay placas promocionales guardadas</p>
+              <p className="text-[11px] mt-0.5">Sube la primera placa desde tu PC para comenzar a usarla en las campañas.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+              {placas.map((pl) => {
+                const isSelected = campPlacaUrl === pl.url_imagen
+                const isDeleting = deletingPlacaId === pl.id
+                return (
+                  <div
+                    key={pl.id}
+                    onClick={() => setCampPlacaUrl(pl.url_imagen)}
+                    className={`group cursor-pointer rounded-2xl border p-3.5 transition-all flex flex-col justify-between gap-2.5 relative ${
+                      isSelected
+                        ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 ring-2 ring-indigo-500/30 shadow-md'
+                        : 'border-[var(--border)] bg-slate-50 dark:bg-slate-800/40 hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-xs'
+                    }`}
+                  >
+                    {/* Botón de papelera para eliminar */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleDeletePlaca(e, pl)}
+                      disabled={isDeleting}
+                      title="Eliminar placa promocional"
+                      className="absolute top-5 right-5 z-10 w-7 h-7 rounded-lg bg-black/60 hover:bg-rose-600 text-white flex items-center justify-center opacity-80 group-hover:opacity-100 transition-all shadow-sm"
+                    >
+                      {isDeleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                    </button>
+
+                    <div className="h-32 rounded-xl bg-slate-200 dark:bg-slate-700 overflow-hidden flex items-center justify-center relative">
+                      <img
+                        src={pl.url_imagen}
+                        alt={pl.titulo}
+                        className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      />
+                      {isSelected && (
+                        <div className="absolute bottom-2 left-2 bg-indigo-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 shadow-sm">
+                          <Check size={11} strokeWidth={3} />
+                          <span>Activa en Campaña</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-black truncate text-[var(--foreground)]" title={pl.titulo}>
+                        {pl.titulo}
+                      </p>
+                      <div className="flex items-center justify-between text-[10px] text-[var(--secondary)]">
+                        <span className="px-2 py-0.5 rounded bg-slate-200/70 dark:bg-slate-700/60 font-medium">
+                          {pl.categoria || 'VOUCHER'}
+                        </span>
+                        {isSelected && (
+                          <span className="text-indigo-600 dark:text-indigo-400 font-extrabold text-[11px]">
+                            ✓ Seleccionada
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Monitoreo de Campañas Lanzadas */}

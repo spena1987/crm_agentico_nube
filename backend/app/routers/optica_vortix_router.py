@@ -3200,11 +3200,16 @@ async def procesar_cola_ahora_endpoint():
 
 
 def _normalizar_placa_item(p: Dict[str, Any]) -> Dict[str, Any]:
-    """Asegura que cada placa contenga `url` y `url_imagen` para compatibilidad con `OpticaPlacaPromocional`."""
-    img_url = str(p.get("url_imagen") or p.get("url") or "").strip()
-    cat_raw = str(p.get("categoria") or "GENERAL").strip().upper()
+    """Asegura que cada placa contenga `id`, `url` y `url_imagen` para compatibilidad con `OpticaPlacaPromocional`."""
+    img_url = str(p.get("url_imagen") or p.get("url") or "").strip().rstrip("?")
+    cat_raw = str(p.get("categoria") or "PROMO_ARMAZONES").strip().upper()
+    placa_id = str(p.get("id") or "").strip()
+    if not placa_id:
+        placa_id = str(uuid.uuid4())
     return {
         **p,
+        "id": placa_id,
+        "titulo": str(p.get("titulo") or "Placa Promocional Óptica Vortix").strip(),
         "url": img_url,
         "url_imagen": img_url,
         "categoria": cat_raw
@@ -3231,29 +3236,51 @@ async def listar_placas_optica():
 async def subir_placa_promocional_optica(request: Request):
     """
     Registra o sube una placa promocional para Óptica Vortix.
-    Soporta tanto `application/json` (`{ titulo, url_imagen, categoria }`) enviado por la UI
-    como `multipart/form-data` con un archivo binario (`archivo`, `titulo`, `categoria`).
+    Soporta:
+      - Multipart `UploadFile` (campos `archivo` o `file`) con `titulo` y `categoria`.
+      - JSON `{ "titulo": ..., "url_imagen": ..., "categoria": ... }` para registrar por URL.
+      - Sube los bytes mediante `MediaService.save_media_bytes(subfolder="images", prefix="vortix_placa")`
+        garantizando sincronización con el bucket 'whatsapp-media' de Supabase Storage y URL pública.
+      - Inserta la nueva placa en `placas_galeria` dentro de `optica_vortix_config` en Supabase y la retorna
+        junto a la lista completa actualizada de placas.
     """
     content_type = (request.headers.get("content-type") or "").lower()
-    titulo = "Placa Promocional Óptica Vortix"
-    categoria = "PROMO_ARMAZONES"
+    titulo_default = "Placa Promocional Óptica Vortix"
+    categoria_default = "PROMO_ARMAZONES"
+    titulo = titulo_default
+    categoria = categoria_default
     media_url = ""
-    orig_name = "placa_vortix.jpg"
+    orig_name = f"placa_vortix_{int(time.time())}.jpg"
     asignar_como_predeterminada = False
 
     if "application/json" in content_type:
-        body = await request.json()
-        titulo = str(body.get("titulo") or titulo).strip()
-        categoria = str(body.get("categoria") or categoria).strip()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw_tit = str(body.get("titulo") or "").strip()
+        if raw_tit:
+            titulo = raw_tit
+        raw_cat = str(body.get("categoria") or "").strip()
+        if raw_cat:
+            categoria = raw_cat.upper()
         media_url = str(body.get("url_imagen") or body.get("url") or "").strip()
         asignar_como_predeterminada = bool(body.get("asignar_como_predeterminada", False))
         if not media_url:
-            raise HTTPException(status_code=400, detail="Falta `url_imagen` de la placa promocional.")
+            raise HTTPException(status_code=400, detail="Falta `url_imagen` o archivo para la placa promocional.")
     else:
-        form = await request.form()
-        archivo = form.get("archivo") or form.get("file")
-        titulo = str(form.get("titulo") or titulo).strip()
-        categoria = str(form.get("categoria") or categoria).strip()
+        try:
+            form = await request.form()
+        except Exception as fe:
+            raise HTTPException(status_code=400, detail=f"Error al procesar formulario multipart: {fe}")
+
+        archivo = form.get("archivo") or form.get("file") or form.get("imagen")
+        raw_tit = str(form.get("titulo") or "").strip()
+        if raw_tit:
+            titulo = raw_tit
+        raw_cat = str(form.get("categoria") or "").strip()
+        if raw_cat:
+            categoria = raw_cat.upper()
         asignar_como_predeterminada = str(form.get("asignar_como_predeterminada") or "false").lower() in ("true", "1", "yes")
         url_directa = str(form.get("url_imagen") or form.get("url") or "").strip()
 
@@ -3262,7 +3289,7 @@ async def subir_placa_promocional_optica(request: Request):
             if not file_bytes:
                 raise HTTPException(status_code=400, detail="El archivo subido está vacío.")
             mime_type = getattr(archivo, "content_type", None) or "image/jpeg"
-            orig_name = getattr(archivo, "filename", None) or f"placa_vortix_{int(datetime.now().timestamp())}.jpg"
+            orig_name = getattr(archivo, "filename", None) or f"placa_vortix_{int(time.time())}.jpg"
             saved = MediaService.save_media_bytes(
                 data=file_bytes,
                 subfolder="images",
@@ -3270,17 +3297,19 @@ async def subir_placa_promocional_optica(request: Request):
                 original_filename=orig_name,
                 prefix="vortix_placa"
             )
-            media_url = (saved.get("media_url") or "").rstrip("?")
+            media_url = (saved.get("storage_url") or saved.get("media_url") or "").rstrip("?")
             orig_name = saved.get("file_name") or orig_name
         elif url_directa:
             media_url = url_directa
         else:
-            raise HTTPException(status_code=400, detail="Debés enviar un archivo de imagen o `url_imagen`.")
+            raise HTTPException(
+                status_code=400,
+                detail="Debes enviar un archivo de imagen en el campo 'archivo' o 'file', o proporcionar 'url_imagen'."
+            )
 
-    cfg = get_optica_vortix_full_config()
-    galeria: List[Dict[str, Any]] = list(cfg.get("placas_galeria") or [])
+    nueva_placa_id = str(uuid.uuid4())
     nueva_placa = _normalizar_placa_item({
-        "id": str(uuid.uuid4()),
+        "id": nueva_placa_id,
         "titulo": titulo,
         "categoria": categoria.upper(),
         "url": media_url,
@@ -3288,6 +3317,9 @@ async def subir_placa_promocional_optica(request: Request):
         "file_name": orig_name,
         "created_at": datetime.now(timezone.utc).isoformat()
     })
+
+    cfg = get_optica_vortix_full_config()
+    galeria: List[Dict[str, Any]] = list(cfg.get("placas_galeria") or [])
     galeria.insert(0, nueva_placa)
 
     updates: Dict[str, Any] = {"placas_galeria": galeria[:50]}
@@ -3306,7 +3338,71 @@ async def subir_placa_promocional_optica(request: Request):
     return {
         **nueva_placa,
         "success": True,
+        "message": "Placa promocional registrada exitosamente",
+        "mensaje": "Placa promocional registrada exitosamente",
         "placa": nueva_placa,
         "placas": placas_norm,
         "items": placas_norm
     }
+
+
+@optica_vortix_router.delete("/placas/{placa_id}")
+async def eliminar_placa_promocional_optica(placa_id: str):
+    """
+    Elimina una placa promocional por `placa_id` de la lista `placas_galeria`
+    en la configuración de Óptica Vortix (`optica_vortix_config` en Supabase).
+    Retorna `{ "success": True, "message": "Placa eliminada exitosamente", "placas": placas_actualizadas }`.
+    """
+    clean_id = (placa_id or "").strip()
+    if not clean_id:
+        raise HTTPException(status_code=400, detail="Debe especificar el identificador de la placa a eliminar.")
+
+    cfg = get_optica_vortix_full_config()
+    galeria: List[Dict[str, Any]] = list(cfg.get("placas_galeria") or [])
+
+    encontrada = False
+    nueva_galeria: List[Dict[str, Any]] = []
+    deleted_urls: Set[str] = set()
+
+    for item in galeria:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "").strip()
+        item_url = str(item.get("url") or item.get("url_imagen") or "").strip().rstrip("?")
+        item_name = str(item.get("file_name") or "").strip()
+
+        # Coincidencia por id o fallback por url/filename
+        if item_id == clean_id or (clean_id in (item_url, item_name) and clean_id != ""):
+            encontrada = True
+            if item_url:
+                deleted_urls.add(item_url)
+        else:
+            nueva_galeria.append(item)
+
+    if not encontrada:
+        raise HTTPException(status_code=404, detail=f"Placa con id '{clean_id}' no encontrada en la configuración.")
+
+    updates: Dict[str, Any] = {"placas_galeria": nueva_galeria}
+
+    # Limpiar referencias predeterminadas si coincidían con la placa eliminada
+    for url_del in deleted_urls:
+        if (cfg.get("placa_turno_url") or "").rstrip("?") == url_del:
+            updates["placa_turno_url"] = ""
+        if (cfg.get("auto_turnos_placa_url") or "").rstrip("?") == url_del:
+            updates["auto_turnos_placa_url"] = ""
+        if (cfg.get("placa_aereos_url") or "").rstrip("?") == url_del:
+            updates["placa_aereos_url"] = ""
+        if (cfg.get("placa_contacto_url") or "").rstrip("?") == url_del:
+            updates["placa_contacto_url"] = ""
+
+    new_cfg = save_optica_vortix_full_config(updates)
+    placas_actualizadas = [_normalizar_placa_item(p) for p in (new_cfg.get("placas_galeria") or []) if isinstance(p, dict)]
+
+    return {
+        "success": True,
+        "message": "Placa eliminada exitosamente",
+        "mensaje": "Placa eliminada exitosamente",
+        "placas": placas_actualizadas,
+        "items": placas_actualizadas
+    }
+
