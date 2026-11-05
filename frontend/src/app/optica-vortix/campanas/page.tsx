@@ -646,13 +646,13 @@ export default function OpticaCampanasPage() {
                   return (
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-[var(--border)] font-bold">
-                        Total turnos: <strong>{turnosGeclisa.length}</strong>
+                        Total turnos: <strong>{loadingTurnos ? 'Consultando...' : turnosGeclisa.length}</strong>
                       </span>
                       <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
-                        Aptos para envío: <strong>{aptos}</strong>
+                        Aptos para envío: <strong>{loadingTurnos ? '...' : aptos}</strong>
                       </span>
                       <span className="px-2.5 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-extrabold">
-                        Seleccionados: <strong>{selec}</strong> de {aptos}
+                        Seleccionados: <strong>{selec}</strong> de {loadingTurnos ? '...' : aptos}
                       </span>
                       {cooldown > 0 && (
                         <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-medium">
