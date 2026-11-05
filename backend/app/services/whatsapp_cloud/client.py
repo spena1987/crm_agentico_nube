@@ -681,6 +681,29 @@ class WhatsAppCloudClient:
         res = await self._request_with_retry("POST", "messages", payload)
         return res
 
+    async def send_reaction(
+        self,
+        to_phone: str,
+        message_id: str,
+        emoji: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Envía o remueve una reacción de emoji a un mensaje específico vía WhatsApp Cloud API.
+        Si emoji es cadena vacía "", Meta remueve la reacción previa.
+        """
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to_phone,
+            "type": "reaction",
+            "reaction": {
+                "message_id": message_id,
+                "emoji": emoji or ""
+            }
+        }
+        res = await self._request_with_retry("POST", "messages", payload)
+        return res
+
     async def send_image(
         self,
         to_phone: str,

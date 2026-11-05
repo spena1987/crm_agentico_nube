@@ -1282,6 +1282,10 @@ def _enriquecer_conversacion_optica_frontend(r: Dict[str, Any], now_utc: Optiona
     origen_fe = _map_origen_to_frontend(r.get("origen_oportunidad") or r.get("origen"))
     cupon = contacto.get("codigo_cupon_activo") or r.get("cupon_codigo") or generar_codigo_beneficio_vortix(str(contacto.get("ficha_geclisa_id") or r.get("telefono") or ""))
 
+    meta = r.get("metadata_json") if isinstance(r.get("metadata_json"), dict) else {}
+    is_pinned = bool(meta.get("fijado") or meta.get("fijada") or meta.get("is_pinned") or r.get("fijada") or r.get("fijado"))
+    no_leido_flag = bool(meta.get("no_leido") or meta.get("manual_unread") or (int(r.get("mensajes_no_leidos") or 0) > 0))
+
     return {
         **r,
         "nombre_contacto": nombre_pac,
@@ -1294,6 +1298,11 @@ def _enriquecer_conversacion_optica_frontend(r: Dict[str, Any], now_utc: Optiona
         "ventana_24h_abierta": ventana_abierta,
         "ventana_24h_activa": ventana_abierta,
         "no_leidos": int(r.get("mensajes_no_leidos") or 0),
+        "no_leido": no_leido_flag,
+        "fijado": is_pinned,
+        "fijada": is_pinned,
+        "is_pinned": is_pinned,
+        "archivado": bool(r.get("archivada")),
         "ultimo_mensaje": r.get("ultimo_mensaje_texto") or "",
         "origen": origen_fe,
         "receta_detectada_hoy": origen_fe == "DETECCION_RECETA_HOY",
@@ -1303,11 +1312,18 @@ def _enriquecer_conversacion_optica_frontend(r: Dict[str, Any], now_utc: Optiona
 
 
 def _enriquecer_mensaje_optica_frontend(m: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Agrega los alias `autor_nombre` y `estado_entrega` esperados por `OpticaMensaje`."""
+    """Agrega los alias `autor_nombre`, `estado_entrega`, `tipo_mensaje`, `mensaje_whatsapp_id`, `fecha_hora` esperados por `OpticaMensaje`."""
     if not m or not isinstance(m, dict):
         return m
+    raw_dir = m.get("direccion") or "outbound"
+    fe_dir = "outbound" if raw_dir in ("outbound", "saliente", "outgoing") else ("inbound" if raw_dir in ("inbound", "entrante", "incoming") else raw_dir)
     return {
         **m,
+        "direccion": fe_dir,
+        "direccion_saliente": raw_dir in ("outbound", "saliente", "outgoing"),
+        "tipo_mensaje": m.get("tipo") or m.get("tipo_mensaje"),
+        "mensaje_whatsapp_id": m.get("wamid") or m.get("mensaje_whatsapp_id"),
+        "fecha_hora": m.get("created_at") or m.get("fecha_hora"),
         "autor_nombre": m.get("autor_nombre") or m.get("enviado_por") or "Óptica Vortix",
         "estado_entrega": m.get("estado_entrega") or m.get("estado") or "sent"
     }
@@ -1359,6 +1375,9 @@ async def listar_conversaciones_optica(
                     continue
 
             conversaciones.append(enriched)
+
+        # Priorizar fijadas al inicio manteniendo orden cronológico
+        conversaciones.sort(key=lambda c: bool(c.get("fijado") or c.get("is_pinned")), reverse=True)
 
         # Contadores por etapa comercial
         all_res = supabase.table("optica_conversaciones").select("etapa_comercial, mensajes_no_leidos").eq("archivada", False).execute()
@@ -1758,6 +1777,319 @@ async def enviar_mensaje_conversacion_optica(conv_id: str, payload: EnviarMensaj
         raise HTTPException(status_code=400, detail=str(ve))
     finally:
         await wa_client.close()
+
+
+@optica_vortix_router.post("/conversaciones/{conv_id}/enviar-media")
+async def enviar_media_conversacion_optica(
+    conv_id: str,
+    file: UploadFile = File(...),
+    caption: Optional[str] = Form(None)
+):
+    """
+    Sube y envía un archivo multimedia (audio, imagen o documento) a través de la Línea 3
+    de Óptica Vortix. Registra el mensaje saliente en `optica_mensajes` y actualiza la conversación.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación de óptica no encontrada.")
+
+    conv = c_res.data[0]
+    contacto = conv.get("optica_contactos") if isinstance(conv.get("optica_contactos"), dict) else {}
+    contacto_id = contacto.get("id") or conv.get("contacto_id")
+    to_phone = str(conv.get("telefono") or "").strip()
+    if not to_phone:
+        raise HTTPException(status_code=400, detail="La conversación no posee un número de teléfono válido.")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="El archivo multimedia enviado está vacío.")
+
+    content_type = (file.content_type or "").lower().strip()
+    filename = file.filename or "archivo"
+
+    # Clasificación estricta de tipo de media
+    if content_type.startswith("audio/") or any(filename.lower().endswith(ext) for ext in [".ogg", ".mp3", ".wav", ".webm", ".m4a", ".aac", ".opus"]):
+        tipo_mensaje = "audio"
+        subfolder = "audio"
+    elif content_type.startswith("image/") or any(filename.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]):
+        tipo_mensaje = "imagen"
+        subfolder = "images"
+    else:
+        tipo_mensaje = "documento"
+        subfolder = "documents"
+
+    # 1. Guardar en disco y sincronizar con Supabase Storage (bucket 'whatsapp-media')
+    saved_file = MediaService.save_media_bytes(
+        data=file_bytes,
+        subfolder=f"optica/{subfolder}",
+        mime_type=content_type or ("audio/ogg" if tipo_mensaje == "audio" else "application/octet-stream"),
+        original_filename=filename,
+        prefix="optica"
+    )
+    media_url = saved_file.get("storage_url") or saved_file.get("media_url")
+    if not media_url:
+        raise HTTPException(status_code=500, detail="No se pudo obtener la URL pública del archivo en Supabase Storage.")
+
+    # 2. Despachar vía WhatsApp Cloud Client (Línea 3 aislada)
+    opt_phone_id, opt_token = get_whatsapp_optica_credentials()
+    if not opt_phone_id or not opt_token:
+        raise HTTPException(
+            status_code=400,
+            detail="La Línea 3 de Óptica Vortix aún no tiene un Phone Number ID exclusivo configurado. Vincule el número en la pestaña Configuración."
+        )
+
+    wa_client = WhatsAppCloudClient(phone_number_id=opt_phone_id, access_token=opt_token, line="optica")
+    try:
+        if tipo_mensaje == "audio":
+            s_res = await wa_client.send_audio(to_phone=to_phone, audio_url=media_url)
+        elif tipo_mensaje == "imagen":
+            s_res = await wa_client.send_image(to_phone=to_phone, image_url=media_url, caption=caption)
+        else:
+            s_res = await wa_client.send_document(to_phone=to_phone, document_url=media_url, filename=filename, caption=caption)
+
+        wamid = s_res.get("wamid")
+    except ConversationWindowClosedError:
+        raise HTTPException(
+            status_code=400,
+            detail="La ventana gratuita de 24 horas de Meta está cerrada para este contacto. Debe responder el paciente o enviarse una plantilla oficial."
+        )
+    except MetaAPIError as me:
+        raise HTTPException(status_code=400, detail=f"Error de Meta WhatsApp API: {me.message}")
+    finally:
+        await wa_client.close()
+
+    # 3. Registrar en public.optica_mensajes
+    now_iso = datetime.now(timezone.utc).isoformat()
+    contenido_txt = caption if caption and caption.strip() else f"[{tipo_mensaje.capitalize()} adjunto]"
+
+    msg_insert = {
+        "conversacion_id": conv_id,
+        "contacto_id": contacto_id,
+        "wamid": wamid,
+        "direccion": "outbound",
+        "tipo": tipo_mensaje,
+        "contenido": contenido_txt,
+        "media_url": media_url,
+        "mime_type": content_type or "application/octet-stream",
+        "estado": "sent",
+        "enviado_por": "operador",
+        "metadata": {
+            "direccion": "saliente",
+            "tipo_mensaje": tipo_mensaje,
+            "mensaje_whatsapp_id": wamid,
+            "caption": caption,
+            "filename": filename,
+            "file_size": len(file_bytes)
+        },
+        "created_at": now_iso,
+        "updated_at": now_iso
+    }
+
+    ins_res = supabase.table("optica_mensajes").insert(msg_insert).execute()
+    raw_saved = ins_res.data[0] if ins_res.data else msg_insert
+
+    # 4. Actualizar public.optica_conversaciones
+    supabase.table("optica_conversaciones").update({
+        "ultimo_mensaje_texto": contenido_txt[:300],
+        "ultimo_mensaje_at": now_iso,
+        "ultimo_mensaje_direccion": "outbound",
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    nuevo_mensaje = _enriquecer_mensaje_optica_frontend(raw_saved) or {}
+    nuevo_mensaje["tipo_mensaje"] = tipo_mensaje
+    nuevo_mensaje["mensaje_whatsapp_id"] = wamid
+    nuevo_mensaje["fecha_hora"] = now_iso
+    nuevo_mensaje["estado"] = "enviado"
+    nuevo_mensaje["direccion"] = "outbound"
+
+    return {"success": True, "mensaje": nuevo_mensaje}
+
+
+@optica_vortix_router.post("/conversaciones/{conv_id}/reaccionar")
+async def reaccionar_mensaje_optica(conv_id: str, payload: Dict[str, Any] = Body(...)):
+    """
+    Envía una reacción de emoji a un mensaje específico por WhatsApp en la Línea 3 (Óptica Vortix).
+    Parámetros en payload: `message_id` (wamid o id de optica_mensajes) y `emoji` (str).
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, telefono").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    to_phone = str(c_res.data[0].get("telefono") or "").strip()
+    m_id = str(payload.get("message_id") or payload.get("mensaje_id") or "").strip()
+    if not m_id:
+        raise HTTPException(status_code=400, detail="Debe especificar message_id.")
+
+    emoji = str(payload.get("emoji") or "").strip()
+
+    # Buscar mensaje en optica_mensajes por UUID o por WAMID
+    m_res = supabase.table("optica_mensajes").select("*").eq("conversacion_id", conv_id).eq("id", m_id).limit(1).execute()
+    if not m_res.data:
+        m_res = supabase.table("optica_mensajes").select("*").eq("conversacion_id", conv_id).eq("wamid", m_id).limit(1).execute()
+
+    target_wamid = None
+    msg_db = None
+    if m_res.data:
+        msg_db = m_res.data[0]
+        target_wamid = msg_db.get("wamid")
+    else:
+        target_wamid = m_id
+
+    opt_phone_id, opt_token = get_whatsapp_optica_credentials()
+    if not opt_phone_id or not opt_token:
+        raise HTTPException(status_code=400, detail="Línea 3 de Óptica Vortix no configurada.")
+
+    wa_client = WhatsAppCloudClient(phone_number_id=opt_phone_id, access_token=opt_token, line="optica")
+    try:
+        if target_wamid:
+            await wa_client.send_reaction(to_phone=to_phone, message_id=target_wamid, emoji=emoji)
+    except MetaAPIError as me:
+        logger.warning(f"[OpticaReaction] Advertencia de Meta enviando reacción: {me.message}")
+    finally:
+        await wa_client.close()
+
+    # Actualizar metadata de reactions en la base de datos si el mensaje existe en optica_mensajes
+    if msg_db:
+        meta = msg_db.get("metadata") if isinstance(msg_db.get("metadata"), dict) else {}
+        reactions = meta.get("reactions") or []
+        reactions = [r for r in reactions if r.get("emisor") != "operador"]
+        if emoji:
+            reactions.append({
+                "emisor": "operador",
+                "emoji": emoji,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+        meta["reactions"] = reactions
+        try:
+            supabase.table("optica_mensajes").update({
+                "metadata": meta,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", msg_db["id"]).execute()
+        except Exception as e_up:
+            logger.warning(f"[OpticaReaction] Error actualizando metadata de reacción: {e_up}")
+
+    return {"success": True}
+
+
+@optica_vortix_router.put("/conversaciones/{conv_id}/fijar")
+@optica_vortix_router.post("/conversaciones/{conv_id}/fijar")
+async def fijar_conversacion_optica(conv_id: str, payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Fija o desfija una conversación para situarla prioritariamente al inicio del chat.
+    Soporta toggle si no se especifica el flag en el cuerpo.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, metadata_json").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    meta = conv.get("metadata_json") if isinstance(conv.get("metadata_json"), dict) else {}
+    current_val = bool(meta.get("fijado") or meta.get("fijada") or meta.get("is_pinned"))
+
+    if payload is not None and any(k in payload for k in ("fijado", "fijada", "is_pinned")):
+        if "fijado" in payload:
+            val = bool(payload["fijado"])
+        elif "fijada" in payload:
+            val = bool(payload["fijada"])
+        else:
+            val = bool(payload["is_pinned"])
+    else:
+        val = not current_val
+
+    meta["fijado"] = val
+    meta["fijada"] = val
+    meta["is_pinned"] = val
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("optica_conversaciones").update({
+        "metadata_json": meta,
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    return {"success": True, "conversacion_id": conv_id, "fijado": val, "fijada": val, "is_pinned": val}
+
+
+@optica_vortix_router.put("/conversaciones/{conv_id}/archivar")
+@optica_vortix_router.post("/conversaciones/{conv_id}/archivar")
+async def archivar_conversacion_optica(conv_id: str, payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Archiva o desarchiva una conversación de Óptica Vortix.
+    Soporta toggle si no se provee el parámetro archivado en el cuerpo.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, archivada, metadata_json").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    meta = conv.get("metadata_json") if isinstance(conv.get("metadata_json"), dict) else {}
+    current_val = bool(conv.get("archivada"))
+
+    if payload is not None and any(k in payload for k in ("archivado", "archivada")):
+        val = bool(payload.get("archivado") if "archivado" in payload else payload.get("archivada"))
+    else:
+        val = not current_val
+
+    meta["archivado"] = val
+    meta["archivada"] = val
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("optica_conversaciones").update({
+        "archivada": val,
+        "metadata_json": meta,
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    return {"success": True, "conversacion_id": conv_id, "archivado": val, "archivada": val}
+
+
+@optica_vortix_router.put("/conversaciones/{conv_id}/marcar-no-leido")
+@optica_vortix_router.post("/conversaciones/{conv_id}/marcar-no-leido")
+async def marcar_no_leido_conversacion_optica(conv_id: str, payload: Optional[Dict[str, Any]] = Body(None)):
+    """
+    Marca o desmarca una conversación como no leída para dejarla pendiente de atención.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, mensajes_no_leidos, metadata_json").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    conv = c_res.data[0]
+    meta = conv.get("metadata_json") if isinstance(conv.get("metadata_json"), dict) else {}
+
+    if payload is not None and "no_leido" in payload:
+        val = bool(payload["no_leido"])
+    elif payload is not None and "manual_unread" in payload:
+        val = bool(payload["manual_unread"])
+    else:
+        val = True
+
+    meta["manual_unread"] = val
+    meta["no_leido"] = val
+    new_unread = 1 if val else 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    supabase.table("optica_conversaciones").update({
+        "mensajes_no_leidos": new_unread,
+        "metadata_json": meta,
+        "updated_at": now_iso
+    }).eq("id", conv_id).execute()
+
+    return {"success": True, "conversacion_id": conv_id, "no_leido": val, "mensajes_no_leidos": new_unread}
 
 
 @optica_vortix_router.patch("/conversaciones/{conv_id}")

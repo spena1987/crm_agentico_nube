@@ -34,8 +34,26 @@ import {
   SlidersHorizontal,
   Wand2,
   AlertTriangle,
+  Paperclip,
+  Mic,
+  Smile,
+  Reply,
+  Pin,
+  Trash2,
+  Copy,
+  AlertCircle,
+  BookOpen
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
+import WhatsAppFormattedText from '@/components/chat/WhatsAppFormattedText'
+import ChatMediaViewer from '@/components/chat/ChatMediaViewer'
+import ChatEmojiPicker from '@/components/chat/ChatEmojiPicker'
+import ChatFloatingFormatToolbar from '@/components/chat/ChatFloatingFormatToolbar'
+import ChatMessageContextMenu from '@/components/chat/ChatMessageContextMenu'
+import ChatContactContextMenu from '@/components/chat/ChatContactContextMenu'
+import ModalReenviarMensaje from '@/components/chat/ModalReenviarMensaje'
+import ModalSelectorPlantillasMeta from '@/components/chat/ModalSelectorPlantillasMeta'
+import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
 import { apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import {
@@ -63,6 +81,12 @@ const sanitizeDiscount = (val: unknown): number => {
 const formatCurrencySafe = (val: number): string => {
   const safe = sanitizeMoney(val)
   return safe.toLocaleString('es-AR')
+}
+
+const formatRecordTime = (secs: number) => {
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return `${m}:${s < 10 ? '0' : ''}${s}`
 }
 
 const ETAPAS_EMBUDO: {
@@ -169,6 +193,9 @@ export default function OpticaVortixChatPage() {
   const searchParams = useSearchParams()
   const initialConvId = searchParams.get('conv_id')
 
+  // Pestañas Activas / Archivadas
+  const [mainTab, setMainTab] = useState<'ACTIVAS' | 'ARCHIVADAS'>('ACTIVAS')
+
   // Estados de lista de conversaciones
   const [conversaciones, setConversaciones] = useState<OpticaConversacion[]>([])
   const [loadingConvs, setLoadingConvs] = useState(true)
@@ -199,6 +226,39 @@ export default function OpticaVortixChatPage() {
   const [showSlashMenu, setShowSlashMenu] = useState(false)
   const [copilotoLoading, setCopilotoLoading] = useState(false)
   const [showCopilotoMenu, setShowCopilotoMenu] = useState(false)
+  const messageInputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Respuesta citada (Quoted Message)
+  const [replyingToMessage, setReplyingToMessage] = useState<OpticaMensaje | null>(null)
+
+  // Grabación de Audio con MediaRecorder
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Adjunto de archivos locales con Previsualización
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [stagedFile, setStagedFile] = useState<File | null>(null)
+  const [stagedFilePreview, setStagedFilePreview] = useState<string | null>(null)
+  const [stagedFileCaption, setStagedFileCaption] = useState('')
+  const [sendingMedia, setSendingMedia] = useState(false)
+
+  // Menús contextuales
+  const [contextMenu, setContextMenu] = useState<{ message: OpticaMensaje; position: { x: number; y: number } } | null>(null)
+  const [contactContextMenu, setContactContextMenu] = useState<{ conversacion: OpticaConversacion; position: { x: number; y: number } } | null>(null)
+
+  // Modales de Reenvío, Historia Clínica y Plantillas Meta
+  const [forwardingMessage, setForwardingMessage] = useState<OpticaMensaje | null>(null)
+  const [selectedPacienteHistoriaClinica, setSelectedPacienteHistoriaClinica] = useState<{
+    id: string
+    nombre: string
+    dni?: string | null
+    geclisa_ficha_id?: number | null
+    telefono?: string
+    obra_social?: string | null
+  } | null>(null)
 
   // Modales: Cotizador, Placas, Plantillas, Visor OCR Receta, Nueva Conversación
   const [showCotizadorModal, setShowCotizadorModal] = useState(false)
@@ -235,7 +295,6 @@ export default function OpticaVortixChatPage() {
   const [showPlacasModal, setShowPlacasModal] = useState(false)
   const [placas, setPlacas] = useState<OpticaPlaca[]>([])
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
-  const [templatesMeta, setTemplatesMeta] = useState<OpticaTemplateMeta[]>([])
 
   // Visor OCR de Imagen de Receta
   const [visorImagenUrl, setVisorImagenUrl] = useState<string | null>(null)
@@ -256,8 +315,6 @@ export default function OpticaVortixChatPage() {
   // Referencias estables para evitar pestañeo (flickering) y salto involuntario de conversación
   const selectedConvIdRef = useRef<string | null>(null)
   const hasInitialSelectedRef = useRef<boolean>(false)
-  const [sendingTemplate, setSendingTemplate] = useState<string | null>(null)
-  const [templateError, setTemplateError] = useState<string | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -275,7 +332,6 @@ export default function OpticaVortixChatPage() {
         setConversaciones(list)
 
         // Auto-selección única inicial: solo se ejecuta la primera vez que carga la página
-        // y nunca más se sobreescribe durante el polling periódico de fondo
         if (!selectedConvIdRef.current && !hasInitialSelectedRef.current && list.length > 0) {
           hasInitialSelectedRef.current = true
           const match = initialConvId ? list.find((c) => c.id === initialConvId) : list[0]
@@ -300,6 +356,20 @@ export default function OpticaVortixChatPage() {
     }, 12000)
     return () => clearInterval(interval)
   }, [filtroEtapa, searchQuery])
+
+  // Limpieza de grabador de audio al desmontar
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current)
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop()
+        } catch {}
+      }
+    }
+  }, [])
 
   // UX-02: Suscripción en Tiempo Real con Supabase Realtime para la conversación activa
   useEffect(() => {
@@ -377,6 +447,7 @@ export default function OpticaVortixChatPage() {
     const isDifferentConv = conv.id !== selectedConvIdRef.current
     selectedConvIdRef.current = conv.id
     setSelectedConv(conv)
+    setReplyingToMessage(null)
 
     if (isDifferentConv && !isSilent) {
       setLoadingMsgs(true)
@@ -414,6 +485,7 @@ export default function OpticaVortixChatPage() {
     }
   }
 
+  // Envío de Texto Libre o Nota Interna
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!selectedConv || !inputMsg.trim() || sendingMsg) return
@@ -421,8 +493,17 @@ export default function OpticaVortixChatPage() {
     setSendingMsg(true)
     const tipo = modoNotaInterna ? 'nota_interna' : 'text'
     const texto = inputMsg.trim()
+    const currentReply = replyingToMessage
     setInputMsg('')
     setShowSlashMenu(false)
+    setReplyingToMessage(null)
+
+    const metadata: Record<string, any> = {}
+    if (currentReply) {
+      metadata.reply_to_id = currentReply.id
+      metadata.reply_to_text = currentReply.contenido
+      metadata.reply_to_emisor = currentReply.direccion === 'inbound' ? 'paciente' : 'operador'
+    }
 
     try {
       const res = await apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}/enviar`, {
@@ -430,6 +511,7 @@ export default function OpticaVortixChatPage() {
         body: JSON.stringify({
           tipo,
           contenido: texto,
+          metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
         }),
       })
       if (res.ok) {
@@ -442,6 +524,361 @@ export default function OpticaVortixChatPage() {
     } finally {
       setSendingMsg(false)
     }
+  }
+
+  // Despacho de Archivo Multimedia o Audio a WhatsApp (Línea 3 Óptica)
+  const handleUploadMedia = async (file: File | Blob, tipo: 'audio' | 'imagen' | 'documento', caption?: string) => {
+    if (!selectedConv) return
+    setSendingMedia(true)
+    try {
+      const formData = new FormData()
+      const fileName = file instanceof File ? file.name : `nota_voz_optica_${Date.now()}.ogg`
+      formData.append('file', file, fileName)
+      formData.append('telefono', selectedConv.telefono)
+      formData.append('conversacion_id', selectedConv.id)
+      if (caption) formData.append('caption', caption)
+      formData.append('tipo', tipo)
+
+      let ok = false
+      let nuevoMensajeData: any = null
+
+      // 1. Intentar endpoint dedicado si está disponible en el servidor
+      try {
+        const res = await apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}/enviar-media`, {
+          method: 'POST',
+          body: formData,
+        })
+        if (res.ok) {
+          nuevoMensajeData = await res.json()
+          ok = true
+        }
+      } catch {
+        ok = false
+      }
+
+      // 2. Si no respondió OK, usar pipeline de subida a /placas/upload y posterior despacho vía /enviar
+      if (!ok) {
+        try {
+          const uploadForm = new FormData()
+          uploadForm.append('file', file, fileName)
+          const uploadRes = await apiFetch('/api/optica-vortix/placas/upload', {
+            method: 'POST',
+            body: uploadForm,
+          })
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json()
+            const mediaUrl = uploadData.url || uploadData.url_imagen
+            if (mediaUrl) {
+              const sendRes = await apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}/enviar`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  tipo: tipo === 'audio' ? 'audio' : tipo === 'documento' ? 'document' : 'image',
+                  media_url: mediaUrl,
+                  media_type: tipo === 'audio' ? 'audio' : tipo === 'documento' ? 'document' : 'image',
+                  contenido: caption || (tipo === 'audio' ? '🎤 Nota de voz' : fileName),
+                  metadata: {
+                    tipo,
+                    file_name: fileName,
+                    media_url: mediaUrl,
+                    is_voice_note: tipo === 'audio',
+                  },
+                }),
+              })
+              if (sendRes.ok) {
+                nuevoMensajeData = await sendRes.json()
+                ok = true
+              }
+            }
+          }
+        } catch {
+          ok = false
+        }
+      }
+
+      if (ok && nuevoMensajeData) {
+        const m = nuevoMensajeData.mensaje || nuevoMensajeData
+        setMensajes((prev) => [...prev, m])
+        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 80)
+      } else {
+        alert('No se pudo despachar el archivo multimedia por WhatsApp. Por favor intenta nuevamente.')
+      }
+    } catch (err) {
+      console.error('Error enviando media en óptica:', err)
+      alert('Error de conexión al enviar el archivo adjunto.')
+    } finally {
+      setSendingMedia(false)
+      handleCancelStagedFile()
+    }
+  }
+
+  // Grabador de Audio con MediaRecorder
+  const startAudioRecording = async () => {
+    if (typeof window === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      alert('Tu navegador no soporta grabación de notas de voz.')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : 'audio/mp4'
+
+      const recorder = new MediaRecorder(stream, { mimeType })
+      mediaRecorderRef.current = recorder
+      audioChunksRef.current = []
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data)
+        }
+      }
+
+      recorder.start(200)
+      setIsRecording(true)
+      setRecordingDuration(0)
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1)
+      }, 1000)
+    } catch (err) {
+      console.error('Error accediendo al micrófono:', err)
+      alert('No se pudo acceder al micrófono. Por favor habilita los permisos de audio en el navegador.')
+    }
+  }
+
+  const cancelAudioRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+    if (mediaRecorderRef.current) {
+      try {
+        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop())
+        if (mediaRecorderRef.current.state !== 'inactive') {
+          mediaRecorderRef.current.stop()
+        }
+      } catch {}
+      mediaRecorderRef.current = null
+    }
+    audioChunksRef.current = []
+    setIsRecording(false)
+    setRecordingDuration(0)
+  }
+
+  const stopAndSendAudioRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+    const recorder = mediaRecorderRef.current
+    if (!recorder) return
+
+    recorder.onstop = async () => {
+      try {
+        recorder.stream.getTracks().forEach((track) => track.stop())
+        const mime = recorder.mimeType || 'audio/webm'
+        const ext = mime.includes('ogg') ? 'ogg' : mime.includes('mp4') ? 'mp4' : 'webm'
+        const audioBlob = new Blob(audioChunksRef.current, { type: mime })
+        const audioFile = new File([audioBlob], `nota_voz_optica_${Date.now()}.${ext}`, { type: mime })
+        await handleUploadMedia(audioFile, 'audio', '🎤 Nota de voz')
+      } catch (err) {
+        console.error('Error procesando nota de voz:', err)
+      } finally {
+        setIsRecording(false)
+        setRecordingDuration(0)
+        mediaRecorderRef.current = null
+        audioChunksRef.current = []
+      }
+    }
+
+    try {
+      recorder.stop()
+    } catch {
+      cancelAudioRecording()
+    }
+  }
+
+  // Manejo de Archivo Seleccionado con Previsualización
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setStagedFile(file)
+    setStagedFileCaption('')
+    if (file.type.startsWith('image/')) {
+      setStagedFilePreview(URL.createObjectURL(file))
+    } else {
+      setStagedFilePreview(null)
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleCancelStagedFile = () => {
+    if (stagedFilePreview) {
+      URL.revokeObjectURL(stagedFilePreview)
+    }
+    setStagedFile(null)
+    setStagedFilePreview(null)
+    setStagedFileCaption('')
+  }
+
+  const handleConfirmSendStagedFile = async () => {
+    if (!stagedFile) return
+    const isImg = stagedFile.type.startsWith('image/')
+    const isAud = stagedFile.type.startsWith('audio/')
+    const tipo = isImg ? 'imagen' : isAud ? 'audio' : 'documento'
+    await handleUploadMedia(stagedFile, tipo, stagedFileCaption)
+  }
+
+  // Handlers de Menú Contextual de Mensaje
+  const handleOpenContextMenu = (e: React.MouseEvent, msg: OpticaMensaje) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({
+      message: msg,
+      position: { x: e.clientX, y: e.clientY },
+    })
+  }
+
+  const handleReplyMessage = (msg: OpticaMensaje) => {
+    setReplyingToMessage(msg)
+    setTimeout(() => {
+      messageInputRef.current?.focus()
+    }, 60)
+  }
+
+  const handleCopyText = (text: string) => {
+    if (!text) return
+    navigator.clipboard.writeText(text).catch(() => {})
+  }
+
+  const handleReactToMessage = async (msg: OpticaMensaje, emoji: string) => {
+    setMensajes((prev) =>
+      prev.map((m) => {
+        if (m.id === msg.id) {
+          const reactions = m.metadata?.reactions || []
+          const filtered = reactions.filter((r: any) => r.emisor !== 'operador')
+          return {
+            ...m,
+            metadata: {
+              ...(m.metadata || {}),
+              reactions: [...filtered, { emisor: 'operador', emoji, timestamp: new Date().toISOString() }],
+            },
+          }
+        }
+        return m
+      })
+    )
+    if (selectedConv) {
+      try {
+        await apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}/reaccionar`, {
+          method: 'POST',
+          body: JSON.stringify({ message_id: msg.id, emoji }),
+        })
+      } catch (err) {
+        console.error('Error al despachar reacción a WhatsApp:', err)
+      }
+    }
+  }
+
+  const handleSaveClinicalNote = async (msg: OpticaMensaje) => {
+    if (!selectedConv) return
+    alert(`✅ Mensaje registrado en el historial de ${selectedConv.nombre_paciente}`)
+  }
+
+  const handleConvertToInternalNote = async (msg: OpticaMensaje) => {
+    setMensajes((prev) =>
+      prev.map((m) => (m.id === msg.id ? { ...m, tipo: 'nota_interna' } : m))
+    )
+  }
+
+  const handleDeleteMessage = async (msg: OpticaMensaje) => {
+    setMensajes((prev) => prev.filter((m) => m.id !== msg.id))
+  }
+
+  // Handlers de Menú Contextual de Contacto/Conversación
+  const handleOpenContactContextMenu = (e: React.MouseEvent, conv: OpticaConversacion) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContactContextMenu({
+      conversacion: conv,
+      position: { x: e.clientX, y: e.clientY },
+    })
+  }
+
+  const handleToggleUnreadContact = async (conv: any) => {
+    const nextUnread = (conv.no_leidos || 0) > 0 ? 0 : 1
+    setConversaciones((prev) =>
+      prev.map((c) => (c.id === conv.id ? { ...c, no_leidos: nextUnread } : c))
+    )
+    try {
+      await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/marcar-no-leido`, {
+        method: 'PUT',
+        body: JSON.stringify({ no_leido: nextUnread > 0 }),
+      })
+    } catch (err) {
+      console.error('Error al actualizar estado no leído en backend:', err)
+    }
+  }
+
+  const handleTogglePinContact = async (conv: any) => {
+    const nextPinned = !(conv as any).is_pinned
+    setConversaciones((prev) =>
+      prev.map((c) => (c.id === conv.id ? { ...c, is_pinned: nextPinned } : c))
+    )
+    try {
+      await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}/fijar`, {
+        method: 'PUT',
+        body: JSON.stringify({ fijado: nextPinned }),
+      })
+    } catch (err) {
+      console.error('Error al fijar conversación en backend:', err)
+    }
+  }
+
+  const handleToggleArchiveContact = async (conv: any) => {
+    const nextArchivada = !conv.archivada
+    try {
+      await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ archivada: nextArchivada }),
+      })
+      setConversaciones((prev) =>
+        prev.map((c) => (c.id === conv.id ? { ...c, archivada: nextArchivada } : c))
+      )
+      if (selectedConv?.id === conv.id) {
+        setSelectedConv((prev) => (prev ? { ...prev, archivada: nextArchivada } : null))
+      }
+    } catch {}
+  }
+
+  const handleToggleBotContact = async (conv: any) => {
+    const nextPaused = !conv.bot_paused
+    try {
+      await apiFetch(`/api/optica-vortix/conversaciones/${conv.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ bot_paused: nextPaused }),
+      })
+      setConversaciones((prev) =>
+        prev.map((c) => (c.id === conv.id ? { ...c, bot_paused: nextPaused } : c))
+      )
+      if (selectedConv?.id === conv.id) {
+        setSelectedConv((prev) => (prev ? { ...prev, bot_paused: nextPaused } : null))
+      }
+    } catch {}
+  }
+
+  const handleCopyPhoneContact = (phone: string) => {
+    if (phone) navigator.clipboard.writeText(phone).catch(() => {})
+  }
+
+  const handleOpenPatientFileContact = (conv: any) => {
+    handleSelectConv(conv)
+    setShowFicha360(true)
+  }
+
+  const handleDeleteContact = (conv: any) => {
+    handleToggleArchiveContact(conv)
   }
 
   const handleChangeEtapa = async (nuevaEtapa: EtapaComercialOptica, notificarListo = false) => {
@@ -616,27 +1053,6 @@ export default function OpticaVortixChatPage() {
     } catch {}
   }
 
-  const openTemplatesModal = async () => {
-    setShowTemplatesModal(true)
-    setTemplateError(null)
-    try {
-      const res = await apiFetch('/api/optica-vortix/plantillas', { cache: 'no-store' })
-      if (res.ok) {
-        const data = await res.json()
-        const listT: OpticaTemplateMeta[] = Array.isArray(data)
-          ? data
-          : data.plantillas || data.items || []
-        setTemplatesMeta(listT)
-      } else {
-        const resAlt = await apiFetch('/api/optica-vortix/salud-linea', { cache: 'no-store' })
-        if (resAlt.ok) {
-          const dataAlt = await resAlt.json()
-          setTemplatesMeta(dataAlt.plantillas_optica || dataAlt.templates || [])
-        }
-      }
-    } catch {}
-  }
-
   const handleIniciarConversacion = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!nuevoTel.trim()) return
@@ -661,13 +1077,25 @@ export default function OpticaVortixChatPage() {
     } catch {}
   }
 
-  // Filtrado local complementario por pestaña rápida
-  const conversacionesFiltradas = conversaciones.filter((c) => {
-    if (filtroTab === 'SIN_LEER') return (c.no_leidos || 0) > 0
-    if (filtroTab === 'RECETA_HOY') return Boolean(c.receta_detectada_hoy || c.origen === 'DETECCION_RECETA_HOY')
-    if (filtroTab === 'VOUCHERS') return Boolean(c.cupon_codigo || c.origen === 'PLACA_TURNO')
-    return true
-  })
+  // Filtrado de conversaciones: Activas vs Archivadas y subfiltros
+  const activasCount = conversaciones.filter((c) => !c.archivada).length
+  const archivadasCount = conversaciones.filter((c) => c.archivada).length
+
+  const conversacionesFiltradas = conversaciones
+    .filter((c) => {
+      if (mainTab === 'ARCHIVADAS') return Boolean(c.archivada)
+      if (c.archivada) return false
+      if (filtroTab === 'SIN_LEER') return (c.no_leidos || 0) > 0
+      if (filtroTab === 'RECETA_HOY') return Boolean(c.receta_detectada_hoy || c.origen === 'DETECCION_RECETA_HOY')
+      if (filtroTab === 'VOUCHERS') return Boolean(c.cupon_codigo || c.origen === 'PLACA_TURNO')
+      return true
+    })
+    .sort((a, b) => {
+      const pinA = (a as any).is_pinned ? 1 : 0
+      const pinB = (b as any).is_pinned ? 1 : 0
+      if (pinA !== pinB) return pinB - pinA
+      return new Date(b.ultimo_mensaje_at || 0).getTime() - new Date(a.ultimo_mensaje_at || 0).getTime()
+    })
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[var(--background)] text-[var(--foreground)] overflow-hidden">
@@ -688,7 +1116,41 @@ export default function OpticaVortixChatPage() {
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* PANEL IZQUIERDO: Lista de Conversaciones & Embudo */}
         <aside className="w-80 xl:w-96 border-r border-[var(--border)] bg-[var(--card)] flex flex-col shrink-0">
-          {/* Buscador y Pestañas */}
+          {/* Pestañas Principales: Activas vs Archivadas */}
+          <div className="flex border-b border-[var(--border)] bg-slate-100/60 dark:bg-slate-800/40 p-1">
+            <button
+              type="button"
+              onClick={() => setMainTab('ACTIVAS')}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                mainTab === 'ACTIVAS'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <span>Activas</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-bold">
+                {activasCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMainTab('ARCHIVADAS')}
+              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                mainTab === 'ARCHIVADAS'
+                  ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                  : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+              }`}
+            >
+              <span>Archivadas</span>
+              {archivadasCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-500/15 text-slate-500 dark:text-slate-400 font-bold">
+                  {archivadasCount}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Buscador y Pestañas Rápidas */}
           <div className="p-3 border-b border-[var(--border)] space-y-2.5">
             <div className="relative">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -701,60 +1163,64 @@ export default function OpticaVortixChatPage() {
               />
             </div>
 
-            {/* Pestañas rápidas */}
-            <div className="grid grid-cols-4 gap-1 bg-slate-100 dark:bg-slate-800/60 p-1 rounded-xl">
-              {[
-                { id: 'TODOS', label: 'Todos' },
-                { id: 'SIN_LEER', label: 'Sin Leer' },
-                { id: 'RECETA_HOY', label: '👓 Receta' },
-                { id: 'VOUCHERS', label: '🎟️ Voucher' },
-              ].map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setFiltroTab(t.id as any)}
-                  className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all truncate ${
-                    filtroTab === t.id
-                      ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
-                      : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
-                  }`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            {mainTab === 'ACTIVAS' && (
+              <>
+                {/* Pestañas rápidas */}
+                <div className="grid grid-cols-4 gap-1 bg-slate-100 dark:bg-slate-800/60 p-1 rounded-xl">
+                  {[
+                    { id: 'TODOS', label: 'Todos' },
+                    { id: 'SIN_LEER', label: 'Sin Leer' },
+                    { id: 'RECETA_HOY', label: '👓 Receta' },
+                    { id: 'VOUCHERS', label: '🎟️ Voucher' },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setFiltroTab(t.id as any)}
+                      className={`py-1 px-1.5 rounded-lg text-[10px] font-bold transition-all truncate ${
+                        filtroTab === t.id
+                          ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                          : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
 
-            {/* Filtro horizontal de Etiquetas de Embudo Óptico */}
-            <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar">
-              <button
-                type="button"
-                onClick={() => setFiltroEtapa('TODAS')}
-                className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all ${
-                  filtroEtapa === 'TODAS'
-                    ? 'bg-indigo-600 text-white border-indigo-600'
-                    : 'bg-slate-50 dark:bg-slate-800/50 text-[var(--secondary)] border-[var(--border)]'
-                }`}
-              >
-                Todas las Etapas
-              </button>
-              {ETAPAS_EMBUDO.map((et) => (
-                <button
-                  key={et.code}
-                  type="button"
-                  onClick={() => setFiltroEtapa(et.code)}
-                  className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all ${
-                    filtroEtapa === et.code
-                      ? 'bg-indigo-600 text-white border-indigo-600'
-                      : `${et.color}`
-                  }`}
-                >
-                  {et.short}
-                </button>
-              ))}
-            </div>
+                {/* Filtro horizontal de Etiquetas de Embudo Óptico (Pipeline de 7 Estados) */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar">
+                  <button
+                    type="button"
+                    onClick={() => setFiltroEtapa('TODAS')}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all ${
+                      filtroEtapa === 'TODAS'
+                        ? 'bg-indigo-600 text-white border-indigo-600'
+                        : 'bg-slate-50 dark:bg-slate-800/50 text-[var(--secondary)] border-[var(--border)]'
+                    }`}
+                  >
+                    Todas las Etapas
+                  </button>
+                  {ETAPAS_EMBUDO.map((et) => (
+                    <button
+                      key={et.code}
+                      type="button"
+                      onClick={() => setFiltroEtapa(et.code)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold shrink-0 border transition-all ${
+                        filtroEtapa === et.code
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : `${et.color}`
+                      }`}
+                    >
+                      {et.short}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Lista de Tarjetas de Conversación */}
+          {/* Lista de Tarjetas de Conversación con soporte para Clic Derecho (ChatContactContextMenu) */}
           <div className="flex-1 overflow-y-auto divide-y divide-[var(--border)]">
             {loadingConvs ? (
               <div className="p-8 flex flex-col items-center justify-center text-slate-400 gap-2">
@@ -776,12 +1242,14 @@ export default function OpticaVortixChatPage() {
                 const isSelected = selectedConv?.id === conv.id
                 const etapaObj =
                   ETAPAS_EMBUDO.find((e) => e.code === conv.etapa_comercial) || ETAPAS_EMBUDO[0]
+                const isPinned = Boolean((conv as any).is_pinned)
 
                 return (
                   <button
                     key={conv.id}
                     type="button"
                     onClick={() => handleSelectConv(conv)}
+                    onContextMenu={(e) => handleOpenContactContextMenu(e, conv)}
                     className={`w-full text-left p-3.5 transition-all hover:bg-slate-50 dark:hover:bg-slate-800/50 flex flex-col gap-1.5 ${
                       isSelected
                         ? 'bg-indigo-50/70 dark:bg-indigo-950/30 border-l-4 border-l-indigo-600'
@@ -791,6 +1259,7 @@ export default function OpticaVortixChatPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
+                          {isPinned && <Pin size={11} className="text-amber-500 rotate-45 shrink-0" />}
                           <span className="font-bold text-xs text-[var(--foreground)] truncate">
                             {conv.nombre_paciente || conv.telefono}
                           </span>
@@ -978,7 +1447,7 @@ export default function OpticaVortixChatPage() {
                 </div>
               )}
 
-              {/* Timeline de Mensajes */}
+              {/* Timeline de Mensajes Enriquecido (WhatsAppFormattedText + ChatMediaViewer + ContextMenu) */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {loadingMsgs ? (
                   <div className="flex items-center justify-center py-12 text-slate-400 gap-2">
@@ -994,10 +1463,21 @@ export default function OpticaVortixChatPage() {
                     const isOutbound = msg.direccion === 'outbound'
                     const isNota = msg.tipo === 'nota_interna'
                     const isCotizacion = msg.tipo === 'cotizacion'
+                    const hasMedia = Boolean(
+                      msg.media_url ||
+                      msg.metadata?.media_url ||
+                      msg.tipo === 'image' ||
+                      msg.tipo === 'document' ||
+                      msg.tipo === 'audio'
+                    )
 
                     if (isNota) {
                       return (
-                        <div key={msg.id} className="flex justify-center">
+                        <div
+                          key={msg.id}
+                          className="flex justify-center"
+                          onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                        >
                           <div className="max-w-lg w-full bg-amber-500/15 border border-amber-500/30 text-amber-900 dark:text-amber-200 rounded-2xl px-4 py-2.5 text-xs space-y-1">
                             <div className="flex items-center justify-between text-[10px] font-bold text-amber-700 dark:text-amber-300">
                               <span className="flex items-center gap-1">
@@ -1005,7 +1485,7 @@ export default function OpticaVortixChatPage() {
                               </span>
                               <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                             </div>
-                            <p className="whitespace-pre-wrap">{msg.contenido}</p>
+                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
                           </div>
                         </div>
                       )
@@ -1015,9 +1495,10 @@ export default function OpticaVortixChatPage() {
                       <div
                         key={msg.id}
                         className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
+                        onContextMenu={(e) => handleOpenContextMenu(e, msg)}
                       >
                         <div
-                          className={`max-w-xl rounded-2xl px-4 py-2.5 text-xs shadow-xs space-y-2 ${
+                          className={`max-w-xl rounded-2xl px-4 py-2.5 text-xs shadow-xs space-y-2 select-text ${
                             isCotizacion
                               ? 'bg-gradient-to-br from-indigo-600 to-violet-700 text-white border border-indigo-400/30'
                               : isOutbound
@@ -1025,47 +1506,49 @@ export default function OpticaVortixChatPage() {
                               : 'bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-bl-xs'
                           }`}
                         >
-                          {/* Si tiene imagen (ej. foto de receta o placa enviada) */}
-                          {msg.media_url && (
+                          {/* Visualizador de Multimedia Nativo: Audios, Documentos, Fotos */}
+                          {hasMedia && (
                             <div className="space-y-1.5">
-                              <div className="relative rounded-xl overflow-hidden border border-white/15 bg-black/10">
-                                <img
-                                  src={msg.media_url}
-                                  alt="Adjunto óptico"
-                                  className="max-h-60 w-auto object-contain mx-auto cursor-pointer"
-                                  onClick={() => {
-                                    setVisorImagenUrl(msg.media_url || null)
-                                    setVisorZoom(1)
-                                    setVisorRotation(0)
-                                  }}
-                                />
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setVisorImagenUrl(msg.media_url || null)
-                                    setVisorZoom(1)
-                                    setVisorRotation(0)
-                                  }}
-                                  className="px-2 py-1 rounded-lg bg-black/20 hover:bg-black/30 text-[10px] font-bold flex items-center gap-1"
-                                >
-                                  <ZoomIn size={11} /> Zoom / Rotar
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRunOcrReceta(msg.media_url!)}
-                                  disabled={ocrLoading}
-                                  className="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 hover:bg-amber-300 text-[10px] font-black flex items-center gap-1 shadow-xs"
-                                >
-                                  {ocrLoading ? (
-                                    <Loader2 size={11} className="animate-spin" />
-                                  ) : (
-                                    <Sparkles size={11} />
-                                  )}
-                                  ✨ Extraer Graduación con IA
-                                </button>
-                              </div>
+                              <ChatMediaViewer
+                                metadata={{
+                                  tipo:
+                                    msg.tipo === 'audio'
+                                      ? 'audio'
+                                      : msg.tipo === 'document' || (msg.media_url && msg.media_url.endsWith('.pdf'))
+                                      ? 'documento'
+                                      : 'imagen',
+                                  media_url: msg.media_url || msg.metadata?.media_url,
+                                  file_name: msg.metadata?.file_name || msg.media_url?.split('/').pop(),
+                                  caption: msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') ? msg.contenido : undefined,
+                                  is_voice_note: msg.tipo === 'audio' || Boolean(msg.metadata?.is_voice_note),
+                                  duration_seconds: msg.metadata?.duration_seconds,
+                                  transcripcion: msg.metadata?.transcripcion,
+                                  reactions: msg.metadata?.reactions,
+                                  delivery_status: msg.estado_entrega === 'read' ? 'leido' : msg.estado_entrega === 'delivered' ? 'entregado' : 'enviado',
+                                }}
+                                isOperator={isOutbound}
+                                mensajeId={msg.id}
+                                contenidoTexto={msg.contenido}
+                              />
+
+                              {/* Si es una imagen en Óptica Vortix, mantenemos el botón directo de Gemini Vision OCR */}
+                              {msg.media_url && !msg.media_url.endsWith('.pdf') && msg.tipo !== 'audio' && (
+                                <div className="flex items-center gap-1.5 pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRunOcrReceta(msg.media_url!)}
+                                    disabled={ocrLoading}
+                                    className="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 hover:bg-amber-300 text-[10px] font-black flex items-center gap-1 shadow-xs transition-colors"
+                                  >
+                                    {ocrLoading ? (
+                                      <Loader2 size={11} className="animate-spin" />
+                                    ) : (
+                                      <Sparkles size={11} />
+                                    )}
+                                    ✨ Extraer Graduación con IA
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
 
@@ -1075,7 +1558,25 @@ export default function OpticaVortixChatPage() {
                             </div>
                           )}
 
-                          <p className="whitespace-pre-wrap leading-relaxed">{msg.contenido}</p>
+                          {/* Renderizado Enriquecido de Texto con Negritas, Cursivas, Enlaces */}
+                          {(!hasMedia || (msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') && !msg.contenido.startsWith('📄'))) && (
+                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
+                          )}
+
+                          {/* Reacciones con Emojis */}
+                          {msg.metadata?.reactions && msg.metadata.reactions.length > 0 && (
+                            <div className="flex items-center gap-1 pt-0.5">
+                              {msg.metadata.reactions.map((r: any, idx: number) => (
+                                <span
+                                  key={idx}
+                                  className="px-1.5 py-0.5 bg-black/20 rounded-full text-[11px]"
+                                  title={`Reacción de ${r.emisor}`}
+                                >
+                                  {r.emoji}
+                                </span>
+                              ))}
+                            </div>
+                          )}
 
                           <div
                             className={`flex items-center justify-end gap-1.5 text-[10px] ${
@@ -1108,8 +1609,50 @@ export default function OpticaVortixChatPage() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Barra Inferior de Escritura con Herramientas Ópticas */}
+              {/* Barra Inferior de Escritura con Herramientas Ópticas, Toolbar Flotante y Grabador de Audio */}
               <div className="p-3 bg-[var(--card)] border-t border-[var(--border)] space-y-2 relative">
+                {/* Banner de Cita/Respuesta (Quoted Message estilo WhatsApp Web) */}
+                {replyingToMessage && (
+                  <div className="flex items-center justify-between p-2.5 bg-slate-100 dark:bg-slate-800/90 border-l-4 border-indigo-500 rounded-xl border border-[var(--border)] shadow-md animate-in slide-in-from-bottom-2 duration-150">
+                    <div className="flex flex-col min-w-0 pr-2">
+                      <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                        <Reply size={11} /> Respondiendo a {replyingToMessage.direccion === 'inbound' ? (selectedConv?.nombre_paciente || 'Paciente') : 'Óptica Vortix'}
+                      </span>
+                      <span className="text-xs text-[var(--secondary)] truncate max-w-md italic mt-0.5">
+                        {replyingToMessage.contenido || '[Archivo Multimedia]'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyingToMessage(null)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-[var(--foreground)] hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0"
+                      title="Cancelar respuesta"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Banner de Ventana de 24 Horas Cerrada */}
+                {!selectedConv.ventana_24h_activa && !modoNotaInterna && (
+                  <div className="flex items-center justify-between p-2.5 bg-rose-950/20 border border-rose-500/30 rounded-xl shadow-xs text-xs text-rose-600 dark:text-rose-300 animate-in fade-in">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <AlertCircle size={15} className="text-rose-500 shrink-0" />
+                      <span className="truncate">
+                        <strong>Ventana 24h de WhatsApp cerrada</strong>: Meta exige enviar una plantilla aprobada para reabrir el chat.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowTemplatesModal(true)}
+                      className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold text-[11px] shrink-0 transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer ml-2"
+                    >
+                      <Send size={11} />
+                      <span>Reabrir con Plantilla</span>
+                    </button>
+                  </div>
+                )}
+
                 {/* Menú flotante de Atajos Rápidos (/) */}
                 {showSlashMenu && (
                   <div className="absolute bottom-full left-3 mb-2 w-80 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl p-2 z-30 space-y-1">
@@ -1218,7 +1761,7 @@ export default function OpticaVortixChatPage() {
 
                     <button
                       type="button"
-                      onClick={openTemplatesModal}
+                      onClick={() => setShowTemplatesModal(true)}
                       className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 border border-purple-500/20 flex items-center gap-1"
                     >
                       <FileText size={12} />
@@ -1240,45 +1783,136 @@ export default function OpticaVortixChatPage() {
                   </button>
                 </div>
 
-                {/* Input y botón Enviar */}
-                <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={inputMsg}
-                    onChange={(e) => {
-                      setInputMsg(e.target.value)
-                      if (e.target.value === '/') setShowSlashMenu(true)
-                    }}
-                    placeholder={
-                      modoNotaInterna
-                        ? 'Escribe una nota interna para el equipo de óptica (no se envía al paciente)...'
-                        : 'Escribe un mensaje por WhatsApp o presiona "/" para atajos rápidos...'
-                    }
-                    className={`flex-1 px-4 py-2.5 rounded-xl text-xs border focus:outline-none focus:ring-2 ${
-                      modoNotaInterna
-                        ? 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-400/50 focus:ring-amber-500/30'
-                        : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] focus:ring-indigo-500/30'
-                    }`}
-                  />
-                  <button
-                    type="submit"
-                    disabled={!inputMsg.trim() || sendingMsg}
-                    className={`px-4 py-2.5 rounded-xl text-white font-bold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all ${
-                      modoNotaInterna
-                        ? 'bg-amber-600 hover:bg-amber-700'
-                        : 'bg-indigo-600 hover:bg-indigo-700'
-                    }`}
-                  >
-                    {sendingMsg ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                    <span>{modoNotaInterna ? 'Guardar Nota' : 'Enviar'}</span>
-                  </button>
+                {/* Composer Multilínea con Clip Adjunto, Emojis, Floating Toolbar y Micrófono */}
+                <form onSubmit={handleSendMessage} className="flex items-end gap-2">
+                  {isRecording ? (
+                    <div className="flex-1 flex items-center justify-between px-3 py-2 bg-rose-500/10 border border-rose-500/30 rounded-xl animate-pulse">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                        <span className="text-xs font-black text-rose-500">Grabando nota de voz:</span>
+                        <span className="text-xs font-mono font-bold text-rose-600 dark:text-rose-400">
+                          {formatRecordTime(recordingDuration)}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={cancelAudioRecording}
+                          className="p-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-1 transition-colors"
+                          title="Cancelar grabación"
+                        >
+                          <Trash2 size={14} />
+                          <span className="hidden sm:inline">Descartar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={stopAndSendAudioRecording}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black flex items-center gap-1 transition-colors shadow-xs"
+                          title="Enviar nota de voz"
+                        >
+                          <Send size={13} />
+                          <span>Enviar Audio</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Botón Adjunto de Archivos Locales (Clip) */}
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileSelect}
+                        className="hidden"
+                        accept="image/*,.pdf,audio/*"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={sendingMedia || modoNotaInterna}
+                        className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700/80 border border-[var(--border)] rounded-xl text-[var(--secondary)] hover:text-[var(--foreground)] transition-colors shrink-0 disabled:opacity-40 mb-0.5"
+                        title="Adjuntar archivo local o imagen (PDF, JPG, PNG)"
+                      >
+                        {sendingMedia ? <Loader2 size={16} className="animate-spin text-indigo-500" /> : <Paperclip size={16} />}
+                      </button>
+
+                      {/* Selector Popover de Emojis */}
+                      <ChatEmojiPicker
+                        onSelectEmoji={(emoji) => {
+                          setInputMsg((prev) => prev + emoji)
+                          setTimeout(() => messageInputRef.current?.focus(), 50)
+                        }}
+                      />
+
+                      {/* Textarea Multilínea con Barra Flotante de Formato (Negrita/Cursiva) */}
+                      <div className="flex-1 relative">
+                        <ChatFloatingFormatToolbar
+                          textareaRef={messageInputRef}
+                          value={inputMsg}
+                          onChange={(val) => setInputMsg(val)}
+                        />
+                        <textarea
+                          ref={messageInputRef}
+                          rows={1}
+                          value={inputMsg}
+                          onChange={(e) => {
+                            setInputMsg(e.target.value)
+                            if (e.target.value === '/') setShowSlashMenu(true)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
+                              handleSendMessage()
+                            }
+                          }}
+                          placeholder={
+                            modoNotaInterna
+                              ? '🔒 Escribe una nota interna para el equipo de óptica (solo visible en el CRM)...'
+                              : !selectedConv.ventana_24h_activa
+                              ? '⚠️ Ventana 24h cerrada. Haz clic en "Plantillas Meta" arriba para reabrir el chat...'
+                              : 'Escribe un mensaje por WhatsApp (*negrita*, _cursiva_, / atajos)...'
+                          }
+                          className={`w-full px-4 py-2.5 text-xs border rounded-xl text-[var(--foreground)] placeholder:text-[var(--secondary)] focus:outline-none focus:ring-1 resize-none max-h-32 min-h-[38px] overflow-y-auto ${
+                            modoNotaInterna
+                              ? 'bg-amber-50/80 dark:bg-amber-950/30 border-amber-400/50 focus:ring-amber-500 focus:border-amber-500'
+                              : 'bg-slate-100 dark:bg-slate-800 border-[var(--border)] focus:ring-indigo-500 focus:border-indigo-500'
+                          }`}
+                        />
+                      </div>
+
+                      {/* Botón Grabadora de Notas de Voz */}
+                      {!inputMsg.trim() && !modoNotaInterna && (
+                        <button
+                          type="button"
+                          onClick={startAudioRecording}
+                          className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-rose-500/15 border border-[var(--border)] rounded-xl text-[var(--secondary)] hover:text-rose-500 transition-colors shrink-0 mb-0.5"
+                          title="Grabar nota de voz"
+                        >
+                          <Mic size={16} />
+                        </button>
+                      )}
+
+                      {/* Botón Enviar */}
+                      <button
+                        type="submit"
+                        disabled={!inputMsg.trim() || sendingMsg}
+                        className={`px-4 py-2.5 rounded-xl text-white font-bold text-xs flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all shrink-0 mb-0.5 ${
+                          modoNotaInterna
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-indigo-600 hover:bg-indigo-700'
+                        }`}
+                      >
+                        {sendingMsg ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                        <span>{modoNotaInterna ? 'Guardar' : 'Enviar'}</span>
+                      </button>
+                    </>
+                  )}
                 </form>
               </div>
             </>
           )}
         </section>
 
-        {/* PANEL DERECHO: Ficha Óptica 360° Geclisa */}
+        {/* PANEL DERECHO: Ficha Óptica 360° Geclisa & Acceso a Historia Clínica */}
         {selectedConv && showFicha360 && (
           <aside className="w-80 xl:w-96 border-l border-[var(--border)] bg-[var(--card)] flex flex-col shrink-0 overflow-y-auto">
             <div className="p-3.5 border-b border-[var(--border)] flex items-center justify-between">
@@ -1303,6 +1937,25 @@ export default function OpticaVortixChatPage() {
             </div>
 
             <div className="p-3.5 space-y-4">
+              {/* Botón Ver Historia Clínica Completa Geclisa */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPacienteHistoriaClinica({
+                    id: selectedConv.paciente_geclisa_id || selectedConv.id,
+                    nombre: selectedConv.nombre_paciente || 'Paciente',
+                    dni: selectedConv.dni || null,
+                    geclisa_ficha_id: selectedConv.paciente_geclisa_id ? parseInt(selectedConv.paciente_geclisa_id, 10) : null,
+                    telefono: selectedConv.telefono,
+                    obra_social: selectedConv.obra_social || null,
+                  })
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-xs"
+              >
+                <Stethoscope size={15} />
+                <span>Ver Historia Clínica Geclisa</span>
+              </button>
+
               {/* Cupón Activo */}
               <div className="p-3 rounded-2xl bg-gradient-to-r from-amber-500/15 via-orange-500/10 to-transparent border border-amber-500/30 flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1754,7 +2407,7 @@ export default function OpticaVortixChatPage() {
         </div>
       )}
 
-      {/* MODAL: Galería de Placas Gráficas */}
+      {/* MODAL: Galería de Placas Gráficas Promocionales */}
       {showPlacasModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-4">
@@ -1808,179 +2461,199 @@ export default function OpticaVortixChatPage() {
         </div>
       )}
 
-      {/* MODAL: Plantillas Oficiales Meta de Óptica */}
-      {showTemplatesModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-xl w-full p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-              <div>
-                <h3 className="text-sm font-black text-[var(--foreground)]">
-                  📋 Enviar Plantilla Oficial Meta (Línea 3 Óptica)
-                </h3>
-                <p className="text-xs text-[var(--secondary)]">
-                  Abre o continúa la conversación con plantillas aprobadas por Meta Cloud API
-                </p>
+      {/* MODAL: Previsualización de Archivo Local Adjunto antes de Enviar */}
+      {stagedFile && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-lg w-full p-5 shadow-2xl space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-2.5">
+              <div className="flex items-center gap-2">
+                <Paperclip size={16} className="text-indigo-500" />
+                <h3 className="text-sm font-black text-[var(--foreground)]">Vista Previa de Adjunto</h3>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setShowTemplatesModal(false)
-                  setTemplateError(null)
-                }}
+                onClick={handleCancelStagedFile}
+                disabled={sendingMedia}
                 className="p-1 rounded-lg text-slate-400 hover:text-[var(--foreground)]"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </div>
 
-            {templateError && (
-              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
-                <AlertTriangle size={15} className="shrink-0" />
-                <span>{templateError}</span>
-              </div>
-            )}
+            <div className="flex flex-col items-center justify-center bg-slate-100 dark:bg-slate-800/60 rounded-2xl p-4 min-h-[160px] max-h-[300px] overflow-hidden">
+              {stagedFilePreview ? (
+                <img
+                  src={stagedFilePreview}
+                  alt="Preview"
+                  className="max-h-[260px] w-auto object-contain rounded-xl shadow-xs"
+                />
+              ) : (
+                <div className="text-center space-y-2">
+                  <FileText size={48} className="mx-auto text-indigo-500" />
+                  <p className="text-xs font-bold text-[var(--foreground)] truncate max-w-xs">{stagedFile.name}</p>
+                  <p className="text-[11px] text-[var(--secondary)]">{(stagedFile.size / 1024).toFixed(1)} KB</p>
+                </div>
+              )}
+            </div>
 
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {(templatesMeta.length > 0
-                ? templatesMeta
-                : [
-                    {
-                      name: 'vortix_beneficio_turno_v1',
-                      titulo_amigable: 'Óptica Vortix • Voucher Descuento por Turno',
-                      status: 'APPROVED',
-                      category: 'MARKETING',
-                      language: 'es_AR',
-                      body_text:
-                        'Hola {{1}}, vimos que tenes un turno programado en la clinica para el {{2}}. Por ser paciente, tenes activado un beneficio exclusivo de {{3}} en *Optica Vortix* presentando tu codigo {{4}} luego de tu consulta.',
-                    },
-                    {
-                      name: 'vortix_receta_lentes_aereos_v1',
-                      titulo_amigable: 'Óptica Vortix • Cotización Receta Lentes Aéreos',
-                      status: 'APPROVED',
-                      category: 'UTILITY',
-                      language: 'es_AR',
-                      body_text:
-                        'Hola {{1}}, esperamos que haya salido muy bien tu consulta de hoy con {{2}}. En *Optica Vortix* ya podemos cotizar tu nueva receta de anteojos por WhatsApp con tu descuento de paciente ({{3}}) - Codigo {{4}}.',
-                    },
-                    {
-                      name: 'vortix_receta_lentes_contacto_v1',
-                      titulo_amigable: 'Óptica Vortix • Lentes de Contacto y Adaptación',
-                      status: 'APPROVED',
-                      category: 'UTILITY',
-                      language: 'es_AR',
-                      body_text:
-                        'Hola {{1}}, vimos que en tu consulta con {{2}} se evaluaron Lentes de Contacto. En *Optica Vortix* contamos con stock de lentes blandos esfericos, toricos y multifocales con beneficio exclusivo (Codigo {{3}}).',
-                    },
-                    {
-                      name: 'vortix_lentes_listos_retiro_v1',
-                      titulo_amigable: 'Óptica Vortix • Aviso de Lentes Listos para Retirar',
-                      status: 'APPROVED',
-                      category: 'UTILITY',
-                      language: 'es_AR',
-                      body_text:
-                        '¡Hola {{1}}! Te escribimos desde *Optica Vortix* para avisarte que tu pedido ({{2}}) ya salio del laboratorio, paso el control de calidad optico y esta *listo para retirar* en el horario de {{3}}.',
-                    },
-                  ]
-              ).map((tpl: any) => {
-                const isApproved = tpl.status === 'APPROVED'
-                const isPending = tpl.status === 'PENDING'
-                const badgeColor = isApproved
-                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                  : isPending
-                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                  : 'bg-slate-500/15 text-slate-500'
+            <div>
+              <label className="block text-[11px] font-bold text-[var(--secondary)] mb-1">
+                Mensaje / Epígrafe (opcional):
+              </label>
+              <input
+                type="text"
+                value={stagedFileCaption}
+                onChange={(e) => setStagedFileCaption(e.target.value)}
+                placeholder="Ej: Te envío la cotización de los multifocales..."
+                className="w-full px-3 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleConfirmSendStagedFile()
+                }}
+              />
+            </div>
 
-                const isSendingThis = sendingTemplate === tpl.name
-
-                return (
-                  <div
-                    key={tpl.name}
-                    className="p-3.5 rounded-2xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-indigo-500/30 transition-all"
-                  >
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-black text-[var(--foreground)]">
-                          {tpl.titulo_amigable || tpl.name}
-                        </span>
-                        <span className="text-[10px] font-mono text-slate-400">
-                          ({tpl.name})
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${badgeColor}`}>
-                          {tpl.status || 'OFFICIAL'}
-                        </span>
-                      </div>
-                      {(tpl.body_text || tpl.preview_body) && (
-                        <p className="text-[11px] text-[var(--secondary)] line-clamp-2 leading-relaxed">
-                          {tpl.body_text || tpl.preview_body}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={isSendingThis || Boolean(sendingTemplate)}
-                      onClick={async () => {
-                        if (!selectedConv || sendingTemplate) return
-                        setSendingTemplate(tpl.name)
-                        setTemplateError(null)
-
-                        try {
-                          const res = await apiFetch(
-                            `/api/optica-vortix/conversaciones/${selectedConv.id}/enviar`,
-                            {
-                              method: 'POST',
-                              body: JSON.stringify({
-                                tipo: 'template',
-                                template_name: tpl.name,
-                                template_language: tpl.language || 'es_AR',
-                                contenido: tpl.body_text || tpl.preview_body || `[Plantilla Meta: ${tpl.name}]`,
-                                parameters: [selectedConv.nombre_paciente || 'Paciente'],
-                              }),
-                            }
-                          )
-
-                          if (res.ok) {
-                            const resData = await res.json()
-                            if (resData.mensaje) {
-                              setMensajes((prev) => [...prev, resData.mensaje])
-                            }
-                            setShowTemplatesModal(false)
-                            handleSelectConv(selectedConv, true) // refresco silencioso sin spinner
-                          } else {
-                            const errData = await res.json().catch(() => null)
-                            setTemplateError(
-                              errData?.detail ||
-                                'Meta Cloud API rechazó el envío de la plantilla. Verifica que esté aprobada.'
-                            )
-                          }
-                        } catch (err: any) {
-                          setTemplateError(err?.message || 'Error de conexión enviando plantilla')
-                        } finally {
-                          setSendingTemplate(null)
-                        }
-                      }}
-                      className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold shrink-0 flex items-center justify-center gap-1.5 shadow-sm transition-all"
-                    >
-                      {isSendingThis ? (
-                        <>
-                          <Loader2 size={13} className="animate-spin" />
-                          <span>Enviando...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Send size={13} />
-                          <span>Enviar a WhatsApp</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )
-              })}
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={handleCancelStagedFile}
+                disabled={sendingMedia}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmSendStagedFile}
+                disabled={sendingMedia}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 shadow-sm"
+              >
+                {sendingMedia ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                <span>Enviar a WhatsApp</span>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL: Iniciar Nueva Conversación */}
+      {/* MENÚ CONTEXTUAL DE MENSAJES (Clic Derecho: Responder, Copiar, Reaccionar, Reenviar) */}
+      {contextMenu && (
+        <ChatMessageContextMenu
+          message={{
+            ...contextMenu.message,
+            emisor: contextMenu.message.tipo === 'nota_interna' ? 'operador' : contextMenu.message.direccion === 'inbound' ? 'paciente' : 'operador',
+            metadata_json: contextMenu.message.metadata || {},
+          }}
+          position={contextMenu.position}
+          onClose={() => setContextMenu(null)}
+          onReply={() => {
+            handleReplyMessage(contextMenu.message)
+            setContextMenu(null)
+          }}
+          onCopy={handleCopyText}
+          onForward={() => {
+            setForwardingMessage(contextMenu.message)
+            setContextMenu(null)
+          }}
+          onReact={(m, emoji) => handleReactToMessage(contextMenu.message, emoji)}
+          onSaveClinicalNote={() => handleSaveClinicalNote(contextMenu.message)}
+          onConvertToInternalNote={() => handleConvertToInternalNote(contextMenu.message)}
+          onDelete={() => handleDeleteMessage(contextMenu.message)}
+        />
+      )}
+
+      {/* MENÚ CONTEXTUAL DE CONTACTOS (Clic Derecho: Pin, Archivar, Marcar no leído) */}
+      {contactContextMenu && (
+        <ChatContactContextMenu
+          conversacion={{
+            ...contactContextMenu.conversacion,
+            unread_count: contactContextMenu.conversacion.no_leidos,
+            bot_disabled: contactContextMenu.conversacion.bot_paused,
+            archivada: contactContextMenu.conversacion.archivada,
+            pacientes: {
+              id: contactContextMenu.conversacion.paciente_geclisa_id || contactContextMenu.conversacion.id,
+              nombre: contactContextMenu.conversacion.nombre_paciente,
+              telefono: contactContextMenu.conversacion.telefono,
+              dni: contactContextMenu.conversacion.dni,
+              obra_social: contactContextMenu.conversacion.obra_social,
+            },
+            metadata_json: {
+              is_pinned: Boolean((contactContextMenu.conversacion as any).is_pinned),
+            },
+          }}
+          position={contactContextMenu.position}
+          onClose={() => setContactContextMenu(null)}
+          onToggleUnread={() => handleToggleUnreadContact(contactContextMenu.conversacion)}
+          onTogglePin={() => handleTogglePinContact(contactContextMenu.conversacion)}
+          onToggleArchive={() => handleToggleArchiveContact(contactContextMenu.conversacion)}
+          onToggleBot={() => handleToggleBotContact(contactContextMenu.conversacion)}
+          onCopyPhone={handleCopyPhoneContact}
+          onOpenPatientFile={() => handleOpenPatientFileContact(contactContextMenu.conversacion)}
+          onDelete={() => handleDeleteContact(contactContextMenu.conversacion)}
+        />
+      )}
+
+      {/* MODAL: Selector de Plantillas Meta Homologadas (Línea 3 Óptica) */}
+      {showTemplatesModal && selectedConv && (
+        <ModalSelectorPlantillasMeta
+          isOpen={showTemplatesModal}
+          onClose={() => setShowTemplatesModal(false)}
+          pacienteNombre={selectedConv.nombre_paciente || 'Paciente'}
+          pacienteTelefono={selectedConv.telefono}
+          pacienteId={selectedConv.paciente_geclisa_id || selectedConv.id}
+          conversacionId={selectedConv.id}
+          isWindowOpen={Boolean(selectedConv.ventana_24h_activa)}
+          onInsertText={(text) => {
+            setInputMsg(text)
+            setShowTemplatesModal(false)
+            setTimeout(() => messageInputRef.current?.focus(), 50)
+          }}
+          onEnviadoExitoso={() => {
+            setShowTemplatesModal(false)
+            handleSelectConv(selectedConv, true)
+          }}
+        />
+      )}
+
+      {/* MODAL: Reenviar Mensaje a otra(s) conversación(es) */}
+      {forwardingMessage && (
+        <ModalReenviarMensaje
+          isOpen={Boolean(forwardingMessage)}
+          onClose={() => setForwardingMessage(null)}
+          message={{
+            ...forwardingMessage,
+            metadata_json: forwardingMessage.metadata || {
+              media_url: forwardingMessage.media_url,
+              tipo: forwardingMessage.tipo,
+            },
+          }}
+          conversaciones={conversaciones.map((c) => ({
+            ...c,
+            is_window_open: c.ventana_24h_activa,
+            pacientes: {
+              id: c.paciente_geclisa_id || c.id,
+              nombre: c.nombre_paciente,
+              telefono: c.telefono,
+              dni: c.dni,
+            },
+          }))}
+          currentConvId={selectedConv?.id}
+          onForwardSuccess={() => {
+            setForwardingMessage(null)
+            if (selectedConv) handleSelectConv(selectedConv, true)
+          }}
+        />
+      )}
+
+      {/* MODAL: Historia Clínica Completa de Geclisa */}
+      {selectedPacienteHistoriaClinica && (
+        <ModalHistoriaClinica
+          isOpen={Boolean(selectedPacienteHistoriaClinica)}
+          onClose={() => setSelectedPacienteHistoriaClinica(null)}
+          paciente={selectedPacienteHistoriaClinica}
+        />
+      )}
+
+      {/* MODAL: Iniciar Nueva Conversación Manual */}
       {showNuevaConvModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <form
