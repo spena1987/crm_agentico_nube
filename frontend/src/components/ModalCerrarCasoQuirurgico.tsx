@@ -125,6 +125,8 @@ export default function ModalCerrarCasoQuirurgico({
       }
 
       let casoActualizado = null
+      let apiErrorMensaje: string | null = null
+
       try {
         const res = await apiFetch(`/api/asesorias-quirurgicas/${casoId}`, {
           method: 'PUT',
@@ -133,9 +135,13 @@ export default function ModalCerrarCasoQuirurgico({
         const data = await res.json()
         if (res.ok && data.success) {
           casoActualizado = data.asesoria
+        } else {
+          apiErrorMensaje = data.detail || data.error || data.mensaje || 'Error devuelto por el servidor'
+          console.warn('Backend API respondió con error al cerrar caso:', apiErrorMensaje)
         }
-      } catch (apiErr) {
+      } catch (apiErr: any) {
         console.warn('Fallback directo a Supabase:', apiErr)
+        apiErrorMensaje = apiErr?.message || 'Error de conexión con el backend'
       }
 
       if (!casoActualizado) {
@@ -147,8 +153,16 @@ export default function ModalCerrarCasoQuirurgico({
           } as any)
           .eq('id', casoId)
           .select()
-        if (!sbErr && sbData && sbData.length > 0) {
+
+        if (sbErr) {
+          console.error('Error en Supabase directo al cerrar caso:', sbErr)
+          throw new Error(sbErr.message || apiErrorMensaje || 'No se pudo actualizar el estado del caso quirúrgico.')
+        }
+
+        if (sbData && sbData.length > 0) {
           casoActualizado = sbData[0]
+        } else {
+          throw new Error(apiErrorMensaje || 'No se pudo actualizar el caso quirúrgico en la base de datos.')
         }
       }
 
