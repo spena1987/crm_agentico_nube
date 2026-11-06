@@ -2552,9 +2552,12 @@ def get_practica_resumen_operativo(practica_id_or_codigo: str, fecha_consulta: O
                 
         # Resolver texto de preparación
         texto_preparacion = None
-        ayuno_horas = 8
-        dias_aviso = 2
-        if practica.get("habilitar_preparacion"):
+        ayuno_horas = None
+        dias_aviso = None
+        habilitar_preparacion = bool(practica.get("habilitar_preparacion", False))
+        if habilitar_preparacion:
+            ayuno_horas = 8
+            dias_aviso = 2
             if practica.get("preparacion_custom_texto"):
                 texto_preparacion = practica.get("preparacion_custom_texto")
             elif practica.get("plantillas_preparaciones"):
@@ -6355,7 +6358,10 @@ def get_configuracion_quirofano() -> Dict[str, Any]:
         resp = supabase.table("configuracion_quirofano").select("*").eq("id", "default").limit(1).execute()
         data = getattr(resp, "data", None)
         if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            return data[0]
+            cfg = data[0]
+            duraciones = cfg.get("duraciones_prestaciones") or {}
+            cfg["mostrar_preparacion_en_consentimiento"] = duraciones.get("mostrar_preparacion_en_consentimiento", True)
+            return cfg
         # Crear default si no existe
         nuevo = {
             "id": "default",
@@ -6364,12 +6370,15 @@ def get_configuracion_quirofano() -> Dict[str, Any]:
                 "catarata_faco": 20,
                 "catarata_compleja": 30,
                 "vitrectomia": 60,
-                "lasik": 15
+                "lasik": 15,
+                "mostrar_preparacion_en_consentimiento": True
             },
             "vigencia_enlace_horas": 72
         }
         res_ins = supabase.table("configuracion_quirofano").insert(nuevo).execute()
-        return res_ins.data[0] if res_ins.data else nuevo
+        res_data = res_ins.data[0] if res_ins.data else nuevo
+        res_data["mostrar_preparacion_en_consentimiento"] = True
+        return res_data
     except Exception as e:
         logger.error(f"Error al obtener configuración de quirófano: {e}")
         return {}
@@ -6379,10 +6388,31 @@ def actualizar_configuracion_quirofano(datos: Dict[str, Any]) -> Dict[str, Any]:
     if not supabase:
         return {}
     try:
-        payload = {**datos, "updated_at": "now()"}
+        columnas_validas = {
+            "duraciones_prestaciones", "plantillas_consentimiento",
+            "whatsapp_mensaje_envio", "whatsapp_mensaje_confirmacion",
+            "vigencia_enlace_horas", "hora_apertura_general",
+            "hora_cierre_general", "slot_intervalo_general"
+        }
+        payload = {k: v for k, v in datos.items() if k in columnas_validas}
+
+        # Manejo de flag global mostrar_preparacion_en_consentimiento dentro de duraciones_prestaciones
+        if "mostrar_preparacion_en_consentimiento" in datos:
+            duraciones = dict(payload.get("duraciones_prestaciones") or {})
+            if not duraciones:
+                # Si no vino duraciones_prestaciones en el payload, traer las actuales
+                cfg_actual = get_configuracion_quirofano()
+                duraciones = dict(cfg_actual.get("duraciones_prestaciones") or {})
+            duraciones["mostrar_preparacion_en_consentimiento"] = bool(datos["mostrar_preparacion_en_consentimiento"])
+            payload["duraciones_prestaciones"] = duraciones
+
+        payload["updated_at"] = "now()"
         resp = supabase.table("configuracion_quirofano").update(payload).eq("id", "default").execute()
         if resp.data and len(resp.data) > 0:
-            return resp.data[0]
+            res_dict = resp.data[0]
+            duraciones = res_dict.get("duraciones_prestaciones") or {}
+            res_dict["mostrar_preparacion_en_consentimiento"] = duraciones.get("mostrar_preparacion_en_consentimiento", True)
+            return res_dict
         return {}
     except Exception as e:
         logger.error(f"Error al actualizar configuración de quirófano: {e}")
@@ -7338,6 +7368,19 @@ def sincronizar_turno_quirofano_desde_asesoria(asesoria_id: str, payload_agenda:
                 turno_p1 = candidatos.pop(0)
             if not turno_p2 and candidatos:
                 turno_p2 = candidatos.pop(0)
+
+            # 4. Cancelar turnos excedentes/huérfanos en caso bilateral (ej: duplicaciones concurrentes)
+            for t_excedente in candidatos:
+                if t_excedente.get("estado") == "programado":
+                    try:
+                        supabase.table("turnos_quirofano").update({
+                            "estado": "cancelado",
+                            "observaciones": "Cancelado automáticamente por purga de turno excedente en caso bilateral.",
+                            "updated_at": "now()"
+                        }).eq("id", t_excedente["id"]).execute()
+                        logger.info(f"Turno excedente huérfano {t_excedente['id']} cancelado automáticamente en asesoría {asesoria_id}.")
+                    except Exception as e_c_ex:
+                        logger.warning(f"Aviso cancelando turno bilateral excedente {t_excedente['id']}: {e_c_ex}")
         else:
             if turnos_existentes:
                 turno_p1 = turnos_existentes[0]

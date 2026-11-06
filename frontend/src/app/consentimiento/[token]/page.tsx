@@ -351,24 +351,22 @@ export default function ConsentimientoPublicoPage() {
             {/* Indicación Dinámica de Ayuno y Preparación Prequirúrgica */}
             {(() => {
               const prep = datos?.preparacion
-              const ayunoHs = prep?.ayuno_horas !== undefined ? prep.ayuno_horas : 8
-              const tienePrepTexto = Boolean(prep?.texto_preparacion)
+              // Solo mostrar el bloque si la preparación está explícitamente habilitada por el Nomenclador y Quirófano
+              if (!prep || !prep.habilitar_preparacion) {
+                return null
+              }
+
+              const ayunoHs = prep.ayuno_horas !== undefined && prep.ayuno_horas !== null ? Number(prep.ayuno_horas) : null
+              const tienePrepTexto = Boolean(prep.texto_preparacion)
+
+              // Si no tiene horas de ayuno asignadas ni texto de indicaciones, no renderizar nada
+              if (ayunoHs === null && !tienePrepTexto) {
+                return null
+              }
 
               return (
                 <>
-                  {ayunoHs === 0 ? (
-                    <div className="flex items-start gap-2.5 font-bold text-emerald-800 pt-2 border-t border-blue-200">
-                      <div className="p-1 bg-emerald-100 text-emerald-700 rounded-lg shrink-0 mt-0.5">
-                        <Utensils size={14} />
-                      </div>
-                      <div>
-                        <span className="text-emerald-950">Indicación de Ayuno: No requiere ayuno estricto</span>
-                        <p className="font-normal text-[11px] text-emerald-700 mt-0.5 leading-snug">
-                          Puede ingerir su dieta habitual liviana previa al horario de ingreso a la clínica.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
+                  {ayunoHs !== null && ayunoHs > 0 && (
                     <div className="flex items-start gap-2.5 font-bold text-amber-900 pt-2 border-t border-blue-200">
                       <div className="p-1 bg-amber-100 text-amber-800 rounded-lg shrink-0 mt-0.5">
                         <Coffee size={14} />
@@ -377,6 +375,20 @@ export default function ConsentimientoPublicoPage() {
                         <span className="text-amber-950">Recuerde: {ayunoHs} horas de ayuno total</span>
                         <p className="font-normal text-[11px] text-amber-800 mt-0.5 leading-snug">
                           No ingerir alimentos sólidos ni líquidos durante las {ayunoHs} horas previas a la cirugía.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {ayunoHs === 0 && (
+                    <div className="flex items-start gap-2.5 font-bold text-emerald-800 pt-2 border-t border-blue-200">
+                      <div className="p-1 bg-emerald-100 text-emerald-700 rounded-lg shrink-0 mt-0.5">
+                        <Utensils size={14} />
+                      </div>
+                      <div>
+                        <span className="text-emerald-950">Indicación de Ayuno: No requiere ayuno estricto</span>
+                        <p className="font-normal text-[11px] text-emerald-700 mt-0.5 leading-snug">
+                          Puede ingerir su dieta habitual liviana previa al horario de ingreso a la clínica.
                         </p>
                       </div>
                     </div>

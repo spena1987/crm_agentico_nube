@@ -6434,11 +6434,17 @@ def obtener_datos_consentimiento_publico(token: str):
             }
         )
         
+        # Verificar si la preparación está habilitada tanto a nivel global como por práctica
+        config_q = get_configuracion_quirofano()
+        mostrar_prep_global = config_q.get("mostrar_preparacion_en_consentimiento", True)
+        hab_practica = bool(resumen_practica.get("habilitar_preparacion", False)) if resumen_practica else False
+        habilitar_prep_final = hab_practica and bool(mostrar_prep_global)
+
         preparacion_info = {
-            "habilitar_preparacion": bool(resumen_practica.get("habilitar_preparacion", False)) if resumen_practica else False,
-            "ayuno_horas": int(resumen_practica.get("ayuno_horas", 8)) if resumen_practica else 8,
-            "texto_preparacion": resumen_practica.get("texto_preparacion") if resumen_practica else None,
-            "dias_aviso": int(resumen_practica.get("dias_aviso", 2)) if resumen_practica else 2
+            "habilitar_preparacion": habilitar_prep_final,
+            "ayuno_horas": resumen_practica.get("ayuno_horas") if (habilitar_prep_final and resumen_practica) else None,
+            "texto_preparacion": resumen_practica.get("texto_preparacion") if (habilitar_prep_final and resumen_practica) else None,
+            "dias_aviso": resumen_practica.get("dias_aviso") if (habilitar_prep_final and resumen_practica) else None
         }
 
         return {
