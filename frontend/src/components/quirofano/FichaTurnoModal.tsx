@@ -34,7 +34,9 @@ import {
   Plus,
   ExternalLink,
   Save,
-  UploadCloud
+  UploadCloud,
+  Package,
+  Barcode
 } from 'lucide-react'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
@@ -99,6 +101,9 @@ export default function FichaTurnoModal({
 
   // Catálogo de Modelos de LIO cargados desde Ajustes
   const [modelosLio, setModelosLio] = useState<any[]>([])
+  // Estado para resolución reactiva de SKU Geclisa y Stock físico multi-depósito
+  const [skuResuelto, setSkuResuelto] = useState<any | null>(null)
+  const [resolviendoSku, setResolviendoSku] = useState(false)
   // Modal flotante para Administrar Modelos de LIO sin salir de la ficha
   const [mostrarModalConfigLio, setMostrarModalConfigLio] = useState(false)
   const [mostrarModalPulsera, setMostrarModalPulsera] = useState(false)
@@ -222,6 +227,49 @@ export default function FichaTurnoModal({
       }))
     }
   }, [slotSeleccionado, quirofanoDefectoId, fechaDefecto, horaDefecto])
+
+  // Consulta en tiempo real de SKU en Geclisa y existencias multi-depósito (Quirófano, Farmacia, Consignación)
+  useEffect(() => {
+    if (!formData.lleva_lente) {
+      setSkuResuelto(null)
+      return
+    }
+    const mod = (formData.lente_tipo || '').replace(/\s*\([^)]*\)/g, '').trim()
+    const diop = parseFloat(String(formData.lente_dioptria || '').replace('+', '').trim())
+    if (!mod || isNaN(diop)) {
+      setSkuResuelto(null)
+      return
+    }
+
+    const resolverSku = async () => {
+      try {
+        setResolviendoSku(true)
+        const res = await apiFetch('/api/modelos-lio/resolver-sku', {
+          method: 'POST',
+          body: JSON.stringify({
+            modelo_nombre: mod,
+            dioptria: diop,
+            torico_valor: formData.es_torico && formData.lente_torico_valor ? `T${formData.lente_torico_valor}` : null,
+            es_torico: Boolean(formData.es_torico)
+          })
+        })
+        const data = await res.json()
+        if (res.ok && data.success) {
+          setSkuResuelto(data)
+        } else {
+          setSkuResuelto(null)
+        }
+      } catch (e) {
+        console.error('Error resolviendo SKU en FichaTurnoModal:', e)
+        setSkuResuelto(null)
+      } finally {
+        setResolviendoSku(false)
+      }
+    }
+
+    const timer = setTimeout(resolverSku, 300)
+    return () => clearTimeout(timer)
+  }, [formData.lleva_lente, formData.lente_tipo, formData.lente_dioptria, formData.es_torico, formData.lente_torico_valor])
 
   const [guardando, setGuardando] = useState(false)
   const [cancelando, setCancelando] = useState(false)
@@ -1865,8 +1913,139 @@ export default function FichaTurnoModal({
                     )}
                   </div>
 
-                  {/* 4. Trazabilidad LIO (Lote y Serie) */}
-                  <div className="col-span-full grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[var(--border)]">
+                  {/* Banner de Sincronización con Geclisa (GTIN & Stock en Vivo) */}
+                  {resolviendoSku ? (
+                    <div className="col-span-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] flex items-center gap-2 text-xs text-blue-600">
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Verificando SKU y Stock en Geclisa...</span>
+                    </div>
+                  ) : skuResuelto?.mapeado ? (
+                    <div className="col-span-full p-3.5 rounded-2xl bg-cyan-50/50 dark:bg-cyan-950/20 border border-cyan-200 dark:border-cyan-800/60 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 rounded-lg bg-cyan-500 text-black">
+                            <Check size={14} />
+                          </span>
+                          <div>
+                            <span className="text-xs font-black text-cyan-950 dark:text-cyan-100 flex items-center gap-1.5">
+                              <span>Geclisa: #{skuResuelto.item.geclisa_ele_id}</span>
+                              <span className="font-mono text-[10px] bg-cyan-100 dark:bg-cyan-900/60 text-cyan-800 dark:text-cyan-200 px-1.5 py-0.5 rounded">
+                                GTIN: {skuResuelto.item.geclisa_ele_cod}
+                              </span>
+                            </span>
+                            <p className="text-[10px] text-[var(--secondary)] truncate max-w-md">
+                              {skuResuelto.item.geclisa_nombre}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Semáforo Logístico Inteligente de Stock */}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Quirófano */}
+                          {(skuResuelto.stock?.stock_quirofano ?? 0) > 0 ? (
+                            <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-emerald-500/15 border border-emerald-500/40 text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 shadow-sm">
+                              <CheckCircle2 size={13} className="text-emerald-600" />
+                              <span>En Quirófano: {skuResuelto.stock.stock_quirofano} un (Listo en Sala)</span>
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                              <AlertCircle size={13} />
+                              <span>Quirófano: 0 un</span>
+                            </span>
+                          )}
+
+                          {/* Farmacia Central */}
+                          {(skuResuelto.stock?.stock_farmacia ?? 0) > 0 && (
+                            <span
+                              className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold flex items-center gap-1.5 ${
+                                (skuResuelto.stock?.stock_quirofano ?? 0) === 0
+                                  ? 'bg-blue-500/15 border border-blue-500/40 text-blue-700 dark:text-blue-300 animate-pulse'
+                                  : 'bg-slate-100 dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                              }`}
+                              title="Depósito Central / Farmacia"
+                            >
+                              <Building2 size={13} />
+                              <span>
+                                Farmacia Central: {skuResuelto.stock.stock_farmacia} un
+                                {(skuResuelto.stock?.stock_quirofano ?? 0) === 0 ? ' (⚠️ Trasladar a Quirófano)' : ''}
+                              </span>
+                            </span>
+                          )}
+
+                          {/* Consignación */}
+                          {(skuResuelto.stock?.stock_consignacion ?? 0) > 0 && (
+                            <span className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-purple-500/10 border border-purple-500/30 text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                              <Package size={13} />
+                              <span>Consignación: {skuResuelto.stock.stock_consignacion} un</span>
+                            </span>
+                          )}
+
+                          {/* Sin Stock Absoluto */}
+                          {(skuResuelto.stock?.stock_total ?? 0) === 0 &&
+                            (skuResuelto.stock?.stock_quirofano ?? 0) === 0 &&
+                            (skuResuelto.stock?.stock_farmacia ?? 0) === 0 &&
+                            (skuResuelto.stock?.stock_consignacion ?? 0) === 0 && (
+                              <span className="px-2.5 py-1 rounded-xl text-[11px] font-black bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                                <AlertTriangle size={13} />
+                                <span>Sin Stock en Clínica</span>
+                              </span>
+                            )}
+                        </div>
+                      </div>
+
+                      {/* Lotes físicos disponibles clasificados por ubicación */}
+                      {(() => {
+                        const lotesConOrigen = [
+                          ...(skuResuelto.stock?.lotes_quirofano || []).map((l: any) => ({ ...l, origen: 'Quirófano', color: 'border-emerald-400 text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/40' })),
+                          ...(skuResuelto.stock?.lotes_farmacia || []).map((l: any) => ({ ...l, origen: 'Farmacia', color: 'border-blue-400 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-950/40' })),
+                          ...(skuResuelto.stock?.lotes_consignacion || []).map((l: any) => ({ ...l, origen: 'Consignación', color: 'border-purple-400 text-purple-800 dark:text-purple-200 bg-purple-50 dark:bg-purple-950/40' }))
+                        ]
+                        if (lotesConOrigen.length === 0) return null
+                        return (
+                          <div className="pt-2 border-t border-cyan-200/60 dark:border-cyan-800/40 flex flex-wrap items-center gap-2">
+                            <span className="text-[10px] font-bold text-cyan-800 dark:text-cyan-300">
+                              Lotes físicos disponibles (Clic para cargar):
+                            </span>
+                            {lotesConOrigen.map((lot: any, lIdx: number) => (
+                              <button
+                                key={lIdx}
+                                type="button"
+                                onClick={() => {
+                                  setFormData((prev: any) => ({
+                                    ...prev,
+                                    lente_lote: lot.lote !== 'S/D' ? lot.lote : prev.lente_lote,
+                                    lente_serie: lot.nroSerie || prev.lente_serie,
+                                    lente_vencimiento: lot.fechaVto && !lot.fechaVto.startsWith('9999') ? lot.fechaVto.split('T')[0] : prev.lente_vencimiento
+                                  }))
+                                }}
+                                className={`px-2 py-0.5 rounded-lg border text-[10px] font-mono font-bold hover:brightness-95 transition cursor-pointer flex items-center gap-1 ${lot.color}`}
+                                title={`Ubicación: ${lot.origen} - Cant: ${lot.cantidad} - Serie: ${lot.nroSerie || 'S/D'}`}
+                              >
+                                <span className="text-[9px] font-sans uppercase font-black opacity-90">[{lot.origen}]</span>
+                                <span>Lote: {lot.lote} ({lot.cantidad} un)</span>
+                              </button>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ) : formData.lente_tipo && formData.lente_dioptria ? (
+                    <div className="col-span-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-[var(--border)] text-[11px] text-[var(--secondary)] flex items-center justify-between">
+                      <span>ℹ Graduación ({formData.lente_tipo} {formData.lente_dioptria}D) sin GTIN Geclisa mapeado.</span>
+                      <a
+                        href="/ajustes?tab=lios"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 font-bold hover:underline flex items-center gap-1"
+                      >
+                        <span>Mapear en Ajustes</span>
+                        <ExternalLink size={12} />
+                      </a>
+                    </div>
+                  ) : null}
+
+                  {/* 4. Trazabilidad LIO (Lote, Serie y Vencimiento) */}
+                  <div className="col-span-full grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-[var(--border)]">
                     <div>
                       <label className="text-[11px] font-semibold text-[var(--secondary)]">N° de Lote LIO</label>
                       <input
@@ -1884,6 +2063,15 @@ export default function FichaTurnoModal({
                         value={formData.lente_serie}
                         onChange={(e) => setFormData({ ...formData, lente_serie: e.target.value })}
                         placeholder="Ej: SN-44120"
+                        className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono outline-none focus:border-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-[var(--secondary)]">Vencimiento LIO</label>
+                      <input
+                        type="date"
+                        value={formData.lente_vencimiento ? formData.lente_vencimiento.split('T')[0] : ''}
+                        onChange={(e) => setFormData({ ...formData, lente_vencimiento: e.target.value })}
                         className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono outline-none focus:border-blue-500"
                       />
                     </div>
