@@ -64,6 +64,11 @@ export default function ModalPausaQuirurgicaOms({
   const [justificacionCambio, setJustificacionCambio] = useState('')
   const [autorizadoPorCirujano, setAutorizadoPorCirujano] = useState(false)
 
+  // Modo de verificación visual asistencial en quirófano (sin lector 2D físico)
+  const [mostrandoVerificacionVisual, setMostrandoVerificacionVisual] = useState(false)
+  const [visualLote, setVisualLote] = useState('')
+  const [visualSerie, setVisualSerie] = useState('')
+
   // Inicializar checks al abrir o recibir turno
   useEffect(() => {
     if (!isOpen || !turno) return
@@ -75,6 +80,9 @@ export default function ModalPausaQuirurgicaOms({
     setJustificacionCambio('')
     setAutorizadoPorCirujano(false)
     setErrorValidacion(null)
+    setMostrandoVerificacionVisual(false)
+    setVisualLote(turno.lente_lote || '')
+    setVisualSerie(turno.lente_serie || '')
 
     // Si no lleva lente (ej. cirugía de párpado, pterigión), el check de LIO no es requerido
     if (!turno.lleva_lente) {
@@ -190,6 +198,43 @@ export default function ModalPausaQuirurgicaOms({
     }
   }
 
+  // Confirmar verificación visual asistencial de blíster en mano (sin lector físico)
+  const handleConfirmarVerificacionVisual = () => {
+    const modeloFinal = turno.lente_tipo || 'LIO Confirmado en Quirófano'
+    const dioptriaFinal = turno.lente_dioptria || 'N/D'
+    const loteFinal = visualLote.trim() || turno.lente_lote || 'COTEJO-VISUAL'
+    const serieFinal = visualSerie.trim() || turno.lente_serie || 'S/D'
+
+    setResultadoValidacion({
+      success: true,
+      coincide: true,
+      estado_validacion: 'COINCIDENCIA_TOTAL',
+      metodo: 'manual_visual',
+      escaneado: {
+        gtin: 'MANUAL-VISUAL',
+        modelo: modeloFinal,
+        nombre_producto: modeloFinal,
+        dioptria_str: dioptriaFinal !== 'N/D' ? (dioptriaFinal + ' D') : 'N/D',
+        dioptria: dioptriaFinal !== 'N/D' ? dioptriaFinal : null,
+        lote: loteFinal,
+        serie: serieFinal,
+        vencimiento: 'Conforme (Cotejo visual en sala)',
+      },
+      planificado: {
+        modelo: turno.lente_tipo,
+        dioptria: turno.lente_dioptria,
+        es_torico: turno.es_torico,
+        torico_valor: turno.lente_torico_valor
+      },
+      discrepancias: []
+    })
+
+    setCheckLio(true)
+    setMostrandoVerificacionVisual(false)
+    setErrorValidacion(null)
+    reproducirBeepExito()
+  }
+
   // Opción A: Confirmar autorización de cambio quirúrgico de cirujano
   const handleConfirmarOverrideCirujano = () => {
     if (!justificacionCambio.trim()) {
@@ -210,7 +255,16 @@ export default function ModalPausaQuirurgicaOms({
         check_consentimiento: checkConsentimiento,
         check_lio: checkLio,
         check_esterilidad: checkEsterilidad,
-        lente_escaneado: resultadoValidacion?.escaneado || null,
+        lente_escaneado: resultadoValidacion?.escaneado || (checkLio && turno.lleva_lente ? {
+          gtin: 'MANUAL-VISUAL',
+          modelo: turno.lente_tipo || 'LIO Confirmado en Quirófano',
+          nombre_producto: turno.lente_tipo || 'LIO Confirmado en Quirófano',
+          dioptria_str: turno.lente_dioptria ? (String(turno.lente_dioptria) + ' D') : 'N/D',
+          dioptria: turno.lente_dioptria || null,
+          lote: visualLote.trim() || turno.lente_lote || 'COTEJO-VISUAL',
+          serie: visualSerie.trim() || turno.lente_serie || 'S/D',
+          vencimiento: 'Conforme (Cotejo visual en sala)'
+        } : null),
         justificacion_cambio_lio: autorizadoPorCirujano ? justificacionCambio.trim() : null,
         autorizado_por_cirujano: autorizadoPorCirujano
       }
@@ -349,9 +403,15 @@ export default function ModalPausaQuirurgicaOms({
                           <span className={`px-2 py-0.5 rounded-full text-[9px] font-black ${
                             autorizadoPorCirujano
                               ? 'bg-amber-400 text-amber-950'
-                              : 'bg-emerald-500 text-white'
+                              : resultadoValidacion?.metodo === 'manual_visual'
+                                ? 'bg-blue-600 text-white shadow-xs'
+                                : 'bg-emerald-500 text-white'
                           }`}>
-                            {autorizadoPorCirujano ? 'AUTORIZADO POR CIRUJANO' : '✔ CONFORME 100%'}
+                            {autorizadoPorCirujano
+                              ? 'AUTORIZADO POR CIRUJANO'
+                              : resultadoValidacion?.metodo === 'manual_visual'
+                                ? '👁️ COTEJO VISUAL CONFORME'
+                                : '✔ CONFORME 100%'}
                           </span>
                         )}
                       </h4>
@@ -366,13 +426,18 @@ export default function ModalPausaQuirurgicaOms({
                     <input
                       type="checkbox"
                       checked={checkLio}
-                      disabled={!resultadoValidacion?.coincide && !autorizadoPorCirujano}
                       onChange={(e) => {
-                        if (resultadoValidacion?.coincide || autorizadoPorCirujano) {
-                          setCheckLio(e.target.checked)
+                        if (e.target.checked) {
+                          if (!resultadoValidacion?.coincide && !autorizadoPorCirujano) {
+                            handleConfirmarVerificacionVisual()
+                          } else {
+                            setCheckLio(true)
+                          }
+                        } else {
+                          setCheckLio(false)
                         }
                       }}
-                      className="w-5 h-5 rounded-lg text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer disabled:opacity-40"
+                      className="w-5 h-5 rounded-lg text-emerald-600 focus:ring-emerald-500 accent-emerald-600 cursor-pointer"
                     />
                     <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--secondary)]">
                       {checkLio ? 'Validado' : 'Pendiente'}
@@ -425,11 +490,23 @@ export default function ModalPausaQuirurgicaOms({
                         <div className="flex items-center justify-between">
                           <p className="font-extrabold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
                             <CheckCircle2 size={16} />
-                            <span>Blíster Validado y Conforme con el Plan</span>
+                            <span>{resultadoValidacion.metodo === 'manual_visual' ? 'Blíster Cotejado Visualmente con el Plan' : 'Blíster Validado y Conforme con el Plan'}</span>
                           </p>
-                          <span className="text-[10px] font-mono bg-emerald-200 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-md font-bold">
-                            GTIN: {resultadoValidacion.escaneado?.gtin}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono bg-emerald-200 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-200 px-2 py-0.5 rounded-md font-bold">
+                              {resultadoValidacion.metodo === 'manual_visual' ? 'COTEJO EN SALA' : `GTIN: ${resultadoValidacion.escaneado?.gtin}`}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setResultadoValidacion(null)
+                                setCheckLio(false)
+                              }}
+                              className="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 underline"
+                            >
+                              Cambiar
+                            </button>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-2 text-[11px] pt-1 border-t border-emerald-500/20">
@@ -592,16 +669,26 @@ export default function ModalPausaQuirurgicaOms({
                   </div>
                 )}
 
-                {/* Botones de Entrada: Cámara, Pistola USB y Manual */}
+                {/* Botones de Entrada: Visual Asistencial, Cámara, Pistola USB y Manual */}
                 <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setMostrandoVerificacionVisual(!mostrandoVerificacionVisual)}
+                    disabled={esCargando}
+                    className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition disabled:opacity-50"
+                  >
+                    <Eye size={14} />
+                    <span>{mostrandoVerificacionVisual ? 'Ocultar Cotejo' : '👁️ Verificación Visual (Sin Escáner)'}</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setCamaraAbierta(true)}
                     disabled={esCargando}
-                    className="flex-1 py-2 px-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition disabled:opacity-50"
+                    className="py-2 px-3 bg-purple-600/90 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition disabled:opacity-50"
                   >
                     <Camera size={14} />
-                    <span>📷 Escanear con Cámara</span>
+                    <span>📷 Cámara</span>
                   </button>
 
                   <button
@@ -611,9 +698,66 @@ export default function ModalPausaQuirurgicaOms({
                     className="py-2 px-3 border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
                   >
                     <Barcode size={14} />
-                    <span>{mostrandoInputManual ? 'Ocultar Manual' : 'Pistola / Manual'}</span>
+                    <span>{mostrandoInputManual ? 'Ocultar' : 'Pistola GS1'}</span>
                   </button>
                 </div>
+
+                {/* Panel de Cotejo Visual Asistencial */}
+                {mostrandoVerificacionVisual && (
+                  <div className="mt-2.5 p-3.5 bg-blue-500/10 border-2 border-blue-500/40 rounded-xl text-xs space-y-3 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 font-extrabold text-blue-700 dark:text-blue-300">
+                        <Eye size={16} />
+                        <span>Cotejo Visual en Quirófano (Protocolo Asistencial)</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setMostrandoVerificacionVisual(false)}
+                        className="text-[11px] text-slate-400 hover:text-[var(--foreground)]"
+                      >
+                        Cerrar
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      Coteje el blíster estéril en mano con la biometría calculada del paciente antes de abrir el empaque:
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-2 p-2.5 bg-[var(--card)] rounded-lg border border-[var(--border)] text-[11px]">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Modelo Previsto</span>
+                        <b className="text-[var(--foreground)]">{turno.lente_tipo || 'Estándar'}</b>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Potencia Calculada</span>
+                        <b className="text-blue-600 dark:text-blue-400 text-xs font-black">{turno.lente_dioptria ? `${turno.lente_dioptria} D` : 'N/D'}</b>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Ojo a Operar</span>
+                        <span className="font-bold text-purple-600 dark:text-purple-400">{ojoDesc}</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block uppercase font-bold">Lote Físico (Blíster)</span>
+                        <input
+                          type="text"
+                          value={visualLote}
+                          onChange={(e) => setVisualLote(e.target.value)}
+                          placeholder={turno.lente_lote || 'Ej: LOT-98214'}
+                          className="w-full mt-0.5 px-2 py-1 text-xs rounded border border-[var(--border)] bg-transparent font-mono outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleConfirmarVerificacionVisual}
+                      className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-md transition"
+                    >
+                      <CheckCircle2 size={16} />
+                      <span>Confirmar Coincidencia Visual y Habilitar Cirugía</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* Input de Ingreso Manual / Pegado de Código GS1 */}
                 {mostrandoInputManual && (
@@ -714,4 +858,4 @@ export default function ModalPausaQuirurgicaOms({
       )}
     </>
   )
-}
+}

@@ -7579,11 +7579,19 @@ def confirmar_pausa_oms_endpoint(turno_id: str, payload: ConfirmarPausaOmsPayloa
         # 3. Actualizar datos del LIO físico
         if payload.lente_escaneado:
             lente_esc = payload.lente_escaneado
-            if lente_esc.get("lote") and lente_esc.get("lote") != "N/D":
-                update_data["lente_lote"] = lente_esc.get("lote")
-            if lente_esc.get("serie") and lente_esc.get("serie") != "N/D":
-                update_data["lente_serie"] = lente_esc.get("serie")
-            if lente_esc.get("vencimiento"):
+            lote_cand = lente_esc.get("lote")
+            if lote_cand and lote_cand not in ("N/D", "COTEJO-VISUAL", "VERIF-VISUAL", "S/D"):
+                update_data["lente_lote"] = lote_cand
+            elif not turno_actual.get("lente_lote") and lote_cand and lote_cand != "N/D":
+                update_data["lente_lote"] = lote_cand
+
+            serie_cand = lente_esc.get("serie")
+            if serie_cand and serie_cand not in ("N/D", "S/D"):
+                update_data["lente_serie"] = serie_cand
+            elif not turno_actual.get("lente_serie") and serie_cand and serie_cand != "N/D":
+                update_data["lente_serie"] = serie_cand
+
+            if lente_esc.get("vencimiento") and "Conforme" not in str(lente_esc.get("vencimiento")):
                 update_data["lente_vencimiento"] = lente_esc.get("vencimiento")
 
             # Opción A: Si el cirujano autorizó un cambio médico justificado del lente
