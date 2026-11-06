@@ -30,6 +30,8 @@ import {
 } from 'lucide-react'
 import TurneroGrid from '@/components/quirofano/TurneroGrid'
 import FichaTurnoModal from '@/components/quirofano/FichaTurnoModal'
+import ModalCartelesPechoA4 from '@/components/quirofano/modal/ModalCartelesPechoA4'
+import { Printer } from 'lucide-react'
 import PizarraQuirofanoEnVivo from '@/components/quirofano/PizarraQuirofanoEnVivo'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
@@ -101,6 +103,7 @@ function ProgramacionQuirurgicaContent() {
   // Panel lateral de casos confirmados pendientes
   const [drawerCasosAbierto, setDrawerCasosAbierto] = useState(false)
   const [mostrarDiasInhabiles, setMostrarDiasInhabiles] = useState(false)
+  const [mostrarModalCartelesA4, setMostrarModalCartelesA4] = useState(false)
 
   // Quirófano actualmente activo y sus días operativos
   const quirofanoActual = quirofanos.find((q) => q.id === quirofanoSeleccionadoId) || quirofanos[0]
@@ -801,6 +804,16 @@ function ProgramacionQuirurgicaContent() {
           onSaved={refrescarTodo}
         />
       )}
+
+      {/* Modal Carteles de Pecho A4 */}
+      {mostrarModalCartelesA4 && (
+        <ModalCartelesPechoA4
+          isOpen={mostrarModalCartelesA4}
+          onClose={() => setMostrarModalCartelesA4(false)}
+          turnos={turnos}
+          quirofanos={quirofanos}
+        />
+      )}
     </div>
   )
 }
@@ -810,7 +823,9 @@ export default function ProgramacionQuirurgicaPage() {
     <Suspense fallback={
       <div className="p-16 flex items-center justify-center min-h-[400px]">
         <Loader2 className="animate-spin text-blue-600" size={36} />
-      </div>
+      
+
+</div>
     }>
       <ProgramacionQuirurgicaContent />
     </Suspense>

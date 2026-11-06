@@ -63,6 +63,7 @@ import { Printer, QrCode, Camera } from 'lucide-react'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos, formatearHoraConFechaSiDifiere, formatearTiempoEsperaSeguro, getFechaHoyLocal, formatDateArg } from '@/lib/dateUtils'
 import ModalDetalleCirugiaEnVivo from './ModalDetalleCirugiaEnVivo'
 import ModalPausaQuirurgicaOms from './modal/ModalPausaQuirurgicaOms'
+import ModalCartelesPechoA4 from './modal/ModalCartelesPechoA4'
 
 interface PizarraQuirofanoEnVivoProps {
   onEditarTurno?: (turno: any) => void
@@ -118,6 +119,8 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [justificacionExcepcion, setJustificacionExcepcion] = useState<string>('')
   const [reenviandoConsentimientoId, setReenviandoConsentimientoId] = useState<string | null>(null)
   const [consentimientoModalTurno, setConsentimientoModalTurno] = useState<any | null>(null)
+  const [mostrarModalCartelesA4, setMostrarModalCartelesA4] = useState<boolean>(false)
+  const [turnoParaCartel, setTurnoParaCartel] = useState<string | null>(null)
 
   // Cargar preferencia de modo oscuro clínico y listener de fullscreen
   useEffect(() => {
@@ -964,6 +967,19 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
           <button
             type="button"
+            onClick={() => {
+              setTurnoParaCartel(null)
+              setMostrarModalCartelesA4(true)
+            }}
+            className="px-3 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded-xl border border-purple-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
+            title="Imprimir carteles distintivos autoadhesivos de pecho para pre-quirófano en hoja A4 (Láser B&W)"
+          >
+            <Printer size={15} />
+            <span className="hidden sm:inline">Carteles A4</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setMostrarModalCamara(true)}
             className="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition shadow-sm"
             title="Escanear pulsera QR con cámara integrada o móvil"
@@ -1455,7 +1471,12 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                     {/* Información del Lente LIO */}
                     {t.lleva_lente && (
                       <div className="flex flex-wrap items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-50/80 dark:bg-blue-950/40 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800/80 text-[11px] font-bold">
-                        {t.lio_calculado ? (
+                        {t.estado === 'operado' ? (
+                          <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-extrabold">
+                            <CheckCircle2 size={12} className="text-emerald-500" />
+                            <span>LIO Implantado:</span>
+                          </span>
+                        ) : t.lio_calculado ? (
                           <span className="inline-flex items-center gap-1 text-cyan-600 dark:text-cyan-400 font-extrabold">
                             <CheckCircle2 size={12} className="text-cyan-500" />
                             <span>LIO Calculado:</span>
@@ -1798,6 +1819,20 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </div>
                     )}
 
+                    {/* Imprimir Cartel de Pecho Individual */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setTurnoParaCartel(t.id)
+                        setMostrarModalCartelesA4(true)
+                      }}
+                      className="p-1.5 rounded-xl border border-[var(--border)] hover:bg-purple-50 dark:hover:bg-purple-950/40 text-slate-500 hover:text-purple-600 transition"
+                      title="Imprimir Cartel de Pecho A4 (Láser B&W)"
+                    >
+                      <Printer size={14} />
+                    </button>
+
                     {/* Editar Ficha Completa */}
                     {onEditarTurno && (
                       <button
@@ -1991,6 +2026,20 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
             </div>
           </div>
         </div>
+      )}
+
+      {/* 8. MODAL DE IMPRESIÓN DE CARTELES AUTOADHESIVOS DE PECHO A4 */}
+      {mostrarModalCartelesA4 && (
+        <ModalCartelesPechoA4
+          isOpen={mostrarModalCartelesA4}
+          onClose={() => {
+            setMostrarModalCartelesA4(false)
+            setTurnoParaCartel(null)
+          }}
+          turnos={turnos}
+          quirofanos={quirofanos}
+          initialTurnoId={turnoParaCartel}
+        />
       )}
 
       {/* 7. MODAL DE ENVÍO DE CONSENTIMIENTO INFORMADO POR WHATSAPP */}

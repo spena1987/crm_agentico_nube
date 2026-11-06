@@ -20,6 +20,8 @@ import {
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
 import ModalPausaQuirurgicaOms from './ModalPausaQuirurgicaOms'
+import ModalCartelesPechoA4 from './ModalCartelesPechoA4'
+import { Printer } from 'lucide-react'
 
 interface ConsolaCabeceraProps {
   turno: any
@@ -38,6 +40,7 @@ export default function ConsolaCabeceraIntraoperatoria({
   const [descargandoPdf, setDescargandoPdf] = useState(false)
   const [subiendoGeclisa, setSubiendoGeclisa] = useState(false)
   const [desvinculandoGeclisa, setDesvinculandoGeclisa] = useState(false)
+  const [mostrarCartelPecho, setMostrarCartelPecho] = useState(false)
 
   const estado = turno.estado || 'programado'
   const esProgramado = estado === 'programado'
@@ -203,6 +206,17 @@ export default function ConsolaCabeceraIntraoperatoria({
             </div>
           )}
 
+          {/* Botón Cartel de Pecho */}
+          <button
+            type="button"
+            onClick={() => setMostrarCartelPecho(true)}
+            className="px-3.5 py-2.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-purple-500/30 transition shadow-sm"
+            title="Imprimir Cartel Distintivo Autoadhesivo de Pecho (A4 Láser B&W)"
+          >
+            <Printer size={15} />
+            <span>Cartel Pecho</span>
+          </button>
+
           {/* Botón 1: Recepcionar Llegada */}
           {esProgramado && (
             <button
@@ -358,12 +372,30 @@ export default function ConsolaCabeceraIntraoperatoria({
                     <>
                       <Loader2 size={14} className="animate-spin" />
                       <span>Subiendo a Geclisa...</span>
-                    </>
+                      {/* Modal Carteles de Pecho A4 */}
+      {mostrarCartelPecho && (
+        <ModalCartelesPechoA4
+          isOpen={mostrarCartelPecho}
+          onClose={() => setMostrarCartelPecho(false)}
+          turnos={[turno]}
+          initialTurnoId={turno.id}
+        />
+      )}
+    </>
                   ) : (
                     <>
                       <UploadCloud size={14} />
                       <span>📤 Subir a Geclisa</span>
-                    </>
+                      {/* Modal Carteles de Pecho A4 */}
+      {mostrarCartelPecho && (
+        <ModalCartelesPechoA4
+          isOpen={mostrarCartelPecho}
+          onClose={() => setMostrarCartelPecho(false)}
+          turnos={[turno]}
+          initialTurnoId={turno.id}
+        />
+      )}
+    </>
                   )}
                 </button>
               )}
@@ -380,6 +412,15 @@ export default function ConsolaCabeceraIntraoperatoria({
         onConfirmarInicio={handleConfirmarInicioPausa}
         procesando={procesandoEstado}
       />
+      {/* Modal Carteles de Pecho A4 */}
+      {mostrarCartelPecho && (
+        <ModalCartelesPechoA4
+          isOpen={mostrarCartelPecho}
+          onClose={() => setMostrarCartelPecho(false)}
+          turnos={[turno]}
+          initialTurnoId={turno.id}
+        />
+      )}
     </>
   )
 }

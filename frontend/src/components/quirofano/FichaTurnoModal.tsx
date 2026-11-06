@@ -42,6 +42,7 @@ import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
+import ModalCartelesPechoA4 from '@/components/quirofano/modal/ModalCartelesPechoA4'
 import { Printer } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { formatDateArg } from '@/lib/dateUtils'
@@ -107,6 +108,7 @@ export default function FichaTurnoModal({
   // Modal flotante para Administrar Modelos de LIO sin salir de la ficha
   const [mostrarModalConfigLio, setMostrarModalConfigLio] = useState(false)
   const [mostrarModalPulsera, setMostrarModalPulsera] = useState(false)
+  const [mostrarCartelPecho, setMostrarCartelPecho] = useState(false)
   const [modalConsentimientoWhatsAppOpen, setModalConsentimientoWhatsAppOpen] = useState(false)
   const [nuevoModeloLio, setNuevoModeloLio] = useState({
     marca: '',
@@ -2231,6 +2233,19 @@ export default function FichaTurnoModal({
                   </span>
                 </button>
 
+                {/* Botón Cartel de Pecho */}
+                {turno?.id && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarCartelPecho(true)}
+                    className="px-3.5 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 border border-purple-500/30 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition-all"
+                    title="Imprimir Cartel Distintivo Autoadhesivo de Pecho (A4 Láser B&W)"
+                  >
+                    <Printer size={14} />
+                    <span>Cartel Pecho</span>
+                  </button>
+                )}
+
                 {/* Botón Enviar Preparación Prequirúrgica */}
                 <button
                   type="button"
@@ -2415,7 +2430,17 @@ export default function FichaTurnoModal({
             </div>
           </div>
         )}
-      </div>
+      
+      {/* Modal Carteles de Pecho A4 */}
+      {mostrarCartelPecho && (
+        <ModalCartelesPechoA4
+          isOpen={mostrarCartelPecho}
+          onClose={() => setMostrarCartelPecho(false)}
+          turnos={turno ? [turno] : []}
+          initialTurnoId={turno?.id}
+        />
+      )}
+</div>
     </div>
   )
 }
