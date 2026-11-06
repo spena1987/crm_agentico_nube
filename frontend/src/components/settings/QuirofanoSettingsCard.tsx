@@ -23,7 +23,8 @@ import {
   Eye,
   Send,
   CheckCheck,
-  Sparkles
+  Sparkles,
+  Coffee
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import LioSettingsCard from './LioSettingsCard'
@@ -207,6 +208,7 @@ export default function QuirofanoSettingsCard({
   const [waMensajeEnvio, setWaMensajeEnvio] = useState('')
   const [waMensajeConfirmacion, setWaMensajeConfirmacion] = useState('')
   const [vigenciaHoras, setVigenciaHoras] = useState(72)
+  const [mostrarPreparacionConsentimiento, setMostrarPreparacionConsentimiento] = useState(true)
 
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
@@ -270,6 +272,9 @@ export default function QuirofanoSettingsCard({
         setWaMensajeEnvio(c.whatsapp_mensaje_envio || '')
         setWaMensajeConfirmacion(c.whatsapp_mensaje_confirmacion || '')
         setVigenciaHoras(c.vigencia_enlace_horas || 72)
+        if (c.mostrar_preparacion_en_consentimiento !== undefined) {
+          setMostrarPreparacionConsentimiento(c.mostrar_preparacion_en_consentimiento !== false)
+        }
       }
 
       if (dataSalas.success && dataSalas.quirofanos) {
@@ -312,7 +317,8 @@ export default function QuirofanoSettingsCard({
         plantillas_consentimiento: plantillasConsentimiento,
         whatsapp_mensaje_envio: waMensajeEnvio,
         whatsapp_mensaje_confirmacion: waMensajeConfirmacion,
-        vigencia_enlace_horas: Number(vigenciaHoras) || 72
+        vigencia_enlace_horas: Number(vigenciaHoras) || 72,
+        mostrar_preparacion_en_consentimiento: mostrarPreparacionConsentimiento
       }
 
       const res = await fetch(`${BACKEND_URL}/api/configuracion-quirofano`, {
@@ -1359,6 +1365,34 @@ export default function QuirofanoSettingsCard({
             <p className="text-xs text-[var(--secondary)]">
               Redacta las cláusulas que leerá y firmará el paciente en su celular según la práctica indicada.
             </p>
+          </div>
+
+          {/* Control Global de Preparación Quirúrgica y Ayuno */}
+          <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Coffee size={16} className="text-amber-600 dark:text-amber-400" />
+                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                  Pautas de Ayuno y Preparación en Comprobante Firmado
+                </h4>
+              </div>
+              <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                Al estar activo, el paciente ve en pantalla las horas de ayuno y las pautas configuradas para su cirugía en el Nomenclador. Si se desactiva, se oculta el bloque en todos los consentimientos de la clínica.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMostrarPreparacionConsentimiento(!mostrarPreparacionConsentimiento)}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                mostrarPreparacionConsentimiento ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  mostrarPreparacionConsentimiento ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
           </div>
 
           <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl text-xs text-blue-700 dark:text-blue-300 flex items-start gap-2">
