@@ -197,7 +197,176 @@ export default function ModalCartelesPechoA4({
   }
 
   const handleImprimir = () => {
-    window.print()
+    const printNode = document.getElementById('contenedor-imprimible-a4')
+    if (!printNode) {
+      window.print()
+      return
+    }
+
+    // Remover iframe previo si existiera
+    const existingIframe = document.getElementById('iframe-impresion-carteles-a4')
+    if (existingIframe) {
+      existingIframe.remove()
+    }
+
+    const iframe = document.createElement('iframe')
+    iframe.id = 'iframe-impresion-carteles-a4'
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    iframe.style.visibility = 'hidden'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document
+    if (!doc) {
+      window.print()
+      return
+    }
+
+    const cssA4 = `
+      @page {
+        size: A4 portrait;
+        margin: 0mm;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html, body {
+        width: 210mm;
+        margin: 0;
+        padding: 0;
+        background: #ffffff;
+        color: #000000;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .pagina-a4-hoja {
+        width: 210mm;
+        height: 297mm;
+        max-height: 297mm;
+        margin: 0;
+        padding: 0;
+        page-break-after: always;
+        break-after: page;
+        display: grid;
+        background: #ffffff;
+        overflow: hidden;
+      }
+      .pagina-a4-hoja:last-child {
+        page-break-after: auto;
+        break-after: auto;
+      }
+      .pagina-a4-3x2 {
+        grid-template-columns: 105mm 105mm;
+        grid-template-rows: 99mm 99mm 99mm;
+      }
+      .pagina-a4-4x2 {
+        grid-template-columns: 105mm 105mm;
+        grid-template-rows: 74.25mm 74.25mm 74.25mm 74.25mm;
+      }
+      .etiqueta-pecho-card {
+        box-sizing: border-box;
+        border: 0.5pt dashed #888888;
+        overflow: hidden;
+        background: #ffffff;
+        color: #000000;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 12px 14px;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      /* Clases de alto contraste morfológico para tóner láser monocromático */
+      .bg-black { background-color: #000000 !important; color: #ffffff !important; }
+      .text-white { color: #ffffff !important; }
+      .text-black { color: #000000 !important; }
+      .border-black { border-color: #000000 !important; }
+      .border { border-style: solid; border-width: 1px; }
+      .border-2 { border-width: 2px !important; }
+      .border-b { border-bottom-style: solid; border-bottom-width: 1px; }
+      .border-dashed { border-style: dashed !important; }
+      .flex { display: flex; }
+      .flex-col { flex-direction: column; }
+      .flex-1 { flex: 1 1 0%; }
+      .items-center { align-items: center; }
+      .justify-between { justify-content: space-between; }
+      .gap-1 { gap: 4px; }
+      .gap-1\\.5 { gap: 6px; }
+      .gap-2 { gap: 8px; }
+      .gap-2\\.5 { gap: 10px; }
+      .p-0\\.5 { padding: 2px; }
+      .p-1 { padding: 4px; }
+      .p-1\\.5 { padding: 6px; }
+      .p-3 { padding: 12px; }
+      .py-0\\.5 { padding-top: 2px; padding-bottom: 2px; }
+      .py-1 { padding-top: 4px; padding-bottom: 4px; }
+      .px-1\\.5 { padding-left: 6px; padding-right: 6px; }
+      .px-2 { padding-left: 8px; padding-right: 8px; }
+      .pb-0\\.5 { padding-bottom: 2px; }
+      .pb-1 { padding-bottom: 4px; }
+      .pt-1 { padding-top: 4px; }
+      .my-0\\.5 { margin-top: 2px; margin-bottom: 2px; }
+      .mt-0\\.5 { margin-top: 2px; }
+      .mt-1 { margin-top: 4px; }
+      .mb-1 { margin-bottom: 4px; }
+      .shrink-0 { flex-shrink: 0; }
+      .min-w-0 { min-width: 0; }
+      .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; }
+      .font-black { font-weight: 900 !important; }
+      .font-extrabold { font-weight: 800 !important; }
+      .font-bold { font-weight: 700 !important; }
+      .font-semibold { font-weight: 600 !important; }
+      .uppercase { text-transform: uppercase !important; }
+      .text-center { text-align: center; }
+      .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .leading-none { line-height: 1; }
+      .leading-tight { line-height: 1.25; }
+      .text-xl { font-size: 20px; }
+      .text-lg { font-size: 18px; }
+      .text-base { font-size: 16px; }
+      .text-xs { font-size: 12px; }
+      .text-\\[11px\\] { font-size: 11px; }
+      .text-\\[10px\\] { font-size: 10px; }
+      .text-\\[9px\\] { font-size: 9px; }
+      .text-\\[8px\\] { font-size: 8px; }
+      .w-\\[24mm\\] { width: 24mm; }
+      .h-\\[24mm\\] { height: 24mm; }
+      .w-\\[20mm\\] { width: 20mm; }
+      .h-\\[20mm\\] { height: 20mm; }
+      .space-y-1 > * + * { margin-top: 4px; }
+      .space-y-1\\.5 > * + * { margin-top: 6px; }
+    `
+
+    doc.open()
+    doc.write(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Carteles Pecho A4 - CentroVisión Quirófano</title>
+  <style>${cssA4}</style>
+</head>
+<body>
+  ${printNode.innerHTML}
+</body>
+</html>`)
+    doc.close()
+
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus()
+        iframe.contentWindow?.print()
+      } catch (err) {
+        console.error('Error con iframe.print(), fallback:', err)
+        window.print()
+      }
+    }, 250)
   }
 
   if (!isOpen) return null
@@ -208,16 +377,37 @@ export default function ModalCartelesPechoA4({
       {/* ESTILOS DE IMPRESIÓN DIRECTA LÁSER A4 (@media print)                    */}
       {/* ========================================================================= */}
       <style jsx global>{`
+        @media screen {
+          .area-imprimible-a4-laser {
+            display: none !important;
+          }
+        }
+
         @media print {
-          /* Ocultar toda la interfaz del CRM y dejar solo el contenedor imprimible */
+          /* Fallback para Ctrl + P */
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 210mm !important;
+            background: #ffffff !important;
+            color: #000000 !important;
+          }
+
           body * {
             visibility: hidden !important;
           }
-          #contenedor-imprimible-a4,
-          #contenedor-imprimible-a4 * {
+
+          .no-print, .no-print * {
+            display: none !important;
+          }
+
+          .area-imprimible-a4-laser,
+          .area-imprimible-a4-laser * {
             visibility: visible !important;
           }
-          #contenedor-imprimible-a4 {
+
+          .area-imprimible-a4-laser {
+            display: block !important;
             position: absolute !important;
             left: 0 !important;
             top: 0 !important;
@@ -226,16 +416,19 @@ export default function ModalCartelesPechoA4({
             padding: 0 !important;
             background: #ffffff !important;
             color: #000000 !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
 
           @page {
             size: A4 portrait;
-            margin: 0mm;
+            margin: 0mm !important;
           }
 
           .pagina-a4-hoja {
             width: 210mm !important;
             height: 297mm !important;
+            max-height: 297mm !important;
             margin: 0 !important;
             padding: 0 !important;
             box-sizing: border-box !important;
@@ -243,6 +436,12 @@ export default function ModalCartelesPechoA4({
             break-after: page !important;
             display: grid !important;
             background: #ffffff !important;
+            overflow: hidden !important;
+          }
+
+          .pagina-a4-hoja:last-child {
+            page-break-after: auto !important;
+            break-after: auto !important;
           }
 
           .pagina-a4-3x2 {
@@ -257,16 +456,12 @@ export default function ModalCartelesPechoA4({
 
           .etiqueta-pecho-card {
             box-sizing: border-box !important;
-            border: 0.5pt dashed #cccccc !important;
+            border: 0.5pt dashed #888888 !important;
             overflow: hidden !important;
             background: #ffffff !important;
             color: #000000 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
-          }
-
-          .no-print {
-            display: none !important;
           }
         }
       `}</style>
@@ -672,7 +867,7 @@ export default function ModalCartelesPechoA4({
       {/* ========================================================================= */}
       {/* CONTENEDOR OCULTO PARA IMPRESIÓN DIRECTA CON window.print()              */}
       {/* ========================================================================= */}
-      <div id="contenedor-imprimible-a4" className="hidden">
+      <div id="contenedor-imprimible-a4" className="area-imprimible-a4-laser">
         {paginasA4.map((hoja, numHoja) => (
           <div
             key={numHoja}
