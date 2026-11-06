@@ -302,22 +302,32 @@ export default function TabProgramacionLio({
               type="checkbox"
               checked={formData.lleva_lente}
               onChange={(e) => setFormData({ ...formData, lleva_lente: e.target.checked })}
-              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 accent-blue-600"
+              className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-[var(--border)]"
             />
-            <span className="text-sm font-extrabold text-blue-900 dark:text-blue-100 flex items-center gap-2">
-              <Sparkles size={17} className="text-blue-600 dark:text-blue-400" />
-              <span>Implante de Lente Intraocular (LIO)</span>
+            <span className="text-xs font-bold text-[var(--foreground)] flex items-center gap-1.5">
+              <span>¿Lleva Lente Intraocular (LIO)?</span>
             </span>
           </label>
 
-          <Link
-            href="/calculo-lio"
-            target="_blank"
-            className="text-xs font-extrabold text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-1"
-          >
-            <span>Mesa de Cálculo de LIO</span>
-            <ExternalLink size={12} />
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/calculo-lio"
+              target="_blank"
+              className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/50 hover:bg-blue-100 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-lg text-[10px] font-bold flex items-center gap-1 shadow-xs transition-all"
+            >
+              <span>Mesa de Cálculo de LIO</span>
+              <ExternalLink size={10} />
+            </Link>
+            <Link
+              href="/ajustes?tab=quirurgicos_turnos&sub=ficha_turno"
+              target="_blank"
+              className="text-[10px] text-[var(--secondary)] hover:text-blue-600 font-semibold flex items-center gap-0.5 hover:underline"
+              title="Abrir panel completo de Ajustes de Quirófano en nueva pestaña"
+            >
+              <ExternalLink size={10} />
+              <span>Ajustes</span>
+            </Link>
+          </div>
         </div>
 
         {formData.lleva_lente && (
@@ -593,7 +603,7 @@ export default function TabProgramacionLio({
             ) : null}
 
             {/* 3. CAJA DE TRAZABILIDAD REAL DEL BLÍSTER (LOTE, SERIE Y VENCIMIENTO) */}
-            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-[var(--border)] space-y-3 pt-3">
+            <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-[var(--border)] space-y-4 pt-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-[var(--border)] gap-2">
                 <div className="flex items-center gap-2">
                   <PackageCheck size={16} className="text-blue-600 shrink-0" />
@@ -610,10 +620,31 @@ export default function TabProgramacionLio({
                     {esOperado ? '✔ Sello en Protocolo' : esEnOperacion ? '🔍 En Verificación Qx' : '⏳ Previo a Quirófano'}
                   </span>
                 </div>
-                <span className="text-[10px] text-[var(--secondary)]">
-                  {esOperado ? 'Datos grabados en Protocolo Qx y Geclisa' : 'Verificación previa al ingreso'}
-                </span>
+
+                <div className="flex items-center gap-2">
+                  {/* Indicador sutil de Escáner ProSoft S224 */}
+                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 border border-[var(--border)] text-[10px] font-semibold text-[var(--secondary)]" title="Lector ProSoft S224 activo en background">
+                    <Barcode size={12} className="text-blue-600 dark:text-blue-400" />
+                    <span>Escáner S224</span>
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${estaEscaneando ? 'bg-emerald-400 scale-125' : 'bg-emerald-500 animate-pulse'}`}
+                    />
+                  </div>
+                  <span className="text-[10px] text-[var(--secondary)] hidden sm:inline">
+                    {esOperado ? 'Datos en Protocolo Qx' : 'Verificación previa al ingreso'}
+                  </span>
+                </div>
               </div>
+
+              {/* Toast si se acaba de escanear por lector físico */}
+              {ultimoLioEscaneado && (
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-2 animate-fade-in">
+                  <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+                  <span>
+                    ✔ Blíster escaneado con éxito: Lote <b>{ultimoLioEscaneado.lote || 'OK'}</b> • Serie <b>{ultimoLioEscaneado.serie || 'OK'}</b> • Vencimiento <b>{ultimoLioEscaneado.vencimiento || 'OK'}</b>
+                  </span>
+                </div>
+              )}
 
               {/* Alerta de Reconciliación Presupuesto vs LIO Implante */}
               {advertenciaReconciliacion && (
@@ -630,45 +661,120 @@ export default function TabProgramacionLio({
                 </div>
               )}
 
-              {/* Si no hay opciones estructuradas, mostrar selector manual */}
+              {/* FILA ÓPTICA UNIFICADA: MODELO + DIOPTRÍA (0.25) + TÓRICO (Exactamente como FichaTurnoModal) */}
               {!tieneOpciones && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="sm:col-span-2">
-                    <label className="block text-[11px] font-bold text-[var(--foreground)] mb-1">Modelo de LIO</label>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 items-start">
+                  {/* 1. Selector de Modelo de LIO */}
+                  <div className="md:col-span-2">
+                    <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
+                      <span>Modelo de Lente Intraocular *</span>
+                      {resolviendoSku && (
+                        <span className="text-[10px] text-blue-600 flex items-center gap-1 animate-pulse">
+                          <Loader2 size={10} className="animate-spin" /> Verificando stock...
+                        </span>
+                      )}
+                    </label>
                     <select
                       value={formData.lente_tipo}
                       onChange={(e) => {
                         const val = e.target.value
-                        const modObj = modelosLio.find((m) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
+                        const modObj = modelosLio.find((m: any) => `${m.modelo} (${m.marca})` === val || m.modelo === val)
                         setFormData((prev: any) => ({
                           ...prev,
                           lente_tipo: val,
                           es_torico: modObj && modObj.tipo_optica && modObj.tipo_optica.toLowerCase().includes('tóric') ? true : prev.es_torico
                         }))
                       }}
-                      className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer text-xs"
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--foreground)] font-bold outline-none focus:border-blue-500"
                     >
                       <option value="">-- Seleccionar Modelo de LIO --</option>
-                      {modelosLio.map((m) => (
-                        <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
-                          {m.marca} — {m.modelo} ({m.tipo_optica || 'LIO'})
-                        </option>
-                      ))}
-                      {formData.lente_tipo && !modelosLio.some((m) => `${m.modelo} (${m.marca})` === formData.lente_tipo) && (
+                      {modelosLio.length > 0 ? (
+                        modelosLio.map((m: any) => (
+                          <option key={m.id || m.modelo} value={`${m.modelo} (${m.marca})`}>
+                            {m.marca} - {m.modelo} ({m.tipo_optica || 'LIO'})
+                          </option>
+                        ))
+                      ) : (
+                        <>
+                          <option value="AcrySof IQ SN60WF (Alcon)">Alcon - AcrySof IQ SN60WF (Monofocal)</option>
+                          <option value="Clareon CNA0T0 (Alcon)">Alcon - Clareon CNA0T0 (Monofocal Asférico)</option>
+                          <option value="PanOptix TFNT00 (Alcon)">Alcon - PanOptix TFNT00 (Trifocal)</option>
+                          <option value="TECNIS ZCB00 (J&J)">Johnson & Johnson - TECNIS ZCB00 (Monofocal)</option>
+                          <option value="TECNIS Eyhance ICB00 (J&J)">Johnson & Johnson - TECNIS Eyhance ICB00 (Monofocal Plus)</option>
+                          <option value="RayOne EMV (Rayner)">Rayner - RayOne EMV (EDOF)</option>
+                          <option value="AT LISA tri 839MP (Zeiss)">Zeiss - AT LISA tri 839MP (Trifocal)</option>
+                        </>
+                      )}
+                      {formData.lente_tipo && !modelosLio.some((m: any) => `${m.modelo} (${m.marca})` === formData.lente_tipo) && (
                         <option value={formData.lente_tipo}>{formData.lente_tipo}</option>
                       )}
                     </select>
                   </div>
 
+                  {/* 2. Dioptría Esférica (Saltos de 0.25) */}
                   <div>
-                    <label className="block text-[11px] font-bold text-[var(--foreground)] mb-1">Dioptría (Poder)</label>
+                    <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
+                      <span>Dioptría (Esfera) *</span>
+                      <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400">Paso 0.25 D</span>
+                    </label>
                     <input
-                      type="text"
+                      type="number"
+                      step="0.25"
+                      min="-15.00"
+                      max="45.00"
                       value={formData.lente_dioptria}
                       onChange={(e) => setFormData({ ...formData, lente_dioptria: e.target.value })}
-                      placeholder="Ej: +21.50 D"
-                      className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-bold text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 text-xs"
+                      placeholder="+21.50"
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 dark:text-blue-400 font-mono font-extrabold text-center outline-none focus:border-blue-500"
                     />
+                  </div>
+
+                  {/* 3. Tórico (Checkbox + Input Entero de Toricidad + Eje 0-180°) */}
+                  <div className="space-y-1.5">
+                    <label className="flex items-center gap-1.5 cursor-pointer text-[11px] font-semibold text-[var(--secondary)]">
+                      <input
+                        type="checkbox"
+                        checked={formData.es_torico}
+                        onChange={(e) => setFormData({ ...formData, es_torico: e.target.checked })}
+                        className="w-3.5 h-3.5 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <span>¿Es Tórico?</span>
+                    </label>
+
+                    {formData.es_torico ? (
+                      <div className="flex items-center gap-2">
+                        <div className="w-1/2">
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="9"
+                            value={formData.lente_torico_valor}
+                            onChange={(e) => setFormData({ ...formData, lente_torico_valor: parseInt(e.target.value) || 0 })}
+                            placeholder="T3"
+                            className="w-full px-2 py-1.5 rounded-xl bg-[var(--card)] border border-blue-500/50 text-xs font-mono font-bold text-center outline-none"
+                            title="Valor tórico cilíndrico (salto discreto de 1)"
+                          />
+                        </div>
+                        <div className="w-1/2">
+                          <input
+                            type="number"
+                            step="1"
+                            min="0"
+                            max="180"
+                            value={formData.lente_torico_eje}
+                            onChange={(e) => setFormData({ ...formData, lente_torico_eje: parseInt(e.target.value) || 0 })}
+                            placeholder="Eje 90°"
+                            className="w-full px-2 py-1.5 rounded-xl bg-[var(--card)] border border-purple-500/50 text-xs font-mono font-bold text-center outline-none"
+                            title="Eje de alineación tórica en grados (0° a 180°)"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-400 font-medium text-center">
+                        No Tórico
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -747,7 +853,7 @@ export default function TabProgramacionLio({
                     </div>
                   </div>
 
-                  {/* Lotes disponibles clasificados por ubicación */}
+                  {/* Lotes disponibles clasificados por ubicación (1-clic) */}
                   {(() => {
                     const lotesConOrigen = [
                       ...(skuResuelto.stock?.lotes_quirofano || []).map((l: any) => ({ ...l, origen: 'Quirófano', color: 'border-emerald-400 text-emerald-800 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-950/40' })),
@@ -793,117 +899,53 @@ export default function TabProgramacionLio({
                 </div>
               ) : null}
 
-              {/* Banner Interactivo de Escáner ProSoft S224 */}
-              <div className="p-3 rounded-2xl bg-slate-100 dark:bg-slate-800/60 border border-[var(--border)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/20">
-                    <Barcode size={18} />
-                  </div>
-                  <div>
-                    <span className="font-bold text-[var(--foreground)] flex items-center gap-2">
-                      <span>Carga Rápida por Escáner ProSoft S224</span>
-                      <span
-                        className={`w-2 h-2 rounded-full ${estaEscaneando ? 'bg-emerald-400 scale-125' : 'bg-emerald-500 animate-pulse'}`}
-                        title="Escuchando lector"
-                      />
-                    </span>
-                    <p className="text-[11px] text-[var(--secondary)]">
-                      {ultimoLioEscaneado ? (
-                        <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                          ✔ Blíster escaneado: Lote {ultimoLioEscaneado.lote || 'OK'} • Serie {ultimoLioEscaneado.serie || 'OK'} • Vto {ultimoLioEscaneado.vencimiento || 'OK'}
-                        </span>
-                      ) : (
-                        'Apunta y dispara a la caja/blíster del lente para autopoblar Lote, Serie y Caducidad.'
-                      )}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Lote, Serie y Vencimiento del Blíster */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* FILA DE TRAZABILIDAD FÍSICA LIMPIA (3 COLUMNAS) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
                 <div>
-                  <label className="block text-[11px] font-bold text-[var(--secondary)] mb-1">
-                    N° de Lote (Blíster) *
+                  <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between mb-1">
+                    <span>N° de Lote LIO</span>
+                    <span className="text-[10px] text-slate-400 font-mono">Físico</span>
                   </label>
                   <input
                     type="text"
                     value={formData.lente_lote || ''}
                     onChange={(e) => setFormData({ ...formData, lente_lote: e.target.value })}
                     placeholder="Ej: LOT-98214"
-                    className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-xs font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--card)] font-mono text-xs font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-[var(--secondary)] mb-1">
-                    N° de Serie (SN) *
+                  <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between mb-1">
+                    <span>N° de Serie LIO</span>
+                    <span className="text-[10px] text-slate-400 font-mono">SN</span>
                   </label>
                   <input
                     type="text"
                     value={formData.lente_serie || ''}
                     onChange={(e) => setFormData({ ...formData, lente_serie: e.target.value })}
                     placeholder="Ej: SN-44120"
-                    className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-xs font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--card)] font-mono text-xs font-bold text-[var(--foreground)] outline-none focus:border-blue-500"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-bold text-[var(--secondary)] mb-1">
-                    Vencimiento LIO
+                  <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between mb-1">
+                    <span>Vencimiento LIO</span>
+                    {ultimoLioEscaneado && (
+                      <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5">
+                        <CheckCircle2 size={10} /> Escáner
+                      </span>
+                    )}
                   </label>
                   <input
                     type="date"
                     value={formData.lente_vencimiento || ''}
                     onChange={(e) => setFormData({ ...formData, lente_vencimiento: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-mono text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
+                    className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--card)] font-mono text-xs text-[var(--foreground)] outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
-
-              {/* Checkbox Tórico Manual (si no viene de cálculo) */}
-              {!tieneOpciones && (
-                <div className="col-span-full pt-2 flex flex-wrap items-center gap-4 border-t border-blue-200/60 dark:border-blue-800/40">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={formData.es_torico}
-                      onChange={(e) => setFormData({ ...formData, es_torico: e.target.checked })}
-                      className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 accent-purple-600"
-                    />
-                    <span className="font-bold text-xs text-purple-700 dark:text-purple-300">Lente Tórico (Astigmatismo)</span>
-                  </label>
-
-                  {formData.es_torico && (
-                    <div className="flex items-center gap-3 text-xs">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium text-[var(--secondary)]">Valor Tórico:</span>
-                        <input
-                          type="number"
-                          min="1"
-                          max="9"
-                          value={formData.lente_torico_valor}
-                          onChange={(e) => setFormData({ ...formData, lente_torico_valor: Number(e.target.value) })}
-                          className="w-16 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--background)] font-bold text-center"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-medium text-[var(--secondary)]">Eje de Implante:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          max="180"
-                          value={formData.lente_torico_eje}
-                          onChange={(e) => setFormData({ ...formData, lente_torico_eje: Number(e.target.value) })}
-                          className="w-20 px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--background)] font-bold text-center text-purple-600"
-                        />
-                        <span className="font-bold text-purple-600">°</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         )}
