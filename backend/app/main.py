@@ -5068,10 +5068,12 @@ async def enviar_recordatorio_whatsapp_endpoint(
         )
 
     # Validar existencia y estado de homologación de la plantilla en Supabase
+    body_text_db = ""
     try:
         tpl_check = supabase.table("whatsapp_templates").select("name, status, body_text").eq("name", template_name).execute()
         if tpl_check.data and len(tpl_check.data) > 0:
             current_status = tpl_check.data[0].get("status", "PENDING")
+            body_text_db = tpl_check.data[0].get("body_text") or ""
             if current_status != "APPROVED":
                 raise HTTPException(
                     status_code=400,
@@ -5103,14 +5105,18 @@ async def enviar_recordatorio_whatsapp_endpoint(
     p_hora = _sanitize_meta_param(variables.get("hora"), "horario a confirmar")
     p_prep = _sanitize_meta_param(variables.get("preparacion"), "Concurrir con DNI y en ayunas.")
 
+    # Determinar dinámicamente variables posicionales {{n}} esperadas por la plantilla en Meta
+    raw_var_matches = re.findall(r"\{\{(\d+)\}\}", body_text_db)
+    num_vars = len(set(raw_var_matches)) if raw_var_matches else 0
+
     components = []
-    if template_name == "turno_cirug_a":
-        # 'turno_cirug_a' en Meta es de texto fijo sin variables posicionales
+    if template_name == "turno_cirug_a" or num_vars == 0:
+        # Plantilla fija sin variables posicionales
         components = []
     elif template_name in ["recordatorio_turno_quirurgico"]:
         p_medico = _sanitize_meta_param(variables.get("cirujano_nombre"), "Equipo Quirúrgico")
         p_quirofano = _sanitize_meta_param(variables.get("quirofano_nombre"), "Centrovisión")
-        body_params = [
+        candidate_params = [
             {"type": "text", "text": p_nombre},
             {"type": "text", "text": p_fecha},
             {"type": "text", "text": p_hora},
@@ -5118,29 +5124,39 @@ async def enviar_recordatorio_whatsapp_endpoint(
             {"type": "text", "text": p_cirugia},
             {"type": "text", "text": p_quirofano}
         ]
-        components = [{"type": "body", "parameters": body_params}]
+        components = [{"type": "body", "parameters": candidate_params[:num_vars] if num_vars > 0 else candidate_params}]
     else:
-        # Default recordatorio con preparación (5 variables)
-        body_params = [
-            {"type": "text", "text": p_nombre},
-            {"type": "text", "text": p_cirugia},
-            {"type": "text", "text": p_fecha},
-            {"type": "text", "text": p_hora},
-            {"type": "text", "text": p_prep}
+        # Default recordatorios quirúrgicos (ej: recordatorio_cirugia_preparacion_v1)
+        # Auto-adaptación dinámica:
+        # - Si la plantilla en Meta tiene 4 variables ({{1}} a {{4}}), despachar exactamente 4 parámetros.
+        # - Si la plantilla en Meta tiene 5 variables ({{1}} a {{5}}), despachar los 5 parámetros.
+        all_candidate_params = [
+            {"type": "text", "text": p_nombre},    # {{1}} Paciente
+            {"type": "text", "text": p_cirugia},   # {{2}} Cirugía
+            {"type": "text", "text": p_fecha},     # {{3}} Fecha
+            {"type": "text", "text": p_hora},      # {{4}} Hora
+            {"type": "text", "text": p_prep}       # {{5}} Preparación
         ]
+        if num_vars > 0:
+            body_params = all_candidate_params[:num_vars]
+        else:
+            # Fallback seguro si no se pudo leer body_text
+            body_params = all_candidate_params[:4]
+
         components = [{"type": "body", "parameters": body_params}]
 
     # Validar límite estricto de Meta: el cuerpo total hidratado no puede superar 1024 caracteres (Error 132005)
-    if template_name == "recordatorio_cirugia_preparacion_v1":
-        cuerpo_estimado = (
-            f"Hola {p_nombre}, le recordamos que su cirugía de {p_cirugia} está programada para el día {p_fecha} "
-            f"a las {p_hora} hs en Centrovisión.\n\n📋 Indicaciones de preparación:\n{p_prep}\n\n"
-            f"Por favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición."
-        )
+    if body_text_db:
+        cuerpo_estimado = body_text_db
+        if num_vars >= 1: cuerpo_estimado = cuerpo_estimado.replace("{{1}}", p_nombre)
+        if num_vars >= 2: cuerpo_estimado = cuerpo_estimado.replace("{{2}}", p_cirugia)
+        if num_vars >= 3: cuerpo_estimado = cuerpo_estimado.replace("{{3}}", p_fecha)
+        if num_vars >= 4: cuerpo_estimado = cuerpo_estimado.replace("{{4}}", p_hora)
+        if num_vars >= 5: cuerpo_estimado = cuerpo_estimado.replace("{{5}}", p_prep)
         if len(cuerpo_estimado) > 1024:
             raise HTTPException(
                 status_code=400,
-                detail=f"El mensaje de la plantilla supera el límite máximo de 1.024 caracteres exigido por Meta WhatsApp (Longitud actual: {len(cuerpo_estimado)} caracteres). Por favor sintetice o recorte las indicaciones de preparación para poder emitirlo."
+                detail=f"El mensaje de la plantilla supera el límite máximo de 1.024 caracteres exigido por Meta WhatsApp (Longitud actual: {len(cuerpo_estimado)} caracteres). Por favor sintetice el contenido para poder emitirlo."
             )
 
     client = WhatsAppCloudClient(phone_number_id=phone_id, access_token=token)

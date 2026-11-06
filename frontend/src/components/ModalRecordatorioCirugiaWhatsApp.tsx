@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   X,
   BellRing,
@@ -234,8 +234,6 @@ export default function ModalRecordatorioCirugiaWhatsApp({
     }
   }, [isOpen, casoId, pacienteNombreDefault, pacienteTelefonoDefault, ojoDefault])
 
-  if (!isOpen) return null
-
   // Sincronizar y consultar estado en vivo con Meta
   const handleSincronizarEstado = async () => {
     try {
@@ -317,6 +315,12 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   const templateStatus = templateActualInfo ? templateActualInfo.status : 'NO_REGISTRADA'
   const isAprobadaMeta = templateStatus === 'APPROVED'
 
+  // Cantidad de variables en la plantilla de Meta
+  const rawVarMatches = templateActualInfo?.body_text
+    ? Array.from(templateActualInfo.body_text.matchAll(/\{\{(\d+)\}\}/g)).map((m) => m[1])
+    : []
+  const numVarsTemplate = new Set(rawVarMatches).size
+
   // Sanitizar texto como lo procesa Meta al inyectar parámetros
   const sanitizeMetaText = (v: string) => {
     const s = (v || '').trim()
@@ -328,31 +332,37 @@ export default function ModalRecordatorioCirugiaWhatsApp({
   // Límite estricto de Meta WhatsApp Cloud API (1.024 caracteres para el body hidratado)
   const LIMITE_CARACTERES_META = 1024
 
-  const calcularLongitudHidratada = () => {
-    if (plantillaSeleccionada === 'turno_cirug_a') {
-      return templateActualInfo?.body_text?.length || 200
-    }
-    const sNombre = sanitizeMetaText(pacienteNombre) || 'Estimado/a'
-    const sCirugia = sanitizeMetaText(cirugia) || 'Cirugía Oftalmológica'
-    const sFecha = sanitizeMetaText(formatDateArg(fecha, fecha)) || 'fecha a confirmar'
-    const sHora = sanitizeMetaText(hora) || 'horario a confirmar'
-    const sPrep = sanitizeMetaText(preparacion) || 'Concurrir con DNI y en ayunas.'
-
-    const textoBaseEstimado = `Hola ${sNombre}, le recordamos que su cirugía de ${sCirugia} está programada para el día ${sFecha} a las ${sHora} hs en Centrovisión.\n\n📋 Indicaciones de preparación:\n${sPrep}\n\nPor favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.`
-    return textoBaseEstimado.length
-  }
-
-  const longitudTotalMensaje = calcularLongitudHidratada()
-  const isExcedidoLongitud = longitudTotalMensaje > LIMITE_CARACTERES_META
-
-  // Generar texto completo del mensaje para previsualización
+  // Generar texto completo del mensaje hidratado para previsualización real según la plantilla activa
   const fechaVisual = formatDateArg(fecha, fecha || '[Fecha]')
-  const cuerpoTextoRenderizado = `Hola ${pacienteNombre || '[Paciente]'}, le recordamos que su cirugía de ${cirugia || '[Procedimiento]'} está programada para el día ${fechaVisual} a las ${hora || '[Horario]'} hs en Centrovisión.
+  const cuerpoTextoRenderizado = useMemo(() => {
+    if (!templateActualInfo?.body_text) {
+      return `Hola ${pacienteNombre || '[Paciente]'}, le recordamos que su cirugía de ${cirugia || '[Procedimiento]'} está programada para el día ${fechaVisual} a las ${hora || '[Horario]'} hs en Centrovisión.\n\nPor favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.`
+    }
+    let res = templateActualInfo.body_text
+    res = res.replace(/\{\{1\}\}/g, pacienteNombre || '[Paciente]')
+    res = res.replace(/\{\{2\}\}/g, cirugia || '[Procedimiento]')
+    res = res.replace(/\{\{3\}\}/g, fechaVisual)
+    res = res.replace(/\{\{4\}\}/g, hora || '[Horario]')
+    if (numVarsTemplate >= 5) {
+      res = res.replace(/\{\{5\}\}/g, preparacion || '[Indicaciones de preparación]')
+    }
+    return res
+  }, [templateActualInfo, pacienteNombre, cirugia, fechaVisual, hora, preparacion, numVarsTemplate])
 
-📋 Indicaciones de preparación:
-${preparacion || '[Pautas de preparación y ayuno]'}
+  const longitudTotalMensaje = useMemo(() => {
+    if (!templateActualInfo?.body_text) return cuerpoTextoRenderizado.length
+    let calc = templateActualInfo.body_text
+    calc = calc.replace(/\{\{1\}\}/g, sanitizeMetaText(pacienteNombre) || 'Estimado/a')
+    calc = calc.replace(/\{\{2\}\}/g, sanitizeMetaText(cirugia) || 'Cirugía Oftalmológica')
+    calc = calc.replace(/\{\{3\}\}/g, sanitizeMetaText(fechaVisual) || 'fecha a confirmar')
+    calc = calc.replace(/\{\{4\}\}/g, sanitizeMetaText(hora) || 'horario a confirmar')
+    if (numVarsTemplate >= 5) {
+      calc = calc.replace(/\{\{5\}\}/g, sanitizeMetaText(preparacion) || 'Concurrir con DNI y en ayunas.')
+    }
+    return calc.length
+  }, [templateActualInfo, pacienteNombre, cirugia, fechaVisual, hora, preparacion, numVarsTemplate, cuerpoTextoRenderizado])
 
-Por favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.`
+  const isExcedidoLongitud = longitudTotalMensaje > LIMITE_CARACTERES_META
 
   // Manejador del despacho
   const handleEnviarWhatsApp = async () => {
@@ -462,6 +472,8 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
   }
 
   const horaActualDisplay = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+
+  if (!isOpen) return null
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-3 sm:p-5 overflow-y-auto">
@@ -780,8 +792,15 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
               {/* Variable 5: Preparación y Ayuno */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-[11px] font-bold text-gray-400">
-                    Indicaciones de Preparación & Ayuno {`{{5}}`}:
+                  <label className="text-[11px] font-bold text-gray-400 flex items-center gap-1.5 flex-wrap">
+                    <span>Indicaciones de Preparación & Ayuno</span>
+                    {numVarsTemplate >= 5 ? (
+                      <span className="text-emerald-400 font-mono text-[10px] font-bold">{`{{5}}`}</span>
+                    ) : (
+                      <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-600/40 font-normal">
+                        Plantilla Meta activa: 4 variables (sin {`{{5}}`})
+                      </span>
+                    )}
                   </label>
                   <div className="flex items-center gap-1.5">
                     <span
@@ -798,6 +817,11 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                     </span>
                   </div>
                 </div>
+                {numVarsTemplate === 4 && (
+                  <p className="text-[10px] text-amber-300/80 mb-1 leading-tight">
+                    * La versión homologada actualmente en Meta cuenta con 4 variables (cita, día, hora y sede). El recordatorio oficial se enviará con éxito. Para incluir preparación en el texto de WhatsApp, puedes editar la plantilla en Ajustes &gt; Plantillas Meta agregando {`{{5}}`}.
+                  </p>
+                )}
                 <textarea
                   rows={4}
                   value={preparacion}
@@ -881,15 +905,9 @@ Por favor, presione el botón inferior para confirmar su asistencia. Ante cualqu
                 {/* Globo Oficial de WhatsApp Outbound */}
                 <div className="self-end max-w-[92%] bg-[#005c4b] text-gray-100 rounded-2xl rounded-tr-xs p-3 shadow-md space-y-2 text-xs">
                   
-                  {/* Cuerpo del Mensaje */}
+                  {/* Cuerpo del Mensaje Real Hidratado */}
                   <div className="text-[11.5px] leading-relaxed whitespace-pre-line text-white">
-                    Hola <span className="font-bold text-emerald-200">{pacienteNombre || 'Paciente'}</span>, le recordamos que su cirugía de <span className="font-bold text-emerald-200">{cirugia || 'Cirugía Oftalmológica'}</span> está programada para el día <span className="font-bold text-emerald-200">{formatDateArg(fecha, 'Fecha')}</span> a las <span className="font-bold text-emerald-200">{hora || 'Horario'}</span> hs en Centrovisión.
-                    <br /><br />
-                    📋 <span className="font-bold underline">Indicaciones de preparación:</span>
-                    <br />
-                    <span className="text-gray-100 italic">{preparacion || 'Ayuno y concurrir con DNI.'}</span>
-                    <br /><br />
-                    Por favor, presione el botón inferior para confirmar su asistencia. Ante cualquier consulta, estamos a su disposición.
+                    {cuerpoTextoRenderizado}
                   </div>
 
                   {/* Footer & Meta Timestamp */}
