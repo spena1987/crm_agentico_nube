@@ -8993,11 +8993,18 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
         elif nuevo_estado == "en_espera":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
+            # Al retroceder a En Espera, limpia timestamps de pre-quirófano e intraoperatorios
+            update_payload["ingreso_pre_quirofano_at"] = None
+            update_payload["inicio_cirugia_at"] = None
+            update_payload["fin_cirugia_at"] = None
         elif nuevo_estado == "pre_quirofano":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
             if not turno_actual.get("ingreso_pre_quirofano_at"):
                 update_payload["ingreso_pre_quirofano_at"] = ahora_iso
+            # Al retroceder a Pre-Quirófano, limpia timestamps intraoperatorios
+            update_payload["inicio_cirugia_at"] = None
+            update_payload["fin_cirugia_at"] = None
         elif nuevo_estado == "en_operacion":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso
@@ -9005,6 +9012,8 @@ def cambiar_estado_turno_quirofano(turno_id: str, nuevo_estado: str) -> Dict[str
                 update_payload["ingreso_pre_quirofano_at"] = ahora_iso
             if not turno_actual.get("inicio_cirugia_at"):
                 update_payload["inicio_cirugia_at"] = ahora_iso
+            # Si se reabre una cirugía, limpia fin_cirugia_at
+            update_payload["fin_cirugia_at"] = None
         elif nuevo_estado == "operado":
             if not turno_actual.get("llegada_at"):
                 update_payload["llegada_at"] = ahora_iso

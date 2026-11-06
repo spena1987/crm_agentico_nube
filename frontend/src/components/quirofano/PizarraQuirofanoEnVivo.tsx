@@ -458,15 +458,26 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
 
       const ahoraIso = new Date().toISOString()
       const timestampsOptimistas: Record<string, any> = {}
-      if (nuevoEstado === 'en_espera') {
+      if (nuevoEstado === 'programado') {
+        timestampsOptimistas.llegada_at = null
+        timestampsOptimistas.ingreso_pre_quirofano_at = null
+        timestampsOptimistas.inicio_cirugia_at = null
+        timestampsOptimistas.fin_cirugia_at = null
+      } else if (nuevoEstado === 'en_espera') {
         if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
+        timestampsOptimistas.ingreso_pre_quirofano_at = null
+        timestampsOptimistas.inicio_cirugia_at = null
+        timestampsOptimistas.fin_cirugia_at = null
       } else if (nuevoEstado === 'pre_quirofano') {
         if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
         if (!turnoPrevio?.ingreso_pre_quirofano_at) timestampsOptimistas.ingreso_pre_quirofano_at = ahoraIso
+        timestampsOptimistas.inicio_cirugia_at = null
+        timestampsOptimistas.fin_cirugia_at = null
       } else if (nuevoEstado === 'en_operacion') {
         if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
         if (!turnoPrevio?.ingreso_pre_quirofano_at) timestampsOptimistas.ingreso_pre_quirofano_at = ahoraIso
         if (!turnoPrevio?.inicio_cirugia_at) timestampsOptimistas.inicio_cirugia_at = ahoraIso
+        timestampsOptimistas.fin_cirugia_at = null
       } else if (nuevoEstado === 'operado') {
         if (!turnoPrevio?.llegada_at) timestampsOptimistas.llegada_at = ahoraIso
         if (!turnoPrevio?.ingreso_pre_quirofano_at) timestampsOptimistas.ingreso_pre_quirofano_at = ahoraIso
@@ -1647,38 +1658,72 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
                       </div>
                     )}
 
-                    {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS y pasa a en_operacion) */}
+                    {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS y pasa a en_operacion) & Volver a Espera */}
                     {esPreQuirofano && (
-                      <button
-                        type="button"
-                        disabled={procesandoId === t.id}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setTurnoParaPausaOms(t)
-                        }}
-                        className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-purple-500/20 transition disabled:opacity-50"
-                        title="Iniciar Cirugía (Abre Checklist de Pausa Quirúrgica OMS y pasa a En Quirófano)"
-                      >
-                        {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={14} />}
-                        <span>🟣 Iniciar Cirugía</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setTurnoParaPausaOms(t)
+                          }}
+                          className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-purple-500/20 transition disabled:opacity-50"
+                          title="Iniciar Cirugía (Abre Checklist de Pausa Quirúrgica OMS y pasa a En Quirófano)"
+                        >
+                          {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <Play size={14} />}
+                          <span>🟣 Iniciar Cirugía</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (window.confirm(`¿Regresar a ${pac.nombre || 'este paciente'} a la etapa de "En Espera"?\n\nEl paciente volverá a figurar en sala de espera y se limpiará el tiempo transcurrido en pre-quirófano.`)) {
+                              handleCambiarEstado(t.id, 'en_espera')
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1 border border-gray-300 dark:border-slate-700 transition"
+                          title="Volver a En Espera: El paciente aún permanece en sala de espera común"
+                        >
+                          <Undo2 size={13} />
+                          <span>Volver a Espera</span>
+                        </button>
+                      </div>
                     )}
 
-                    {/* Botón 4: Finalizar Cirugía (marcar operado) */}
+                    {/* Botón 4: Finalizar Cirugía (marcar operado) & Volver a Pre-Qx */}
                     {esEnOperacion && (
-                      <button
-                        type="button"
-                        disabled={procesandoId === t.id}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleCambiarEstado(t.id, 'operado')
-                        }}
-                        className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-emerald-500/20 transition disabled:opacity-50"
-                        title="Finalizar y cerrar acto quirúrgico"
-                      >
-                        {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                        <span>🟢 Finalizar (Operado)</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleCambiarEstado(t.id, 'operado')
+                          }}
+                          className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md shadow-emerald-500/20 transition disabled:opacity-50"
+                          title="Finalizar y cerrar acto quirúrgico"
+                        >
+                          {procesandoId === t.id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                          <span>🟢 Finalizar (Operado)</span>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={procesandoId === t.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (window.confirm(`¿Regresar a ${pac.nombre || 'este paciente'} a la etapa de "Pre-Quirófano"?\n\nSe cancelará el estado de cirugía en curso para este paciente.`)) {
+                              handleCambiarEstado(t.id, 'pre_quirofano')
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-600 dark:text-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1 border border-gray-300 dark:border-slate-700 transition"
+                          title="Volver a Pre-Quirófano: Se inició la cirugía por error"
+                        >
+                          <Undo2 size={13} />
+                          <span>Volver a Pre-Qx</span>
+                        </button>
+                      </div>
                     )}
 
                     {/* Si ya está operado: Protocolo Quirúrgico y Sincronización Geclisa */}

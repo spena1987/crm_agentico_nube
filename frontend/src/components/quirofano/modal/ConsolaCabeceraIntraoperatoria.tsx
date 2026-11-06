@@ -14,7 +14,8 @@ import {
   CheckCheck,
   Check,
   Trash2,
-  Sparkles
+  Sparkles,
+  Undo2
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 import { formatearHoraDesdeIso, calcularMinutosTranscurridos } from '@/lib/dateUtils'
@@ -215,43 +216,91 @@ export default function ConsolaCabeceraIntraoperatoria({
             </button>
           )}
 
-          {/* Botón 2: Pasar a Pre-Quirófano */}
+          {/* Botón 2: Pasar a Pre-Quirófano & Deshacer Recepción */}
           {esEnEspera && (
-            <button
-              type="button"
-              disabled={procesandoEstado}
-              onClick={() => onCambiarEstado('pre_quirofano')}
-              className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-cyan-500/30 transition disabled:opacity-50"
-            >
-              {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-              <span>🩵 Ingresar a Pre-Quirófano</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={procesandoEstado}
+                onClick={() => onCambiarEstado('pre_quirofano')}
+                className="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-cyan-500/30 transition disabled:opacity-50"
+              >
+                {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                <span>🩵 Ingresar a Pre-Quirófano</span>
+              </button>
+              <button
+                type="button"
+                disabled={procesandoEstado}
+                onClick={() => {
+                  if (window.confirm('¿Revertir la recepción y devolver el turno a Citado?')) {
+                    onCambiarEstado('programado')
+                  }
+                }}
+                className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-300 dark:border-slate-700 transition"
+                title="Deshacer recepción: Vuelve a Citado"
+              >
+                <Undo2 size={14} />
+                <span>Deshacer</span>
+              </button>
+            </div>
           )}
 
-          {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS) */}
+          {/* Botón 3: Iniciar Cirugía (dispara Pausa Quirúrgica OMS) & Volver a Espera */}
           {esPreQuirofano && (
-            <button
-              type="button"
-              disabled={procesandoEstado}
-              onClick={() => setModalPausaAbierto(true)}
-              className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-purple-500/30 transition disabled:opacity-50"
-            >
-              {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
-              <span>🟣 Iniciar Cirugía (Pausa OMS)</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={procesandoEstado}
+                onClick={() => setModalPausaAbierto(true)}
+                className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-purple-500/30 transition disabled:opacity-50"
+              >
+                {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+                <span>🟣 Iniciar Cirugía (Pausa OMS)</span>
+              </button>
+              <button
+                type="button"
+                disabled={procesandoEstado}
+                onClick={() => {
+                  if (window.confirm('¿Regresar al paciente a la etapa de "En Espera"?\n\nEl paciente volverá a figurar en sala de espera común y se limpiará el tiempo transcurrido en pre-quirófano.')) {
+                    onCambiarEstado('en_espera')
+                  }
+                }}
+                className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-300 dark:border-slate-700 transition"
+                title="Volver a En Espera (si aún permanece en sala de espera)"
+              >
+                <Undo2 size={14} />
+                <span>Volver a Espera</span>
+              </button>
+            </div>
           )}
 
-          {/* Botón 4: Finalizar Cirugía */}
+          {/* Botón 4: Finalizar Cirugía & Volver a Pre-Qx */}
           {esEnOperacion && (
-            <button
-              type="button"
-              disabled={procesandoEstado}
-              onClick={() => onCambiarEstado('operado')}
-              className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition disabled:opacity-50"
-            >
-              {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={16} />}
-              <span>🟢 Finalizar Cirugía (Operado)</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={procesandoEstado}
+                onClick={() => onCambiarEstado('operado')}
+                className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-xl text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition disabled:opacity-50"
+              >
+                {procesandoEstado ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={16} />}
+                <span>🟢 Finalizar Cirugía (Operado)</span>
+              </button>
+              <button
+                type="button"
+                disabled={procesandoEstado}
+                onClick={() => {
+                  if (window.confirm('¿Regresar al paciente a "Pre-Quirófano"?\n\nSe cancelará el estado de cirugía en curso.')) {
+                    onCambiarEstado('pre_quirofano')
+                  }
+                }}
+                className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-300 dark:border-slate-700 transition"
+                title="Volver a Pre-Quirófano"
+              >
+                <Undo2 size={14} />
+                <span>Volver a Pre-Qx</span>
+              </button>
+            </div>
           )}
 
           {/* Si ya está Operado: Botones de Protocolo Quirúrgico y Subida a Geclisa */}
