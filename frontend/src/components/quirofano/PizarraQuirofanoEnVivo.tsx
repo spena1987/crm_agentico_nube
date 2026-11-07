@@ -188,9 +188,22 @@ export default function PizarraQuirofanoEnVivo({ onEditarTurno }: PizarraQuirofa
   const [mostrarModalGuiaS224, setMostrarModalGuiaS224] = useState<boolean>(false)
   const [hudEscaneoLio, setHudEscaneoLio] = useState<{ texto: string; gtin?: string; lote?: string; vto?: string } | null>(null)
 
+  // Suspender escáner de la pizarra si hay algún modal interactivo activo para ceder el control exclusivo
+  const hayModalAbiertoEnPizarra = !!(
+    turnoParaPausaOms ||
+    scanVerifTurnoId ||
+    turnoModalDetalle ||
+    pulseraTurnoId ||
+    mostrarModalCamara ||
+    mostrarModalGuiaS224 ||
+    alertaConsentimiento ||
+    mostrarModalCartelesA4 ||
+    consentimientoModalTurno
+  )
+
   // Motor inteligente de escáner universal (ProSoft S224 / USB HID / Bluetooth)
   const { ultimoEscaneo, estaEscaneando } = useSmartScannerEngine({
-    enabled: true,
+    enabled: !hayModalAbiertoEnPizarra,
     onScanPaciente: (scannedTurnoId, rawCode) => {
       procesarEscaneoPizarra(rawCode, scannedTurnoId)
     },

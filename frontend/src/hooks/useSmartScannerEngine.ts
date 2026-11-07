@@ -47,6 +47,42 @@ export function useSmartScannerEngine({
   useEffect(() => {
     if (!enabled) return
 
+    const despacharCodigoEscaneado = (rawCode: string, isInput?: boolean, target?: HTMLElement | null) => {
+      if (!rawCode || rawCode.length < 4) return
+
+      // Si el foco estaba en un input y el escáner escribió caracteres dentro, limpiarlos
+      if (isInput && target && 'value' in target) {
+        const inputElem = target as HTMLInputElement
+        if (inputElem.value && inputElem.value.includes(rawCode)) {
+          inputElem.value = inputElem.value.replace(rawCode, '').trim()
+          inputElem.dispatchEvent(new Event('input', { bubbles: true }))
+        }
+      }
+
+      if (callbacksRef.current.reproducirAudio) {
+        reproducirBeepScan()
+      }
+
+      setEstaEscaneando(true)
+      setTimeout(() => setEstaEscaneando(false), 800)
+
+      // Clasificar código mediante el motor GS1 / Pulsera con normalización de teclado
+      const rawLimpio = normalizarDistorsionTecladoEscaner(rawCode)
+      const clasificacion = clasificarLecturaEscaneo(rawLimpio)
+      setUltimoEscaneo(clasificacion)
+
+      // Disparar callbacks específicos
+      if (clasificacion.tipo === 'PULSERA_PACIENTE') {
+        callbacksRef.current.onScanPaciente?.(clasificacion.turnoId, rawLimpio)
+      } else if (clasificacion.tipo === 'LIO_DATAMATRIX') {
+        callbacksRef.current.onScanLio?.(clasificacion.gs1, rawLimpio)
+      } else if (clasificacion.tipo === 'CODIGO_1D_GTIN') {
+        callbacksRef.current.onScanGtin?.(clasificacion.gtin14, rawLimpio)
+      }
+
+      callbacksRef.current.onScanGeneral?.(clasificacion)
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const isInput =
@@ -59,8 +95,8 @@ export function useSmartScannerEngine({
       const timeDiff = currentTime - lastKeyTimeRef.current
       lastKeyTimeRef.current = currentTime
 
-      // Si el intervalo entre teclas es largo (> 80ms) y teníamos pocos caracteres (< 4), reiniciar buffer
-      if (timeDiff > 85 && bufferRef.current.length > 0 && bufferRef.current.length < 5) {
+      // Si el intervalo entre teclas es largo (> 90ms) y teníamos pocos caracteres (< 4), reiniciar buffer
+      if (timeDiff > 90 && bufferRef.current.length > 0 && bufferRef.current.length < 4) {
         bufferRef.current = ''
         burstCountRef.current = 0
       }
@@ -68,47 +104,15 @@ export function useSmartScannerEngine({
       // Finalizador de ráfaga: Enter o Tab (según la configuración del escáner en el manual)
       if (e.key === 'Enter' || e.key === 'Tab') {
         const rawCode = bufferRef.current.trim()
-        const burstCount = burstCountRef.current
         bufferRef.current = ''
         burstCountRef.current = 0
+        if (timeoutClearRef.current) clearTimeout(timeoutClearRef.current)
 
-        // Un código de barras o DataMatrix válido tiene mínimo 4 caracteres y viene en ráfaga rápida
+        // Un código de barras o DataMatrix válido tiene mínimo 4 caracteres
         if (rawCode.length >= 4) {
-          // Prevenir que el Enter envíe formularios accidentales
           e.preventDefault()
           e.stopPropagation()
-
-          // Si el foco estaba en un input y el escáner escribió caracteres dentro, limpiarlos
-          if (isInput && target && 'value' in target) {
-            const inputElem = target as HTMLInputElement
-            if (inputElem.value && inputElem.value.includes(rawCode)) {
-              inputElem.value = inputElem.value.replace(rawCode, '').trim()
-              inputElem.dispatchEvent(new Event('input', { bubbles: true }))
-            }
-          }
-
-          if (callbacksRef.current.reproducirAudio) {
-            reproducirBeepScan()
-          }
-
-          setEstaEscaneando(true)
-          setTimeout(() => setEstaEscaneando(false), 800)
-
-          // Clasificar código mediante el motor GS1 / Pulsera con normalización de teclado
-          const rawLimpio = normalizarDistorsionTecladoEscaner(rawCode)
-          const clasificacion = clasificarLecturaEscaneo(rawLimpio)
-          setUltimoEscaneo(clasificacion)
-
-          // Disparar callbacks específicos
-          if (clasificacion.tipo === 'PULSERA_PACIENTE') {
-            callbacksRef.current.onScanPaciente?.(clasificacion.turnoId, rawLimpio)
-          } else if (clasificacion.tipo === 'LIO_DATAMATRIX') {
-            callbacksRef.current.onScanLio?.(clasificacion.gs1, rawLimpio)
-          } else if (clasificacion.tipo === 'CODIGO_1D_GTIN') {
-            callbacksRef.current.onScanGtin?.(clasificacion.gtin14, rawLimpio)
-          }
-
-          callbacksRef.current.onScanGeneral?.(clasificacion)
+          despacharCodigoEscaneado(rawCode, !!isInput, target)
         }
         return
       }
@@ -118,12 +122,19 @@ export function useSmartScannerEngine({
         bufferRef.current += e.key
         burstCountRef.current += 1
 
-        // Temporizador de seguridad: si no llega el delimitador Enter tras 600ms, limpiar
+        // Temporizador de seguridad: si no llega el delimitador Enter tras la ráfaga,
+        // pero se acumularon >= 4 caracteres a alta velocidad de lectura láser, procesar al vuelo
         if (timeoutClearRef.current) clearTimeout(timeoutClearRef.current)
         timeoutClearRef.current = setTimeout(() => {
+          const rawCode = bufferRef.current.trim()
+          const count = burstCountRef.current
           bufferRef.current = ''
           burstCountRef.current = 0
-        }, 650)
+
+          if (rawCode.length >= 4 && count >= 4) {
+            despacharCodigoEscaneado(rawCode, !!isInput, target)
+          }
+        }, 280)
       }
     }
 

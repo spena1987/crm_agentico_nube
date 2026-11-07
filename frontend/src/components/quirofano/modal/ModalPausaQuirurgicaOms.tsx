@@ -21,7 +21,8 @@ import {
   AlertCircle,
   Barcode,
   HelpCircle,
-  Check
+  Check,
+  Keyboard
 } from 'lucide-react'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { parseGs1Code, Gs1ParsedData } from '@/lib/gs1Parser'
@@ -135,6 +136,14 @@ export default function ModalPausaQuirurgicaOms({
     onScanGtin: (_gtin, rawCode) => {
       if (turno?.lleva_lente) {
         procesarCodigoBlister(rawCode)
+      }
+    },
+    onScanGeneral: (clasificacion) => {
+      // Si fue pulsera, ya se procesó en onScanPaciente
+      if (clasificacion.tipo === 'PULSERA_PACIENTE') return
+      // Para cualquier otro código escaneado (LIO_DATAMATRIX, CODIGO_1D_GTIN o DESCONOCIDO)
+      if (turno?.lleva_lente && clasificacion.raw && clasificacion.raw.trim().length >= 4) {
+        procesarCodigoBlister(clasificacion.raw.trim())
       }
     }
   })
@@ -445,6 +454,38 @@ export default function ModalPausaQuirurgicaOms({
                   </label>
                 </div>
 
+                {/* HUD: Modo Escaneo 'Al Vuelo' Activo Permanente */}
+                <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 mb-3 transition-colors ${
+                  checkLio
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200'
+                    : 'bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-purple-500/10 border-indigo-500/30 text-indigo-900 dark:text-indigo-200'
+                }`}>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="relative flex h-3.5 w-3.5 shrink-0">
+                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                        checkLio ? 'bg-emerald-400' : 'bg-indigo-400'
+                      }`}></span>
+                      <span className={`relative inline-flex rounded-full h-3.5 w-3.5 ${
+                        checkLio ? 'bg-emerald-500' : 'bg-indigo-500'
+                      }`}></span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-black tracking-wide flex items-center gap-1.5 truncate">
+                        <span>{checkLio ? 'Blíster LIO Validado (Lector Activo)' : '🟢 Escáner Óptico / Láser Listo ("Al Vuelo")'}</span>
+                      </p>
+                      <p className="text-[11px] text-[var(--secondary)] truncate">
+                        {checkLio
+                          ? 'Puede disparar sobre otro blíster para rectificar la validación.'
+                          : 'Apunte el lector al blíster o caja en cualquier momento. No requiere clics ni foco manual.'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="hidden sm:flex items-center gap-1 text-[10px] uppercase font-mono px-2 py-1 rounded-md font-bold shrink-0 bg-[var(--card)] border border-[var(--border)] shadow-2xs">
+                    <Barcode size={12} className="text-indigo-500" />
+                    <span>MANOS LIBRES</span>
+                  </div>
+                </div>
+
                 {/* Resumen del Plan Previsto en Biometría */}
                 <div className="bg-[var(--card)] p-2.5 rounded-xl border border-[var(--border)] text-xs mb-3 space-y-1 shadow-xs">
                   <div className="flex items-center justify-between">
@@ -669,37 +710,48 @@ export default function ModalPausaQuirurgicaOms({
                   </div>
                 )}
 
-                {/* Botones de Entrada: Visual Asistencial, Cámara, Pistola USB y Manual */}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setMostrandoVerificacionVisual(!mostrandoVerificacionVisual)}
-                    disabled={esCargando}
-                    className="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition disabled:opacity-50"
-                  >
-                    <Eye size={14} />
-                    <span>{mostrandoVerificacionVisual ? 'Ocultar Cotejo' : '👁️ Verificación Visual (Sin Escáner)'}</span>
-                  </button>
+                {/* Alternativas de Contingencia y Excepción Asistencial */}
+                <div className="pt-2 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">
+                    ¿Sin lector láser o blíster deteriorado?
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMostrandoVerificacionVisual(!mostrandoVerificacionVisual)
+                        setMostrandoInputManual(false)
+                      }}
+                      disabled={esCargando}
+                      className="py-1.5 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--card)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] text-[11px] font-semibold flex items-center gap-1 transition"
+                    >
+                      <Eye size={13} className="text-blue-500" />
+                      <span>{mostrandoVerificacionVisual ? 'Cerrar Cotejo' : 'Cotejo Visual Manual'}</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setCamaraAbierta(true)}
-                    disabled={esCargando}
-                    className="py-2 px-3 bg-purple-600/90 hover:bg-purple-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition disabled:opacity-50"
-                  >
-                    <Camera size={14} />
-                    <span>📷 Cámara</span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setCamaraAbierta(true)}
+                      disabled={esCargando}
+                      className="py-1.5 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--card)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] text-[11px] font-semibold flex items-center gap-1 transition"
+                    >
+                      <Camera size={13} className="text-purple-500" />
+                      <span>Cámara</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setMostrandoInputManual(!mostrandoInputManual)}
-                    disabled={esCargando}
-                    className="py-2 px-3 border border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
-                  >
-                    <Barcode size={14} />
-                    <span>{mostrandoInputManual ? 'Ocultar' : 'Pistola GS1'}</span>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMostrandoInputManual(!mostrandoInputManual)
+                        setMostrandoVerificacionVisual(false)
+                      }}
+                      disabled={esCargando}
+                      className="py-1.5 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--card)] hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--foreground)] text-[11px] font-semibold flex items-center gap-1 transition"
+                    >
+                      <Keyboard size={13} className="text-slate-500" />
+                      <span>{mostrandoInputManual ? 'Ocultar Teclado' : 'Escribir Código'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Panel de Cotejo Visual Asistencial */}
