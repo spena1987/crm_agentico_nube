@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Megaphone,
   ShieldCheck,
@@ -28,6 +28,9 @@ import {
   X,
   FileImage,
   Check,
+  FileText,
+  Eye,
+  Info,
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
@@ -65,7 +68,7 @@ interface PacienteTurnoGeclisa {
   codigo_beneficio: string
   estado_envio: 'ELEGIBLE' | 'COOLDOWN_ACTIVO' | 'OPT_OUT' | 'SIN_CELULAR'
   motivo_exclusion?: string | null
-  seleccionado: boolean
+  seleccionado?: boolean
 }
 
 interface PrestadorFiltro {
@@ -107,22 +110,29 @@ export default function OpticaCampanasPage() {
   // Subida directa desde Paso 3 del Constructor
   const step3FileInputRef = useRef<HTMLInputElement | null>(null)
   const [uploadingStep3Placa, setUploadingStep3Placa] = useState(false)
-  const [step3UploadFeedback, setStep3UploadFeedback] = useState<string | null>(null)
+  const [step3IsDragging, setStep3IsDragging] = useState(false)
+  const [step3UploadFeedback, setStep3UploadFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Wizard de 5 pasos para Crear Campaña Anti-Bloqueo
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1)
   const [campNombre, setCampNombre] = useState('Campaña Voucher 20% OFF Pacientes Consultorio')
   const [campSegmento, setCampSegmento] = useState('TURNOS_PROXIMOS_CON_DESCUENTO')
+  const [diasRecetasFiltro, setDiasRecetasFiltro] = useState<number>(30)
 
-  // Paso 2: Selección Granular de Turnos de Geclisa
+  // Paso 2: Selección Granular de Turnos de Geclisa con Timezone Mendoza UTC-3
   const getFechaOffsetStr = (diasOffset: number) => {
-    const d = new Date()
-    d.setDate(d.getDate() + diasOffset)
-    return d.toISOString().split('T')[0]
+    const now = new Date()
+    // Ajustar a timezone Mendoza UTC-3 sin desfasar a medianoche UTC
+    const mza = new Date(now.getTime() - (now.getTimezoneOffset() - 180) * 60000)
+    mza.setDate(mza.getDate() + diasOffset)
+    return mza.toISOString().split('T')[0]
   }
 
   const [fechaTurnoFiltro, setFechaTurnoFiltro] = useState<string>(getFechaOffsetStr(1))
   const [turnosGeclisa, setTurnosGeclisa] = useState<PacienteTurnoGeclisa[]>([])
+  const [selectedTurnoIds, setSelectedTurnoIds] = useState<Set<string>>(new Set())
+
+  // Filtros locales en memoria (no resetean selección)
   const [prestadoresDisponibles, setPrestadoresDisponibles] = useState<PrestadorFiltro[]>([])
   const [prestadorFiltroId, setPrestadorFiltroId] = useState<string>('TODOS')
   const [ubicacionesDisponibles, setUbicacionesDisponibles] = useState<UbicacionFiltro[]>([])
@@ -143,6 +153,11 @@ export default function OpticaCampanasPage() {
   const [jitterMax, setJitterMax] = useState(90)
   const [loteMaxHora, setLoteMaxHora] = useState(35)
   const [creatingCamp, setCreatingCamp] = useState(false)
+
+  // Modal de Detalle de Campaña en Historial
+  const [campanaDetalleModal, setCampanaDetalleModal] = useState<OpticaCampana | null>(null)
+  const [destinatariosDetalle, setDestinatariosDetalle] = useState<any[]>([])
+  const [loadingDestinatarios, setLoadingDestinatarios] = useState(false)
 
   const loadAll = async () => {
     setLoading(true)
@@ -186,22 +201,25 @@ export default function OpticaCampanasPage() {
     loadAll()
   }, [])
 
+  // Drag & drop handlers para Galería general
   const handleFilePicked = (file: File) => {
     if (!file.type.startsWith('image/')) {
-      setUploadFeedback({ type: 'error', text: 'El archivo seleccionado debe ser una imagen (PNG, JPG, JPEG o WEBP).' })
+      setUploadFeedback({ type: 'error', text: 'Por favor selecciona un archivo de imagen (PNG, JPG o WEBP).' })
       return
     }
-    if (filePreviewUrl) {
-      URL.revokeObjectURL(filePreviewUrl)
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadFeedback({ type: 'error', text: 'La imagen supera el límite de 10 MB.' })
+      return
     }
     setSelectedFile(file)
-    setFilePreviewUrl(URL.createObjectURL(file))
     setUploadFeedback(null)
-    const cleanName = file.name
-      .replace(/\.[^/.]+$/, '')
-      .replace(/[-_]/g, ' ')
-      .trim()
-    setNuevaPlacaTitulo(cleanName.charAt(0).toUpperCase() + cleanName.slice(1))
+    if (!nuevaPlacaTitulo.trim()) {
+      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '')
+      setNuevaPlacaTitulo(nameWithoutExt.replace(/[-_]/g, ' ').slice(0, 60))
+    }
+    const reader = new FileReader()
+    reader.onload = (e) => setFilePreviewUrl(e.target?.result as string)
+    reader.readAsDataURL(file)
   }
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -211,47 +229,35 @@ export default function OpticaCampanasPage() {
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
-    e.stopPropagation()
     setIsDragging(true)
   }
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault()
-    e.stopPropagation()
     setIsDragging(false)
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
-    e.stopPropagation()
     setIsDragging(false)
     const file = e.dataTransfer.files?.[0]
     if (file) handleFilePicked(file)
   }
 
   const handleClearSelectedFile = () => {
-    if (filePreviewUrl) {
-      URL.revokeObjectURL(filePreviewUrl)
-    }
     setSelectedFile(null)
     setFilePreviewUrl(null)
-    setNuevaPlacaTitulo('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const handleUploadPlaca = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    if (!selectedFile) {
-      setUploadFeedback({ type: 'error', text: 'Por favor selecciona una imagen de tu computadora primero.' })
-      return
-    }
-    const tituloFinal = nuevaPlacaTitulo.trim() || selectedFile.name.replace(/\.[^/.]+$/, '')
+  const handleUploadNuevaPlaca = async () => {
+    if (!selectedFile) return
     setUploadingPlaca(true)
     setUploadFeedback(null)
     try {
       const formData = new FormData()
-      formData.append('archivo', selectedFile)
-      formData.append('titulo', tituloFinal)
+      formData.append('file', selectedFile)
+      formData.append('titulo', nuevaPlacaTitulo.trim() || selectedFile.name)
       formData.append('categoria', nuevaPlacaCat)
 
       const res = await apiFetch('/api/optica-vortix/placas/upload', {
@@ -260,84 +266,60 @@ export default function OpticaCampanasPage() {
       })
 
       if (res.ok) {
-        const data = await res.json()
-        const newUrl = data.url_imagen || data.url || data.placa?.url_imagen
-        if (newUrl && !campPlacaUrl) {
-          setCampPlacaUrl(newUrl)
-        }
-        setUploadFeedback({ type: 'success', text: `¡Placa "${tituloFinal}" subida con éxito a Supabase Storage!` })
+        const nueva = await res.json()
+        setUploadFeedback({ type: 'success', text: '¡Placa subida con éxito a Supabase Storage!' })
+        setCampPlacaUrl(nueva.url_imagen)
         handleClearSelectedFile()
+        setNuevaPlacaTitulo('')
         await loadAll()
-        setTimeout(() => setUploadFeedback(null), 5000)
       } else {
-        const errData = await res.json().catch(() => null)
-        setUploadFeedback({
-          type: 'error',
-          text: errData?.detail || 'Error al subir la placa al almacenamiento.',
-        })
+        const err = await res.json().catch(() => null)
+        setUploadFeedback({ type: 'error', text: err?.detail || 'Error al subir la placa al almacenamiento.' })
       }
     } catch (err: any) {
-      setUploadFeedback({
-        type: 'error',
-        text: err?.message || 'Error de conexión al subir la placa.',
-      })
+      setUploadFeedback({ type: 'error', text: err?.message || 'Error de conexión al subir la placa.' })
     } finally {
       setUploadingPlaca(false)
     }
   }
 
-  const handleStep3FileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  // Subida Directa en Paso 3 (Drag & Drop + Input File)
+  const handleStep3UploadFile = async (file: File) => {
     if (!file.type.startsWith('image/')) {
-      alert('El archivo seleccionado debe ser una imagen válida (PNG, JPG, WEBP).')
+      setStep3UploadFeedback({ type: 'error', text: 'El archivo debe ser una imagen (PNG, JPG o WEBP).' })
       return
     }
     setUploadingStep3Placa(true)
     setStep3UploadFeedback(null)
     try {
-      const cleanName = file.name
-        .replace(/\.[^/.]+$/, '')
-        .replace(/[-_]/g, ' ')
-        .trim()
-      const tituloFinal = cleanName ? cleanName.charAt(0).toUpperCase() + cleanName.slice(1) : 'Placa de Campaña'
-
       const formData = new FormData()
-      formData.append('archivo', file)
-      formData.append('titulo', tituloFinal)
+      formData.append('file', file)
+      formData.append('titulo', file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ').slice(0, 50))
       formData.append('categoria', 'VOUCHER_TURNO')
 
       const res = await apiFetch('/api/optica-vortix/placas/upload', {
         method: 'POST',
         body: formData,
       })
-
       if (res.ok) {
-        const data = await res.json()
-        const newUrl = data.url_imagen || data.url || data.placa?.url_imagen
-        if (newUrl) {
-          setCampPlacaUrl(newUrl)
-        }
-        setStep3UploadFeedback(`¡Placa "${tituloFinal}" subida a Storage y seleccionada para esta campaña!`)
-        await loadAll()
-        setTimeout(() => setStep3UploadFeedback(null), 5000)
+        const uploaded = await res.json()
+        setCampPlacaUrl(uploaded.url_imagen)
+        setPlacas((prev) => [uploaded, ...prev])
+        setStep3UploadFeedback({ type: 'success', text: '¡Placa subida y aplicada como portada de campaña!' })
       } else {
-        const errData = await res.json().catch(() => null)
-        alert(errData?.detail || 'Error al subir la placa desde la PC.')
+        const err = await res.json().catch(() => null)
+        setStep3UploadFeedback({ type: 'error', text: err?.detail || 'No se pudo subir la placa.' })
       }
     } catch (err: any) {
-      alert(err?.message || 'Error de conexión al subir la placa.')
+      setStep3UploadFeedback({ type: 'error', text: err?.message || 'Error de conexión al subir placa.' })
     } finally {
       setUploadingStep3Placa(false)
-      if (step3FileInputRef.current) step3FileInputRef.current.value = ''
     }
   }
 
   const handleDeletePlaca = async (e: React.MouseEvent, pl: OpticaPlaca) => {
     e.stopPropagation()
-    const confirma = window.confirm(`¿Estás seguro de eliminar la placa promocional "${pl.titulo}" de la galería?`)
-    if (!confirma) return
-
+    if (!confirm(`¿Eliminar la placa promocional "${pl.titulo}"?`)) return
     setDeletingPlacaId(pl.id)
     try {
       await apiFetch(`/api/optica-vortix/placas/${encodeURIComponent(pl.id)}`, {
@@ -349,7 +331,6 @@ export default function OpticaCampanasPage() {
       setPlacas((prev) => prev.filter((item) => item.id !== pl.id))
       await loadAll()
     } catch (err) {
-      console.warn('Error al invocar eliminación de placa:', err)
       setPlacas((prev) => prev.filter((item) => item.id !== pl.id))
       if (campPlacaUrl === pl.url_imagen) {
         setCampPlacaUrl('')
@@ -359,27 +340,28 @@ export default function OpticaCampanasPage() {
     }
   }
 
+  // Consulta de Audiencia a Geclisa / Recetas
   const fetchAudienciaGeclisa = async (
     fechaParam?: string,
-    prestadorParam?: string,
-    ubicacionParam?: string,
-    servicioParam?: string,
+    segmentoParam?: string,
+    diasRecetasParam?: number,
     forceRefresh: boolean = false
   ) => {
     setLoadingTurnos(true)
     setErrorTurnos(null)
     const targetFecha = fechaParam || fechaTurnoFiltro
-    const targetPrest = prestadorParam !== undefined ? prestadorParam : prestadorFiltroId
-    const targetUbic = ubicacionParam !== undefined ? ubicacionParam : ubicacionFiltroId
-    const targetServ = servicioParam !== undefined ? servicioParam : servicioFiltroId
+    const targetSeg = segmentoParam || campSegmento
+    const targetDiasRecetas = diasRecetasParam || diasRecetasFiltro
+
     try {
       const q = new URLSearchParams()
       if (targetFecha) q.set('fecha', targetFecha)
-      if (targetPrest && targetPrest !== 'TODOS') q.set('prestador_id', targetPrest)
-      if (targetUbic && targetUbic !== 'TODAS') q.set('ubicacion_id', targetUbic)
-      if (targetServ && targetServ !== 'TODOS') q.set('servicio_id', targetServ)
+      if (targetSeg) q.set('segmento', targetSeg)
+      if (targetDiasRecetas) q.set('dias_recetas', String(targetDiasRecetas))
       if (forceRefresh) q.set('force_refresh', 'true')
 
+      // NOTA: No enviamos filtros de prestador/ubicacion/servicio para que el backend devuelva la nómina
+      // completa del día/período y el frontend pueda filtrarla instantáneamente (0ms) sin borrar selecciones.
       const res = await apiFetch(`/api/optica-vortix/campanas/audiencia-geclisa?${q.toString()}`, {
         cache: 'no-store',
       })
@@ -387,6 +369,11 @@ export default function OpticaCampanasPage() {
         const data = await res.json()
         const pacs: PacienteTurnoGeclisa[] = data.pacientes || []
         setTurnosGeclisa(pacs)
+
+        // Inicializar seleccionados: por defecto todos los ELEGIBLES quedan marcados
+        const elegibles = new Set(pacs.filter((p) => p.estado_envio === 'ELEGIBLE').map((p) => p.turno_id))
+        setSelectedTurnoIds(elegibles)
+
         if (data.prestadores) {
           setPrestadoresDisponibles(data.prestadores)
         }
@@ -413,50 +400,108 @@ export default function OpticaCampanasPage() {
     }
   }
 
+  // Recarga ÚNICAMENTE cuando cambia el paso, la fecha, el segmento o los días de recetas
   useEffect(() => {
     if (step === 2) {
-      fetchAudienciaGeclisa(fechaTurnoFiltro, prestadorFiltroId, ubicacionFiltroId, servicioFiltroId)
+      fetchAudienciaGeclisa(fechaTurnoFiltro, campSegmento, diasRecetasFiltro)
     }
-  }, [step, fechaTurnoFiltro, prestadorFiltroId, ubicacionFiltroId, servicioFiltroId])
+  }, [step, fechaTurnoFiltro, campSegmento, diasRecetasFiltro])
 
+  // Filtrado Instantáneo en Memoria (0 ms y SIN perder selecciones previas)
+  const turnosFiltrados = useMemo(() => {
+    return turnosGeclisa.filter((t) => {
+      if (ubicacionFiltroId !== 'TODAS') {
+        const uMatch =
+          t.ubicacion_id === ubicacionFiltroId ||
+          (t.ubicacion && t.ubicacion.toLowerCase().includes(ubicacionFiltroId.toLowerCase()))
+        if (!uMatch) return false
+      }
+      if (servicioFiltroId !== 'TODOS') {
+        const sMatch =
+          t.servicio_id === servicioFiltroId ||
+          (t.servicio && t.servicio.toLowerCase().includes(servicioFiltroId.toLowerCase()))
+        if (!sMatch) return false
+      }
+      if (prestadorFiltroId !== 'TODOS') {
+        if (t.prestador_id !== prestadorFiltroId) return false
+      }
+      if (searchPaciente.trim()) {
+        const s = searchPaciente.toLowerCase()
+        return (
+          t.paciente_nombre.toLowerCase().includes(s) ||
+          t.dni.includes(s) ||
+          t.telefono.includes(s) ||
+          t.prestador_nombre.toLowerCase().includes(s) ||
+          (t.ubicacion && t.ubicacion.toLowerCase().includes(s)) ||
+          (t.servicio && t.servicio.toLowerCase().includes(s)) ||
+          (t.practica && t.practica.toLowerCase().includes(s)) ||
+          (t.servicio_practica && t.servicio_practica.toLowerCase().includes(s)) ||
+          t.obra_social.toLowerCase().includes(s)
+        )
+      }
+      return true
+    })
+  }, [turnosGeclisa, ubicacionFiltroId, servicioFiltroId, prestadorFiltroId, searchPaciente])
+
+  // Operaciones de Selección Persistente
   const toggleSeleccionarPaciente = (turnoId: string) => {
-    setTurnosGeclisa((prev) =>
-      prev.map((p) => (p.turno_id === turnoId ? { ...p, seleccionado: !p.seleccionado } : p))
-    )
+    setSelectedTurnoIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(turnoId)) next.delete(turnoId)
+      else next.add(turnoId)
+      return next
+    })
   }
 
-  const toggleSeleccionarTodos = (seleccionar: boolean) => {
-    setTurnosGeclisa((prev) =>
-      prev.map((p) =>
-        p.estado_envio === 'ELEGIBLE' ? { ...p, seleccionado: seleccionar } : p
-      )
-    )
+  const toggleSeleccionarTodosAptos = (seleccionar: boolean) => {
+    setSelectedTurnoIds((prev) => {
+      const next = new Set(prev)
+      turnosFiltrados.forEach((p) => {
+        if (p.estado_envio === 'ELEGIBLE') {
+          if (seleccionar) next.add(p.turno_id)
+          else next.delete(p.turno_id)
+        }
+      })
+      return next
+    })
   }
 
   const seleccionarSoloSedeCentral = () => {
-    setTurnosGeclisa((prev) =>
-      prev.map((p) => {
-        if (p.estado_envio !== 'ELEGIBLE') return p
-        const esCentral = (p.ubicacion || '').includes('540') || p.ubicacion_id === '3'
-        return { ...p, seleccionado: esCentral }
+    setSelectedTurnoIds((prev) => {
+      const next = new Set(prev)
+      turnosGeclisa.forEach((p) => {
+        if (p.estado_envio === 'ELEGIBLE') {
+          const esCentral = (p.ubicacion || '').includes('540') || p.ubicacion_id === '3'
+          if (esCentral) next.add(p.turno_id)
+          else next.delete(p.turno_id)
+        }
       })
-    )
+      return next
+    })
   }
 
   const seleccionarSoloConsultas = () => {
-    setTurnosGeclisa((prev) =>
-      prev.map((p) => {
-        if (p.estado_envio !== 'ELEGIBLE') return p
-        const esConsulta = (p.servicio || '').toUpperCase().includes('CONSULTA')
-        return { ...p, seleccionado: esConsulta }
+    setSelectedTurnoIds((prev) => {
+      const next = new Set(prev)
+      turnosGeclisa.forEach((p) => {
+        if (p.estado_envio === 'ELEGIBLE') {
+          const esConsulta =
+            (p.servicio || '').toUpperCase().includes('CONSULTA') ||
+            (p.servicio_practica || '').toUpperCase().includes('CONSULTA')
+          if (esConsulta) next.add(p.turno_id)
+          else next.delete(p.turno_id)
+        }
       })
-    )
+      return next
+    })
   }
 
   const handleCrearYLanzarCampana = async () => {
     setCreatingCamp(true)
     try {
-      const seleccionados = turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE')
+      const seleccionados = turnosGeclisa.filter(
+        (p) => selectedTurnoIds.has(p.turno_id) && p.estado_envio === 'ELEGIBLE'
+      )
       const res = await apiFetch('/api/optica-vortix/campanas', {
         method: 'POST',
         body: JSON.stringify({
@@ -507,6 +552,26 @@ export default function OpticaCampanasPage() {
     await loadAll()
   }
 
+  const handleVerDetalleCampana = async (camp: OpticaCampana) => {
+    setCampanaDetalleModal(camp)
+    setLoadingDestinatarios(true)
+    setDestinatariosDetalle([])
+    try {
+      const res = await apiFetch(`/api/optica-vortix/campanas/${camp.id}`, { cache: 'no-store' })
+      if (res.ok) {
+        const d = await res.json()
+        setDestinatariosDetalle(d.destinatarios || d.items || [])
+      }
+    } catch {
+    } finally {
+      setLoadingDestinatarios(false)
+    }
+  }
+
+  const seleccionadosTotal = turnosGeclisa.filter(
+    (p) => selectedTurnoIds.has(p.turno_id) && p.estado_envio === 'ELEGIBLE'
+  ).length
+
   return (
     <div className="min-h-screen flex flex-col bg-[var(--background)] text-[var(--foreground)]">
       <OpticaSubNavHeader />
@@ -521,7 +586,7 @@ export default function OpticaCampanasPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm md:text-base font-black">
-                  Escudo Anti-Bloqueo Meta WhatsApp Cloud API — Activo
+                  Escudo Anti-Bloqueo Meta WhatsApp Cloud API • Activo
                 </h2>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-slate-950">
                   Calidad: {salud?.quality_rating || 'GREEN'}
@@ -534,31 +599,39 @@ export default function OpticaCampanasPage() {
           </div>
 
           <div className="flex items-center gap-4 text-xs">
-            <div className="px-3 py-2 rounded-xl bg-white/10 border border-white/10">
-              <span className="block text-[10px] text-emerald-200">Tier Diario Meta</span>
-              <strong className="font-black">{salud?.messaging_limit_tier || 'TIER_1K'}</strong>
+            <div className="text-right">
+              <p className="text-emerald-300 font-bold">Línea 3 Óptica</p>
+              <p className="text-[11px] text-slate-300 font-mono">+54 9 261 568-0272</p>
             </div>
-            <div className="px-3 py-2 rounded-xl bg-white/10 border border-white/10">
-              <span className="block text-[10px] text-emerald-200">Opt-Outs Respetados</span>
-              <strong className="font-black">{salud?.opt_outs_total ?? 0} excluidos</strong>
+            <div className="h-8 w-px bg-white/20" />
+            <div className="text-right">
+              <p className="text-emerald-300 font-bold">Límite Diario Tier</p>
+              <p className="text-[11px] text-slate-300 font-bold">{(salud as any)?.tier || salud?.messaging_limit_tier || 'TIER_1K'} (1.000 msgs/día)</p>
             </div>
           </div>
         </div>
 
-        {/* Grid: Constructor de Campañas en 4 Pasos + Previsualizador WhatsApp */}
+        {/* Wizard Constructor de Campañas */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Constructor 4 Pasos (2 columnas) */}
-          <div className="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 shadow-xs space-y-5">
-            <div className="flex items-center justify-between border-b border-[var(--border)] pb-4">
-              <div>
-                <h2 className="text-base font-black text-[var(--foreground)]">
-                  Constructor de Campañas con Goteo Humanizado
-                </h2>
-                <p className="text-xs text-[var(--secondary)]">
-                  Diseña envíos promocionales cuidando la reputación de la Línea 3 de Óptica Vortix
-                </p>
+          <div className="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 space-y-5">
+            {/* Header del Constructor */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <Megaphone size={20} />
+                </div>
+                <div>
+                  <h2 className="text-sm md:text-base font-black text-[var(--foreground)]">
+                    Constructor de Campañas Anti-Bloqueo Óptica Vortix
+                  </h2>
+                  <p className="text-xs text-[var(--secondary)]">
+                    Diseña envíos promocionales cuidando la reputación de la Línea 3 de Óptica Vortix
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center gap-1">
+
+              {/* Indicador de Pasos 1 a 5 */}
+              <div className="flex items-center gap-1.5">
                 {[1, 2, 3, 4, 5].map((s) => (
                   <button
                     key={s}
@@ -566,8 +639,10 @@ export default function OpticaCampanasPage() {
                     onClick={() => setStep(s as any)}
                     className={`w-7 h-7 rounded-lg text-xs font-black transition-all ${
                       step === s
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)]'
+                        ? 'bg-indigo-600 text-white shadow-md scale-105'
+                        : step > s
+                        ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold'
+                        : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)]'
                     }`}
                   >
                     {s}
@@ -576,6 +651,7 @@ export default function OpticaCampanasPage() {
               </div>
             </div>
 
+            {/* PASO 1: NOMBRE Y SEGMENTO CLÍNICO */}
             {step === 1 && (
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
@@ -600,16 +676,16 @@ export default function OpticaCampanasPage() {
                     className="w-full px-3.5 py-2 rounded-xl text-xs bg-slate-100 dark:bg-slate-800 border border-[var(--border)] font-bold"
                   >
                     <option value="TURNOS_PROXIMOS_CON_DESCUENTO">
-                      🎟️ Pacientes con Turno de Consultorio Próximo (Voucher Descuento Cortesía)
+                      📅 Pacientes con Turno de Consultorio Próximo (Voucher Descuento Cortesía)
                     </option>
                     <option value="RECETAS_AEREOS_ULTIMOS_7_DIAS">
-                      👓 Pacientes con Indicación de Lentes Aéreos (Últimos 7 días sin compra)
+                      👓 Pacientes con Indicación de Lentes Aéreos (Últimos 7 a 30 días sin compra)
                     </option>
                     <option value="USUARIOS_LENTES_CONTACTO">
-                      💧 Reposición de Lentes de Contacto y Soluciones
+                      👁️ Reposición de Lentes de Contacto y Soluciones
                     </option>
                     <option value="CONTROL_ANUAL_RECETA">
-                      📅 Renovación Anual de Cristales (+12 meses desde última receta)
+                      🔄 Renovación Anual de Cristales (+12 meses desde última receta)
                     </option>
                   </select>
                 </div>
@@ -625,33 +701,30 @@ export default function OpticaCampanasPage() {
               </div>
             )}
 
+            {/* PASO 2: AUDIENCIA Y SELECCIÓN GRANULAR DE PACIENTES */}
             {step === 2 && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
-                      Paso 2 • Audiencia y Selección Granular de Pacientes (Geclisa Centrovisión)
+                      {campSegmento === 'TURNOS_PROXIMOS_CON_DESCUENTO'
+                        ? 'Paso 2 • Audiencia y Selección Granular de Pacientes (Geclisa Centrovisión)'
+                        : 'Paso 2 • Audiencia Clínica de Pacientes con Receta Oftalmológica (CRM)'}
                     </h3>
                     <p className="text-[11px] text-[var(--secondary)] mt-0.5">
-                      Filtra por fecha y profesional. Selecciona individualmente o en lote cuidando las protecciones anti-bloqueo.
+                      {campSegmento === 'TURNOS_PROXIMOS_CON_DESCUENTO'
+                        ? 'Filtra por fecha y profesional. Selecciona individualmente o en lote cuidando las protecciones anti-bloqueo.'
+                        : 'Pacientes con prescripción oftalmológica reciente sin compra en óptica. Protegidos por Cooldown de 30 días.'}
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={() =>
-                      fetchAudienciaGeclisa(
-                        fechaTurnoFiltro,
-                        prestadorFiltroId,
-                        ubicacionFiltroId,
-                        servicioFiltroId,
-                        true
-                      )
-                    }
+                    onClick={() => fetchAudienciaGeclisa(fechaTurnoFiltro, campSegmento, diasRecetasFiltro, true)}
                     disabled={loadingTurnos}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
                   >
                     <RefreshCw size={13} className={loadingTurnos ? 'animate-spin' : ''} />
-                    <span>Actualizar Turnos</span>
+                    <span>Actualizar Nómina</span>
                   </button>
                 </div>
 
@@ -663,15 +736,7 @@ export default function OpticaCampanasPage() {
                     </div>
                     <button
                       type="button"
-                      onClick={() =>
-                        fetchAudienciaGeclisa(
-                          fechaTurnoFiltro,
-                          prestadorFiltroId,
-                          ubicacionFiltroId,
-                          servicioFiltroId,
-                          true
-                        )
-                      }
+                      onClick={() => fetchAudienciaGeclisa(fechaTurnoFiltro, campSegmento, diasRecetasFiltro, true)}
                       className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] hover:bg-rose-700 transition-colors shrink-0"
                     >
                       Reintentar
@@ -679,62 +744,86 @@ export default function OpticaCampanasPage() {
                   </div>
                 )}
 
-                {/* Filtros de Fecha, Prestador, Ubicación, Servicio y Buscador */}
+                {/* Filtros de Fecha o Período */}
                 <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/40 border border-[var(--border)] space-y-2.5">
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
-                    {/* Atajos Rápidos de Fecha */}
-                    <div className="sm:col-span-7 flex items-center gap-1.5">
-                      {(() => {
-                        const hoy = new Date().toISOString().split('T')[0]
-                        const manana = new Date(Date.now() + 86400000).toISOString().split('T')[0]
-                        const pasado = new Date(Date.now() + 172800000).toISOString().split('T')[0]
-                        return (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => setFechaTurnoFiltro(hoy)}
-                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                fechaTurnoFiltro === hoy
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
-                              }`}
-                            >
-                              Hoy
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFechaTurnoFiltro(manana)}
-                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                fechaTurnoFiltro === manana
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
-                              }`}
-                            >
-                              Mañana
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setFechaTurnoFiltro(pasado)}
-                              className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                fechaTurnoFiltro === pasado
-                                  ? 'bg-indigo-600 text-white'
-                                  : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
-                              }`}
-                            >
-                              Pasado
-                            </button>
-                            <input
-                              type="date"
-                              value={fechaTurnoFiltro}
-                              onChange={(e) => setFechaTurnoFiltro(e.target.value)}
-                              className="flex-1 px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
-                            />
-                          </>
-                        )
-                      })()}
-                    </div>
+                    {campSegmento === 'TURNOS_PROXIMOS_CON_DESCUENTO' ? (
+                      /* Atajos de Fecha para Turnos */
+                      <div className="sm:col-span-7 flex items-center gap-1.5">
+                        {(() => {
+                          const hoy = getFechaOffsetStr(0)
+                          const manana = getFechaOffsetStr(1)
+                          const pasado = getFechaOffsetStr(2)
+                          return (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setFechaTurnoFiltro(hoy)}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                  fechaTurnoFiltro === hoy
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                                }`}
+                              >
+                                Hoy
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setFechaTurnoFiltro(manana)}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                  fechaTurnoFiltro === manana
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                                }`}
+                              >
+                                Mañana
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setFechaTurnoFiltro(pasado)}
+                                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                                  fechaTurnoFiltro === pasado
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                                }`}
+                              >
+                                Pasado
+                              </button>
+                              <input
+                                type="date"
+                                value={fechaTurnoFiltro}
+                                onChange={(e) => setFechaTurnoFiltro(e.target.value)}
+                                className="flex-1 px-2 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                              />
+                            </>
+                          )
+                        })()}
+                      </div>
+                    ) : (
+                      /* Atajos de Período para Recetas */
+                      <div className="sm:col-span-7 flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-[var(--secondary)] mr-1 flex items-center gap-1">
+                          <Clock size={13} />
+                          <span>Período:</span>
+                        </span>
+                        {[7, 14, 30, 60].map((dias) => (
+                          <button
+                            key={dias}
+                            type="button"
+                            onClick={() => setDiasRecetasFiltro(dias)}
+                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                              diasRecetasFiltro === dias
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white dark:bg-slate-800 border border-[var(--border)] text-[var(--secondary)]'
+                            }`}
+                          >
+                            {dias}d
+                          </button>
+                        ))}
+                      </div>
+                    )}
 
-                    {/* Input de Búsqueda */}
+                    {/* Buscador de Texto */}
                     <div className="sm:col-span-5 relative">
                       <Search size={13} className="absolute left-2.5 top-2.5 text-[var(--secondary)]" />
                       <input
@@ -747,32 +836,30 @@ export default function OpticaCampanasPage() {
                     </div>
                   </div>
 
-                  {/* Fila 2: Selectores de Sede, Servicio y Prestador */}
+                  {/* Fila 2: Selectores de Sede, Servicio y Prestador (Filtrado Instantáneo en React) */}
                   <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 pt-1.5 border-t border-[var(--border)]/60">
-                    {/* Dropdown de Sede / Ubicación */}
                     <div className="sm:col-span-4">
                       <select
                         value={ubicacionFiltroId}
                         onChange={(e) => setUbicacionFiltroId(e.target.value)}
                         className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
                       >
-                        <option value="TODAS">🏢 Todas las Sedes Geclisa</option>
+                        <option value="TODAS">🏢 Todas las Sedes</option>
                         {ubicacionesDisponibles.map((u) => (
                           <option key={u.id} value={u.id}>
-                            📍 {u.nombre.split('-')[0].trim()} {u.cantidad_turnos !== undefined ? `(${u.cantidad_turnos})` : ''}
+                            🏢 {u.nombre.split('-')[0].trim()} {u.cantidad_turnos !== undefined ? `(${u.cantidad_turnos})` : ''}
                           </option>
                         ))}
                       </select>
                     </div>
 
-                    {/* Dropdown de Servicio Clínico */}
                     <div className="sm:col-span-4">
                       <select
                         value={servicioFiltroId}
                         onChange={(e) => setServicioFiltroId(e.target.value)}
                         className="w-full px-2.5 py-1.5 rounded-lg text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold truncate"
                       >
-                        <option value="TODOS">🔬 Todos los Servicios</option>
+                        <option value="TODOS">🩺 Todos los Servicios</option>
                         {serviciosDisponibles.map((s) => (
                           <option key={s.id} value={s.id}>
                             🩺 {s.nombre} {s.cantidad_turnos !== undefined ? `(${s.cantidad_turnos})` : ''}
@@ -781,7 +868,6 @@ export default function OpticaCampanasPage() {
                       </select>
                     </div>
 
-                    {/* Dropdown de Prestador */}
                     <div className="sm:col-span-4">
                       <select
                         value={prestadorFiltroId}
@@ -802,7 +888,6 @@ export default function OpticaCampanasPage() {
                 {/* Métricas y Badges de Resumen Anti-Bloqueo */}
                 {(() => {
                   const aptos = turnosGeclisa.filter((t) => t.estado_envio === 'ELEGIBLE').length
-                  const selec = turnosGeclisa.filter((t) => t.seleccionado && t.estado_envio === 'ELEGIBLE').length
                   const cooldown = turnosGeclisa.filter((t) => t.estado_envio === 'COOLDOWN_ACTIVO').length
                   const optout = turnosGeclisa.filter((t) => t.estado_envio === 'OPT_OUT').length
                   const sinCel = turnosGeclisa.filter((t) => t.estado_envio === 'SIN_CELULAR').length
@@ -810,13 +895,13 @@ export default function OpticaCampanasPage() {
                   return (
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800 border border-[var(--border)] font-bold">
-                        Total turnos: <strong>{loadingTurnos ? 'Consultando...' : turnosGeclisa.length}</strong>
+                        Total en agenda: <strong>{loadingTurnos ? 'Consultando...' : turnosGeclisa.length}</strong>
                       </span>
                       <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
                         Aptos para envío: <strong>{loadingTurnos ? '...' : aptos}</strong>
                       </span>
                       <span className="px-2.5 py-1 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-extrabold">
-                        Seleccionados: <strong>{selec}</strong> de {loadingTurnos ? '...' : aptos}
+                        Seleccionados: <strong>{seleccionadosTotal}</strong> de {loadingTurnos ? '...' : aptos}
                       </span>
                       {cooldown > 0 && (
                         <span className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 font-medium">
@@ -839,7 +924,7 @@ export default function OpticaCampanasPage() {
                           type="button"
                           onClick={seleccionarSoloSedeCentral}
                           className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 transition-colors"
-                          title="Seleccionar únicamente pacientes con turno en Mitre 540 (Planta Baja Óptica)"
+                          title="Seleccionar únicamente pacientes con turno en Mitre 540"
                         >
                           📍 Solo Mitre 540 (PB)
                         </button>
@@ -853,14 +938,14 @@ export default function OpticaCampanasPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => toggleSeleccionarTodos(true)}
+                          onClick={() => toggleSeleccionarTodosAptos(true)}
                           className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 transition-colors"
                         >
                           Todos los aptos
                         </button>
                         <button
                           type="button"
-                          onClick={() => toggleSeleccionarTodos(false)}
+                          onClick={() => toggleSeleccionarTodosAptos(false)}
                           className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:bg-slate-200 transition-colors"
                         >
                           Deseleccionar
@@ -875,35 +960,21 @@ export default function OpticaCampanasPage() {
                   {loadingTurnos ? (
                     <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-[var(--secondary)]">
                       <Loader2 size={24} className="animate-spin text-indigo-600" />
-                      <span>Consultando agenda de Geclisa Centrovisión...</span>
+                      <span>
+                        {campSegmento === 'TURNOS_PROXIMOS_CON_DESCUENTO'
+                          ? 'Consultando agenda de Geclisa Centrovisión...'
+                          : 'Consultando prescripciones médicas en Supabase...'}
+                      </span>
+                    </div>
+                  ) : turnosFiltrados.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-[var(--secondary)]">
+                      No se encontraron pacientes para la fecha y filtros seleccionados.
                     </div>
                   ) : (
                     (() => {
-                      const filtrados = turnosGeclisa.filter((t) => {
-                        if (!searchPaciente.trim()) return true
-                        const s = searchPaciente.toLowerCase()
-                        return (
-                          t.paciente_nombre.toLowerCase().includes(s) ||
-                          t.dni.includes(s) ||
-                          t.telefono.includes(s) ||
-                          t.prestador_nombre.toLowerCase().includes(s) ||
-                          (t.ubicacion && t.ubicacion.toLowerCase().includes(s)) ||
-                          (t.servicio && t.servicio.toLowerCase().includes(s)) ||
-                          t.obra_social.toLowerCase().includes(s)
-                        )
-                      })
-
-                      if (filtrados.length === 0) {
-                        return (
-                          <div className="py-12 text-center text-xs text-[var(--secondary)]">
-                            No se encontraron turnos en Geclisa para la fecha y filtros seleccionados.
-                          </div>
-                        )
-                      }
-
-                      const aptosFiltrados = filtrados.filter((t) => t.estado_envio === 'ELEGIBLE')
+                      const aptosFiltrados = turnosFiltrados.filter((t) => t.estado_envio === 'ELEGIBLE')
                       const todosSeleccionados =
-                        aptosFiltrados.length > 0 && aptosFiltrados.every((t) => t.seleccionado)
+                        aptosFiltrados.length > 0 && aptosFiltrados.every((t) => selectedTurnoIds.has(t.turno_id))
 
                       return (
                         <table className="w-full text-left text-xs border-collapse">
@@ -912,25 +983,25 @@ export default function OpticaCampanasPage() {
                               <th className="py-2.5 px-3 w-10 text-center">
                                 <button
                                   type="button"
-                                  onClick={() => toggleSeleccionarTodos(!todosSeleccionados)}
+                                  onClick={() => toggleSeleccionarTodosAptos(!todosSeleccionados)}
                                   className="text-indigo-600 dark:text-indigo-400 hover:opacity-80"
                                 >
                                   {todosSeleccionados ? <CheckSquare size={16} /> : <Square size={16} />}
                                 </button>
                               </th>
-                              <th className="py-2.5 px-2 w-16">Hora</th>
+                              <th className="py-2.5 px-2 w-16">Hora/Fecha</th>
                               <th className="py-2.5 px-3">Paciente & DNI</th>
                               <th className="py-2.5 px-3">WhatsApp / Móvil</th>
-                              <th className="py-2.5 px-3">Médico & Servicio</th>
+                              <th className="py-2.5 px-3">Médico & Práctica</th>
                               <th className="py-2.5 px-3">Sede & Consultorio</th>
                               <th className="py-2.5 px-3">Obra Social</th>
                               <th className="py-2.5 px-3 text-right">Estado Anti-Bloqueo</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--border)]">
-                            {filtrados.map((t) => {
+                            {turnosFiltrados.map((t) => {
                               const isEligible = t.estado_envio === 'ELEGIBLE'
-                              const isSelected = !!t.seleccionado && isEligible
+                              const isSelected = selectedTurnoIds.has(t.turno_id) && isEligible
                               const isCurrentPreview = pacientePreview?.turno_id === t.turno_id
 
                               return (
@@ -968,81 +1039,54 @@ export default function OpticaCampanasPage() {
                                     {t.hora_turno || '--:--'}
                                   </td>
                                   <td className="py-2 px-3">
-                                    <div className="font-bold text-[var(--foreground)]">
-                                      {t.paciente_nombre}
-                                    </div>
-                                    <div className="text-[10px] text-[var(--secondary)]">
-                                      DNI: {t.dni || 'S/D'} • Ficha: #{t.ficha_id || '0'}
-                                    </div>
+                                    <p className="font-bold text-[var(--foreground)]">{t.paciente_nombre}</p>
+                                    <p className="text-[11px] text-[var(--secondary)] font-mono">DNI: {t.dni || 'S/D'}</p>
                                   </td>
-                                  <td className="py-2 px-3 font-mono text-[11px]">
+                                  <td className="py-2 px-3 font-mono">
                                     {t.telefono ? (
                                       <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                                        +{t.telefono}
+                                        {t.telefono}
                                       </span>
                                     ) : (
-                                      <span className="text-slate-400 italic text-[10px]">Sin teléfono</span>
+                                      <span className="text-slate-400 italic text-[11px]">Sin móvil</span>
                                     )}
                                   </td>
                                   <td className="py-2 px-3">
-                                    <div className="font-semibold text-slate-800 dark:text-slate-200">
-                                      {t.prestador_nombre}
-                                    </div>
-                                    <div className="flex items-center gap-1 mt-0.5">
-                                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-medium">
-                                        {t.servicio || 'CONSULTAS'}
-                                      </span>
-                                      <span className="text-[10px] text-[var(--secondary)] truncate max-w-[120px]">
-                                        {t.practica || t.servicio_practica}
-                                      </span>
-                                    </div>
+                                    <p className="font-semibold text-[var(--foreground)]">{t.prestador_nombre}</p>
+                                    <p className="text-[11px] text-[var(--secondary)] truncate max-w-[170px]" title={t.practica || t.servicio_practica}>
+                                      {t.practica || t.servicio_practica}
+                                    </p>
                                   </td>
                                   <td className="py-2 px-3">
-                                    <div className="flex items-center gap-1">
-                                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                                        (t.ubicacion || '').includes('540')
-                                          ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                                          : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'
-                                      }`}>
-                                        📍 {(t.ubicacion || 'Mitre 540').split('-')[0].trim()}
-                                      </span>
-                                    </div>
-                                    {t.consultorio && (
-                                      <div className="text-[10px] text-[var(--secondary)] mt-0.5 truncate max-w-[130px]">
-                                        {t.consultorio}
-                                      </div>
-                                    )}
+                                    <p className="text-[11px] text-[var(--foreground)] font-medium truncate max-w-[150px]" title={t.ubicacion}>
+                                      {t.ubicacion || 'Mitre 540'}
+                                    </p>
+                                    <p className="text-[10px] text-[var(--secondary)]">{t.consultorio || 'Consultorio'}</p>
                                   </td>
-                                  <td className="py-2 px-3 text-[11px] text-[var(--secondary)] truncate max-w-[120px]">
+                                  <td className="py-2 px-3 text-[11px] text-[var(--secondary)] truncate max-w-[120px]" title={t.obra_social}>
                                     {t.obra_social || 'Particular'}
                                   </td>
                                   <td className="py-2 px-3 text-right">
-                                    {t.estado_envio === 'ELEGIBLE' && (
-                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                                        Apto para Envío
+                                    {isEligible ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                        ✓ APTO
                                       </span>
-                                    )}
-                                    {t.estado_envio === 'COOLDOWN_ACTIVO' && (
+                                    ) : t.estado_envio === 'COOLDOWN_ACTIVO' ? (
                                       <span
-                                        title={t.motivo_exclusion || undefined}
-                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                        title={t.motivo_exclusion || 'Ya contactado en los últimos 30 días'}
                                       >
                                         Cooldown 30d
                                       </span>
-                                    )}
-                                    {t.estado_envio === 'OPT_OUT' && (
+                                    ) : t.estado_envio === 'OPT_OUT' ? (
                                       <span
-                                        title={t.motivo_exclusion || undefined}
-                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 border border-rose-500/20"
+                                        title={t.motivo_exclusion || 'Opt-Out solicitado'}
                                       >
-                                        Opt-Out Activo
+                                        Opt-Out
                                       </span>
-                                    )}
-                                    {t.estado_envio === 'SIN_CELULAR' && (
-                                      <span
-                                        title={t.motivo_exclusion || undefined}
-                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/15 text-slate-500 border border-slate-500/20"
-                                      >
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-500 border border-slate-500/20">
                                         Sin Celular
                                       </span>
                                     )}
@@ -1057,18 +1101,19 @@ export default function OpticaCampanasPage() {
                   )}
                 </div>
 
-                <div className="flex justify-between items-center pt-2">
+                <div className="flex justify-between items-center">
                   <button
                     type="button"
                     onClick={() => setStep(1)}
-                    className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                    className="px-4 py-2 rounded-xl border border-[var(--border)] text-xs font-bold"
                   >
                     ← Anterior
                   </button>
                   <button
                     type="button"
                     onClick={() => setStep(3)}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors"
+                    disabled={seleccionadosTotal === 0}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold transition-colors"
                   >
                     Siguiente: Estrategia & Plantilla (Paso 3) →
                   </button>
@@ -1076,6 +1121,7 @@ export default function OpticaCampanasPage() {
               </div>
             )}
 
+            {/* PASO 3: ESTRATEGIA, PLANTILLA META Y SUBIDA DIRECTA DE PLACA */}
             {step === 3 && (
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
@@ -1128,11 +1174,11 @@ export default function OpticaCampanasPage() {
                         plantillas.map((p) => {
                           const badge =
                             p.status === 'APPROVED'
-                              ? '✅ Aprobada'
+                              ? '✓ Aprobada'
                               : p.status === 'PENDING'
                               ? '⏳ En Revisión'
                               : p.status === 'REJECTED'
-                              ? '❌ Rechazada'
+                              ? '✕ Rechazada'
                               : '⚙️ Sin aprovisionar'
                           return (
                             <option key={p.name} value={p.name}>
@@ -1143,16 +1189,16 @@ export default function OpticaCampanasPage() {
                       ) : (
                         <>
                           <option value="vortix_beneficio_turno_v1">
-                            Óptica Vortix • Voucher Descuento por Turno (✅ Base Oficial)
+                            Óptica Vortix • Voucher Descuento por Turno (✓ Base Oficial)
                           </option>
                           <option value="vortix_receta_lentes_aereos_v1">
-                            Óptica Vortix • Cotización Receta Lentes Aéreos (✅ Base Oficial)
+                            Óptica Vortix • Cotización Receta Lentes Aéreos (✓ Base Oficial)
                           </option>
                           <option value="vortix_receta_lentes_contacto_v1">
-                            Óptica Vortix • Lentes de Contacto y Adaptación (✅ Base Oficial)
+                            Óptica Vortix • Lentes de Contacto y Adaptación (✓ Base Oficial)
                           </option>
                           <option value="vortix_lentes_listos_retiro_v1">
-                            Óptica Vortix • Aviso de Lentes Listos para Retirar (✅ Base Oficial)
+                            Óptica Vortix • Aviso de Lentes Listos para Retirar (✓ Base Oficial)
                           </option>
                         </>
                       )}
@@ -1169,7 +1215,7 @@ export default function OpticaCampanasPage() {
                   </div>
                 </div>
 
-                {/* Sección de Placa Gráfica Promocional con Galería Compacta y Subida Directa */}
+                {/* Subida Directa de Placa con Drag & Drop en Paso 3 */}
                 <div className="space-y-3 pt-2 border-t border-[var(--border)]">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
@@ -1177,136 +1223,114 @@ export default function OpticaCampanasPage() {
                         Placa Gráfica Promocional (Supabase Storage)
                       </label>
                       <p className="text-[11px] text-[var(--secondary)]">
-                        Selecciona una placa de la galería o sube una nueva directamente desde tu computadora.
+                        Selecciona una placa existente o arrastra una nueva imagen desde tu PC aquí mismo.
                       </p>
                     </div>
+                  </div>
 
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        ref={step3FileInputRef}
-                        accept="image/png,image/jpeg,image/webp"
-                        onChange={handleStep3FileUpload}
-                        className="hidden"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => step3FileInputRef.current?.click()}
-                        disabled={uploadingStep3Placa}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold shadow-xs transition-colors"
-                      >
-                        {uploadingStep3Placa ? (
-                          <>
-                            <Loader2 size={13} className="animate-spin" />
-                            <span>Subiendo a Storage...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Plus size={13} />
-                            <span>➕ Subir Nueva Placa desde mi PC</span>
-                          </>
-                        )}
-                      </button>
+                  {/* Input File oculto para Paso 3 */}
+                  <input
+                    type="file"
+                    ref={step3FileInputRef}
+                    accept="image/png,image/jpeg,image/webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      if (f) handleStep3UploadFile(f)
+                    }}
+                  />
 
-                      <button
-                        type="button"
-                        onClick={() => setCampPlacaUrl('')}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1 ${
-                          !campPlacaUrl
-                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 font-extrabold'
-                            : 'border-[var(--border)] text-[var(--secondary)] hover:bg-slate-100 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        <X size={12} />
-                        <span>✖️ Sin Placa (Solo Mensaje de Texto)</span>
-                      </button>
+                  {/* Zona Drag & Drop Paso 3 */}
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setStep3IsDragging(true)
+                    }}
+                    onDragLeave={(e) => {
+                      e.preventDefault()
+                      setStep3IsDragging(false)
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      setStep3IsDragging(false)
+                      const f = e.dataTransfer.files?.[0]
+                      if (f) handleStep3UploadFile(f)
+                    }}
+                    onClick={() => step3FileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-4 text-center cursor-pointer transition-all ${
+                      step3IsDragging
+                        ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40'
+                        : 'border-slate-300 dark:border-slate-700 hover:border-indigo-500 bg-slate-50/60 dark:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center shrink-0">
+                        {uploadingStep3Placa ? <Loader2 size={18} className="animate-spin" /> : <Upload size={18} />}
+                      </div>
+                      <div className="text-left">
+                        <p className="text-xs font-black text-[var(--foreground)]">
+                          {uploadingStep3Placa
+                            ? 'Subiendo imagen a Supabase Storage...'
+                            : 'Arrastra una placa aquí o haz clic para subir desde tu PC'}
+                        </p>
+                        <p className="text-[10px] text-[var(--secondary)]">
+                          Formatos: PNG, JPG, WEBP. Se guardará en la galería y se aplicará de inmediato.
+                        </p>
+                      </div>
                     </div>
                   </div>
 
                   {step3UploadFeedback && (
-                    <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs flex items-center gap-2">
-                      <CheckCircle2 size={14} className="shrink-0" />
-                      <span>{step3UploadFeedback}</span>
+                    <div
+                      className={`p-2.5 rounded-xl text-xs flex items-center gap-2 ${
+                        step3UploadFeedback.type === 'success'
+                          ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+                          : 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                      }`}
+                    >
+                      {step3UploadFeedback.type === 'success' ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+                      <span>{step3UploadFeedback.text}</span>
                     </div>
                   )}
 
-                  {/* Cuadrícula visual compacta de placas disponibles */}
-                  {placas.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2.5 max-h-56 overflow-y-auto p-1.5 border border-[var(--border)] rounded-2xl bg-slate-50/50 dark:bg-slate-800/20">
-                      {placas.map((pl) => {
+                  {/* Selector Rápido de Placas Guardadas */}
+                  {placas.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                      {placas.slice(0, 8).map((pl) => {
                         const isSelected = campPlacaUrl === pl.url_imagen
                         return (
                           <div
                             key={pl.id}
                             onClick={() => setCampPlacaUrl(pl.url_imagen)}
-                            className={`group relative cursor-pointer rounded-xl border p-2 transition-all flex flex-col justify-between gap-1.5 ${
+                            className={`cursor-pointer rounded-xl border p-2 text-left transition-all ${
                               isSelected
-                                ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 ring-2 ring-indigo-500/30 shadow-xs'
-                                : 'border-[var(--border)] bg-white dark:bg-slate-800/80 hover:border-slate-400 dark:hover:border-slate-600'
+                                ? 'border-indigo-600 bg-indigo-50/80 dark:bg-indigo-950/40 ring-2 ring-indigo-500/40'
+                                : 'border-[var(--border)] bg-slate-50 dark:bg-slate-800/40 hover:border-slate-400'
                             }`}
                           >
-                            <div className="h-16 w-full rounded-lg bg-slate-200 dark:bg-slate-700 overflow-hidden flex items-center justify-center relative">
-                              <img
-                                src={pl.url_imagen}
-                                alt={pl.titulo}
-                                className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-200"
-                              />
-                              {isSelected && (
-                                <div className="absolute top-1 right-1 bg-indigo-600 text-white rounded-full p-0.5 shadow-sm">
-                                  <Check size={12} strokeWidth={3} />
-                                </div>
-                              )}
+                            <div className="h-16 rounded-lg bg-slate-200 dark:bg-slate-700 overflow-hidden mb-1.5 flex items-center justify-center">
+                              <img src={pl.url_imagen} alt={pl.titulo} className="h-full w-full object-cover" />
                             </div>
-                            <div>
-                              <p className="text-[11px] font-bold truncate text-[var(--foreground)]" title={pl.titulo}>
-                                {pl.titulo}
-                              </p>
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-700 text-[var(--secondary)] truncate block font-medium">
-                                {pl.categoria || 'VOUCHER'}
-                              </span>
-                            </div>
+                            <p className="text-[11px] font-bold truncate text-[var(--foreground)]">{pl.titulo}</p>
+                            <span className="text-[9px] text-[var(--secondary)]">{pl.categoria || 'VOUCHER'}</span>
                           </div>
                         )
                       })}
                     </div>
-                  ) : (
-                    <div className="p-4 rounded-xl border border-dashed border-[var(--border)] text-center text-xs text-[var(--secondary)] space-y-1">
-                      <p>No hay placas disponibles en la galería todavía.</p>
-                      <p className="text-[11px]">Usa el botón &ldquo;➕ Subir Nueva Placa desde mi PC&rdquo; para agregar una.</p>
-                    </div>
                   )}
 
-                  {/* Estado de Placa Seleccionada y URL opcional */}
-                  <div className="flex items-center justify-between text-xs px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-[var(--border)]">
-                    <div className="flex items-center gap-2 truncate">
-                      <span className="font-bold text-[var(--secondary)]">Placa activa:</span>
-                      {campPlacaUrl ? (
-                        <div className="flex items-center gap-2 truncate">
-                          <img
-                            src={campPlacaUrl}
-                            alt="Placa seleccionada"
-                            className="w-6 h-6 rounded-md object-cover border border-[var(--border)] shrink-0"
-                          />
-                          <span className="font-mono text-[11px] text-indigo-600 dark:text-indigo-400 truncate">
-                            {campPlacaUrl}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-amber-600 dark:text-amber-400 italic">
-                          Sin placa (Se enviará únicamente la plantilla oficial de texto)
-                        </span>
-                      )}
-                    </div>
-                    {campPlacaUrl && (
+                  {campPlacaUrl && (
+                    <div className="flex items-center justify-between text-xs p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold">
+                      <span className="truncate max-w-[280px]">✓ Placa activa seleccionada</span>
                       <button
                         type="button"
                         onClick={() => setCampPlacaUrl('')}
-                        className="text-[11px] text-rose-500 hover:text-rose-700 font-bold shrink-0 ml-2"
+                        className="text-[11px] text-rose-500 hover:text-rose-700 font-bold"
                       >
                         Quitar placa
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-between">
@@ -1328,6 +1352,7 @@ export default function OpticaCampanasPage() {
               </div>
             )}
 
+            {/* PASO 4: CADENCIA Y JITTER */}
             {step === 4 && (
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-indigo-600 dark:text-indigo-400">
@@ -1381,38 +1406,36 @@ export default function OpticaCampanasPage() {
               </div>
             )}
 
+            {/* PASO 5: RESUMEN Y LANZAMIENTO */}
             {step === 5 && (
               <div className="space-y-4">
                 <h3 className="text-xs font-black uppercase text-emerald-600">
                   Paso 5 • Resumen de Protección y Lanzamiento
                 </h3>
-                {(() => {
-                  const seleccionados = turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE')
-                  return (
-                    <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] text-xs space-y-2">
-                      <p>
-                        <strong>Campaña:</strong> {campNombre}
-                      </p>
-                      <p>
-                        <strong>Segmento:</strong> {campSegmento}
-                      </p>
-                      <p>
-                        <strong>Destinatarios Seleccionados:</strong>{' '}
-                        <span className="text-emerald-600 dark:text-emerald-400 font-black">
-                          {seleccionados.length} pacientes de Geclisa
-                        </span>{' '}
-                        para la fecha {formatDateArg(fechaTurnoFiltro)}.
-                      </p>
-                      <p>
-                        <strong>Estrategia:</strong> {campEstrategia} ({campTemplate})
-                      </p>
-                      <p>
-                        <strong>Cadencia Humanizada:</strong> 1 envío cada {jitterMin}s–{jitterMax}s (máx.{' '}
-                        {loteMaxHora}/hora en horario comercial 09:00 a 20:00 hs).
-                      </p>
-                    </div>
-                  )
-                })()}
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-[var(--border)] text-xs space-y-2">
+                  <p>
+                    <strong>Campaña:</strong> {campNombre}
+                  </p>
+                  <p>
+                    <strong>Segmento:</strong> {campSegmento}
+                  </p>
+                  <p>
+                    <strong>Destinatarios Seleccionados:</strong>{' '}
+                    <span className="text-emerald-600 dark:text-emerald-400 font-black">
+                      {seleccionadosTotal} pacientes
+                    </span>{' '}
+                    {campSegmento === 'TURNOS_PROXIMOS_CON_DESCUENTO'
+                      ? `para la fecha ${formatDateArg(fechaTurnoFiltro)}.`
+                      : `del período de recetas (${diasRecetasFiltro} días).`}
+                  </p>
+                  <p>
+                    <strong>Estrategia:</strong> {campEstrategia} ({campTemplate})
+                  </p>
+                  <p>
+                    <strong>Cadencia Humanizada:</strong> 1 envío cada {jitterMin}s–{jitterMax}s (máx.{' '}
+                    {loteMaxHora}/hora en horario comercial 09:00 a 20:00 hs).
+                  </p>
+                </div>
                 <div className="flex justify-between items-center">
                   <button
                     type="button"
@@ -1424,32 +1447,34 @@ export default function OpticaCampanasPage() {
                   <button
                     type="button"
                     onClick={handleCrearYLanzarCampana}
-                    disabled={
-                      creatingCamp ||
-                      turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE').length === 0
-                    }
-                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-black flex items-center gap-2 shadow-md transition-all"
+                    disabled={creatingCamp || seleccionadosTotal === 0}
+                    className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black text-xs flex items-center gap-2 shadow-lg transition-all"
                   >
                     {creatingCamp ? (
-                      <Loader2 size={14} className="animate-spin" />
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        <span>Encolando envíos con protección...</span>
+                      </>
                     ) : (
-                      <Play size={14} />
+                      <>
+                        <Play size={16} />
+                        <span>Confirmar y Encolar Campaña</span>
+                      </>
                     )}
-                    Iniciar Campaña para {turnosGeclisa.filter((p) => p.seleccionado && p.estado_envio === 'ELEGIBLE').length} Pacientes
                   </button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Previsualizador de Teléfono WhatsApp */}
+          {/* Previsualizador de Teléfono WhatsApp (Reactivo) */}
           <div className="bg-slate-900 text-white rounded-3xl p-5 border border-slate-800 shadow-xl flex flex-col justify-between space-y-3">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Smartphone size={16} className="text-emerald-400" />
                 <span className="text-xs font-black">Previsualización WhatsApp Paciente</span>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold truncate max-w-[140px]">
                 {campTemplate}
               </span>
             </div>
@@ -1481,7 +1506,7 @@ export default function OpticaCampanasPage() {
               ) : (
                 <div className="p-2.5 rounded-xl bg-slate-800/40 border border-slate-700/40 text-center">
                   <span className="text-[11px] text-slate-400 italic">
-                    💬 Mensaje sin placa gráfica adjunta (Envío solo texto)
+                    ⚠️ Mensaje sin placa gráfica adjunta (Envío solo texto)
                   </span>
                 </div>
               )}
@@ -1559,7 +1584,7 @@ export default function OpticaCampanasPage() {
                       🎟️ Quiero mi voucher de descuento
                     </div>
                     <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-cyan-400 font-bold text-[11px]">
-                      👓 Cotizar mi receta por WhatsApp
+                      🕶️ Cotizar mi receta por WhatsApp
                     </div>
                     <div className="py-1.5 text-center rounded-lg bg-[#202c33] text-slate-400 font-semibold text-[10px]">
                       No recibir avisos de óptica
@@ -1642,7 +1667,6 @@ export default function OpticaCampanasPage() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-                  {/* Miniatura de previsualización */}
                   <div className="md:col-span-3">
                     {filePreviewUrl && (
                       <div className="h-28 w-full rounded-xl overflow-hidden bg-slate-900 border border-[var(--border)] flex items-center justify-center shadow-xs relative">
@@ -1651,53 +1675,48 @@ export default function OpticaCampanasPage() {
                           alt="Previsualización"
                           className="h-full w-full object-cover"
                         />
-                        <span className="absolute bottom-1 right-1 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-mono">
-                          {selectedFile.size > 1024 * 1024
-                            ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`
-                            : `${Math.round(selectedFile.size / 1024)} KB`}
+                        <span className="absolute bottom-1 right-1 text-[9px] bg-black/70 text-white px-1.5 py-0.5 rounded font-mono">
+                          {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
                         </span>
                       </div>
                     )}
                   </div>
 
-                  {/* Campos de Título y Categoría */}
                   <div className="md:col-span-6 space-y-2.5">
                     <div>
-                      <label className="block text-[11px] font-bold mb-1 text-[var(--foreground)]">
-                        Título de la Placa
+                      <label className="block text-[11px] font-bold text-[var(--foreground)] mb-1">
+                        Título de la Placa Promocional *
                       </label>
                       <input
                         type="text"
                         value={nuevaPlacaTitulo}
                         onChange={(e) => setNuevaPlacaTitulo(e.target.value)}
-                        placeholder="Ej: Voucher 20% OFF Turno Consulta"
-                        className="w-full px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                        placeholder="Ej: Voucher 20% OFF Turnos Mitre 540"
+                        className="w-full px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900 border border-[var(--border)] font-semibold"
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold mb-1 text-[var(--foreground)]">
-                        Categoría Promocional
+                      <label className="block text-[11px] font-bold text-[var(--foreground)] mb-1">
+                        Categoría de Uso
                       </label>
                       <select
                         value={nuevaPlacaCat}
                         onChange={(e) => setNuevaPlacaCat(e.target.value)}
-                        className="w-full px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-800 border border-[var(--border)] font-semibold"
+                        className="w-full px-3 py-1.5 rounded-xl text-xs bg-white dark:bg-slate-900 border border-[var(--border)] font-semibold"
                       >
                         <option value="VOUCHER_TURNO">🎟️ Voucher Descuento por Turno</option>
-                        <option value="LENTES_AEREOS">👓 Lentes Aéreos y Receta</option>
-                        <option value="LENTES_CONTACTO">💧 Lentes de Contacto y Soluciones</option>
-                        <option value="PROMO_ARMAZONES">✨ Promoción Armazones y Estilos</option>
-                        <option value="PROMO_TEMPORADA">🌞 Promo Temporada / Sol</option>
-                        <option value="OTRO">📁 Otra Categoría</option>
+                        <option value="RECETA_AEREOS">👓 Prescripción Cristales y Armazones</option>
+                        <option value="LENTES_CONTACTO">👁️ Lentes de Contacto y Soluciones</option>
+                        <option value="ANTEOJOS_LISTOS">✅ Lentes Listos para Retirar</option>
+                        <option value="INSTITUCIONAL">🏥 Institucional Óptica Vortix</option>
                       </select>
                     </div>
                   </div>
 
-                  {/* Botón de Subida */}
                   <div className="md:col-span-3 flex flex-col gap-2">
                     <button
                       type="button"
-                      onClick={() => handleUploadPlaca()}
+                      onClick={handleUploadNuevaPlaca}
                       disabled={uploadingPlaca}
                       className="w-full px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-md transition-all"
                     >
@@ -1709,7 +1728,7 @@ export default function OpticaCampanasPage() {
                       ) : (
                         <>
                           <Upload size={15} />
-                          <span>⬆️ Subir a Storage</span>
+                          <span>🚀 Subir a Storage</span>
                         </>
                       )}
                     </button>
@@ -1726,7 +1745,6 @@ export default function OpticaCampanasPage() {
               </div>
             )}
 
-            {/* Feedback Toast */}
             {uploadFeedback && (
               <div
                 className={`p-3 rounded-xl text-xs flex items-center justify-between gap-2 ${
@@ -1772,7 +1790,6 @@ export default function OpticaCampanasPage() {
                         : 'border-[var(--border)] bg-slate-50 dark:bg-slate-800/40 hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-xs'
                     }`}
                   >
-                    {/* Botón de papelera para eliminar */}
                     <button
                       type="button"
                       onClick={(e) => handleDeletePlaca(e, pl)}
@@ -1819,53 +1836,227 @@ export default function OpticaCampanasPage() {
           )}
         </div>
 
-        {/* Monitoreo de Campañas Lanzadas */}
-        <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 space-y-3">
-          <h3 className="text-sm font-black text-[var(--foreground)]">
-            Historial y Embudo en Vivo de Campañas de Óptica
-          </h3>
+        {/* Historial y Embudo en Vivo de Campañas de Óptica */}
+        <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
+            <div>
+              <h3 className="text-sm font-black text-[var(--foreground)] flex items-center gap-2">
+                <Megaphone size={18} className="text-indigo-600" />
+                Historial y Embudo en Vivo de Campañas de Óptica
+              </h3>
+              <p className="text-xs text-[var(--secondary)] mt-0.5">
+                Seguimiento en tiempo real de envíos, tasas de entrega, lecturas y conversiones por WhatsApp
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={loadAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800 text-xs font-bold hover:bg-slate-100 transition-colors"
+            >
+              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+              <span>Actualizar Embudo</span>
+            </button>
+          </div>
+
           {campanas.length === 0 ? (
-            <p className="text-xs text-[var(--secondary)]">
+            <p className="text-xs text-[var(--secondary)] py-4 text-center">
               Aún no se han lanzado campañas masivas. Usa el constructor de arriba para iniciar una.
             </p>
           ) : (
-            <div className="space-y-2">
-              {campanas.map((c) => (
-                <div
-                  key={c.id}
-                  className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/40 flex flex-wrap items-center justify-between gap-3 text-xs"
-                >
-                  <div>
-                    <p className="font-black text-[var(--foreground)]">{c.nombre}</p>
-                    <p className="text-[11px] text-[var(--secondary)]">
-                      Segmento: {c.segmento} • Plantilla: {c.template_name} • Estado:{' '}
-                      <strong>{c.estado}</strong>
-                    </p>
+            <div className="space-y-3">
+              {campanas.map((c) => {
+                const tot = c.total_audiencia || (c as any).destinatarios_count || 1
+                const env = c.enviados ?? 0
+                const pctEnv = Math.min(100, Math.round((env / tot) * 100))
+                const leidos = c.leidos ?? 0
+                const resp = c.respondidos ?? 0
+
+                return (
+                  <div
+                    key={c.id}
+                    className="p-4 rounded-2xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/40 space-y-3 text-xs"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-black text-sm text-[var(--foreground)]">{c.nombre}</p>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              c.estado === 'EN_CURSO'
+                                ? 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/30 animate-pulse'
+                                : c.estado === 'COMPLETADA'
+                                ? 'bg-indigo-500/15 text-indigo-600 border border-indigo-500/30'
+                                : 'bg-slate-200 dark:bg-slate-700 text-[var(--secondary)]'
+                            }`}
+                          >
+                            {c.estado}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-[var(--secondary)] mt-0.5">
+                          Segmento: <strong>{c.segmento || 'TURNOS'}</strong> • Plantilla:{' '}
+                          <code className="text-indigo-600 dark:text-indigo-400 font-mono text-[10px]">{c.template_name}</code> •{' '}
+                          Creada: {formatDateArg(c.created_at || (c as any).fecha_creacion || '')}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleVerDetalleCampana(c)}
+                          className="px-3 py-1.5 rounded-xl border border-[var(--border)] bg-white dark:bg-slate-900 text-xs font-bold hover:bg-slate-100 transition-colors flex items-center gap-1.5"
+                        >
+                          <Eye size={13} />
+                          <span>Ver Destinatarios</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleCampana(c)}
+                          className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-colors ${
+                            c.estado === 'EN_CURSO'
+                              ? 'bg-amber-500 hover:bg-amber-600 text-slate-950'
+                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                          }`}
+                        >
+                          {c.estado === 'EN_CURSO' ? <Pause size={13} /> : <Play size={13} />}
+                          <span>{c.estado === 'EN_CURSO' ? 'Pausar' : 'Reanudar'}</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Barra de Progreso y Métricas de Conversión */}
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-2 border-t border-[var(--border)]/60 items-center">
+                      <div className="sm:col-span-2 space-y-1">
+                        <div className="flex justify-between text-[11px]">
+                          <span className="font-semibold text-[var(--secondary)]">
+                            Progreso de Envío: {env} de {tot} ({pctEnv}%)
+                          </span>
+                          <span className="font-mono text-[10px] text-[var(--secondary)]">
+                            Jitter: {c.jitter_min_seg || 15}s–{c.jitter_max_seg || 35}s
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-indigo-600 transition-all duration-500 rounded-full"
+                            style={{ width: `${pctEnv}%` }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-center gap-4 text-center">
+                        <div>
+                          <p className="text-[10px] text-[var(--secondary)] font-bold">Leídos</p>
+                          <p className="text-xs font-black text-cyan-600 dark:text-cyan-400">{leidos}</p>
+                        </div>
+                        <div className="h-6 w-px bg-[var(--border)]" />
+                        <div>
+                          <p className="text-[10px] text-[var(--secondary)] font-bold">Respondieron</p>
+                          <p className="text-xs font-black text-emerald-600 dark:text-emerald-400">{resp}</p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[10px] text-[var(--secondary)] block">Estrategia</span>
+                        <span className="font-bold text-[11px] text-[var(--foreground)]">
+                          {(c as any).estrategia_envio === 'template_directo' || c.estrategia === 'DIRECTA_IMAGEN' ? 'Directa con Placa' : 'Doble Paso'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <span>
-                      Enviados: <strong>{c.enviados ?? 0}</strong>/{c.total_audiencia ?? 0}
-                    </span>
-                    <span>
-                      Leídos: <strong>{c.leidos ?? 0}</strong>
-                    </span>
-                    <span>
-                      Respondidos: <strong className="text-emerald-600">{c.respondidos ?? 0}</strong>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleCampana(c)}
-                      className="px-3 py-1.5 rounded-xl bg-indigo-600 text-white font-bold flex items-center gap-1"
-                    >
-                      {c.estado === 'EN_CURSO' ? <Pause size={12} /> : <Play size={12} />}
-                      {c.estado === 'EN_CURSO' ? 'Pausar' : 'Reanudar'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
+
+        {/* Modal de Detalle de Destinatarios de Campaña */}
+        {campanaDetalleModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-3xl max-w-3xl w-full p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
+              <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                <div>
+                  <h3 className="text-sm font-black text-[var(--foreground)] flex items-center gap-2">
+                    <Users size={17} className="text-indigo-600" />
+                    Destinatarios de la Campaña: {campanaDetalleModal.nombre}
+                  </h3>
+                  <p className="text-[11px] text-[var(--secondary)] mt-0.5">
+                    Plantilla: {campanaDetalleModal.template_name} • Estado: {campanaDetalleModal.estado}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCampanaDetalleModal(null)}
+                  className="p-1.5 rounded-xl border border-[var(--border)] hover:bg-slate-100 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto border border-[var(--border)] rounded-2xl">
+                {loadingDestinatarios ? (
+                  <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs text-[var(--secondary)]">
+                    <Loader2 size={24} className="animate-spin text-indigo-600" />
+                    <span>Cargando destinatarios y estados de entrega...</span>
+                  </div>
+                ) : destinatariosDetalle.length === 0 ? (
+                  <div className="py-10 text-center text-xs text-[var(--secondary)]">
+                    No se registraron envíos en cola para esta campaña aún.
+                  </div>
+                ) : (
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-slate-100 dark:bg-slate-800/80 sticky top-0 text-[11px] font-black text-[var(--secondary)] border-b border-[var(--border)]">
+                      <tr>
+                        <th className="py-2.5 px-3">WhatsApp</th>
+                        <th className="py-2.5 px-3">Programado Para</th>
+                        <th className="py-2.5 px-3">Estado Envío</th>
+                        <th className="py-2.5 px-3">Enviado En</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {destinatariosDetalle.map((d, dIdx) => (
+                        <tr key={d.id || dIdx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                          <td className="py-2 px-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                            {d.telefono}
+                          </td>
+                          <td className="py-2 px-3 text-[11px] text-[var(--secondary)] font-mono">
+                            {d.programado_para ? d.programado_para.replace('T', ' ').slice(0, 19) : '--'}
+                          </td>
+                          <td className="py-2 px-3">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                d.estado === 'enviado'
+                                  ? 'bg-emerald-500/15 text-emerald-600 border border-emerald-500/30'
+                                  : d.estado === 'leido'
+                                  ? 'bg-cyan-500/15 text-cyan-600 border border-cyan-500/30'
+                                  : d.estado === 'pendiente'
+                                  ? 'bg-amber-500/15 text-amber-600 border border-amber-500/30'
+                                  : 'bg-rose-500/15 text-rose-600 border border-rose-500/30'
+                              }`}
+                            >
+                              {d.estado}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-[11px] text-[var(--secondary)] font-mono">
+                            {d.enviado_at ? d.enviado_at.replace('T', ' ').slice(0, 19) : 'Pendiente'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCampanaDetalleModal(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs font-bold hover:bg-slate-200 transition-colors"
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

@@ -2770,6 +2770,8 @@ AUDIENCIA_CACHE_TTL_SECONDS = 300  # 5 minutos
 @optica_vortix_router.get("/campanas/audiencia-geclisa")
 async def obtener_audiencia_geclisa_campana(
     fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD del turno en Geclisa"),
+    segmento: Optional[str] = Query(None, description="Segmento clínico: TURNOS_PROXIMOS_CON_DESCUENTO, RECETAS_AEREOS_ULTIMOS_7_DIAS, USUARIOS_LENTES_CONTACTO, CONTROL_ANUAL_RECETA"),
+    dias_recetas: int = Query(30, ge=1, le=180, description="Días hacia atrás para recetas oftalmológicas"),
     dias_anticipacion: int = Query(1, ge=0, le=14),
     prestador_id: Optional[str] = Query(None),
     ubicacion_id: Optional[str] = Query(None),
@@ -2828,6 +2830,155 @@ async def obtener_audiencia_geclisa_campana(
         if s_id_str:
             res = [p for p in res if str(p.get("servicio_id")) == s_id_str or str(p.get("servicio")) == s_id_str]
         return res
+
+    # 0. AUDIENCIA POR RECETAS Y PRESCRIPCIONES OFTALMOLÓGICAS (7 a 30 días)
+    seg_clean = str(segmento or "").strip().upper()
+    if seg_clean and seg_clean != "TURNOS_PROXIMOS_CON_DESCUENTO":
+        now_utc = datetime.now(timezone.utc)
+        since_recetas = (now_utc - timedelta(days=dias_recetas)).isoformat()
+        telefonos_cooldown: Set[str] = set()
+        telefonos_optout: Set[str] = set()
+        since_30d = (now_utc - timedelta(days=30)).isoformat()
+
+        if supabase:
+            try:
+                res_cd = (
+                    supabase.table("optica_envios_programados")
+                    .select("telefono")
+                    .gte("programado_para", since_30d)
+                    .in_("estado", ["enviado", "pendiente", "entregado", "leido"])
+                    .limit(2000)
+                    .execute()
+                )
+                for r in (res_cd.data or []):
+                    t = str(r.get("telefono") or "").strip()
+                    if t:
+                        telefonos_cooldown.add(t)
+
+                res_oo = supabase.table("optica_contactos").select("telefono").eq("opt_out", True).execute()
+                for r in (res_oo.data or []):
+                    t = str(r.get("telefono") or "").strip()
+                    if t:
+                        telefonos_optout.add(t)
+            except Exception as e_sc:
+                logger.warning(f"[AudienciaRecetas] Error consultando cooldown/optout: {e_sc}")
+
+        tipos_opp = ["indicacion_lentes_aereos", "indicacion_ambos"]
+        if "CONTACTO" in seg_clean:
+            tipos_opp = ["indicacion_lentes_contacto", "indicacion_ambos"]
+        elif "CONTROL_ANUAL" in seg_clean:
+            tipos_opp = ["indicacion_lentes_aereos", "indicacion_lentes_contacto", "indicacion_ambos"]
+
+        prestadores_dict: Dict[str, Dict[str, Any]] = {}
+        ubicaciones_dict: Dict[str, Dict[str, Any]] = {}
+        servicios_dict: Dict[str, Dict[str, Any]] = {}
+        todos_pacientes: List[Dict[str, Any]] = []
+
+        if supabase:
+            try:
+                opp_query = (
+                    supabase.table("optica_oportunidades_geclisa")
+                    .select("*")
+                    .in_("tipo_oportunidad", tipos_opp)
+                )
+                if "CONTROL_ANUAL" not in seg_clean:
+                    opp_query = opp_query.gte("created_at", since_recetas)
+                
+                opp_res = opp_query.order("created_at", desc=True).limit(300).execute()
+                for el in (opp_res.data or []):
+                    pid = str(el.get("prestador_id") or "1").strip()
+                    pnombre = str(el.get("prestador_nombre") or "Oftalmólogo Prescriptor").strip()
+                    if pid and pnombre:
+                        if pid not in prestadores_dict:
+                            prestadores_dict[pid] = {"id": pid, "nombre": pnombre, "cantidad_turnos": 0}
+                        prestadores_dict[pid]["cantidad_turnos"] += 1
+
+                    unombre = "Mitre 540 - Consultorios Centrovisión"
+                    uid = "3"
+                    if uid not in ubicaciones_dict:
+                        ubicaciones_dict[uid] = {"id": uid, "nombre": unombre, "cantidad_turnos": 0}
+                    ubicaciones_dict[uid]["cantidad_turnos"] += 1
+
+                    snombre = "RECETAS AÉREOS" if "aereos" in str(el.get("tipo_oportunidad") or "").lower() else "LENTES DE CONTACTO"
+                    sid = snombre
+                    if sid not in servicios_dict:
+                        servicios_dict[sid] = {"id": sid, "nombre": snombre, "cantidad_turnos": 0}
+                    servicios_dict[sid]["cantidad_turnos"] += 1
+
+                    tel = str(el.get("telefono") or "").strip()
+                    nombre_pac = str(el.get("paciente_nombre") or "Paciente").title().strip()
+                    fecha_c = str(el.get("created_at") or now_utc.isoformat()).split("T")[0]
+
+                    estado_envio = "ELEGIBLE"
+                    motivo_exclusion = None
+                    if tel in telefonos_optout:
+                        estado_envio = "OPT_OUT"
+                        motivo_exclusion = "Paciente solicitó no recibir avisos de óptica"
+                    elif tel in telefonos_cooldown:
+                        estado_envio = "COOLDOWN_ACTIVO"
+                        motivo_exclusion = "Ya contactado en los últimos 30 días (Escudo Anti-Spam)"
+                    elif not tel or len("".join(filter(str.isdigit, tel))) < 7:
+                        estado_envio = "SIN_CELULAR"
+                        motivo_exclusion = "No posee teléfono móvil registrado"
+
+                    grad = el.get("graduacion_json") or {}
+                    grad_txt = ""
+                    if grad:
+                        od_sph = grad.get("od_esfera")
+                        oi_sph = grad.get("oi_esfera")
+                        add_val = grad.get("adicion")
+                        if od_sph is not None or oi_sph is not None:
+                            grad_txt = f"OD: {od_sph or 0:+.2f} | OI: {oi_sph or 0:+.2f}"
+                            if add_val:
+                                grad_txt += f" | ADD: {add_val:+.2f}"
+
+                    todos_pacientes.append({
+                        "turno_id": str(el.get("id") or ""),
+                        "ficha_id": str(el.get("ficha_geclisa_id") or ""),
+                        "paciente_nombre": nombre_pac,
+                        "dni": str(el.get("dni") or "").strip(),
+                        "telefono": tel,
+                        "hora_turno": str(el.get("created_at") or "10:00").split("T")[1][:5] if "T" in str(el.get("created_at") or "") else "10:00",
+                        "fecha_turno": fecha_c,
+                        "prestador_id": pid,
+                        "prestador_nombre": pnombre,
+                        "ubicacion": unombre,
+                        "ubicacion_id": uid,
+                        "consultorio": "Consultorio Oftalmológico",
+                        "servicio": snombre,
+                        "servicio_id": sid,
+                        "practica": grad_txt or str(el.get("texto_indicacion_detectada") or "Prescripción de Cristales"),
+                        "servicio_practica": grad_txt or "Indicación de Anteojos",
+                        "obra_social": str(el.get("obra_social") or "Particular").strip(),
+                        "codigo_beneficio": str(el.get("codigo_beneficio") or f"#VORTIX-{tel[-4:] if len(tel)>=4 else 'PROMO'}"),
+                        "estado_envio": estado_envio,
+                        "motivo_exclusion": motivo_exclusion,
+                        "seleccionado": estado_envio == "ELEGIBLE"
+                    })
+            except Exception as e_opp_aud:
+                logger.error(f"[AudienciaRecetas] Error consultando oportunidades: {e_opp_aud}")
+
+        prestadores_list = sorted(prestadores_dict.values(), key=lambda x: str(x["nombre"]))
+        ubicaciones_list = sorted(ubicaciones_dict.values(), key=lambda x: str(x["nombre"]))
+        servicios_list = sorted(servicios_dict.values(), key=lambda x: str(x["nombre"]))
+
+        pacs_result = _aplicar_filtros_pacs(todos_pacientes)
+
+        return {
+            "success": True,
+            "segmento": seg_clean,
+            "dias_recetas": dias_recetas,
+            "fecha_objetivo": since_recetas.split("T")[0],
+            "total_turnos": len(pacs_result),
+            "elegibles_count": sum(1 for p in pacs_result if p.get("estado_envio") == "ELEGIBLE"),
+            "cooldown_count": sum(1 for p in pacs_result if p.get("estado_envio") == "COOLDOWN_ACTIVO"),
+            "opt_out_count": sum(1 for p in pacs_result if p.get("estado_envio") == "OPT_OUT"),
+            "sin_telefono_count": sum(1 for p in pacs_result if p.get("estado_envio") == "SIN_CELULAR"),
+            "prestadores": prestadores_list,
+            "ubicaciones": ubicaciones_list,
+            "servicios": servicios_list,
+            "pacientes": pacs_result
+        }
 
     # 1. Servir desde caché si no se solicita force_refresh
     if not f_refresh and fecha_obj in _AUDIENCIA_GECLISA_CACHE:
@@ -3077,6 +3228,32 @@ async def listar_campanas_optica():
         "success": True,
         "campanas": items,
         "items": items
+    }
+
+
+@optica_vortix_router.get("/campanas/{camp_id}")
+async def obtener_detalle_campana_optica(camp_id: str):
+    """Devuelve los detalles de una campaña de Óptica Vortix y sus destinatarios programados."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+    c_res = supabase.table("optica_campanas").select("*").eq("id", camp_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+    camp = _enriquecer_campana_optica_frontend(c_res.data[0])
+
+    env_res = (
+        supabase.table("optica_envios_programados")
+        .select("id, telefono, estado, programado_para, enviado_at, template_name, error_detalle")
+        .eq("campana_id", camp_id)
+        .order("programado_para", desc=False)
+        .limit(500)
+        .execute()
+    )
+    return {
+        "success": True,
+        "campana": camp,
+        "destinatarios": env_res.data or [],
+        "items": env_res.data or []
     }
 
 

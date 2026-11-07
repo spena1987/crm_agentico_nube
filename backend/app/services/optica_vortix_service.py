@@ -1063,6 +1063,42 @@ def sincronizar_turnos_proximos_optica(
         except Exception as e:
             logger.debug(f"[Motor1] Aviso consultando opt_out/cooldown: {e}")
 
+    # OPTIMIZACION DE RENDIMIENTO: Pre-enriquecimiento de fichas en bloque y paralelo
+    fichas_necesitadas = list({
+        str(t.get("ficha_id")).strip() for t in raw_turnos 
+        if t.get("ficha_id") and len("".join(filter(str.isdigit, str(t.get("telefono") or "")))) < 7
+    })
+
+    contactos_cache_local = {}
+    if supabase and fichas_necesitadas:
+        try:
+            c_res = (
+                supabase.table("optica_contactos")
+                .select("ficha_geclisa_id, dni, telefono, nombre, obra_social")
+                .in_("ficha_geclisa_id", fichas_necesitadas[:200])
+                .execute()
+            )
+            for c in (c_res.data or []):
+                fid_c = str(c.get("ficha_geclisa_id") or "").strip()
+                if fid_c and c.get("telefono"):
+                    contactos_cache_local[fid_c] = c
+        except Exception as e_c:
+            logger.debug(f"[Motor1 Pre-Cache Contactos] {e_c}")
+
+    fichas_a_buscar = [
+        fid for fid in fichas_necesitadas 
+        if fid not in contactos_cache_local and fid not in _FICHA_GECLISA_CACHE
+    ]
+    if fichas_a_buscar:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=min(8, len(fichas_a_buscar))) as ex:
+            future_to_fid = {ex.submit(obtener_ficha_geclisa_con_cache, fid): fid for fid in fichas_a_buscar[:35]}
+            try:
+                for fut in as_completed(future_to_fid, timeout=2.5):
+                    pass
+            except Exception:
+                pass
+
     for t in raw_turnos:
         turno_id = str(t.get("turno_id") or t.get("id") or "").strip()
         ficha_id = str(t.get("ficha_id") or "").strip()
@@ -1125,20 +1161,32 @@ def sincronizar_turnos_proximos_optica(
             })
             continue
 
-        # 3. Enriquecer desde ficha completa de Geclisa ÚNICAMENTE si falta teléfono móvil válido
+        # 3. Enriquecer desde ficha completa de Geclisa si falta telefono movil
         celular_ficha = None
         digits_tel = "".join(filter(str.isdigit, raw_tel))
         if ficha_id and len(digits_tel) < 7:
-            ficha_data = obtener_ficha_geclisa_con_cache(ficha_id)
-            if ficha_data:
-                celular_ficha = ficha_data.get("celular")
-                raw_tel = raw_tel or ficha_data.get("telefono") or ""
-                dni = dni or str(ficha_data.get("dni") or "")
+            # Primero intentar desde cache local de optica_contactos
+            c_loc = contactos_cache_local.get(ficha_id)
+            if c_loc and c_loc.get("telefono"):
+                raw_tel = str(c_loc.get("telefono") or "")
+                dni = dni or str(c_loc.get("dni") or "")
                 if not obra_social or obra_social.upper() == "PARTICULAR":
-                    obra_social = str(ficha_data.get("obra_social") or obra_social or "Particular")
+                    obra_social = str(c_loc.get("obra_social") or obra_social or "Particular")
                 if not paciente_nombre or paciente_nombre.startswith("Paciente #"):
-                    paciente_nombre = str(ficha_data.get("nombre_completo") or paciente_nombre)
-
+                    paciente_nombre = str(c_loc.get("nombre") or paciente_nombre)
+            
+            # Si todavia falta telefono, consultar ficha en Geclisa
+            digits_check = "".join(filter(str.isdigit, raw_tel))
+            if len(digits_check) < 7:
+                ficha_data = obtener_ficha_geclisa_con_cache(ficha_id)
+                if ficha_data:
+                    celular_ficha = ficha_data.get("celular")
+                    raw_tel = raw_tel or ficha_data.get("telefono") or ""
+                    dni = dni or str(ficha_data.get("dni") or "")
+                    if not obra_social or obra_social.upper() == "PARTICULAR":
+                        obra_social = str(ficha_data.get("obra_social") or obra_social or "Particular")
+                    if not paciente_nombre or paciente_nombre.startswith("Paciente #"):
+                        paciente_nombre = str(ficha_data.get("nombre_completo") or paciente_nombre)
         # 4. Normalizar teléfono regional Mendoza
         tel_norm, err_tel = normalizar_telefono_optica_mza(
             raw_phone=raw_tel,
