@@ -1031,13 +1031,13 @@ export default function TabProgramacionLio({
       </div>
 
       {/* Observaciones Internas de Quirófano (No Protocolares) */}
-      <div className="p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 space-y-1.5 text-xs">
-        <div className="flex flex-wrap items-center justify-between gap-1.5">
+      <div className="w-full p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 space-y-2 text-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <label className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-            <AlertCircle size={14} className="text-amber-600 shrink-0" />
+            <AlertCircle size={15} className="text-amber-600 shrink-0" />
             <span>Observaciones y Particularidades de Quirófano (Uso Interno de Sala)</span>
           </label>
-          <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+          <span className="text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30 self-start sm:self-auto">
             🔒 No va al Protocolo Quirúrgico Oficial
           </span>
         </div>

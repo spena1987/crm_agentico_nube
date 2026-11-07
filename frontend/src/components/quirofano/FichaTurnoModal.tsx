@@ -2124,25 +2124,25 @@ export default function FichaTurnoModal({
                   </div>
 
                   {/* 5. Observaciones Internas de Quirófano (Particularidades del Caso - No Protocolares) */}
-                  <div className="p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 space-y-1.5">
-                    <div className="flex flex-wrap items-center justify-between gap-1.5">
-                      <label className="text-[11px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-                        <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                  <div className="col-span-full w-full p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 space-y-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <label className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                        <AlertCircle size={15} className="text-amber-600 shrink-0" />
                         <span>Observaciones y Particularidades de Quirófano (Uso Interno de Sala)</span>
                       </label>
-                      <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                      <span className="text-[10px] uppercase font-bold px-2.5 py-0.5 rounded-md bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30 self-start sm:self-auto">
                         🔒 No va al Protocolo Quirúrgico Oficial
                       </span>
                     </div>
-                    <p className="text-[10px] text-[var(--secondary)]">
-                      Campo de texto libre para el equipo de quirófano (circulante, instrumentadora, enfermería). Registre requerimientos asistenciales, postura o detalles especiales del paciente.
+                    <p className="text-[11px] text-[var(--secondary)]">
+                      Campo de texto libre para el equipo de sala (circulante, instrumentadora, enfermería). Registre requerimientos asistenciales, postura o detalles especiales del paciente.
                     </p>
                     <textarea
                       rows={2}
                       value={formData.observaciones_quirofano}
                       onChange={(e) => setFormData({ ...formData, observaciones_quirofano: e.target.value })}
                       placeholder="Ej: Paciente con hipoacusia en oído izquierdo, requiere almohadilla cervical, lente en custodia del paciente, etc..."
-                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-amber-500/30 text-xs text-[var(--foreground)] outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 placeholder:text-slate-400"
+                      className="w-full p-2.5 rounded-xl bg-[var(--card)] border border-amber-500/30 text-xs text-[var(--foreground)] outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 placeholder:text-slate-400 font-medium resize-y"
                     />
                   </div>
                   </div>
