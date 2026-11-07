@@ -1278,11 +1278,10 @@ def _enriquecer_conversacion_optica_frontend(r: Dict[str, Any], now_utc: Optiona
             pass
 
     nombre_pac = contacto.get("nombre") or r.get("nombre_contacto") or r.get("nombre_paciente") or f"Contacto {str(r.get('telefono') or '')[-4:]}"
-    grad_norm = normalizar_estructura_graduacion(contacto.get("graduacion_actual_json") or r.get("graduacion_actual_json") or {})
+    meta = r.get("metadata_json") if isinstance(r.get("metadata_json"), dict) else {}
+    grad_norm = normalizar_estructura_graduacion(contacto.get("graduacion_actual_json") or meta.get("graduacion_actual_json") or r.get("graduacion_actual_json") or {})
     origen_fe = _map_origen_to_frontend(r.get("origen_oportunidad") or r.get("origen"))
     cupon = contacto.get("codigo_cupon_activo") or r.get("cupon_codigo") or generar_codigo_beneficio_vortix(str(contacto.get("ficha_geclisa_id") or r.get("telefono") or ""))
-
-    meta = r.get("metadata_json") if isinstance(r.get("metadata_json"), dict) else {}
     is_pinned = bool(meta.get("fijado") or meta.get("fijada") or meta.get("is_pinned") or r.get("fijada") or r.get("fijado"))
     no_leido_flag = bool(meta.get("no_leido") or meta.get("manual_unread") or (int(r.get("mensajes_no_leidos") or 0) > 0))
 
@@ -1978,6 +1977,169 @@ async def reaccionar_mensaje_optica(conv_id: str, payload: Dict[str, Any] = Body
     return {"success": True}
 
 
+@optica_vortix_router.post("/conversaciones/{conv_id}/presencia")
+async def enviar_presencia_optica_endpoint(
+    conv_id: str,
+    presence: str = Body("composing", embed=True)
+):
+    """
+    Emite el indicador de presencia ('composing' o 'paused') hacia WhatsApp Cloud API
+    utilizando las credenciales aisladas de la Línea 3 de Óptica Vortix.
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    c_res = supabase.table("optica_conversaciones").select("id, telefono").eq("id", conv_id).limit(1).execute()
+    if not c_res.data:
+        raise HTTPException(status_code=404, detail="Conversación no encontrada")
+
+    to_phone = c_res.data[0].get("telefono")
+    if not to_phone:
+        raise HTTPException(status_code=400, detail="Conversación sin teléfono válido")
+
+    # Obtener el wamid del último mensaje entrante para activar el indicador oficial en Meta Cloud API
+    last_wamid = None
+    try:
+        m_res = (
+            supabase.table("optica_mensajes")
+            .select("wamid")
+            .eq("conversacion_id", conv_id)
+            .eq("direccion", "inbound")
+            .not_.is_("wamid", "null")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if m_res.data and m_res.data[0].get("wamid"):
+            last_wamid = m_res.data[0]["wamid"]
+    except Exception as e_wamid:
+        logger.debug(f"[OpticaPresencia] No se pudo obtener último wamid: {e_wamid}")
+
+    optica_phone_id, optica_token = get_whatsapp_optica_credentials()
+    if not optica_phone_id or not optica_token:
+        return {"success": True, "notice": "Línea 3 sin credenciales de Meta configuradas"}
+
+    wa_client = WhatsAppCloudClient(phone_number_id=optica_phone_id, access_token=optica_token)
+    try:
+        await wa_client.send_typing_indicator(to_phone=to_phone, presence=presence, message_id=last_wamid)
+    except Exception as e:
+        logger.warning(f"[OpticaPresencia] Error al emitir typing indicator: {e}")
+    finally:
+        await wa_client.close()
+
+    return {"success": True}
+
+
+@optica_vortix_router.post("/mensajes/{mensaje_id}/transcribir")
+async def transcribir_mensaje_audio_optica(mensaje_id: str):
+    """
+    Transcribe un mensaje de audio de Óptica Vortix con Gemini Flash.
+    Obtiene los bytes desde media_url (Supabase Storage, URL pública o archivo local)
+    o descargando vía WhatsAppCloudClient si existe media_id.
+    Persiste la transcripción en optica_mensajes.metadata['transcripcion'].
+    """
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Supabase no disponible")
+
+    # 1. Buscar mensaje en public.optica_mensajes
+    m_res = supabase.table("optica_mensajes").select("*").eq("id", mensaje_id).limit(1).execute()
+    if not m_res.data:
+        m_res = supabase.table("optica_mensajes").select("*").eq("wamid", mensaje_id).limit(1).execute()
+    if not m_res.data:
+        raise HTTPException(status_code=404, detail="Mensaje no encontrado")
+
+    msg = m_res.data[0]
+    real_id = msg.get("id")
+    meta = msg.get("metadata") if isinstance(msg.get("metadata"), dict) else {}
+    media_url = msg.get("media_url") or meta.get("media_url") or meta.get("url")
+    mime_type = msg.get("mime_type") or meta.get("mime_type") or "audio/ogg"
+
+    audio_bytes: Optional[bytes] = None
+
+    # Intentar leer desde archivo local en STATIC_MEDIA_DIR si la URL lo referencia
+    from app.services.media_service import STATIC_MEDIA_DIR
+    if media_url:
+        parsed_str = str(media_url)
+        if "/static/media/" in parsed_str:
+            rel = parsed_str.split("/static/media/")[-1].split("?")[0]
+            local_path = os.path.join(STATIC_MEDIA_DIR, rel.replace("/", os.sep))
+            if os.path.exists(local_path):
+                try:
+                    with open(local_path, "rb") as f:
+                        audio_bytes = f.read()
+                except Exception as ef:
+                    logger.warning(f"[OpticaTranscribir] Error leyendo archivo local {local_path}: {ef}")
+
+        # Si no se leyó localmente y es URL remota HTTP/HTTPS (Supabase Storage / CDN)
+        if not audio_bytes and (parsed_str.startswith("http://") or parsed_str.startswith("https://")):
+            try:
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as h_client:
+                    r = await h_client.get(parsed_str)
+                    if r.status_code == 200:
+                        audio_bytes = r.content
+                        if r.headers.get("Content-Type"):
+                            mime_type = r.headers.get("Content-Type")
+            except Exception as e_dl:
+                logger.warning(f"[OpticaTranscribir] Error descargando audio desde {parsed_str}: {e_dl}")
+
+    # Descarga directa desde Meta si no hay audio_bytes pero sí media_id
+    media_id = meta.get("media_id") or meta.get("whatsapp_media_id")
+    if not audio_bytes and media_id:
+        try:
+            optica_phone_id, optica_token = get_whatsapp_optica_credentials()
+            if optica_phone_id and optica_token:
+                wa_client = WhatsAppCloudClient(phone_number_id=optica_phone_id, access_token=optica_token)
+                try:
+                    dl_bytes, dl_mime = await wa_client.download_media_bytes(media_id)
+                    audio_bytes = dl_bytes
+                    if dl_mime:
+                        mime_type = dl_mime
+                finally:
+                    await wa_client.close()
+        except Exception as e_wa:
+            logger.warning(f"[OpticaTranscribir] Error descargando media_id de WhatsApp: {e_wa}")
+
+    if not audio_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudieron recuperar los bytes del audio desde media_url ni media_id"
+        )
+
+    # 2. Invocar transcripción con Gemini
+    from app.agent import transcribir_audio_con_gemini
+    try:
+        trans = await asyncio.to_thread(
+            transcribir_audio_con_gemini,
+            audio_url=None,
+            audio_bytes=audio_bytes,
+            mime_type=mime_type
+        )
+    except Exception as e_gem:
+        logger.error(f"[OpticaTranscribir] Error transcribiendo audio con Gemini: {e_gem}")
+        raise HTTPException(status_code=500, detail=f"Error transcribiendo audio con Gemini: {str(e_gem)}")
+
+    if not trans:
+        trans = "(Audio sin transcripción detectable)"
+
+    # 3. Guardar la transcripción en metadata['transcripcion'] y actualizar fila
+    meta["transcripcion"] = trans
+    update_data: Dict[str, Any] = {
+        "metadata": meta,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    curr_content = str(msg.get("contenido") or "").strip()
+    if not curr_content or curr_content in ("[Audio adjunto]", "[AUDIO] Mensaje recibido", "🎤 [Audio]"):
+        update_data["contenido"] = f"🎤 {trans}"
+
+    supabase.table("optica_mensajes").update(update_data).eq("id", real_id).execute()
+
+    return {
+        "success": True,
+        "transcripcion": trans,
+        "mensaje_id": real_id
+    }
+
+
 @optica_vortix_router.put("/conversaciones/{conv_id}/fijar")
 @optica_vortix_router.post("/conversaciones/{conv_id}/fijar")
 async def fijar_conversacion_optica(conv_id: str, payload: Optional[Dict[str, Any]] = Body(None)):
@@ -2265,10 +2427,50 @@ async def ocr_receta_endpoint(payload: OcrRecetaPayload):
             rotacion_grados=int(payload.rotacion_grados or 0)
         )
         grad = normalizar_estructura_graduacion(res.get("graduacion"))
+
+        conv_actualizada = None
+        target_conv_id = payload.conversacion_id
+        if not target_conv_id and payload.contacto_id and supabase:
+            c_q = supabase.table("optica_conversaciones").select("id").eq("contacto_id", payload.contacto_id).order("updated_at", desc=True).limit(1).execute()
+            if c_q.data:
+                target_conv_id = c_q.data[0]["id"]
+
+        if target_conv_id and supabase:
+            c_res = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", target_conv_id).limit(1).execute()
+            if c_res.data:
+                conv_row = c_res.data[0]
+                target_cid = conv_row.get("contacto_id") or payload.contacto_id
+
+                # Persistencia atómica de graduación en optica_contactos
+                if target_cid:
+                    supabase.table("optica_contactos").update({
+                        "graduacion_actual_json": grad,
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", target_cid).execute()
+
+                meta = conv_row.get("metadata_json") if isinstance(conv_row.get("metadata_json"), dict) else {}
+                meta["graduacion_actual_json"] = grad
+
+                upd_fields: Dict[str, Any] = {
+                    "metadata_json": meta,
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }
+
+                etapa_actual = str(conv_row.get("etapa_comercial") or "").strip().upper()
+                if etapa_actual in ("NUEVA_CONSULTA", "CONSULTA_ARMAZON"):
+                    upd_fields["etapa_comercial"] = "PRESUPUESTO_AEREOS"
+
+                supabase.table("optica_conversaciones").update(upd_fields).eq("id", target_conv_id).execute()
+
+                refreshed = supabase.table("optica_conversaciones").select("*, optica_contactos(*)").eq("id", target_conv_id).limit(1).execute()
+                if refreshed.data:
+                    conv_actualizada = _enriquecer_conversacion_optica_frontend(refreshed.data[0])
+
         return {
             **grad,
             "success": True,
-            "graduacion": grad
+            "graduacion": grad,
+            "conversacion": conv_actualizada
         }
     except Exception as e:
         logger.error(f"[OpticaOCR] Error en endpoint OCR: {e}")

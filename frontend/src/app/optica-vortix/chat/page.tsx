@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   Glasses,
@@ -42,21 +42,25 @@ import {
   Trash2,
   Copy,
   AlertCircle,
-  BookOpen
+  BookOpen,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import WhatsAppFormattedText from '@/components/chat/WhatsAppFormattedText'
-import ChatMediaViewer from '@/components/chat/ChatMediaViewer'
+import ChatMediaViewer, { DeliveryStatusIcon } from '@/components/chat/ChatMediaViewer'
 import ChatEmojiPicker from '@/components/chat/ChatEmojiPicker'
 import ChatFloatingFormatToolbar from '@/components/chat/ChatFloatingFormatToolbar'
 import ChatMessageContextMenu from '@/components/chat/ChatMessageContextMenu'
 import ChatContactContextMenu from '@/components/chat/ChatContactContextMenu'
+import ChatQuickRepliesMenu, { QuickReplyTemplate } from '@/components/chat/ChatQuickRepliesMenu'
+import ToggleHuman from '@/components/ToggleHuman'
 import ModalReenviarMensaje from '@/components/chat/ModalReenviarMensaje'
 import ModalSelectorPlantillasMeta from '@/components/chat/ModalSelectorPlantillasMeta'
 import ModalHistoriaClinica from '@/components/ModalHistoriaClinica'
 import { apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
-import { formatDateArg } from '@/lib/dateUtils'
+import { formatDateArg, getCalendarDayKey, formatDateBadge } from '@/lib/dateUtils'
 import {
   EtapaComercialOptica,
   OpticaConversacion,
@@ -142,22 +146,40 @@ const ETAPAS_EMBUDO: {
 
 const ATAJOS_RAPIDOS = [
   {
-    cmd: '/horarios',
-    titulo: 'Horarios y Dirección',
+    cmd: '/cotizar',
+    titulo: 'Presupuesto de Cristales',
     texto:
-      '📍 *Óptica Vortix* te espera de Lunes a Viernes de 8:30 a 20:00 hs y Sábados de 9:00 a 13:00 hs, dentro del Centro Oftalmológico. ¡Podés pasar sin turno previo!',
+      '👓 *Presupuesto Óptica Vortix*: Estimado/a {{nombre}}, contamos con opciones en cristales monofocales y multifocales con hasta 20% de descuento y cuotas sin interés. ¿Te gustaría que te coticemos según tu receta?',
+  },
+  {
+    cmd: '/receta',
+    titulo: 'Solicitud de Receta Médica',
+    texto:
+      '📄 Para cotizar tus lentes con exactitud, por favor envíanos una foto nítida de tu orden o receta médica oftalmológica (OD / OI / Cerca / Lejos).',
+  },
+  {
+    cmd: '/retiro',
+    titulo: 'Lentes Listos para Retirar',
+    texto:
+      '✨ ¡Excelente noticia {{nombre}}! Tus lentes ya se encuentran listos para retirar en Óptica Vortix. Te esperamos en Planta Baja del Centro Oftalmológico.',
+  },
+  {
+    cmd: '/cuidados',
+    titulo: 'Cuidados y Mantenimiento',
+    texto:
+      '💧 *Cuidados y Mantenimiento*: Limpia tus cristales con paño de microfibra y spray óptico neutro. No uses alcohol directo ni papel tissue seco para evitar rayaduras.',
   },
   {
     cmd: '/ubicacion',
-    titulo: 'Ubicación en Planta Baja',
+    titulo: 'Ubicación y Horarios en Planta Baja',
     texto:
-      '✨ Estamos ubicados en la Planta Baja de la clínica, justo a la salida de los consultorios oftalmológicos, para que puedas cotizar tu receta en el momento con tu descuento de paciente.',
+      '📍 *Óptica Vortix* te espera en la Planta Baja del Centro Oftalmológico (Av. San Martín 1420), de Lunes a Viernes de 8:30 a 20:00 hs y Sábados de 9:00 a 13:00 hs. ¡Podés pasar sin turno previo!',
   },
   {
-    cmd: '/obras_sociales',
-    titulo: 'Cobertura y Reintegros',
+    cmd: '/formas_pago',
+    titulo: 'Medios de Pago y Cuotas',
     texto:
-      '💳 Trabajamos con descuentos directos por convenio y emitimos factura oficial con el detalle dióptrico para reintegro inmediato en tu Obra Social o Prepaga.',
+      '💳 *Formas de Pago*: Contás con 3 y 6 cuotas sin interés con tarjetas bancarias, o un 15% OFF adicional abonando por transferencia o efectivo.',
   },
   {
     cmd: '/garantia',
@@ -166,16 +188,76 @@ const ATAJOS_RAPIDOS = [
       '🛡️ Todos nuestros cristales monofocales y multifocales cuentan con *Garantía de Adaptación Recetada* en conjunto con tu médico oftalmólogo de la clínica.',
   },
   {
-    cmd: '/medios_pago',
-    titulo: 'Cuotas y Medios de Pago',
-    texto:
-      '💰 Contás con 3 y 6 cuotas sin interés con tarjetas bancarias, o un 15% OFF adicional abonando por transferencia o efectivo.',
-  },
-  {
     cmd: '/limpieza_lc',
     titulo: 'Cuidado Lentes de Contacto',
     texto:
       '💧 Recordá utilizar siempre solución multipropósito estéril para tus lentes de contacto, renovar el líquido del estuche a diario y no dormir con ellos salvo indicación médica.',
+  },
+]
+
+const PLANTILLAS_OPTICA: QuickReplyTemplate[] = [
+  {
+    id: 'cotizar',
+    command: '/cotizar',
+    title: 'Presupuesto de Cristales 1-Clic',
+    category: 'Ventas',
+    icon: Glasses,
+    template:
+      '👓 *Presupuesto Óptica Vortix*: Estimado/a *{{nombre}}*, contamos con opciones en cristales monofocales y multifocales con hasta 20% de descuento y cuotas sin interés. ¿Te gustaría que te coticemos según tu receta?',
+  },
+  {
+    id: 'receta',
+    command: '/receta',
+    title: 'Solicitud de Foto de Receta',
+    category: 'Atención',
+    icon: FileText,
+    template:
+      '📄 Para cotizar tus lentes con exactitud, por favor envíanos una foto nítida de tu orden o receta médica oftalmológica (OD / OI / Cerca / Lejos).',
+  },
+  {
+    id: 'retiro',
+    command: '/retiro',
+    title: 'Lentes Listos para Retirar',
+    category: 'Taller',
+    icon: Sparkles,
+    template:
+      '✨ ¡Excelente noticia *{{nombre}}*! Tus lentes ya se encuentran listos para retirar en Óptica Vortix. Te esperamos en Planta Baja del Centro Oftalmológico.',
+  },
+  {
+    id: 'cuidados',
+    command: '/cuidados',
+    title: 'Cuidados de Cristales y Armazón',
+    category: 'Guía',
+    icon: Glasses,
+    template:
+      '💧 *Cuidados y Mantenimiento*: Limpia tus cristales con paño de microfibra y spray óptico neutro. No uses alcohol directo ni papel tissue seco para evitar rayaduras.',
+  },
+  {
+    id: 'ubicacion',
+    command: '/ubicacion',
+    title: 'Ubicación y Horarios en Planta Baja',
+    category: 'Información',
+    icon: Clock,
+    template:
+      '📍 *Óptica Vortix* te espera en la Planta Baja del Centro Oftalmológico (Av. San Martín 1420), de Lunes a Viernes de 8:30 a 20:00 hs y Sábados de 9:00 a 13:00 hs.',
+  },
+  {
+    id: 'formas_pago',
+    command: '/formas_pago',
+    title: 'Medios de Pago y Cuotas Sin Interés',
+    category: 'Facturación',
+    icon: Calculator,
+    template:
+      '💳 *Formas de Pago*: Aceptamos transferencias bancarias, tarjetas de débito y crédito en 3 y 6 cuotas sin interés, o 15% OFF adicional por pago contado efectivo.',
+  },
+  {
+    id: 'garantia',
+    command: '/garantia',
+    title: 'Garantía de Adaptación Recetada',
+    category: 'Atención',
+    icon: Sparkles,
+    template:
+      '🛡️ Todos nuestros cristales monofocales y multifocales cuentan con *Garantía de Adaptación Recetada* en conjunto con tu médico oftalmólogo de la clínica.',
   },
 ]
 
@@ -313,11 +395,138 @@ export default function OpticaVortixChatPage() {
   const [showConfirmListoRetirar, setShowConfirmListoRetirar] = useState(false)
   const [cotizadorError, setCotizadorError] = useState<string | null>(null)
 
+  // Toast visual de notificaciones (OCR, etc.)
+  const [toastNotificacion, setToastNotificacion] = useState<{ mensaje: string; tipo?: 'success' | 'info' } | null>(null)
+
+  // Búsqueda en mensajes del chat activo
+  const [showSearchInChat, setShowSearchInChat] = useState(false)
+  const [inChatSearchQuery, setInChatSearchQuery] = useState('')
+  const [inChatSearchMatchIndex, setInChatSearchMatchIndex] = useState(0)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // Indicador de Presencia ("composing" / "paused")
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const lastPresenceSentRef = useRef<number>(0)
+
   // Referencias estables para evitar pestañeo (flickering) y salto involuntario de conversación
   const selectedConvIdRef = useRef<string | null>(null)
   const hasInitialSelectedRef = useRef<boolean>(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Mensajes que coinciden con la búsqueda dentro del chat activo
+  const matchingMessageIds = useMemo(() => {
+    const q = inChatSearchQuery.trim().toLowerCase()
+    if (!q) return []
+    return mensajes
+      .filter((m) => m.contenido && m.contenido.toLowerCase().includes(q))
+      .map((m) => m.id)
+  }, [mensajes, inChatSearchQuery])
+
+  useEffect(() => {
+    setInChatSearchMatchIndex(0)
+  }, [inChatSearchQuery])
+
+  const scrollToMatch = useCallback((index: number) => {
+    if (matchingMessageIds.length === 0) return
+    const safeIndex = (index + matchingMessageIds.length) % matchingMessageIds.length
+    setInChatSearchMatchIndex(safeIndex)
+    const targetId = matchingMessageIds[safeIndex]
+    if (targetId) {
+      const el = document.getElementById(`msg-${targetId}`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [matchingMessageIds])
+
+  // Atajo de teclado global Ctrl+F / Cmd+F para búsqueda en chat y Escape para cerrar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
+        if (selectedConv) {
+          e.preventDefault()
+          setShowSearchInChat(true)
+          setTimeout(() => searchInputRef.current?.focus(), 60)
+        }
+      } else if (e.key === 'Escape' && showSearchInChat) {
+        e.preventDefault()
+        setShowSearchInChat(false)
+        setInChatSearchQuery('')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [selectedConv, showSearchInChat])
+
+  // Separadores cronológicos de mensajes agrupados por día
+  interface MessageDayGroup {
+    dateKey: string
+    badgeText: string
+    messages: OpticaMensaje[]
+  }
+
+  const messageDayGroups = useMemo<MessageDayGroup[]>(() => {
+    const groups: MessageDayGroup[] = []
+    let currentGroup: MessageDayGroup | null = null
+
+    for (const msg of mensajes) {
+      const dayKey = getCalendarDayKey(msg.created_at)
+      if (!currentGroup || currentGroup.dateKey !== dayKey) {
+        currentGroup = {
+          dateKey: dayKey,
+          badgeText: formatDateBadge(msg.created_at),
+          messages: [msg],
+        }
+        groups.push(currentGroup)
+      } else {
+        currentGroup.messages.push(msg)
+      }
+    }
+
+    return groups
+  }, [mensajes])
+
+  // Despacho de Presencia debounced ("composing" / "paused")
+  const sendPresence = async (convId: string, presence: 'composing' | 'paused') => {
+    if (!convId) return
+    try {
+      await apiFetch(`/api/optica-vortix/conversaciones/${convId}/presencia`, {
+        method: 'POST',
+        body: JSON.stringify({ presence }),
+      })
+    } catch {
+      // silencioso
+    }
+  }
+
+  const handleTypingPresence = () => {
+    if (modoNotaInterna || !selectedConv?.id) return
+
+    const now = Date.now()
+    if (now - lastPresenceSentRef.current > 3000) {
+      lastPresenceSentRef.current = now
+      sendPresence(selectedConv.id, 'composing')
+    }
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      if (selectedConv?.id && !modoNotaInterna) {
+        sendPresence(selectedConv.id, 'paused')
+      }
+    }, 2500)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current)
+        typingTimeoutRef.current = null
+      }
+    }
+  }, [selectedConv?.id])
 
   const fetchConversaciones = async (isBackground = false) => {
     try {
@@ -954,14 +1163,63 @@ export default function OpticaVortixChatPage() {
       })
       if (res.ok) {
         const data = await res.json()
-        const extraida: OpticaGraduacion = data.graduacion || data
-        setGraduacion({
+        const rawGrad: any = data.graduacion || data
+        const extraida: OpticaGraduacion = {
           ...EMPTY_GRADUACION,
-          ...extraida,
+          ...rawGrad,
           fuente: 'OCR_IA',
-        })
+        }
+
+        setGraduacion(extraida)
+        setSelectedConv((prev) => (prev ? { ...prev, graduacion_actual_json: extraida } : null))
+        setConversaciones((prev) =>
+          prev.map((c) => (c.id === selectedConv.id ? { ...c, graduacion_actual_json: extraida } : c))
+        )
         setShowFicha360(true)
         setVisorImagenUrl(null)
+
+        // Toast visual de éxito
+        setToastNotificacion({
+          mensaje: '✨ Graduación extraída con éxito de la receta (OD / OI)',
+          tipo: 'success',
+        })
+        setTimeout(() => setToastNotificacion(null), 4500)
+
+        // Auto-calibración del Cotizador 1-Clic para presbicia (add o adicion > 0)
+        const rawAdd = String(rawGrad.add || rawGrad.adicion || '')
+        const addNum = parseFloat(rawAdd.replace('+', '').trim())
+        if (!isNaN(addNum) && addNum > 0) {
+          const addStr = `+${addNum.toFixed(2)}`
+          setCotizadorOpciones([
+            {
+              titulo: 'Opción 1 • Multifocal Standard Digital',
+              cristal: `Multifocal Progresivo Balance 1.50 (Add ${addStr})`,
+              tratamiento: 'Antirreflex Clásico + UV400',
+              armazon: 'Armazón Línea Clásica Incluido',
+              precio_lista: 180000,
+              descuento_pct: 20,
+              precio_final: 144000,
+            },
+            {
+              titulo: 'Opción 2 • Multifocal Premium Free-Form (Recomendada)',
+              cristal: `Multifocal Free-Form Amplio Campo 1.56 (Add ${addStr})`,
+              tratamiento: 'Blue Light Cut + Antirreflex Super Hidrofóbico',
+              armazon: 'Armazón Acetato / Metal Premium',
+              precio_lista: 260000,
+              descuento_pct: 20,
+              precio_final: 208000,
+            },
+            {
+              titulo: 'Opción 3 • Multifocal Fotocromático Transitions',
+              cristal: `Multifocal Digital 1.59 Policarbonato / Transitions (Add ${addStr})`,
+              tratamiento: 'Fotocromático Inteligente + Filtro Azul + Extra Dureza',
+              armazon: 'Armazón Vortix Titanium / Alta Gama',
+              precio_lista: 340000,
+              descuento_pct: 20,
+              precio_final: 272000,
+            },
+          ])
+        }
       }
     } catch {
     } finally {
@@ -1363,7 +1621,7 @@ export default function OpticaVortixChatPage() {
                   </div>
                 </div>
 
-                {/* Controles Superiores: Selector Etapa 1-clic, Bot, Cotizador, Toggle Ficha */}
+                {/* Controles Superiores: Selector Etapa 1-clic, Switch Bot ToggleHuman, Cotizador, Búsqueda, Toggle Ficha */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <select
                     value={selectedConv.etapa_comercial}
@@ -1386,20 +1644,41 @@ export default function OpticaVortixChatPage() {
                     <span className="hidden sm:inline">Cotizador Rápido</span>
                   </button>
 
+                  {/* Switch Bot IA en Cabecera (ToggleHuman 1-clic) */}
+                  <ToggleHuman
+                    conversacionId={selectedConv.id}
+                    botDisabled={Boolean(selectedConv.bot_paused)}
+                    onToggle={(disabled) => {
+                      setSelectedConv((prev) => (prev ? { ...prev, bot_paused: disabled } : null))
+                      setConversaciones((prev) =>
+                        prev.map((c) => (c.id === selectedConv.id ? { ...c, bot_paused: disabled } : c))
+                      )
+                      apiFetch(`/api/optica-vortix/conversaciones/${selectedConv.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ bot_paused: disabled }),
+                      }).catch(() => {})
+                    }}
+                  />
+
+                  {/* Botón Lupa de Búsqueda en Chat Activo (Ctrl + F) */}
                   <button
                     type="button"
-                    onClick={handleToggleBot}
-                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 border transition-colors ${
-                      selectedConv.bot_paused
-                        ? 'bg-amber-500/10 text-amber-600 border-amber-500/30'
-                        : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                    onClick={() => {
+                      setShowSearchInChat(!showSearchInChat)
+                      if (!showSearchInChat) {
+                        setTimeout(() => searchInputRef.current?.focus(), 60)
+                      } else {
+                        setInChatSearchQuery('')
+                      }
+                    }}
+                    className={`p-1.5 rounded-xl border transition-colors ${
+                      showSearchInChat
+                        ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs'
+                        : 'border-[var(--border)] text-[var(--secondary)] hover:text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800'
                     }`}
-                    title="Pausar o reactivar asistente IA en esta conversación"
+                    title="Buscar en mensajes de este chat (Ctrl + F)"
                   >
-                    {selectedConv.bot_paused ? <PauseCircle size={14} /> : <PlayCircle size={14} />}
-                    <span className="hidden md:inline">
-                      {selectedConv.bot_paused ? 'IA Pausada' : 'IA Activa'}
-                    </span>
+                    <Search size={16} />
                   </button>
 
                   <button
@@ -1412,6 +1691,70 @@ export default function OpticaVortixChatPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Barra Desplegable de Búsqueda de Mensajes en el Chat Activo */}
+              {showSearchInChat && (
+                <div className="px-4 py-2 bg-slate-100/95 dark:bg-slate-800/95 border-b border-[var(--border)] flex items-center justify-between gap-3 backdrop-blur-xs transition-all animate-in fade-in slide-in-from-top-1 duration-150">
+                  <div className="flex items-center gap-2 flex-1 max-w-md relative">
+                    <Search size={14} className="absolute left-2.5 text-slate-400 pointer-events-none" />
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={inChatSearchQuery}
+                      onChange={(e) => setInChatSearchQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          if (e.shiftKey) {
+                            scrollToMatch(inChatSearchMatchIndex - 1)
+                          } else {
+                            scrollToMatch(inChatSearchMatchIndex + 1)
+                          }
+                        }
+                      }}
+                      placeholder="Buscar en mensajes (Enter: sig., Shift+Enter: ant., Esc: cerrar)..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-[var(--border)] text-xs text-[var(--foreground)] placeholder:text-[var(--secondary)] focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-xs"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0 text-xs">
+                    <span className="text-[11px] font-semibold text-[var(--secondary)] px-2.5 py-1 rounded-lg bg-white/70 dark:bg-slate-900/70 border border-[var(--border)]">
+                      {matchingMessageIds.length === 0
+                        ? '0 coincidencias'
+                        : `${inChatSearchMatchIndex + 1} de ${matchingMessageIds.length}`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => scrollToMatch(inChatSearchMatchIndex - 1)}
+                      disabled={matchingMessageIds.length === 0}
+                      className="p-1.5 rounded-lg border border-[var(--border)] bg-white dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 disabled:opacity-40 text-[var(--foreground)] transition-colors"
+                      title="Coincidencia anterior (Shift + Enter)"
+                    >
+                      <ChevronUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => scrollToMatch(inChatSearchMatchIndex + 1)}
+                      disabled={matchingMessageIds.length === 0}
+                      className="p-1.5 rounded-lg border border-[var(--border)] bg-white dark:bg-slate-900 hover:bg-slate-200 dark:hover:bg-slate-800 disabled:opacity-40 text-[var(--foreground)] transition-colors"
+                      title="Coincidencia siguiente (Enter)"
+                    >
+                      <ChevronDown size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSearchInChat(false)
+                        setInChatSearchQuery('')
+                      }}
+                      className="p-1.5 rounded-lg hover:bg-rose-500/15 hover:text-rose-500 text-[var(--secondary)] transition-colors ml-1"
+                      title="Cerrar búsqueda (Esc)"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Banner de confirmación para notificar lentes listos */}
               {showConfirmListoRetirar && (
@@ -1448,7 +1791,7 @@ export default function OpticaVortixChatPage() {
                 </div>
               )}
 
-              {/* Timeline de Mensajes Enriquecido (WhatsAppFormattedText + ChatMediaViewer + ContextMenu) */}
+              {/* Timeline de Mensajes Enriquecido con Separadores Cronológicos por Día (WhatsAppFormattedText + ChatMediaViewer + ContextMenu) */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {loadingMsgs ? (
                   <div className="flex items-center justify-center py-12 text-slate-400 gap-2">
@@ -1460,152 +1803,181 @@ export default function OpticaVortixChatPage() {
                     No hay mensajes aún en esta conversación. Puedes enviar una plantilla o usar el Cotizador Rápido.
                   </div>
                 ) : (
-                  mensajes.map((msg) => {
-                    const isOutbound = msg.direccion === 'outbound'
-                    const isNota = msg.tipo === 'nota_interna'
-                    const isCotizacion = msg.tipo === 'cotizacion'
-                    const hasMedia = Boolean(
-                      msg.media_url ||
-                      msg.metadata?.media_url ||
-                      msg.tipo === 'image' ||
-                      msg.tipo === 'document' ||
-                      msg.tipo === 'audio'
-                    )
+                  messageDayGroups.map((group) => (
+                    <div key={group.dateKey} className="space-y-3">
+                      {/* Píldora de Separador Cronológico por Día (Estilo WhatsApp Web) */}
+                      <div className="flex justify-center my-3 sticky top-1 z-10 select-none pointer-events-none">
+                        <span className="px-3 py-1 rounded-full text-[10px] font-extrabold tracking-wider bg-slate-200/90 dark:bg-slate-800/90 text-slate-700 dark:text-slate-300 shadow-xs border border-slate-300/40 dark:border-slate-700/60 uppercase backdrop-blur-xs pointer-events-auto">
+                          {group.badgeText}
+                        </span>
+                      </div>
 
-                    if (isNota) {
-                      return (
-                        <div
-                          key={msg.id}
-                          className="flex justify-center"
-                          onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                        >
-                          <div className="max-w-lg w-full bg-amber-500/15 border border-amber-500/30 text-amber-900 dark:text-amber-200 rounded-2xl px-4 py-2.5 text-xs space-y-1">
-                            <div className="flex items-center justify-between text-[10px] font-bold text-amber-700 dark:text-amber-300">
-                              <span className="flex items-center gap-1">
-                                <StickyNote size={12} /> Nota Interna de Óptica ({msg.autor_nombre || 'Asesor'})
-                              </span>
-                              <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      {group.messages.map((msg) => {
+                        const isOutbound = msg.direccion === 'outbound'
+                        const isNota = msg.tipo === 'nota_interna'
+                        const isCotizacion = msg.tipo === 'cotizacion'
+                        const hasMedia = Boolean(
+                          msg.media_url ||
+                          msg.metadata?.media_url ||
+                          msg.tipo === 'image' ||
+                          msg.tipo === 'document' ||
+                          msg.tipo === 'audio'
+                        )
+                        const isCurrentSearchMatch = matchingMessageIds[inChatSearchMatchIndex] === msg.id
+
+                        if (isNota) {
+                          return (
+                            <div
+                              id={`msg-${msg.id}`}
+                              key={msg.id}
+                              className={`flex justify-center transition-all duration-200 ${
+                                isCurrentSearchMatch ? 'ring-2 ring-amber-400 dark:ring-amber-300 rounded-2xl p-0.5' : ''
+                              }`}
+                              onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                            >
+                              <div className="max-w-lg w-full bg-amber-500/15 border border-amber-500/30 text-amber-900 dark:text-amber-200 rounded-2xl px-4 py-2.5 text-xs space-y-1">
+                                <div className="flex items-center justify-between text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                                  <span className="flex items-center gap-1">
+                                    <StickyNote size={12} /> Nota Interna de Óptica ({msg.autor_nombre || 'Asesor'})
+                                  </span>
+                                  <span>{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                </div>
+                                <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
+                              </div>
                             </div>
-                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
-                          </div>
-                        </div>
-                      )
-                    }
+                          )
+                        }
 
-                    return (
-                      <div
-                        key={msg.id}
-                        className={`flex ${isOutbound ? 'justify-end' : 'justify-start'}`}
-                        onContextMenu={(e) => handleOpenContextMenu(e, msg)}
-                      >
-                        <div
-                          className={`max-w-xl rounded-2xl px-4 py-2.5 text-xs shadow-xs space-y-2 select-text ${
-                            isCotizacion
-                              ? 'bg-gradient-to-br from-indigo-600 to-violet-700 text-white border border-indigo-400/30'
-                              : isOutbound
-                              ? 'bg-indigo-600 text-white rounded-br-xs'
-                              : 'bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-bl-xs'
-                          }`}
-                        >
-                          {/* Visualizador de Multimedia Nativo: Audios, Documentos, Fotos */}
-                          {hasMedia && (
-                            <div className="space-y-1.5">
-                              <ChatMediaViewer
-                                metadata={{
-                                  tipo:
-                                    msg.tipo === 'audio'
-                                      ? 'audio'
-                                      : msg.tipo === 'document' || (msg.media_url && msg.media_url.endsWith('.pdf'))
-                                      ? 'documento'
-                                      : 'imagen',
-                                  media_url: msg.media_url || msg.metadata?.media_url,
-                                  file_name: msg.metadata?.file_name || msg.media_url?.split('/').pop(),
-                                  caption: msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') ? msg.contenido : undefined,
-                                  is_voice_note: msg.tipo === 'audio' || Boolean(msg.metadata?.is_voice_note),
-                                  duration_seconds: msg.metadata?.duration_seconds,
-                                  transcripcion: msg.metadata?.transcripcion,
-                                  reactions: msg.metadata?.reactions,
-                                  delivery_status: msg.estado_entrega === 'read' ? 'leido' : msg.estado_entrega === 'delivered' ? 'entregado' : 'enviado',
-                                }}
-                                isOperator={isOutbound}
-                                mensajeId={msg.id}
-                                contenidoTexto={msg.contenido}
-                              />
+                        return (
+                          <div
+                            id={`msg-${msg.id}`}
+                            key={msg.id}
+                            className={`flex ${isOutbound ? 'justify-end' : 'justify-start'} transition-all duration-200 ${
+                              isCurrentSearchMatch ? 'ring-2 ring-amber-400 dark:ring-amber-300 rounded-2xl p-0.5' : ''
+                            }`}
+                            onContextMenu={(e) => handleOpenContextMenu(e, msg)}
+                          >
+                            <div
+                              className={`max-w-xl rounded-2xl px-4 py-2.5 text-xs shadow-xs space-y-2 select-text ${
+                                isCotizacion
+                                  ? 'bg-gradient-to-br from-indigo-600 to-violet-700 text-white border border-indigo-400/30'
+                                  : isOutbound
+                                  ? 'bg-indigo-600 text-white rounded-br-xs'
+                                  : 'bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-bl-xs'
+                              }`}
+                            >
+                              {/* Visualizador de Multimedia Nativo con Transcripción conectada a Óptica */}
+                              {hasMedia && (
+                                <div className="space-y-1.5">
+                                  <ChatMediaViewer
+                                    metadata={{
+                                      tipo:
+                                        msg.tipo === 'audio'
+                                          ? 'audio'
+                                          : msg.tipo === 'document' || (msg.media_url && msg.media_url.endsWith('.pdf'))
+                                          ? 'documento'
+                                          : 'imagen',
+                                      media_url: msg.media_url || msg.metadata?.media_url,
+                                      file_name: msg.metadata?.file_name || msg.media_url?.split('/').pop(),
+                                      caption: msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') ? msg.contenido : undefined,
+                                      is_voice_note: msg.tipo === 'audio' || Boolean(msg.metadata?.is_voice_note),
+                                      duration_seconds: msg.metadata?.duration_seconds,
+                                      transcripcion: msg.metadata?.transcripcion,
+                                      reactions: msg.metadata?.reactions,
+                                      delivery_status: msg.metadata?.delivery_status || (msg.estado_entrega === 'read' ? 'leido' : msg.estado_entrega === 'delivered' ? 'entregado' : 'enviado'),
+                                    }}
+                                    isOperator={isOutbound}
+                                    mensajeId={msg.id}
+                                    contenidoTexto={msg.contenido}
+                                    endpointTranscribir="/api/optica-vortix/mensajes"
+                                    onTranscribeSuccess={(msgId, trans) => {
+                                      setMensajes((prev) =>
+                                        prev.map((m) =>
+                                          m.id === msgId
+                                            ? {
+                                                ...m,
+                                                metadata: {
+                                                  ...(m.metadata || {}),
+                                                  transcripcion: trans,
+                                                },
+                                              }
+                                            : m
+                                        )
+                                      )
+                                    }}
+                                  />
 
-                              {/* Si es una imagen en Óptica Vortix, mantenemos el botón directo de Gemini Vision OCR */}
-                              {msg.media_url && !msg.media_url.endsWith('.pdf') && msg.tipo !== 'audio' && (
-                                <div className="flex items-center gap-1.5 pt-1">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRunOcrReceta(msg.media_url!)}
-                                    disabled={ocrLoading}
-                                    className="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 hover:bg-amber-300 text-[10px] font-black flex items-center gap-1 shadow-xs transition-colors"
-                                  >
-                                    {ocrLoading ? (
-                                      <Loader2 size={11} className="animate-spin" />
-                                    ) : (
-                                      <Sparkles size={11} />
-                                    )}
-                                    ✨ Extraer Graduación con IA
-                                  </button>
+                                  {/* Botón directo de Gemini Vision OCR para Recetas */}
+                                  {msg.media_url && !msg.media_url.endsWith('.pdf') && msg.tipo !== 'audio' && (
+                                    <div className="flex items-center gap-1.5 pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRunOcrReceta(msg.media_url!)}
+                                        disabled={ocrLoading}
+                                        className="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 hover:bg-amber-300 text-[10px] font-black flex items-center gap-1 shadow-xs transition-colors"
+                                      >
+                                        {ocrLoading ? (
+                                          <Loader2 size={11} className="animate-spin" />
+                                        ) : (
+                                          <Sparkles size={11} />
+                                        )}
+                                        ✨ Extraer Graduación con IA
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               )}
-                            </div>
-                          )}
 
-                          {msg.template_name && (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/15 text-[10px] font-bold">
-                              <FileText size={10} /> Plantilla Meta: {msg.template_name}
-                            </div>
-                          )}
+                              {msg.template_name && (
+                                <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-black/15 text-[10px] font-bold">
+                                  <FileText size={10} /> Plantilla Meta: {msg.template_name}
+                                </div>
+                              )}
 
-                          {/* Renderizado Enriquecido de Texto con Negritas, Cursivas, Enlaces */}
-                          {(!hasMedia || (msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') && !msg.contenido.startsWith('📄'))) && (
-                            <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
-                          )}
+                              {/* Renderizado Enriquecido de Texto con Negritas, Cursivas, Enlaces */}
+                              {(!hasMedia || (msg.contenido && !msg.contenido.startsWith('📷') && !msg.contenido.startsWith('🎤') && !msg.contenido.startsWith('📄'))) && (
+                                <WhatsAppFormattedText text={msg.contenido} className="leading-relaxed" />
+                              )}
 
-                          {/* Reacciones con Emojis */}
-                          {msg.metadata?.reactions && msg.metadata.reactions.length > 0 && (
-                            <div className="flex items-center gap-1 pt-0.5">
-                              {msg.metadata.reactions.map((r: any, idx: number) => (
-                                <span
-                                  key={idx}
-                                  className="px-1.5 py-0.5 bg-black/20 rounded-full text-[11px]"
-                                  title={`Reacción de ${r.emisor}`}
-                                >
-                                  {r.emoji}
+                              {/* Reacciones con Emojis */}
+                              {msg.metadata?.reactions && msg.metadata.reactions.length > 0 && (
+                                <div className="flex items-center gap-1 pt-0.5">
+                                  {msg.metadata.reactions.map((r: any, idx: number) => (
+                                    <span
+                                      key={idx}
+                                      className="px-1.5 py-0.5 bg-black/20 rounded-full text-[11px]"
+                                      title={`Reacción de ${r.emisor}`}
+                                    >
+                                      {r.emoji}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Tildes oficiales de entrega con DeliveryStatusIcon */}
+                              <div
+                                className={`flex items-center justify-end gap-1.5 text-[10px] ${
+                                  isOutbound ? 'text-indigo-100/80' : 'text-[var(--secondary)]'
+                                }`}
+                              >
+                                <span>
+                                  {new Date(msg.created_at).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
                                 </span>
-                              ))}
-                            </div>
-                          )}
-
-                          <div
-                            className={`flex items-center justify-end gap-1.5 text-[10px] ${
-                              isOutbound ? 'text-indigo-100/80' : 'text-[var(--secondary)]'
-                            }`}
-                          >
-                            <span>
-                              {new Date(msg.created_at).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </span>
-                            {isOutbound && (
-                              <span>
-                                {msg.estado_entrega === 'read' ? (
-                                  <CheckCheck size={13} className="text-cyan-300" />
-                                ) : msg.estado_entrega === 'delivered' ? (
-                                  <CheckCheck size={13} />
-                                ) : (
-                                  <Check size={13} />
+                                {isOutbound && (
+                                  <DeliveryStatusIcon
+                                    status={msg.metadata?.delivery_status || msg.estado_entrega || 'enviado'}
+                                  />
                                 )}
-                              </span>
-                            )}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                    )
-                  })
+                        )
+                      })}
+                    </div>
+                  ))
                 )}
                 <div ref={messagesEndRef} />
               </div>
@@ -1654,38 +2026,20 @@ export default function OpticaVortixChatPage() {
                   </div>
                 )}
 
-                {/* Menú flotante de Atajos Rápidos (/) */}
-                {showSlashMenu && (
-                  <div className="absolute bottom-full left-3 mb-2 w-80 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-2xl p-2 z-30 space-y-1">
-                    <div className="px-2 py-1 text-[10px] font-black uppercase text-[var(--secondary)] flex items-center justify-between">
-                      <span>Atajos Rápidos de Óptica Vortix</span>
-                      <button type="button" onClick={() => setShowSlashMenu(false)}>
-                        <X size={12} />
-                      </button>
-                    </div>
-                    {ATAJOS_RAPIDOS.map((at) => (
-                      <button
-                        key={at.cmd}
-                        type="button"
-                        onClick={() => {
-                          setInputMsg(at.texto)
-                          setShowSlashMenu(false)
-                        }}
-                        className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-indigo-500/10 transition-colors"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-xs text-indigo-600 dark:text-indigo-400">
-                            {at.cmd}
-                          </span>
-                          <span className="text-[10px] font-semibold text-[var(--foreground)]">
-                            {at.titulo}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-[var(--secondary)] truncate">{at.texto}</p>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {/* Menú de Respuestas Rápidas (/) de Óptica Vortix */}
+                <ChatQuickRepliesMenu
+                  isOpen={showSlashMenu || inputMsg.startsWith('/')}
+                  searchFilter={inputMsg.startsWith('/') ? inputMsg : ''}
+                  pacienteNombre={selectedConv?.nombre_paciente || 'Paciente'}
+                  pacienteTelefono={selectedConv?.telefono}
+                  customTemplates={PLANTILLAS_OPTICA}
+                  onSelect={(processedText) => {
+                    setInputMsg(processedText)
+                    setShowSlashMenu(false)
+                    setTimeout(() => messageInputRef.current?.focus(), 50)
+                  }}
+                  onClose={() => setShowSlashMenu(false)}
+                />
 
                 {/* Menú flotante de Copiloto IA Óptico */}
                 {showCopilotoMenu && (
@@ -1857,6 +2211,7 @@ export default function OpticaVortixChatPage() {
                           value={inputMsg}
                           onChange={(e) => {
                             setInputMsg(e.target.value)
+                            handleTypingPresence()
                             if (e.target.value === '/') setShowSlashMenu(true)
                           }}
                           onKeyDown={(e) => {
@@ -2726,6 +3081,20 @@ export default function OpticaVortixChatPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+      {/* Toast Visual de Notificación */}
+      {toastNotificacion && (
+        <div className="fixed top-20 right-8 z-50 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-slate-900/95 dark:bg-slate-800/95 text-white border border-emerald-500/40 shadow-2xl backdrop-blur-md animate-in slide-in-from-top-3 fade-in duration-200">
+          <Sparkles size={16} className="text-amber-400 shrink-0" />
+          <span className="text-xs font-semibold">{toastNotificacion.mensaje}</span>
+          <button
+            type="button"
+            onClick={() => setToastNotificacion(null)}
+            className="p-1 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white ml-2 transition-colors"
+          >
+            <X size={14} />
+          </button>
         </div>
       )}
     </div>

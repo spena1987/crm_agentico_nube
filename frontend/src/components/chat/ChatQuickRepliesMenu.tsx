@@ -87,6 +87,7 @@ interface ChatQuickRepliesMenuProps {
   searchFilter: string
   pacienteNombre?: string
   pacienteTelefono?: string
+  customTemplates?: QuickReplyTemplate[]
   onSelect: (processedText: string) => void
   onClose: () => void
 }
@@ -96,6 +97,7 @@ export default function ChatQuickRepliesMenu({
   searchFilter,
   pacienteNombre = 'Paciente',
   pacienteTelefono = '',
+  customTemplates,
   onSelect,
   onClose
 }: ChatQuickRepliesMenuProps) {
@@ -104,7 +106,8 @@ export default function ChatQuickRepliesMenu({
 
   // Filtrar plantillas según lo que escribe el usuario después de la barra "/"
   const cleanFilter = searchFilter.replace(/^\//, '').toLowerCase().trim()
-  const filteredTemplates = DEFAULT_TEMPLATES.filter(
+  const sourceTemplates = customTemplates && customTemplates.length > 0 ? customTemplates : DEFAULT_TEMPLATES
+  const filteredTemplates = sourceTemplates.filter(
     (t) =>
       t.command.toLowerCase().includes(cleanFilter) ||
       t.title.toLowerCase().includes(cleanFilter) ||

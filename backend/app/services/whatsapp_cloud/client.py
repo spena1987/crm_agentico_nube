@@ -3,6 +3,7 @@ Cliente asíncrono de alto rendimiento para Meta WhatsApp Cloud API (Graph API v
 Incluye Exponential Backoff con Jitter, Circuit Breaker y manejo granular de errores de Meta.
 """
 
+import re
 import httpx
 import asyncio
 import random
@@ -703,6 +704,50 @@ class WhatsAppCloudClient:
         }
         res = await self._request_with_retry("POST", "messages", payload)
         return res
+
+    async def send_typing_indicator(
+        self,
+        to_phone: str,
+        presence: str = "composing",
+        message_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Emite el indicador de presencia ('composing' / 'typing...' o 'paused') hacia WhatsApp Cloud API.
+        En Meta Cloud API v21+, el typing indicator oficial se activa despachando:
+          {"messaging_product": "whatsapp", "status": "read", "message_id": "<wamid>", "typing_indicator": {"type": "text"}}
+        Si presence es 'paused' o no hay message_id, se procesa de forma segura sin arrojar error.
+        """
+        if presence == "paused":
+            return {"success": True, "presence": "paused"}
+
+        clean_phone = re.sub(r"\D", "", to_phone or "")
+
+        # Si se suministra message_id, despachar el typing indicator oficial de Meta WhatsApp Cloud API
+        if message_id:
+            payload = {
+                "messaging_product": "whatsapp",
+                "status": "read",
+                "message_id": message_id,
+                "typing_indicator": {
+                    "type": "text"
+                }
+            }
+            try:
+                res = await self._request_with_retry("POST", "messages", payload)
+                return {
+                    "success": True,
+                    "presence": "composing",
+                    "raw_response": res
+                }
+            except Exception as e:
+                logger.debug(f"[WhatsAppCloud] Typing indicator omitido o no admitido para {clean_phone}: {e}")
+                return {"success": True, "presence": "composing", "fallback": True}
+
+        # Si no hay message_id específico, retornar éxito graceful
+        return {"success": True, "presence": presence, "notice": "typing_indicator_requires_message_id"}
+
+    # Alias de compatibilidad
+    send_presence = send_typing_indicator
 
     async def send_image(
         self,

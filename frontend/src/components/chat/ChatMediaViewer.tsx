@@ -23,7 +23,8 @@ import {
   ZoomOut,
   Eye,
   UserCheck,
-  Phone
+  Phone,
+  Clock
 } from 'lucide-react'
 import { BACKEND_URL } from '@/lib/api'
 
@@ -57,6 +58,7 @@ interface ChatMediaViewerProps {
   isOperator?: boolean
   mensajeId?: string
   contenidoTexto?: string
+  endpointTranscribir?: string
   onTranscribeSuccess?: (mensajeId: string, transcripcion: string) => void
 }
 
@@ -65,6 +67,7 @@ export default function ChatMediaViewer({
   isOperator, 
   mensajeId, 
   contenidoTexto,
+  endpointTranscribir,
   onTranscribeSuccess 
 }: ChatMediaViewerProps) {
   const [modalOpen, setModalOpen] = useState(false)
@@ -167,7 +170,12 @@ export default function ChatMediaViewer({
     if (!mensajeId || transcribiendo) return
     setTranscribiendo(true)
     try {
-      const res = await fetch(`${BACKEND_URL}/api/mensajes/${mensajeId}/transcribir`, {
+      const baseUrl = endpointTranscribir || '/api/mensajes'
+      const url = baseUrl.startsWith('http')
+        ? `${baseUrl}/${mensajeId}/transcribir`
+        : `${BACKEND_URL}${baseUrl.startsWith('/') ? '' : '/'}${baseUrl}/${mensajeId}/transcribir`
+
+      const res = await fetch(url, {
         method: 'POST'
       })
       if (!res.ok) {
@@ -679,10 +687,18 @@ export function DeliveryStatusIcon({
   status, 
   isPatientMessage = false 
 }: { 
-  status?: 'enviado' | 'entregado' | 'leido' | 'fallido' | string
+  status?: 'enviado' | 'entregado' | 'leido' | 'fallido' | 'pending' | 'sending' | string
   isPatientMessage?: boolean 
 }) {
   const normStatus = (status || (isPatientMessage ? 'leido' : 'enviado')).toLowerCase()
+
+  if (normStatus === 'pending' || normStatus === 'sending' || normStatus === 'reloj' || normStatus === 'clock') {
+    return (
+      <span title="Enviando a WhatsApp..." className="inline-flex items-center">
+        <Clock size={13} className="text-white/70 shrink-0 ml-1 animate-pulse" />
+      </span>
+    )
+  }
 
   if (normStatus === 'fallido' || normStatus === 'failed' || normStatus === 'error') {
     return (
