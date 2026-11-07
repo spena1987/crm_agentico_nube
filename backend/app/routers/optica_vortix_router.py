@@ -3465,44 +3465,50 @@ async def enviar_prueba_campana_endpoint(payload: EnviarPruebaCampanaPayload):
         for p_idx, p_obj in enumerate(params, start=1):
             rendered_text = rendered_text.replace(f"{{{{{p_idx}}}}}", str(p_obj.get("text") or ""))
 
-        # Guardar en conversaciones y mensajes de Óptica
-        conv_q = supabase.table("optica_conversaciones").select("id").eq("telefono", tel_norm).limit(1).execute()
-        if conv_q.data:
-            conv_id = conv_q.data[0]["id"]
-            supabase.table("optica_conversaciones").update({
-                "ultimo_mensaje_texto": rendered_text[:300],
-                "ultimo_mensaje_at": sent_iso,
-                "ultimo_mensaje_direccion": "saliente",
-                "updated_at": sent_iso
-            }).eq("id", conv_id).execute()
-        else:
-            c_ins = supabase.table("optica_conversaciones").insert({
-                "telefono": tel_norm,
-                "nombre_contacto": nombre_corto,
-                "estado": "activa",
-                "ultimo_mensaje_texto": rendered_text[:300],
-                "ultimo_mensaje_at": sent_iso,
-                "ultimo_mensaje_direccion": "saliente",
-                "created_at": sent_iso,
-                "updated_at": sent_iso
-            }).execute()
-            conv_id = c_ins.data[0]["id"] if c_ins.data else None
+        # Guardar en conversaciones y mensajes de Óptica (no-bloqueante ante Meta 200 OK)
+        try:
+            conv_q = supabase.table("optica_conversaciones").select("id").eq("telefono", tel_norm).limit(1).execute()
+            if conv_q.data:
+                conv_id = conv_q.data[0]["id"]
+                supabase.table("optica_conversaciones").update({
+                    "ultimo_mensaje_texto": rendered_text[:300],
+                    "ultimo_mensaje_at": sent_iso,
+                    "ultimo_mensaje_direccion": "outbound",
+                    "updated_at": sent_iso
+                }).eq("id", conv_id).execute()
+            else:
+                c_ins = supabase.table("optica_conversaciones").insert({
+                    "telefono": tel_norm,
+                    "nombre_contacto": nombre_corto,
+                    "estado": "activa",
+                    "ultimo_mensaje_texto": rendered_text[:300],
+                    "ultimo_mensaje_at": sent_iso,
+                    "ultimo_mensaje_direccion": "outbound",
+                    "created_at": sent_iso,
+                    "updated_at": sent_iso
+                }).execute()
+                conv_id = c_ins.data[0]["id"] if c_ins.data else None
 
-        if conv_id:
-            supabase.table("optica_mensajes").insert({
-                "conversacion_id": conv_id,
-                "wamid": wamid or f"test_{int(time.time())}",
-                "direccion": "saliente",
-                "tipo": "template",
-                "contenido": rendered_text,
-                "estado": "enviado",
-                "metadata_json": {
-                    "es_prueba": True,
+            if conv_id:
+                supabase.table("optica_mensajes").insert({
+                    "conversacion_id": conv_id,
+                    "wamid": wamid or f"test_{int(time.time())}",
+                    "direccion": "outbound",
+                    "tipo": "template",
+                    "contenido": rendered_text,
                     "template_name": tpl_name,
-                    "placa_url": payload.placa_url
-                },
-                "created_at": sent_iso
-            }).execute()
+                    "media_url": payload.placa_url or None,
+                    "estado": "sent",
+                    "metadata": {
+                        "es_prueba": True,
+                        "template_name": tpl_name,
+                        "placa_url": payload.placa_url
+                    },
+                    "created_at": sent_iso,
+                    "updated_at": sent_iso
+                }).execute()
+        except Exception as e_db:
+            logger.warning(f"[CampanaPrueba] Aviso guardando historial en Supabase para {tel_norm}: {e_db}")
 
         return {
             "success": True,

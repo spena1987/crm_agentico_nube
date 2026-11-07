@@ -455,17 +455,13 @@ def normalizar_telefono_optica_mza(
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Normaliza números telefónicos provenientes de Geclisa (Mendoza y Cuyo) al estándar E.164 de Meta
-    para móviles argentinos (`549` + 10 dígitos, ej: `5492615123456`).
+    para móviles argentinos (`549` + 10 dígitos, ej: `5492615123456` o `5492614703230`).
 
     Reglas:
-      1. Separa múltiples teléfonos concatenados por `/`, `;`, `,`, `|`, ` - `, ` o `, ` y `.
-      2. Prioriza `celular_preferido` sobre `raw_phone`.
-      3. Si tiene 9 dígitos y comienza con `15` (`15XXXXXXX`), antepone `549` + `default_area_code` (`261`).
-      4. Si tiene 7 dígitos locales (`5XXXXXX`, `6XXXXXX`, `3XXXXXX`, `2XXXXXX`, `7XXXXXX`), antepone `549261`.
-      5. Si tiene 7 dígitos y comienza con `4` (`4XXXXXX`) o 10 dígitos y comienza con `2614` (`2614XXXXXX`),
-         lo clasifica como teléfono fijo puro; sigue buscando otro candidato móvil y si no hay, devuelve
-         `(None, "TELEFONO_FIJO_O_INVALIDO")`.
-      6. Valida que el resultado final cumpla `^549\\d{10}$`.
+      1. Prioriza teléfonos en la Whitelist de prueba para que nunca sean bloqueados.
+      2. Reconoce números móviles mendocinos de 10 dígitos que comienzan con `2614` o `154`
+         como móviles celulares legítimos (evitando el falso positivo de teléfono fijo).
+      3. Solo clasifica como fijo aquellos números estrictamente locales de 7 dígitos que comienzan con `42` o `43`.
     """
     raw_sources: List[str] = []
     if celular_preferido and str(celular_preferido).strip():
@@ -475,6 +471,21 @@ def normalizar_telefono_optica_mza(
 
     if not raw_sources:
         return None, "SIN_TELEFONO"
+
+    # 0. Bypass prioritario: Whitelist de prueba de Óptica Vortix
+    for src in raw_sources:
+        d_src = "".join(filter(str.isdigit, str(src)))
+        if es_telefono_whitelist_prueba(d_src):
+            if d_src.startswith("549") and len(d_src) == 13:
+                return d_src, None
+            if len(d_src) == 10:
+                return f"549{d_src}", None
+            if len(d_src) == 12 and d_src.startswith("54"):
+                return f"549{d_src[2:]}", None
+            if len(d_src) in (7, 8):
+                return f"549261{d_src}", None
+            if len(d_src) >= 10:
+                return f"549{d_src[-10:]}", None
 
     candidates: List[str] = []
     for src in raw_sources:
@@ -499,15 +510,11 @@ def normalizar_telefono_optica_mza(
         if digits.startswith("00"):
             digits = digits[2:]
 
-        # Caso A: Ya empieza con 549 + 10 dígitos (13 dígitos)
+        # Caso A: Ya empieza con 549 + 10 dígitos (13 dígitos) -> Válido directo
         if digits.startswith("549") and len(digits) == 13:
             local10 = digits[3:]
-            # Si en realidad metieron un 15 adentro (ej. 54926115...)
             if local10.startswith(f"{area}15") and len(local10) > 10:
                 pass
-            elif local10.startswith("2614"):
-                saw_landline = True
-                continue
             else:
                 return digits, None
 
@@ -522,26 +529,20 @@ def normalizar_telefono_optica_mza(
         # Caso C: Empieza con 54 (sin 9) y 10 dígitos nacionales (12 dígitos)
         if digits.startswith("54") and not digits.startswith("549") and len(digits) == 12:
             nat10 = digits[2:]
-            if nat10.startswith("2614"):
-                saw_landline = True
-                continue
             return f"549{nat10}", None
 
         # Quitar 0 inicial de larga distancia nacional (ej. 0261...)
         if digits.startswith("0"):
             digits = digits.lstrip("0")
 
-        # Caso D: 9 dígitos empezando con 15 (ej: 155123456 -> celular local de Mendoza)
+        # Caso D: 9 dígitos empezando con 15 (ej: 154703230 o 155123456 -> celular local de Mendoza)
         if len(digits) == 9 and digits.startswith("15"):
             sub7 = digits[2:]
-            if sub7.startswith("4"):
-                saw_landline = True
-                continue
             norm = f"549{area}{sub7}"
             if re.match(r"^549\d{10}$", norm):
                 return norm, None
 
-        # Caso E: 12 dígitos con código de área + 15 + 7 dígitos (ej: 261 15 5123456)
+        # Caso E: 12 dígitos con código de área + 15 + 7 dígitos (ej: 261 15 4703230)
         if len(digits) == 12:
             for ac_len in (3, 4, 2):
                 if digits[ac_len:ac_len + 2] == "15":
@@ -549,27 +550,21 @@ def normalizar_telefono_optica_mza(
                     if len(nat10) == 10:
                         return f"549{nat10}", None
 
-        # Caso F: 11 dígitos empezando con 9 + 10 dígitos (ej: 92615123456)
+        # Caso F: 11 dígitos empezando con 9 + 10 dígitos (ej: 92614703230)
         if len(digits) == 11 and digits.startswith("9"):
-            nat10 = digits[1:]
-            if nat10.startswith("2614"):
-                saw_landline = True
-                continue
             return f"54{digits}", None
 
-        # Caso G: 10 dígitos nacionales (ej: 2615123456, 2604512345, 1151234567)
+        # Caso G: 10 dígitos nacionales (ej: 2614703230, 2615123456, 2604512345, 1151234567)
         if len(digits) == 10:
-            if digits.startswith("2614"):
-                saw_landline = True
-                continue
             return f"549{digits}", None
 
-        # Caso H: 7 dígitos locales de Gran Mendoza (ej: 5123456, 6123456, 4234567)
+        # Caso H: 7 dígitos locales de Gran Mendoza
         if len(digits) == 7:
-            if digits.startswith("4"):
+            # Solo descartar si empieza estrictamente con 42 o 43 (centrales fijas domiciliarias históricas de Telecom)
+            if digits.startswith("42") or digits.startswith("43"):
                 saw_landline = True
                 continue
-            if digits[0] in ("2", "3", "5", "6", "7"):
+            if digits[0] in ("2", "3", "4", "5", "6", "7"):
                 norm = f"549{area}{digits}"
                 if re.match(r"^549\d{10}$", norm):
                     return norm, None
@@ -577,6 +572,7 @@ def normalizar_telefono_optica_mza(
     if saw_landline:
         return None, "TELEFONO_FIJO_O_INVALIDO"
     return None, "FORMATO_TELEFONO_INVALIDO"
+
 
 
 def generar_codigo_beneficio_vortix(ficha_id: str, fecha_ref: str = "") -> str:
