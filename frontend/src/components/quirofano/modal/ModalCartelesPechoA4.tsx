@@ -26,6 +26,42 @@ interface ModalCartelesPechoA4Props {
   initialTurnoId?: string | null
 }
 
+// 1. Formateador de DNI clínico argentino (elimina ceros a la izquierda y formatea con puntos: 16.038.153)
+function formatearDniClinico(dni?: string | number): string {
+  if (!dni) return 'S/D'
+  const limpio = String(dni).replace(/\D/g, '').replace(/^0+/, '')
+  if (!limpio) return 'S/D'
+  return limpio.replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+}
+
+// 2. Formateador de Fecha Quirúrgica DD/MM/AAAA
+function formatearFechaCirugia(f?: string): string {
+  if (!f) return ''
+  try {
+    const parte = f.split('T')[0]
+    const [y, m, d] = parte.split('-')
+    if (y && m && d) return `${d}/${m}/${y}`
+    return f
+  } catch {
+    return f
+  }
+}
+
+// 3. Detector semántico: identifica si el procedimiento clínico exige LIO independientemente de flags de base de datos
+function requiereLenteSemantico(practicaNombre?: string, llevaLente?: boolean): boolean {
+  if (llevaLente) return true
+  if (!practicaNombre) return false
+  const p = practicaNombre.toUpperCase()
+  return (
+    p.includes('CATARATA') ||
+    p.includes('FACO') ||
+    p.includes('LIO') ||
+    p.includes('LENTE') ||
+    p.includes('ICL') ||
+    p.includes('IMPL')
+  )
+}
+
 export default function ModalCartelesPechoA4({
   isOpen,
   onClose,
@@ -196,6 +232,7 @@ export default function ModalCartelesPechoA4({
     setSeleccionadosIds(new Set())
   }
 
+  // Motor de impresión dual: Iframe aislado con fuentes estándar TrueType (Arial) para garantizar ToUnicode CMap
   const handleImprimir = () => {
     const printNode = document.getElementById('contenedor-imprimible-a4')
     if (!printNode) {
@@ -203,7 +240,6 @@ export default function ModalCartelesPechoA4({
       return
     }
 
-    // Remover iframe previo si existiera
     const existingIframe = document.getElementById('iframe-impresion-carteles-a4')
     if (existingIframe) {
       existingIframe.remove()
@@ -242,7 +278,7 @@ export default function ModalCartelesPechoA4({
         padding: 0;
         background: #ffffff;
         color: #000000;
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
@@ -279,7 +315,7 @@ export default function ModalCartelesPechoA4({
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        padding: 12px 14px;
+        padding: 10px 14px;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
@@ -291,6 +327,8 @@ export default function ModalCartelesPechoA4({
       .border { border-style: solid; border-width: 1px; }
       .border-2 { border-width: 2px !important; }
       .border-b { border-bottom-style: solid; border-bottom-width: 1px; }
+      .border-b-2 { border-bottom-style: solid; border-bottom-width: 2px; }
+      .border-t { border-top-style: solid; border-top-width: 1px; }
       .border-dashed { border-style: dashed !important; }
       .flex { display: flex; }
       .flex-col { flex-direction: column; }
@@ -304,17 +342,19 @@ export default function ModalCartelesPechoA4({
       .p-0\\.5 { padding: 2px; }
       .p-1 { padding: 4px; }
       .p-1\\.5 { padding: 6px; }
-      .p-3 { padding: 12px; }
+      .p-3 { padding: 10px; }
       .py-0\\.5 { padding-top: 2px; padding-bottom: 2px; }
       .py-1 { padding-top: 4px; padding-bottom: 4px; }
       .px-1\\.5 { padding-left: 6px; padding-right: 6px; }
       .px-2 { padding-left: 8px; padding-right: 8px; }
       .pb-0\\.5 { padding-bottom: 2px; }
       .pb-1 { padding-bottom: 4px; }
+      .pt-0\\.5 { padding-top: 2px; }
       .pt-1 { padding-top: 4px; }
       .my-0\\.5 { margin-top: 2px; margin-bottom: 2px; }
       .mt-0\\.5 { margin-top: 2px; }
       .mt-1 { margin-top: 4px; }
+      .mb-0\\.5 { margin-bottom: 2px; }
       .mb-1 { margin-bottom: 4px; }
       .shrink-0 { flex-shrink: 0; }
       .min-w-0 { min-width: 0; }
@@ -327,10 +367,11 @@ export default function ModalCartelesPechoA4({
       .text-center { text-align: center; }
       .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .leading-none { line-height: 1; }
-      .leading-tight { line-height: 1.25; }
+      .leading-tight { line-height: 1.2; }
+      .leading-snug { line-height: 1.25; }
       .text-xl { font-size: 20px; }
-      .text-lg { font-size: 18px; }
-      .text-base { font-size: 16px; }
+      .text-lg { font-size: 17px; }
+      .text-base { font-size: 15px; }
       .text-xs { font-size: 12px; }
       .text-\\[11px\\] { font-size: 11px; }
       .text-\\[10px\\] { font-size: 10px; }
@@ -340,8 +381,13 @@ export default function ModalCartelesPechoA4({
       .h-\\[24mm\\] { height: 24mm; }
       .w-\\[20mm\\] { width: 20mm; }
       .h-\\[20mm\\] { height: 20mm; }
-      .space-y-1 > * + * { margin-top: 4px; }
-      .space-y-1\\.5 > * + * { margin-top: 6px; }
+      .space-y-1 > * + * { margin-top: 3px; }
+      .space-y-1\\.5 > * + * { margin-top: 5px; }
+      .rounded-xs { border-radius: 2px; }
+      .rounded { border-radius: 3px; }
+      .rounded-md { border-radius: 4px; }
+      .bg-slate-100 { background-color: #f1f5f9 !important; }
+      .bg-white { background-color: #ffffff !important; }
     `
 
     doc.open()
@@ -369,6 +415,234 @@ export default function ModalCartelesPechoA4({
     }, 250)
   }
 
+  // Renderizador unificado de cada etiqueta clínica de pecho
+  const renderEtiqueta = (slot: { esVacio: boolean; turno?: any }, sIdx: number, esModoImpresion: boolean) => {
+    if (slot.esVacio || !slot.turno) {
+      return (
+        <div
+          key={sIdx}
+          className="etiqueta-pecho-card p-3 flex flex-col items-center justify-center text-slate-300 text-xs border border-dashed border-slate-300"
+        >
+          {!esModoImpresion && (
+            <span className="font-mono text-[10px] no-print">
+              [Espacio vacío #{sIdx + 1}]
+            </span>
+          )}
+        </div>
+      )
+    }
+
+    const t = slot.turno
+    const pac = t.pacientes || {}
+    const ojo = (t.ojo || 'OD').toUpperCase()
+    const esOD = ojo === 'OD'
+    const esOI = ojo === 'OI'
+    const qrUrl = qrMap[t.id]
+
+    // Cálculo de edad
+    let edadStr = ''
+    if (pac.fecha_nacimiento) {
+      try {
+        const fn = new Date(pac.fecha_nacimiento)
+        const hoy = new Date()
+        let edad = hoy.getFullYear() - fn.getFullYear()
+        const m = hoy.getMonth() - fn.getMonth()
+        if (m < 0 || (m === 0 && hoy.getDate() < fn.getDate())) {
+          edad--
+        }
+        if (edad > 0 && edad < 120) {
+          edadStr = `${edad} años`
+        }
+      } catch {}
+    }
+
+    // Código institucional completo sin truncar
+    const codigoTurnoMostrar = t.codigo_turno ? String(t.codigo_turno) : String(t.id).slice(0, 8)
+
+    // Fecha y hora
+    const fechaStr = formatearFechaCirugia(t.fecha_cirugia || t.fecha)
+    const horaStr = t.hora_inicio ? t.hora_inicio.slice(0, 5) : '08:00'
+
+    // Obra Social normalizada
+    const obraSocial = (t.obra_social || pac.obra_social || 'Particular').toUpperCase()
+
+    // LIO: Detección clínica
+    const tieneLioCargado = Boolean(t.lleva_lente && (t.lente_tipo || t.lente_dioptria))
+    const exigeLioClinico = requiereLenteSemantico(t.practica_nombre, t.lleva_lente)
+
+    return (
+      <div
+        key={sIdx}
+        className={`etiqueta-pecho-card p-3 sm:p-4 flex flex-col justify-between border border-dashed border-slate-400 bg-white text-black ${
+          formato === '3x2' ? 'space-y-1.5' : 'space-y-1'
+        }`}
+        style={{ boxSizing: 'border-box' }}
+      >
+        {/* 1. Cabecera con QR Láser + Datos de Clínica, Sala, Turno y Fecha */}
+        <div className="flex items-center gap-2.5 pb-1 border-b border-black">
+          {/* QR Vectorial 100% Black */}
+          <div className="shrink-0 bg-white border border-black p-0.5">
+            {qrUrl ? (
+              <img
+                src={qrUrl}
+                alt={`QR ${t.id}`}
+                className={formato === '3x2' ? 'w-[24mm] h-[24mm]' : 'w-[20mm] h-[20mm]'}
+                style={{ imageRendering: 'pixelated' }}
+              />
+            ) : (
+              <div className="w-[20mm] h-[20mm] bg-slate-100 flex items-center justify-center text-[8px] font-mono">
+                QR...
+              </div>
+            )}
+          </div>
+
+          {/* Info Clínica, Sala, Código de Turno y Fecha/Hora */}
+          <div className="flex-1 min-w-0 text-[10px] leading-tight">
+            <div className="flex items-center justify-between">
+              <span className="font-black text-[11px] tracking-tight uppercase">
+                CENTROVISIÓN QUIRÚRGICO
+              </span>
+              <span className="font-mono font-black text-xs text-black" style={{ whiteSpace: 'nowrap' }}>
+                {fechaStr ? `${fechaStr} • ` : ''}{horaStr} hs
+              </span>
+            </div>
+
+            {/* Sala destacada como píldora de alto contraste + Código de Turno Completo */}
+            <div className="flex items-center justify-between mt-1 gap-1">
+              <span className="px-2 py-0.5 bg-black text-white text-[9px] font-black rounded uppercase tracking-wider" style={{ whiteSpace: 'nowrap' }}>
+                SALA {t.quirofanos?.codigo || t.quirofanos?.nombre || 'Q01'}
+              </span>
+              <span className="font-mono text-[9px] font-bold text-slate-900 truncate" title={`Código institucional: ${codigoTurnoMostrar}`}>
+                #{codigoTurnoMostrar}
+              </span>
+            </div>
+
+            <p className="truncate text-slate-800 text-[10px] font-semibold mt-0.5">
+              Cirujano: <b>{t.cirujano_nombre || 'Asignado'}</b>
+            </p>
+          </div>
+        </div>
+
+        {/* 2. Nombre del Paciente en Tipografía GIGANTE + Fila de Filiación Blindada */}
+        <div className="py-0.5">
+          <h2
+            className={`font-black uppercase tracking-tight text-black leading-none ${
+              formato === '3x2' ? 'text-xl' : 'text-base'
+            }`}
+          >
+            {pac.nombre || 'PACIENTE SIN NOMBRE'}
+          </h2>
+          <div className="flex items-center gap-2 text-[11px] font-bold text-slate-900 mt-1">
+            <span className="font-mono" style={{ whiteSpace: 'nowrap' }}>
+              DNI: {formatearDniClinico(pac.dni)}
+            </span>
+            {edadStr && (
+              <span style={{ whiteSpace: 'nowrap' }}>• {edadStr}</span>
+            )}
+            <span className="truncate max-w-[130px]" style={{ whiteSpace: 'nowrap' }}>
+              • {obraSocial}
+            </span>
+          </div>
+        </div>
+
+        {/* 3. INSIGNIA DE OJO A OPERAR — DIFERENCIACIÓN MORFOLÓGICA INVERSA */}
+        {esOD ? (
+          /* OJO DERECHO: Fondo NEGRO SÓLIDO con letras BLANCAS */
+          <div className="bg-black text-white text-center font-black py-1 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5 shadow-xs">
+            ►►► OJO DERECHO (OD) ►►►
+          </div>
+        ) : esOI ? (
+          /* OJO IZQUIERDO: Fondo BLANCO PURO con RECUADRO NEGRO EXTRA-GRUESO */
+          <div
+            className="bg-white text-black text-center font-black py-0.5 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5"
+            style={{ borderWidth: '3.5px', borderStyle: 'solid', borderColor: '#000000' }}
+          >
+            ◄◄◄ OJO IZQUIERDO (OI) ◄◄◄
+          </div>
+        ) : (
+          /* AMBOS OJOS: Doble Borde */
+          <div
+            className="bg-white text-black text-center font-black py-0.5 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5"
+            style={{ borderWidth: '4px', borderStyle: 'double', borderColor: '#000000' }}
+          >
+            ◈◈◈ AMBOS OJOS (AO) ◈◈◈
+          </div>
+        )}
+
+        {/* 4. Práctica Quirúrgica Programada (Multilínea fluida, sin truncado por puntos) */}
+        <div className="text-[10px] leading-tight border-b border-black/40 pb-1">
+          <span className="text-[9px] font-bold text-slate-600 block uppercase">Procedimiento:</span>
+          <span
+            className="font-black text-[11px] text-black uppercase block leading-snug"
+            style={{
+              wordBreak: 'break-word',
+              display: '-webkit-box',
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden'
+            }}
+          >
+            {t.practica_nombre || 'Cirugía Oftalmológica'}
+          </span>
+        </div>
+
+        {/* 5. Bloque LIO Blindado Clínicamente */}
+        {tieneLioCargado ? (
+          <div className="border border-black p-1.5 text-[10px] leading-tight bg-white">
+            <div className="flex items-center justify-between border-b border-black/30 pb-0.5 mb-1">
+              <span className="font-black uppercase tracking-wider text-[9px]">
+                LENTE INTRAOCULAR (LIO)
+              </span>
+              <span className="font-mono font-bold text-[10px]">
+                Lote: {t.lente_lote || 'S/D'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-1.5">
+              <span className="font-bold text-[11px] truncate flex-1">
+                {t.lente_tipo || 'LIO Asignado'}
+              </span>
+              <div className="border-2 border-black px-2 py-0.5 font-black text-xs sm:text-sm text-black">
+                {t.lente_dioptria ? `${t.lente_dioptria} D` : 'N/D'}
+              </div>
+              {t.es_torico && (
+                <div className="bg-black text-white px-1.5 py-0.5 font-black text-[9px] uppercase">
+                  T{t.lente_torico_valor || 0} ({t.lente_torico_eje || 90}°)
+                </div>
+              )}
+            </div>
+          </div>
+        ) : exigeLioClinico ? (
+          /* Cirugía que requiere Lente pero aún no fue cargada en el sistema */
+          <div className="border-2 border-black p-1 text-[10px] leading-tight bg-white">
+            <div className="flex items-center justify-between border-b border-black pb-0.5 mb-0.5">
+              <span className="font-black uppercase tracking-wider text-[9px] text-black">
+                ⚠️ LIO REQUERIDO (CIRUGÍA CON IMPLANTE)
+              </span>
+            </div>
+            <div className="font-black text-center py-0.5 text-[10px] text-black uppercase bg-slate-100">
+              PENDIENTE DE ASIGNACIÓN BIOMÉTRICA / VER HC
+            </div>
+          </div>
+        ) : (
+          /* Cirugías menores sin lente (párpado, pterigion, botox, láser) */
+          <div className="border border-dashed border-black/50 p-1 text-[9px] text-center font-bold text-black uppercase">
+            CIRUGÍA SIN IMPLANTE DE LIO
+          </div>
+        )}
+
+        {/* 6. Checklist Manual Prequirúrgico al pie */}
+        <div
+          className="pt-1 mt-0.5 border-t border-black/40 flex items-center justify-between text-[8px] font-bold text-black uppercase"
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          <span>[ ] Dilatación</span>
+          <span>[ ] Consentimiento</span>
+          <span>[ ] Alergias: _______</span>
+        </div>
+      </div>
+    )
+  }
+
   if (!isOpen) return null
 
   return (
@@ -391,6 +665,7 @@ export default function ModalCartelesPechoA4({
             width: 210mm !important;
             background: #ffffff !important;
             color: #000000 !important;
+            font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
           }
 
           body * {
@@ -418,6 +693,7 @@ export default function ModalCartelesPechoA4({
             color: #000000 !important;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
+            font-family: Arial, "Helvetica Neue", Helvetica, sans-serif !important;
           }
 
           @page {
@@ -524,9 +800,9 @@ export default function ModalCartelesPechoA4({
                       ? 'bg-blue-600 text-white shadow-sm'
                       : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
                   }`}
-                  title="3 Filas × 2 Columnas: 6 etiquetas de 105 × 99 mm (Tipografía Gigante)"
+                  title="3 filas x 2 columnas = 6 etiquetas por hoja A4 (105 x 99 mm)"
                 >
-                  <span>3×2 (6 por Hoja) ⭐</span>
+                  <span>3×2 (6 por Hoja - Gigante)</span>
                 </button>
                 <button
                   type="button"
@@ -536,7 +812,7 @@ export default function ModalCartelesPechoA4({
                       ? 'bg-blue-600 text-white shadow-sm'
                       : 'text-[var(--secondary)] hover:text-[var(--foreground)]'
                   }`}
-                  title="4 Filas × 2 Columnas: 8 etiquetas de 105 × 74 mm (Rendimiento estándar)"
+                  title="4 filas x 2 columnas = 8 etiquetas por hoja A4 (105 x 74 mm)"
                 >
                   <span>4×2 (8 por Hoja)</span>
                 </button>
@@ -625,7 +901,7 @@ export default function ModalCartelesPechoA4({
                 >
                   {turnos.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.pacientes?.nombre || 'Paciente'} (DNI: {t.pacientes?.dni}) - {t.ojo || 'OD'}
+                      {t.pacientes?.nombre || 'Paciente'} (DNI: {formatearDniClinico(t.pacientes?.dni)}) - {t.ojo || 'OD'}
                     </option>
                   ))}
                 </select>
@@ -641,7 +917,7 @@ export default function ModalCartelesPechoA4({
                         key={idx}
                         type="button"
                         onClick={() => setPosicionInicio(idx)}
-                        className={`w-6 h-6 rounded text-[10px] font-mono font-bold transition ${
+                        className={`w-6 h-6 rounded-lg text-xs font-mono font-bold transition flex items-center justify-center ${
                           posicionInicio === idx
                             ? 'bg-blue-600 text-white shadow-xs'
                             : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:text-[var(--foreground)]'
@@ -692,171 +968,7 @@ export default function ModalCartelesPechoA4({
                     height: '297mm'
                   }}
                 >
-                  {hoja.map((slot, sIdx) => {
-                    if (slot.esVacio || !slot.turno) {
-                      return (
-                        <div
-                          key={sIdx}
-                          className="etiqueta-pecho-card p-3 flex flex-col items-center justify-center text-slate-300 text-xs border border-dashed border-slate-300"
-                        >
-                          <span className="font-mono text-[10px] no-print">
-                            [Espacio vacío #{sIdx + 1}]
-                          </span>
-                        </div>
-                      )
-                    }
-
-                    const t = slot.turno
-                    const pac = t.pacientes || {}
-                    const ojo = (t.ojo || 'OD').toUpperCase()
-                    const esOD = ojo === 'OD'
-                    const esOI = ojo === 'OI'
-                    const qrUrl = qrMap[t.id]
-
-                    // Cálculo de edad si está disponible
-                    let edadStr = ''
-                    if (pac.fecha_nacimiento) {
-                      try {
-                        const fn = new Date(pac.fecha_nacimiento)
-                        const hoy = new Date()
-                        let edad = hoy.getFullYear() - fn.getFullYear()
-                        const m = hoy.getMonth() - fn.getMonth()
-                        if (m < 0 || (m === 0 && hoy.getDate() < fn.getDate())) {
-                          edad--
-                        }
-                        if (edad > 0 && edad < 120) {
-                          edadStr = `${edad} años`
-                        }
-                      } catch {}
-                    }
-
-                    return (
-                      <div
-                        key={sIdx}
-                        className={`etiqueta-pecho-card p-3 sm:p-4 flex flex-col justify-between border border-dashed border-slate-400 bg-white text-black ${
-                          formato === '3x2' ? 'space-y-1.5' : 'space-y-1'
-                        }`}
-                        style={{ boxSizing: 'border-box' }}
-                      >
-                        {/* 1. Cabecera con QR Láser + Datos de Clínica y Turno */}
-                        <div className="flex items-center gap-2.5 pb-1 border-b border-black">
-                          {/* QR Vectorial 100% Black */}
-                          <div className="shrink-0 bg-white border border-black p-0.5">
-                            {qrUrl ? (
-                              <img
-                                src={qrUrl}
-                                alt={`QR ${t.id}`}
-                                className={formato === '3x2' ? 'w-[25mm] h-[25mm]' : 'w-[20mm] h-[20mm]'}
-                                style={{ imageRendering: 'pixelated' }}
-                              />
-                            ) : (
-                              <div className="w-[20mm] h-[20mm] bg-slate-100 flex items-center justify-center text-[8px] font-mono">
-                                QR...
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Info Clínica, Sala y Hora */}
-                          <div className="flex-1 min-w-0 text-[10px] leading-tight">
-                            <div className="flex items-center justify-between">
-                              <span className="font-black text-[11px] tracking-tight uppercase">
-                                CENTROVISIÓN QUIRÚRGICO
-                              </span>
-                              <span className="font-mono font-black text-xs">
-                                {t.hora_inicio ? t.hora_inicio.slice(0, 5) : '08:00'} hs
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between mt-0.5 font-bold">
-                              <span>Sala: {t.quirofanos?.codigo || t.quirofanos?.nombre || 'Q01'}</span>
-                              <span className="font-mono text-[9px]">Turno #{String(t.codigo_turno || t.id).slice(0, 8)}</span>
-                            </div>
-                            <p className="truncate text-slate-800 text-[10px] font-semibold mt-0.5">
-                              Cirujano: <b>{t.cirujano_nombre || 'Asignado'}</b>
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* 2. Nombre del Paciente en Tipografía GIGANTE */}
-                        <div className="py-0.5">
-                          <h2
-                            className={`font-black uppercase tracking-tight text-black leading-none ${
-                              formato === '3x2' ? 'text-xl' : 'text-base'
-                            }`}
-                          >
-                            {pac.nombre || 'PACIENTE SIN NOMBRE'}
-                          </h2>
-                          <div className="flex items-center gap-2 font-mono text-[11px] font-bold text-slate-900 mt-1">
-                            <span>DNI: {pac.dni || 'S/D'}</span>
-                            {edadStr && <span>• {edadStr}</span>}
-                            <span>• {t.obra_social || pac.obra_social || 'Particular'}</span>
-                          </div>
-                        </div>
-
-                        {/* 3. INSIGNIA DE OJO A OPERAR — DIFERENCIACIÓN MORFOLÓGICA INVERSA */}
-                        {esOD ? (
-                          /* OJO DERECHO: Fondo NEGRO SÓLIDO con letras BLANCAS */
-                          <div className="bg-black text-white text-center font-black py-1 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5 shadow-xs">
-                            ►►► OJO DERECHO (OD) ►►►
-                          </div>
-                        ) : esOI ? (
-                          /* OJO IZQUIERDO: Fondo BLANCO PURO con RECUADRO NEGRO EXTRA-GRUESO */
-                          <div
-                            className="bg-white text-black text-center font-black py-0.5 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5"
-                            style={{ borderWidth: '3.5px', borderStyle: 'solid', borderColor: '#000000' }}
-                          >
-                            ◄◄◄ OJO IZQUIERDO (OI) ◄◄◄
-                          </div>
-                        ) : (
-                          /* AMBOS OJOS: Doble Borde */
-                          <div
-                            className="bg-white text-black text-center font-black py-0.5 px-2 text-base sm:text-lg tracking-wider uppercase my-0.5"
-                            style={{ borderWidth: '4px', borderStyle: 'double', borderColor: '#000000' }}
-                          >
-                            ◈◈◈ AMBOS OJOS (AO) ◈◈◈
-                          </div>
-                        )}
-
-                        {/* 4. Práctica Quirúrgica Programada */}
-                        <div className="text-[10px] leading-tight border-b border-black/40 pb-1">
-                          <span className="font-semibold text-slate-700 block">Práctica:</span>
-                          <span className="font-black text-[11px] uppercase truncate block">
-                            {t.practica_nombre || 'Cirugía Oftalmológica'}
-                          </span>
-                        </div>
-
-                        {/* 5. Bloque LIO Blindado */}
-                        {t.lleva_lente ? (
-                          <div className="border border-black p-1.5 text-[10px] leading-tight bg-white">
-                            <div className="flex items-center justify-between border-b border-black/30 pb-0.5 mb-1">
-                              <span className="font-black uppercase tracking-wider text-[9px]">
-                                LENTE INTRAOCULAR (LIO)
-                              </span>
-                              <span className="font-mono font-bold text-[10px]">
-                                Lote: {t.lente_lote || 'S/D'}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-1.5">
-                              <span className="font-bold text-[11px] truncate flex-1">
-                                {t.lente_tipo || 'LIO Estándar'}
-                              </span>
-                              <div className="border-2 border-black px-2 py-0.5 font-black text-xs sm:text-sm text-black">
-                                {t.lente_dioptria ? `${t.lente_dioptria} D` : 'N/D'}
-                              </div>
-                              {t.es_torico && (
-                                <div className="bg-black text-white px-1.5 py-0.5 font-black text-[9px] uppercase">
-                                  T{t.lente_torico_valor || 0} ({t.lente_torico_eje || 90}°)
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="border border-dashed border-black/40 p-1 text-[10px] text-center font-bold text-slate-800">
-                            SIN IMPLANTE DE LENTE (LIO)
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {hoja.map((slot, sIdx) => renderEtiqueta(slot, sIdx, false))}
                 </div>
               </div>
             ))}
@@ -865,7 +977,7 @@ export default function ModalCartelesPechoA4({
       </div>
 
       {/* ========================================================================= */}
-      {/* CONTENEDOR OCULTO PARA IMPRESIÓN DIRECTA CON window.print()              */}
+      {/* CONTENEDOR OCULTO PARA IMPRESIÓN DIRECTA CON window.print() / IFRAME       */}
       {/* ========================================================================= */}
       <div id="contenedor-imprimible-a4" className="area-imprimible-a4-laser">
         {paginasA4.map((hoja, numHoja) => (
@@ -873,142 +985,7 @@ export default function ModalCartelesPechoA4({
             key={numHoja}
             className={`pagina-a4-hoja ${formato === '3x2' ? 'pagina-a4-3x2' : 'pagina-a4-4x2'}`}
           >
-            {hoja.map((slot, sIdx) => {
-              if (slot.esVacio || !slot.turno) {
-                return <div key={sIdx} className="etiqueta-pecho-card" />
-              }
-
-              const t = slot.turno
-              const pac = t.pacientes || {}
-              const ojo = (t.ojo || 'OD').toUpperCase()
-              const esOD = ojo === 'OD'
-              const esOI = ojo === 'OI'
-              const qrUrl = qrMap[t.id]
-
-              let edadStr = ''
-              if (pac.fecha_nacimiento) {
-                try {
-                  const fn = new Date(pac.fecha_nacimiento)
-                  const hoy = new Date()
-                  let edad = hoy.getFullYear() - fn.getFullYear()
-                  const m = hoy.getMonth() - fn.getMonth()
-                  if (m < 0 || (m === 0 && hoy.getDate() < fn.getDate())) {
-                    edad--
-                  }
-                  if (edad > 0 && edad < 120) {
-                    edadStr = `${edad} años`
-                  }
-                } catch {}
-              }
-
-              return (
-                <div
-                  key={sIdx}
-                  className={`etiqueta-pecho-card p-3 flex flex-col justify-between ${
-                    formato === '3x2' ? 'space-y-1.5' : 'space-y-1'
-                  }`}
-                >
-                  {/* 1. Cabecera */}
-                  <div className="flex items-center gap-2 pb-1 border-b border-black">
-                    <div className="shrink-0 bg-white border border-black p-0.5">
-                      {qrUrl && (
-                        <img
-                          src={qrUrl}
-                          alt="QR"
-                          className={formato === '3x2' ? 'w-[24mm] h-[24mm]' : 'w-[20mm] h-[20mm]'}
-                          style={{ imageRendering: 'pixelated' }}
-                        />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0 text-[10px] leading-tight">
-                      <div className="flex items-center justify-between">
-                        <span className="font-black text-[11px] uppercase">CENTROVISIÓN QUIRÚRGICO</span>
-                        <span className="font-mono font-black text-xs">
-                          {t.hora_inicio ? t.hora_inicio.slice(0, 5) : '08:00'} hs
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between mt-0.5 font-bold">
-                        <span>Sala: {t.quirofanos?.codigo || t.quirofanos?.nombre || 'Q01'}</span>
-                        <span className="font-mono text-[9px]">#{String(t.codigo_turno || t.id).slice(0, 8)}</span>
-                      </div>
-                      <p className="truncate font-semibold text-[10px] mt-0.5">
-                        Cirujano: <b>{t.cirujano_nombre || 'Asignado'}</b>
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* 2. Paciente */}
-                  <div className="py-0.5">
-                    <h2
-                      className={`font-black uppercase tracking-tight text-black leading-none ${
-                        formato === '3x2' ? 'text-xl' : 'text-base'
-                      }`}
-                    >
-                      {pac.nombre || 'PACIENTE SIN NOMBRE'}
-                    </h2>
-                    <div className="flex items-center gap-2 font-mono text-[11px] font-bold text-black mt-1">
-                      <span>DNI: {pac.dni || 'S/D'}</span>
-                      {edadStr && <span>• {edadStr}</span>}
-                      <span>• {t.obra_social || pac.obra_social || 'Particular'}</span>
-                    </div>
-                  </div>
-
-                  {/* 3. OJO - Morfología Inversa */}
-                  {esOD ? (
-                    <div className="bg-black text-white text-center font-black py-1 px-2 text-base tracking-wider uppercase my-0.5">
-                      ►►► OJO DERECHO (OD) ►►►
-                    </div>
-                  ) : esOI ? (
-                    <div
-                      className="bg-white text-black text-center font-black py-0.5 px-2 text-base tracking-wider uppercase my-0.5"
-                      style={{ borderWidth: '3.5px', borderStyle: 'solid', borderColor: '#000000' }}
-                    >
-                      ◄◄◄ OJO IZQUIERDO (OI) ◄◄◄
-                    </div>
-                  ) : (
-                    <div
-                      className="bg-white text-black text-center font-black py-0.5 px-2 text-base tracking-wider uppercase my-0.5"
-                      style={{ borderWidth: '4px', borderStyle: 'double', borderColor: '#000000' }}
-                    >
-                      ◈◈◈ AMBOS OJOS (AO) ◈◈◈
-                    </div>
-                  )}
-
-                  {/* 4. Práctica */}
-                  <div className="text-[10px] leading-tight border-b border-black/40 pb-1">
-                    <span className="font-semibold block">Práctica:</span>
-                    <span className="font-black text-[11px] uppercase truncate block">
-                      {t.practica_nombre || 'Cirugía Oftalmológica'}
-                    </span>
-                  </div>
-
-                  {/* 5. LIO */}
-                  {t.lleva_lente ? (
-                    <div className="border border-black p-1.5 text-[10px] leading-tight bg-white">
-                      <div className="flex items-center justify-between border-b border-black/30 pb-0.5 mb-1">
-                        <span className="font-black uppercase tracking-wider text-[9px]">LENTE INTRAOCULAR (LIO)</span>
-                        <span className="font-mono font-bold text-[10px]">Lote: {t.lente_lote || 'S/D'}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-1.5">
-                        <span className="font-bold text-[11px] truncate flex-1">{t.lente_tipo || 'LIO Estándar'}</span>
-                        <div className="border-2 border-black px-2 py-0.5 font-black text-xs text-black">
-                          {t.lente_dioptria ? `${t.lente_dioptria} D` : 'N/D'}
-                        </div>
-                        {t.es_torico && (
-                          <div className="bg-black text-white px-1.5 py-0.5 font-black text-[9px] uppercase">
-                            T{t.lente_torico_valor || 0} ({t.lente_torico_eje || 90}°)
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="border border-dashed border-black/40 p-1 text-[10px] text-center font-bold">
-                      SIN IMPLANTE DE LENTE (LIO)
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+            {hoja.map((slot, sIdx) => renderEtiqueta(slot, sIdx, true))}
           </div>
         ))}
       </div>
