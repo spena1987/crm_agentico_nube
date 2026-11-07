@@ -113,6 +113,7 @@ DEFAULT_OPTICA_CONFIG: Dict[str, Any] = {
     "hora_fin_envios": "20:00",
     "max_envios_diarios": 200,
     "cooldown_dias_mismo_contacto": 14,
+    "telefonos_whitelist_prueba": ["5492614703230", "2614703230"],
 
     # Respuestas Interactivas y Fuera de Horario
     "auto_reply_fuera_horario": True,
@@ -255,6 +256,19 @@ def _sincronizar_aliases_config_optica(cfg: Dict[str, Any]) -> Dict[str, Any]:
     res["hora_fin_envios"] = h_fin
     res["antibloqueo_hora_fin"] = h_fin
 
+    # Whitelist de Teléfonos de Prueba / Desarrollador (Exentos de Cooldown)
+    raw_wl = res.get("telefonos_whitelist_prueba") or ["5492614703230", "2614703230"]
+    if isinstance(raw_wl, str):
+        wl_list = [x.strip() for x in raw_wl.replace(";", ",").split(",") if x.strip()]
+    elif isinstance(raw_wl, list):
+        wl_list = [str(x).strip() for x in raw_wl if str(x).strip()]
+    else:
+        wl_list = ["5492614703230", "2614703230"]
+    if "5492614703230" not in wl_list and "2614703230" not in wl_list:
+        wl_list.append("5492614703230")
+    res["telefonos_whitelist_prueba"] = wl_list
+    res["antibloqueo_whitelist_telefonos"] = wl_list
+
     msg_fh = str(res.get("auto_respuesta_fuera_horario") or res.get("mensaje_fuera_horario") or DEFAULT_OPTICA_CONFIG["mensaje_fuera_horario"]).strip()
     res["mensaje_fuera_horario"] = msg_fh
     res["auto_respuesta_fuera_horario"] = msg_fh
@@ -267,6 +281,32 @@ def _sincronizar_aliases_config_optica(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     return res
 
+
+
+
+def es_telefono_whitelist_prueba(telefono: str, cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Determina si un número telefónico pertenece a la lista blanca de pruebas / desarrollador.
+    Los teléfonos en la lista blanca quedan 100% exentos de la regla de Cooldown para permitir
+    pruebas continuas de campañas y automatismos.
+    """
+    if not telefono:
+        return False
+    digits_tel = "".join(filter(str.isdigit, str(telefono)))
+    if not digits_tel:
+        return False
+    if not cfg:
+        cfg = get_optica_vortix_full_config()
+    wl = cfg.get("telefonos_whitelist_prueba") or ["5492614703230", "2614703230"]
+    if isinstance(wl, str):
+        wl = [x.strip() for x in wl.replace(";", ",").split(",") if x.strip()]
+    for w in wl:
+        w_digits = "".join(filter(str.isdigit, str(w)))
+        if not w_digits:
+            continue
+        if digits_tel == w_digits or (len(w_digits) >= 8 and digits_tel.endswith(w_digits[-8:])):
+            return True
+    return False
 
 def get_optica_vortix_full_config() -> Dict[str, Any]:
     """
@@ -1258,7 +1298,8 @@ def sincronizar_turnos_proximos_optica(
             })
             continue
 
-        if tel_norm in recent_promo_phones:
+        is_test_wl = es_telefono_whitelist_prueba(tel_norm, cfg)
+        if not is_test_wl and tel_norm in recent_promo_phones:
             excluidos.append({
                 "turno_id": turno_id,
                 "ficha_id": ficha_id,

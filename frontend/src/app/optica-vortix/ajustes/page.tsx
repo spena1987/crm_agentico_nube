@@ -142,6 +142,10 @@ const DEFAULT_CONFIG_LOCAL: OpticaConfig = {
   antibloqueo_ventana_horaria_inicio: '09:00',
   antibloqueo_ventana_horaria_fin: '20:00',
   antibloqueo_pausa_calidad_amarilla: true,
+  telefonos_whitelist_prueba: [
+    '5492614703230',
+    '2614703230'
+  ],
   sedes_habilitadas_campana: [
     'Mitre 540 - Ciudad de Mendoza',
     'Mitre 538 3er Piso Dpto 4 - Ciudad de Mendoza'
@@ -589,6 +593,30 @@ export default function OpticaAjustesPage() {
                     placeholder="Máximo (90s)"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-400 block mb-1">
+                  Whitelist / Teléfonos de Prueba (Exentos de Cooldown)
+                </label>
+                <input
+                  type="text"
+                  value={(config.telefonos_whitelist_prueba || []).join(', ')}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      telefonos_whitelist_prueba: e.target.value
+                        .split(',')
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500"
+                  placeholder="Ej: 5492614703230, 2614703230"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Separados por coma. Estos números pueden recibir campañas y pruebas ilimitadas sin restricción de 30 días.
+                </p>
               </div>
             </div>
           </div>

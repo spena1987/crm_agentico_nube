@@ -33,6 +33,7 @@ from app.services.whatsapp_cloud.client import (
     invalidate_whatsapp_credentials_cache
 )
 from app.services.optica_vortix_service import (
+    es_telefono_whitelist_prueba,
     get_mendoza_now,
     get_optica_vortix_full_config,
     save_optica_vortix_full_config,
@@ -2911,10 +2912,11 @@ async def obtener_audiencia_geclisa_campana(
 
                     estado_envio = "ELEGIBLE"
                     motivo_exclusion = None
+                    is_test_wl = es_telefono_whitelist_prueba(tel)
                     if tel in telefonos_optout:
                         estado_envio = "OPT_OUT"
                         motivo_exclusion = "Paciente solicitó no recibir avisos de óptica"
-                    elif tel in telefonos_cooldown:
+                    elif not is_test_wl and tel in telefonos_cooldown:
                         estado_envio = "COOLDOWN_ACTIVO"
                         motivo_exclusion = "Ya contactado en los últimos 30 días (Escudo Anti-Spam)"
                     elif not tel or len("".join(filter(str.isdigit, tel))) < 7:
@@ -3088,10 +3090,11 @@ async def obtener_audiencia_geclisa_campana(
 
             estado_envio = "ELEGIBLE"
             motivo_exclusion = None
+            is_test_wl = es_telefono_whitelist_prueba(tel)
             if tel in telefonos_optout:
                 estado_envio = "OPT_OUT"
                 motivo_exclusion = "Paciente solicitó no recibir avisos de óptica"
-            elif tel in telefonos_cooldown:
+            elif not is_test_wl and tel in telefonos_cooldown:
                 estado_envio = "COOLDOWN_ACTIVO"
                 motivo_exclusion = "Ya contactado en los últimos 30 días (Escudo Anti-Spam)"
             elif not tel:
@@ -3320,6 +3323,183 @@ async def crear_campana_optica(payload: CrearCampanaOpticaPayload):
     return {**camp, "success": True, "campana": camp}
 
 
+
+class EnviarPruebaCampanaPayload(BaseModel):
+    telefono: str = Field(..., description="Teléfono móvil de destino para prueba")
+    template_name: str = Field(..., description="Nombre de la plantilla oficial de Meta")
+    template_language: Optional[str] = "es_AR"
+    descuento_texto: Optional[str] = "20% OFF en Cristales y Armazones"
+    placa_url: Optional[str] = None
+    estrategia: Optional[str] = "DOBLE_PASO"
+    nombre_contacto: Optional[str] = "Prueba Vortix"
+
+
+@optica_vortix_router.post("/campanas/enviar-prueba")
+async def enviar_prueba_campana_endpoint(payload: EnviarPruebaCampanaPayload):
+    """
+    Envía de forma inmediata una plantilla y/o placa de prueba a un celular específico
+    a través de la Línea 3 de Óptica Vortix, sin aplicar Cooldown.
+    Permite validar en tiempo real cómo recibe y visualiza el paciente el WhatsApp.
+    """
+    raw_tel = payload.telefono.strip()
+    tel_norm, err_tel = normalizar_telefono_optica_mza(raw_tel)
+    if not tel_norm:
+        raise HTTPException(status_code=400, detail=err_tel or "Número de teléfono inválido para WhatsApp")
+
+    opt_phone_id, opt_token = get_whatsapp_optica_credentials()
+    if not opt_phone_id or not opt_token:
+        raise HTTPException(status_code=500, detail="Línea 3 de Óptica no configurada en variables de entorno")
+
+    wa_client = WhatsAppCloudClient(phone_number_id=opt_phone_id, access_token=opt_token, line="optica")
+    tpl_name = payload.template_name.strip()
+    tpl_lang = payload.template_language or "es_AR"
+
+    # 1. Determinar número de variables del template
+    tpl_body_text = f"[Prueba Campaña Óptica: {tpl_name}]"
+    tpl_header_type = "NONE"
+    try:
+        t_db = supabase.table("whatsapp_templates").select("header_type, body_text, language").eq("name", tpl_name).limit(1).execute()
+        if t_db.data:
+            tpl_header_type = str(t_db.data[0].get("header_type") or "NONE").upper()
+            tpl_body_text = str(t_db.data[0].get("body_text") or tpl_body_text)
+            tpl_lang = str(t_db.data[0].get("language") or tpl_lang)
+    except Exception:
+        pass
+
+    if not tpl_body_text or tpl_body_text.startswith("[Prueba"):
+        cat_match = next((c for c in OPTICA_VORTIX_TEMPLATES_CATALOG if c["name"] == tpl_name), None)
+        if cat_match:
+            tpl_body_text = cat_match.get("body_text") or ""
+            tpl_header_type = str(cat_match.get("header_type") or tpl_header_type).upper()
+
+    var_matches = re.findall(r'\{\{(\d+)\}\}', tpl_body_text)
+    num_vars = len(set(var_matches)) if var_matches else 4
+
+    nombre_corto = (payload.nombre_contacto or "Paciente").split()[0].title()
+    cupon = "#VORTIX-TEST"
+    descuento = payload.descuento_texto or "20% OFF en Cristales y Armazones"
+
+    if num_vars == 1:
+        params = [{"type": "text", "text": nombre_corto}]
+    elif num_vars == 2:
+        params = [
+            {"type": "text", "text": nombre_corto},
+            {"type": "text", "text": cupon}
+        ]
+    elif num_vars == 3:
+        if "retiro" in tpl_name or "listos" in tpl_name:
+            params = [
+                {"type": "text", "text": nombre_corto},
+                {"type": "text", "text": "anteojos monofocales"},
+                {"type": "text", "text": "09:00 a 19:30 hs"}
+            ]
+        elif "contacto" in tpl_name:
+            params = [
+                {"type": "text", "text": nombre_corto},
+                {"type": "text", "text": "el Dr. Arago"},
+                {"type": "text", "text": cupon}
+            ]
+        else:
+            params = [
+                {"type": "text", "text": nombre_corto},
+                {"type": "text", "text": "tu turno de consultorio"},
+                {"type": "text", "text": cupon}
+            ]
+    else:
+        params = [
+            {"type": "text", "text": nombre_corto},
+            {"type": "text", "text": "esta semana"},
+            {"type": "text", "text": descuento},
+            {"type": "text", "text": cupon}
+        ]
+        for extra_idx in range(5, num_vars + 1):
+            params.append({"type": "text", "text": f"Beneficio {extra_idx}"})
+
+    components: List[Dict[str, Any]] = []
+    if (tpl_header_type == "IMAGE" or payload.estrategia == "DIRECTA_IMAGEN") and payload.placa_url:
+        eff_media_id = await obtener_o_subir_placa_media_id(wa_client, payload.placa_url)
+        if eff_media_id:
+            components.append({
+                "type": "header",
+                "parameters": [{"type": "image", "image": {"id": eff_media_id}}]
+            })
+        else:
+            components.append({
+                "type": "header",
+                "parameters": [{"type": "image", "image": {"link": payload.placa_url}}]
+            })
+
+    if params:
+        components.append({
+            "type": "body",
+            "parameters": params
+        })
+
+    try:
+        send_res = await wa_client.send_template(
+            to_phone=tel_norm,
+            template_name=tpl_name,
+            language_code=tpl_lang,
+            components=components
+        )
+        wamid = send_res.get("wamid") or (send_res.get("messages", [{}])[0].get("id") if isinstance(send_res.get("messages"), list) and send_res.get("messages") else None)
+        sent_iso = datetime.now(timezone.utc).isoformat()
+
+        # Renderizar texto de plantilla para registro en historial
+        rendered_text = tpl_body_text
+        for p_idx, p_obj in enumerate(params, start=1):
+            rendered_text = rendered_text.replace(f"{{{{{p_idx}}}}}", str(p_obj.get("text") or ""))
+
+        # Guardar en conversaciones y mensajes de Óptica
+        conv_q = supabase.table("optica_conversaciones").select("id").eq("telefono", tel_norm).limit(1).execute()
+        if conv_q.data:
+            conv_id = conv_q.data[0]["id"]
+            supabase.table("optica_conversaciones").update({
+                "ultimo_mensaje_texto": rendered_text[:300],
+                "ultimo_mensaje_at": sent_iso,
+                "ultimo_mensaje_direccion": "saliente",
+                "updated_at": sent_iso
+            }).eq("id", conv_id).execute()
+        else:
+            c_ins = supabase.table("optica_conversaciones").insert({
+                "telefono": tel_norm,
+                "nombre_contacto": nombre_corto,
+                "estado": "activa",
+                "ultimo_mensaje_texto": rendered_text[:300],
+                "ultimo_mensaje_at": sent_iso,
+                "ultimo_mensaje_direccion": "saliente",
+                "created_at": sent_iso,
+                "updated_at": sent_iso
+            }).execute()
+            conv_id = c_ins.data[0]["id"] if c_ins.data else None
+
+        if conv_id:
+            supabase.table("optica_mensajes").insert({
+                "conversacion_id": conv_id,
+                "wamid": wamid or f"test_{int(time.time())}",
+                "direccion": "saliente",
+                "tipo": "template",
+                "contenido": rendered_text,
+                "estado": "enviado",
+                "metadata_json": {
+                    "es_prueba": True,
+                    "template_name": tpl_name,
+                    "placa_url": payload.placa_url
+                },
+                "created_at": sent_iso
+            }).execute()
+
+        return {
+            "success": True,
+            "wamid": wamid,
+            "telefono": tel_norm,
+            "message": f"Mensaje de prueba enviado exitosamente a {tel_norm} vía Línea 3"
+        }
+    except Exception as e_send:
+        logger.error(f"[CampanaPrueba] Error enviando WhatsApp de prueba a {tel_norm}: {e_send}")
+        raise HTTPException(status_code=500, detail=f"Error enviando mensaje por WhatsApp Cloud API: {str(e_send)}")
+
+
 @optica_vortix_router.post("/campanas/{camp_id}/lanzar")
 async def lanzar_campana_optica(camp_id: str):
     """
@@ -3394,7 +3574,8 @@ async def lanzar_campana_optica(camp_id: str):
         contactos = []
         for d in dest_manuales:
             tel_d = str(d.get("telefono") or "").strip()
-            if not tel_d or tel_d in telefonos_cooldown:
+            is_test_wl = es_telefono_whitelist_prueba(tel_d)
+            if not tel_d or (not is_test_wl and tel_d in telefonos_cooldown):
                 continue
             try:
                 ct_rec = upsert_optica_contacto(
@@ -3466,8 +3647,8 @@ async def lanzar_campana_optica(camp_id: str):
         tel = str(ct.get("telefono") or "").strip()
         if not tel:
             continue
-        # Protección estricta: Cooldown de 30 días
-        if tel in telefonos_cooldown:
+        # Protección estricta: Cooldown de 30 días (eximiendo whitelist de pruebas)
+        if not es_telefono_whitelist_prueba(tel) and tel in telefonos_cooldown:
             continue
 
         if encolados > 0 and encolados % lote_sz == 0:

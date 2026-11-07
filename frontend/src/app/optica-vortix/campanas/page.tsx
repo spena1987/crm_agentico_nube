@@ -31,6 +31,7 @@ import {
   FileText,
   Eye,
   Info,
+  Send,
 } from 'lucide-react'
 import OpticaSubNavHeader from '@/components/optica/OpticaSubNavHeader'
 import { apiFetch } from '@/lib/api'
@@ -158,6 +159,53 @@ export default function OpticaCampanasPage() {
   const [campanaDetalleModal, setCampanaDetalleModal] = useState<OpticaCampana | null>(null)
   const [destinatariosDetalle, setDestinatariosDetalle] = useState<any[]>([])
   const [loadingDestinatarios, setLoadingDestinatarios] = useState(false)
+
+  // Disparo Inmediato de Prueba (Opción 1 y 2: Whitelist y Bypass Cooldown)
+  const [telefonoPrueba, setTelefonoPrueba] = useState('2614703230')
+  const [enviandoPrueba, setEnviandoPrueba] = useState(false)
+  const [pruebaFeedback, setPruebaFeedback] = useState<{ type: 'success' | 'error'; text: string; wamid?: string } | null>(null)
+
+  const handleEnviarPrueba = async () => {
+    if (!telefonoPrueba.trim()) {
+      setPruebaFeedback({ type: 'error', text: 'Por favor ingresa un número de celular de prueba.' })
+      return
+    }
+    setEnviandoPrueba(true)
+    setPruebaFeedback(null)
+    try {
+      const res = await apiFetch('/api/optica-vortix/campanas/enviar-prueba', {
+        method: 'POST',
+        body: JSON.stringify({
+          telefono: telefonoPrueba.trim(),
+          template_name: campTemplate,
+          nombre_contacto: pacientePreview?.paciente_nombre || 'Paciente Prueba',
+          descuento_texto: campDescuento,
+          estrategia: campEstrategia,
+          placa_url: campPlacaUrl || null,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok && data.success) {
+        setPruebaFeedback({
+          type: 'success',
+          text: `¡WhatsApp de prueba enviado con éxito a ${data.telefono}!`,
+          wamid: data.wamid,
+        })
+      } else {
+        setPruebaFeedback({
+          type: 'error',
+          text: data?.detail || data?.message || 'Error al enviar WhatsApp de prueba desde la Línea 3.',
+        })
+      }
+    } catch (err: any) {
+      setPruebaFeedback({
+        type: 'error',
+        text: err?.message || 'Error de conexión al disparar el WhatsApp de prueba.',
+      })
+    } finally {
+      setEnviandoPrueba(false)
+    }
+  }
 
   const loadAll = async () => {
     setLoading(true)
@@ -1067,29 +1115,52 @@ export default function OpticaCampanasPage() {
                                     {t.obra_social || 'Particular'}
                                   </td>
                                   <td className="py-2 px-3 text-right">
-                                    {isEligible ? (
-                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                                        ✓ APTO
-                                      </span>
-                                    ) : t.estado_envio === 'COOLDOWN_ACTIVO' ? (
-                                      <span
-                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
-                                        title={t.motivo_exclusion || 'Ya contactado en los últimos 30 días'}
-                                      >
-                                        Cooldown 30d
-                                      </span>
-                                    ) : t.estado_envio === 'OPT_OUT' ? (
-                                      <span
-                                        className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 border border-rose-500/20"
-                                        title={t.motivo_exclusion || 'Opt-Out solicitado'}
-                                      >
-                                        Opt-Out
-                                      </span>
-                                    ) : (
-                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-500 border border-slate-500/20">
-                                        Sin Celular
-                                      </span>
-                                    )}
+                                    {(() => {
+                                      const isWlTest = t.telefono && (
+                                        t.telefono.includes('2614703230') || 
+                                        t.telefono.endsWith('4703230') ||
+                                        t.telefono.includes('5492614703230')
+                                      );
+                                      if (isWlTest) {
+                                        return (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-xs" title="Teléfono de prueba exento de Cooldown (Whitelist Desarrollador)">
+                                            ✓ APTO (Whitelist Test)
+                                          </span>
+                                        );
+                                      }
+                                      if (isEligible) {
+                                        return (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                            ✓ APTO
+                                          </span>
+                                        );
+                                      }
+                                      if (t.estado_envio === 'COOLDOWN_ACTIVO') {
+                                        return (
+                                          <span
+                                            className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                                            title={t.motivo_exclusion || 'Ya contactado en los últimos 30 días'}
+                                          >
+                                            Cooldown 30d
+                                          </span>
+                                        );
+                                      }
+                                      if (t.estado_envio === 'OPT_OUT') {
+                                        return (
+                                          <span
+                                            className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 border border-rose-500/20"
+                                            title={t.motivo_exclusion || 'Opt-Out solicitado'}
+                                          >
+                                            Opt-Out
+                                          </span>
+                                        );
+                                      }
+                                      return (
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-500 border border-slate-500/20">
+                                          Sin Celular
+                                        </span>
+                                      );
+                                    })()}
                                   </td>
                                 </tr>
                               )
@@ -1592,6 +1663,75 @@ export default function OpticaCampanasPage() {
                   </div>
                 )
               })()}
+            </div>
+
+            {/* Widget Disparo Inmediato de Prueba (Opción 1 & 2: Whitelist) */}
+            <div className="mt-4 pt-4 border-t border-slate-800/80 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Send size={14} className="text-emerald-400" />
+                  <span className="text-xs font-black text-white">Disparar WhatsApp de Prueba</span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono font-bold">
+                  🛡️ Whitelist Test
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-snug">
+                Envía esta plantilla con su placa HD al instante a tu celular para verificar la recepción real. <strong>Exento de la regla de Cooldown de 30 días</strong>.
+              </p>
+
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="text"
+                      value={telefonoPrueba}
+                      onChange={(e) => setTelefonoPrueba(e.target.value)}
+                      placeholder="2614703230"
+                      className="w-full bg-[#0b141a] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                    />
+                    <span className="absolute right-2.5 top-2 text-[10px] text-slate-500 font-bold">MZA</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleEnviarPrueba}
+                    disabled={enviandoPrueba || !telefonoPrueba.trim()}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-black shadow-md shadow-emerald-900/30 disabled:opacity-50 transition-all active:scale-95 cursor-pointer whitespace-nowrap"
+                  >
+                    {enviandoPrueba ? (
+                      <>
+                        <Loader2 size={13} className="animate-spin" />
+                        <span>Enviando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send size={13} />
+                        <span>Enviar Prueba</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {pruebaFeedback && (
+                  <div
+                    className={`p-2.5 rounded-xl text-[11px] leading-tight flex items-start gap-2 border ${
+                      pruebaFeedback.type === 'success'
+                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                        : 'bg-rose-950/60 border-rose-500/40 text-rose-300'
+                    }`}
+                  >
+                    <span className="text-sm">{pruebaFeedback.type === 'success' ? '✅' : '❌'}</span>
+                    <div className="flex-1">
+                      <p className="font-semibold">{pruebaFeedback.text}</p>
+                      {pruebaFeedback.type === 'success' && (
+                        <p className="text-[10px] text-emerald-400/80 mt-0.5">
+                          Revisá tu WhatsApp en {telefonoPrueba}. El mensaje fue enviado con éxito desde la Línea 3 de Óptica Vortix (+54 9 261 568-0272).
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
