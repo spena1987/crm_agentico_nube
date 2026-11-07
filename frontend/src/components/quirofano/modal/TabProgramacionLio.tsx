@@ -661,9 +661,9 @@ export default function TabProgramacionLio({
                 </div>
               )}
 
-              {/* FILA ÓPTICA UNIFICADA: MODELO + DIOPTRÍA (0.25) + TÓRICO (Exactamente como FichaTurnoModal) */}
+              {/* FILA ÓPTICA UNIFICADA: MODELO + DIOPTRÍA (0.25) + TÓRICO + INCISIÓN */}
               {!tieneOpciones && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5 items-start">
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3.5 items-start">
                   {/* 1. Selector de Modelo de LIO */}
                   <div className="md:col-span-2">
                     <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
@@ -775,6 +775,45 @@ export default function TabProgramacionLio({
                         No Tórico
                       </div>
                     )}
+                  </div>
+
+                  {/* 4. Grado de Incisión Quirúrgica (0° a 360°) */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Compass size={12} className="text-blue-500" />
+                        <span>Incisión (°)</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">0° - 360°</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="360"
+                      value={formData.lente_incision_grados ?? ''}
+                      onChange={(e) => setFormData({ ...formData, lente_incision_grados: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
+                      placeholder="Ej: 120°"
+                      className="w-full mt-1 px-2.5 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 dark:text-blue-400 font-mono font-extrabold text-center outline-none focus:border-blue-500"
+                      title="Meridiano o grado angular por donde el cirujano realiza la incisión principal (0° a 360°)"
+                    />
+                    <div className="flex items-center justify-between gap-1 mt-1">
+                      {[90, 120, 135, 180].map((deg) => (
+                        <button
+                          key={deg}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, lente_incision_grados: deg })}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition border ${
+                            Number(formData.lente_incision_grados) === deg
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:text-blue-600 border-[var(--border)]'
+                          }`}
+                          title={`Fijar meridiano de incisión en ${deg}°`}
+                        >
+                          {deg}°
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -989,6 +1028,29 @@ export default function TabProgramacionLio({
             className="w-full px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--background)] font-medium outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
+      </div>
+
+      {/* Observaciones Internas de Quirófano (No Protocolares) */}
+      <div className="p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 space-y-1.5 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <label className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+            <AlertCircle size={14} className="text-amber-600 shrink-0" />
+            <span>Observaciones y Particularidades de Quirófano (Uso Interno de Sala)</span>
+          </label>
+          <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+            🔒 No va al Protocolo Quirúrgico Oficial
+          </span>
+        </div>
+        <p className="text-[11px] text-[var(--secondary)]">
+          Notas operativas exclusivas para el equipo de sala (circulante, instrumentadora, enfermería).
+        </p>
+        <textarea
+          rows={2}
+          value={formData.observaciones_quirofano || ''}
+          onChange={(e) => setFormData({ ...formData, observaciones_quirofano: e.target.value })}
+          placeholder="Ej: Paciente con hipoacusia en oído izquierdo, requiere almohadilla cervical, lente en custodia del paciente, etc..."
+          className="w-full mt-1 p-2.5 rounded-xl border border-amber-500/30 bg-[var(--background)] text-xs text-[var(--foreground)] font-medium outline-none focus:ring-2 focus:ring-amber-500 resize-none"
+        />
       </div>
 
       {/* Observaciones y Notas */}

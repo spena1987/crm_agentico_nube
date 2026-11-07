@@ -36,7 +36,8 @@ import {
   Save,
   UploadCloud,
   Package,
-  Barcode
+  Barcode,
+  Compass
 } from 'lucide-react'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import { supabase } from '@/lib/supabase'
@@ -197,11 +198,13 @@ export default function FichaTurnoModal({
     es_torico: turno?.es_torico ?? (casoConfirmadoInicial?.es_torico ?? false),
     lente_torico_valor: turno?.lente_torico_valor !== undefined && turno?.lente_torico_valor !== null ? turno.lente_torico_valor : (casoConfirmadoInicial?.lente_torico_valor ?? 0),
     lente_torico_eje: turno?.lente_torico_eje !== undefined && turno?.lente_torico_eje !== null ? turno.lente_torico_eje : (casoConfirmadoInicial?.lente_torico_eje ?? 90),
+    lente_incision_grados: turno?.lente_incision_grados !== undefined && turno?.lente_incision_grados !== null ? turno.lente_incision_grados : (casoConfirmadoInicial?.lente_incision_grados ?? ''),
     lente_lote: turno?.lente_lote || '',
     lente_serie: turno?.lente_serie || '',
     lente_vencimiento: turno?.lente_vencimiento || '',
     tipo_anestesia: turno?.tipo_anestesia || 'Tópica + Sedación',
     observaciones: turno?.observaciones || '',
+    observaciones_quirofano: turno?.observaciones_quirofano || '',
     observaciones_intraoperatorias: turno?.observaciones_intraoperatorias || '',
     estado: turno?.estado || 'programado',
     lio_calculado: turno?.lio_calculado ?? (casoConfirmadoInicial?.lio_calculado ?? false),
@@ -502,6 +505,8 @@ export default function FichaTurnoModal({
         lente_torico_valor: formData.es_torico ? Number(formData.lente_torico_valor) || 0 : null,
         lente_dioptria: formData.lleva_lente ? formData.lente_dioptria : null,
         lente_tipo: formData.lleva_lente ? formData.lente_tipo : null,
+        lente_incision_grados: formData.lleva_lente && formData.lente_incision_grados !== '' && formData.lente_incision_grados !== null ? Number(formData.lente_incision_grados) : null,
+        observaciones_quirofano: formData.observaciones_quirofano?.trim() || null,
         lente_lote: formData.lleva_lente ? formData.lente_lote : null,
         lente_serie: formData.lleva_lente ? formData.lente_serie : null,
         lente_vencimiento: formData.lleva_lente && formData.lente_vencimiento ? formData.lente_vencimiento : null
@@ -1815,9 +1820,9 @@ export default function FichaTurnoModal({
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
                     {/* 1. Modelo de LIO */}
-                    <div className="md:col-span-2">
+                    <div className="lg:col-span-2">
                     <label className="text-[11px] font-semibold text-[var(--secondary)]">Modelo de Lente Intraocular *</label>
                     <select
                       value={formData.lente_tipo}
@@ -1913,6 +1918,45 @@ export default function FichaTurnoModal({
                         No Tórico
                       </div>
                     )}
+                  </div>
+
+                  {/* 4. Grado de Incisión Quirúrgica (0° a 360°) */}
+                  <div>
+                    <label className="text-[11px] font-semibold text-[var(--secondary)] flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <Compass size={12} className="text-blue-500" />
+                        <span>Incisión (°)</span>
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">0° - 360°</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      max="360"
+                      value={formData.lente_incision_grados}
+                      onChange={(e) => setFormData({ ...formData, lente_incision_grados: e.target.value === '' ? '' : parseInt(e.target.value) || 0 })}
+                      placeholder="Ej: 120°"
+                      className="w-full mt-1 px-2.5 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs text-blue-600 dark:text-blue-400 font-mono font-extrabold text-center outline-none focus:border-blue-500"
+                      title="Meridiano o grado angular por donde el cirujano realiza la incisión principal (0° a 360°)"
+                    />
+                    <div className="flex items-center justify-between gap-1 mt-1">
+                      {[90, 120, 135, 180].map((deg) => (
+                        <button
+                          key={deg}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, lente_incision_grados: deg })}
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition border ${
+                            Number(formData.lente_incision_grados) === deg
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-slate-100 dark:bg-slate-800 text-[var(--secondary)] hover:text-blue-600 border-[var(--border)]'
+                          }`}
+                          title={`Fijar meridiano de incisión en ${deg}°`}
+                        >
+                          {deg}°
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Banner de Sincronización con Geclisa (GTIN & Stock en Vivo) */}
@@ -2077,6 +2121,29 @@ export default function FichaTurnoModal({
                         className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-[var(--border)] text-xs font-mono outline-none focus:border-blue-500"
                       />
                     </div>
+                  </div>
+
+                  {/* 5. Observaciones Internas de Quirófano (Particularidades del Caso - No Protocolares) */}
+                  <div className="p-3.5 rounded-2xl bg-amber-500/5 dark:bg-amber-950/20 border border-amber-500/30 space-y-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <label className="text-[11px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                        <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                        <span>Observaciones y Particularidades de Quirófano (Uso Interno de Sala)</span>
+                      </label>
+                      <span className="text-[9px] uppercase font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+                        🔒 No va al Protocolo Quirúrgico Oficial
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-[var(--secondary)]">
+                      Campo de texto libre para el equipo de quirófano (circulante, instrumentadora, enfermería). Registre requerimientos asistenciales, postura o detalles especiales del paciente.
+                    </p>
+                    <textarea
+                      rows={2}
+                      value={formData.observaciones_quirofano}
+                      onChange={(e) => setFormData({ ...formData, observaciones_quirofano: e.target.value })}
+                      placeholder="Ej: Paciente con hipoacusia en oído izquierdo, requiere almohadilla cervical, lente en custodia del paciente, etc..."
+                      className="w-full mt-1 px-3 py-2 rounded-xl bg-[var(--card)] border border-amber-500/30 text-xs text-[var(--foreground)] outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 placeholder:text-slate-400"
+                    />
                   </div>
                   </div>
                 </div>

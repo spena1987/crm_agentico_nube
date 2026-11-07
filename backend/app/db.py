@@ -6594,7 +6594,7 @@ def get_turno_quirofano_by_id(turno_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 COLUMN_KEYS_TURNOS_QUIROFANO = {
-    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje", "llegada_at", "ingreso_pre_quirofano_at", "inicio_cirugia_at", "fin_cirugia_at",
+    "lleva_lente", "es_torico", "lente_torico_valor", "lente_torico_eje", "lente_incision_grados", "observaciones_quirofano", "llegada_at", "ingreso_pre_quirofano_at", "inicio_cirugia_at", "fin_cirugia_at",
     "instrumentador_nombre", "medico_derivador_nombre", "observaciones_intraoperatorias",
     "asesoria_id", "paciente_id", "quirofano_id", "fecha_cirugia", "hora_inicio",
     "duracion_minutos", "ojo", "es_bilateral_escalonada", "turno_par_id", "cirujano_id",
@@ -9786,6 +9786,8 @@ def obtener_datos_pulsera_turno(turno_id: str) -> Dict[str, Any]:
                 "es_torico": turno.get("es_torico", False),
                 "lente_torico_valor": turno.get("lente_torico_valor"),
                 "lente_torico_eje": turno.get("lente_torico_eje"),
+                "lente_incision_grados": turno.get("lente_incision_grados"),
+                "observaciones_quirofano": turno.get("observaciones_quirofano"),
                 "lente_lote": turno.get("lente_lote")
             },
             "estado": turno.get("estado"),

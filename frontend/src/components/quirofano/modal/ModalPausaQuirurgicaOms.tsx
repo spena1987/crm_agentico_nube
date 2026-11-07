@@ -503,7 +503,18 @@ export default function ModalPausaQuirurgicaOms({
                         Tórico: T{turno.lente_torico_valor || 0} (Eje {turno.lente_torico_eje || 90}°)
                       </span>
                     )}
+                    {turno.lente_incision_grados !== undefined && turno.lente_incision_grados !== null && turno.lente_incision_grados !== '' && (
+                      <span className="text-blue-600 dark:text-blue-400 font-bold flex items-center gap-0.5">
+                        🧭 Incisión: {turno.lente_incision_grados}°
+                      </span>
+                    )}
                   </div>
+                  {turno.observaciones_quirofano && (
+                    <div className="mt-1.5 pt-1.5 border-t border-[var(--border)] text-[11px] text-amber-800 dark:text-amber-300 font-medium flex items-start gap-1.5 bg-amber-500/10 p-2 rounded-lg">
+                      <span className="shrink-0 font-bold text-amber-700 dark:text-amber-400">⚠️ Nota Quirófano:</span>
+                      <span className="italic">{turno.observaciones_quirofano}</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Sub-vista: Escaneo en Progreso */}

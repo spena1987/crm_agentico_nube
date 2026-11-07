@@ -593,9 +593,14 @@ export default function ModalCartelesPechoA4({
               <span className="font-black uppercase tracking-wider text-[9px]">
                 LENTE INTRAOCULAR (LIO)
               </span>
-              <span className="font-mono font-bold text-[10px]">
-                Lote: {t.lente_lote || 'S/D'}
-              </span>
+              <div className="flex items-center gap-1.5 font-mono font-bold text-[10px]">
+                {t.lente_incision_grados !== undefined && t.lente_incision_grados !== null && (
+                  <span className="border border-black px-1 text-[9px] bg-slate-100 font-black">
+                    Inc: {t.lente_incision_grados}°
+                  </span>
+                )}
+                <span>Lote: {t.lente_lote || 'S/D'}</span>
+              </div>
             </div>
             <div className="flex items-center justify-between gap-1.5">
               <span className="font-bold text-[11px] truncate flex-1">
