@@ -56,7 +56,7 @@ export interface OpticaTemplate {
 }
 
 const OPTICA_VARIABLES = [
-  { id: 'paciente_nombre', label: 'Nombre Paciente', icon: User, sample: 'Mariana Pérez' },
+  { id: 'paciente_nombre', label: 'Primer Nombre Paciente', icon: User, sample: 'Mariana' },
   { id: 'prestador_nombre', label: 'Médico / Profesional', icon: Stethoscope, sample: 'Dr. Bonanno' },
   { id: 'turno_fecha_hora', label: 'Fecha y Hora Turno', icon: Calendar, sample: 'Mañana a las 10:30 hs' },
   { id: 'porcentaje_descuento', label: 'Descuento (% OFF)', icon: Tag, sample: '20% OFF' },
@@ -66,7 +66,7 @@ const OPTICA_VARIABLES = [
 ]
 
 const SAMPLE_VALUES_DICT: Record<string, string> = {
-  paciente_nombre: 'Mariana Pérez',
+  paciente_nombre: 'Mariana',
   prestador_nombre: 'Dr. Bonanno',
   turno_fecha_hora: 'Mañana a las 10:30 hs',
   porcentaje_descuento: '20% OFF',
@@ -352,7 +352,7 @@ export default function OpticaTemplatesManager() {
     const varMatches = trimmedBody.match(/\{\{(\d+)\}\}/g) || []
     const uniqueVars = Array.from(new Set(varMatches.map(m => parseInt(m.replace(/\D/g, ''), 10)))).sort((a, b) => a - b)
     const defaultSamples = [
-      'Mariana Pérez',
+      'Mariana',
       'Dr. Bonanno',
       '20% OFF',
       '#VORTIX-8A4F',
@@ -1066,7 +1066,19 @@ export default function OpticaTemplatesManager() {
 
               {/* Botones de Acción */}
               <div className="space-y-2 pt-1">
-                <label className="text-slate-300 font-semibold">Botones de Respuesta Rápida (máx 2):</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-semibold">Botones de Respuesta Rápida (máx 2):</label>
+                  <button
+                    type="button"
+                    onClick={() => setButtons([
+                      { type: 'QUICK_REPLY', text: 'Quiero más información' },
+                      { type: 'QUICK_REPLY', text: 'Contactar un asesor' }
+                    ])}
+                    className="text-[11px] text-blue-400 hover:text-blue-300 underline font-semibold"
+                  >
+                    Usar: Info + Asesor
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
                     type="text"
@@ -1075,7 +1087,7 @@ export default function OpticaTemplatesManager() {
                     onChange={e =>
                       setButtons(prev => [{ type: 'QUICK_REPLY', text: e.target.value }, prev[1]].filter(Boolean))
                     }
-                    placeholder="Botón 1: Quiero mi descuento"
+                    placeholder="Botón 1: Quiero más información"
                     className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                   />
                   <input
@@ -1085,7 +1097,7 @@ export default function OpticaTemplatesManager() {
                     onChange={e =>
                       setButtons(prev => [prev[0], { type: 'QUICK_REPLY', text: e.target.value }].filter(Boolean))
                     }
-                    placeholder="Botón 2: Ver promos armazones"
+                    placeholder="Botón 2: Contactar un asesor"
                     className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-blue-500"
                   />
                 </div>

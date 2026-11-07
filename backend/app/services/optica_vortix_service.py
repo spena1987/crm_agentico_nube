@@ -284,6 +284,27 @@ def _sincronizar_aliases_config_optica(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 
+def extraer_primer_nombre_paciente(nombre_raw: Optional[str]) -> str:
+    """
+    Extrae únicamente el primer nombre del paciente capitalizado (sin apellidos, sin títulos).
+    Maneja formatos clínicos comunes como 'PEREZ, MARIANA BEATRIZ' o 'Mariana Pérez'.
+    """
+    if not nombre_raw:
+        return "Paciente"
+    raw = str(nombre_raw).strip()
+    if not raw:
+        return "Paciente"
+    partes = raw.split(",")
+    if len(partes) > 1 and partes[1].strip():
+        candidato = partes[1].strip()
+    else:
+        candidato = partes[0].strip()
+    tokens = [t for t in candidato.split() if t.strip()]
+    if not tokens:
+        return "Paciente"
+    return tokens[0].capitalize()
+
+
 def es_telefono_whitelist_prueba(telefono: str, cfg: Optional[Dict[str, Any]] = None) -> bool:
     """
     Determina si un número telefónico pertenece a la lista blanca de pruebas / desarrollador.

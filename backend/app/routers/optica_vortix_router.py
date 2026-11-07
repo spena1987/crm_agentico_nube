@@ -32,7 +32,9 @@ from app.services.whatsapp_cloud.client import (
     get_whatsapp_optica_credentials,
     invalidate_whatsapp_credentials_cache
 )
+from app.services.whatsapp_cloud.templates import _upload_sample_media_for_template_header
 from app.services.optica_vortix_service import (
+    extraer_primer_nombre_paciente,
     es_telefono_whitelist_prueba,
     get_mendoza_now,
     get_optica_vortix_full_config,
@@ -751,7 +753,7 @@ def validar_reglas_meta_plantilla(body_text: str) -> Optional[str]:
 
 
 SAMPLE_VALUES_BY_VAR_NAME: Dict[str, str] = {
-    "paciente_nombre": "Mariana Pérez",
+    "paciente_nombre": "Mariana",
     "prestador_nombre": "Dr. Bonanno",
     "turno_fecha_hora": "15/11/2026 a las 10:30 hs",
     "porcentaje_descuento": "20% OFF",
@@ -761,7 +763,7 @@ SAMPLE_VALUES_BY_VAR_NAME: Dict[str, str] = {
 }
 
 SAMPLE_VALUES_BY_INDEX: Dict[int, str] = {
-    1: "Mariana Pérez",
+    1: "Mariana",
     2: "Dr. Bonanno",
     3: "20% OFF",
     4: "#VORTIX-8A4F",
@@ -804,6 +806,28 @@ def generar_body_example_meta(
     return {"body_text": [sample_list]}
 
 
+async def _construir_header_component_con_example(
+    token: str,
+    h_type: Optional[str],
+    h_content: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Construye el componente HEADER oficial para Meta Graph API v21+.
+    Si el header es IMAGE o DOCUMENT, sube un binario de muestra a la Resumable Upload API
+    para adjuntar el 'header_handle' en 'example', evitando el rechazo error_subcode: 2388043.
+    """
+    h_type_clean = (h_type or "NONE").upper()
+    if h_type_clean == "TEXT" and h_content:
+        return {"type": "HEADER", "format": "TEXT", "text": h_content[:60]}
+    elif h_type_clean in ("IMAGE", "DOCUMENT"):
+        h_comp: Dict[str, Any] = {"type": "HEADER", "format": h_type_clean}
+        handle = await _upload_sample_media_for_template_header(token, h_type_clean)
+        if handle:
+            h_comp["example"] = {"header_handle": [handle]}
+        return h_comp
+    return None
+
+
 @optica_vortix_router.post("/plantillas")
 async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
     """
@@ -825,12 +849,9 @@ async def crear_plantilla_optica(payload: CrearPlantillaOpticaPayload):
 
     components = []
     h_type = (payload.header_type or "NONE").upper()
-    if h_type == "TEXT" and payload.header_content:
-        components.append({"type": "HEADER", "format": "TEXT", "text": payload.header_content[:60]})
-    elif h_type == "IMAGE":
-        components.append({"type": "HEADER", "format": "IMAGE"})
-    elif h_type == "DOCUMENT":
-        components.append({"type": "HEADER", "format": "DOCUMENT"})
+    header_comp = await _construir_header_component_con_example(token, h_type, payload.header_content)
+    if header_comp:
+        components.append(header_comp)
 
     body_comp: Dict[str, Any] = {"type": "BODY", "text": payload.body_text}
     example_obj = generar_body_example_meta(payload.body_text, payload.sample_values, payload.variable_mappings)
@@ -955,12 +976,9 @@ async def editar_plantilla_optica(name: str, payload: EditarPlantillaOpticaPaylo
     # 3. Construir componentes para Meta
     components = []
     h_type = (payload.header_type or "NONE").upper()
-    if h_type == "TEXT" and payload.header_content:
-        components.append({"type": "HEADER", "format": "TEXT", "text": payload.header_content[:60]})
-    elif h_type == "IMAGE":
-        components.append({"type": "HEADER", "format": "IMAGE"})
-    elif h_type == "DOCUMENT":
-        components.append({"type": "HEADER", "format": "DOCUMENT"})
+    header_comp = await _construir_header_component_con_example(token, h_type, payload.header_content)
+    if header_comp:
+        components.append(header_comp)
 
     body_comp: Dict[str, Any] = {"type": "BODY", "text": payload.body_text}
     example_obj = generar_body_example_meta(payload.body_text, payload.sample_values, payload.variable_mappings)
@@ -1105,12 +1123,9 @@ async def aprovisionar_plantilla_individual(name: str):
         raise HTTPException(status_code=400, detail=err_meta)
 
     components: List[Dict[str, Any]] = []
-    if spec.get("header_type") == "TEXT" and spec.get("header_content"):
-        components.append({"type": "HEADER", "format": "TEXT", "text": spec["header_content"][:60]})
-    elif spec.get("header_type") == "IMAGE":
-        components.append({"type": "HEADER", "format": "IMAGE"})
-    elif spec.get("header_type") == "DOCUMENT":
-        components.append({"type": "HEADER", "format": "DOCUMENT"})
+    header_comp = await _construir_header_component_con_example(token, spec.get("header_type"), spec.get("header_content"))
+    if header_comp:
+        components.append(header_comp)
 
     body_comp: Dict[str, Any] = {"type": "BODY", "text": spec["body_text"]}
     example_obj = generar_body_example_meta(
@@ -3375,7 +3390,7 @@ async def enviar_prueba_campana_endpoint(payload: EnviarPruebaCampanaPayload):
     var_matches = re.findall(r'\{\{(\d+)\}\}', tpl_body_text)
     num_vars = len(set(var_matches)) if var_matches else 4
 
-    nombre_corto = (payload.nombre_contacto or "Paciente").split()[0].title()
+    nombre_corto = extraer_primer_nombre_paciente(payload.nombre_contacto)
     cupon = "#VORTIX-TEST"
     descuento = payload.descuento_texto or "20% OFF en Cristales y Armazones"
 
@@ -3656,7 +3671,7 @@ async def lanzar_campana_optica(camp_id: str):
         accumulated_delay += random.randint(int_min, max(int_min + 1, int_max))
 
         prog_at = (now_utc + timedelta(seconds=accumulated_delay)).isoformat()
-        nombre_corto = str(ct.get("nombre") or "Paciente").split(",")[0].title().strip()
+        nombre_corto = extraer_primer_nombre_paciente(ct.get("nombre"))
         cupon = str(ct.get("codigo_cupon_activo") or generar_codigo_beneficio_vortix(tel))
 
         # Construcción dinámica de parámetros según num_vars exacto de la plantilla Meta
