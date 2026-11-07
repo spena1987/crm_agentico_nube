@@ -17,7 +17,7 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Optional, List, Dict, Any, Set, Tuple
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query, Body, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db import supabase
 from app.services.geclisa_client import GeclisaClient
