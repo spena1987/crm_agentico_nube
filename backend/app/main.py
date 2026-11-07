@@ -159,6 +159,8 @@ from app.db import (
     desvincular_documento_geclisa_turno,
     obtener_datos_pulsera_turno,
     marcar_pulsera_impresa,
+    obtener_lote_pulseras_fecha,
+    marcar_pulseras_impresas_lote,
     procesar_escaneo_qr_turno,
     get_turnos_dia_ejecucion
 )
@@ -6197,6 +6199,30 @@ def marcar_pulsera_impresa_api(turno_id: str, payload: Optional[Dict[str, Any]] 
     res = marcar_pulsera_impresa(turno_id, usuario_crm=user)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=res.get("error") or "Error al registrar impresión de pulsera.")
+    return res
+
+@app.get("/api/turnos-quirofano-lote-pulseras")
+def obtener_lote_pulseras_api(fecha: Optional[str] = None, quirofano_id: Optional[str] = None):
+    """
+    Retorna el listado consolidado de turnos de una fecha para la impresión masiva de pulseras en lote.
+    """
+    from datetime import date
+    f = fecha or date.today().isoformat()
+    res = obtener_lote_pulseras_fecha(f, quirofano_id=quirofano_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Error al obtener pulseras del día.")
+    return res
+
+@app.post("/api/turnos-quirofano-marcar-pulseras-lote")
+def marcar_pulseras_lote_api(payload: Dict[str, Any] = Body(...)):
+    """
+    Marca en lote una lista de turnos como pulseras impresas.
+    """
+    turno_ids = payload.get("turno_ids") or []
+    user = payload.get("usuario_crm") or "Operador Recepción"
+    res = marcar_pulseras_impresas_lote(turno_ids, usuario_crm=user)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("error") or "Error al marcar lote de pulseras.")
     return res
 
 # Disparo de Consentimiento por WhatsApp

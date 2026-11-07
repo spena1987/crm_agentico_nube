@@ -29,6 +29,7 @@ import {
 import { supabase } from '@/lib/supabase'
 import { BACKEND_URL, apiFetch } from '@/lib/api'
 import ModalImprimirPulsera from '@/components/quirofano/ModalImprimirPulsera'
+import ModalImprimirLotePulseras from '@/components/quirofano/ModalImprimirLotePulseras'
 import ModalEnviarConsentimientoWhatsApp from '@/components/ModalEnviarConsentimientoWhatsApp'
 import ModalVerificacionQR from '@/components/quirofano/ModalVerificacionQR'
 import ModalEscanearCamara from '@/components/quirofano/ModalEscanearCamara'
@@ -62,6 +63,8 @@ interface TurnoRecepcion {
   lente_tipo?: string
   lente_dioptria?: string
   lente_lote?: string
+  pulsera_impresa?: boolean
+  pulsera_impresa_at?: string
   quirofanos?: {
     id: string
     nombre: string
@@ -106,6 +109,23 @@ export default function RecepcionPacientesDia() {
 
   // Estados de Pulsera Térmica y Escáner QR
   const [pulseraTurnoId, setPulseraTurnoId] = useState<string | null>(null)
+  const [mostrarModalLotePulseras, setMostrarModalLotePulseras] = useState<boolean>(false)
+
+  // Pulseras pendientes de impresión del día
+  const pulserasPendientesCount = useMemo(() => {
+    return turnos.filter((t) => !t.pulsera_impresa && t.estado !== 'cancelado').length
+  }, [turnos])
+
+  // Quirófanos únicos extraídos de turnos
+  const quirofanosUnicos = useMemo(() => {
+    const map = new Map<string, any>()
+    turnos.forEach((t) => {
+      if (t.quirofanos?.id && t.quirofanos?.nombre) {
+        map.set(t.quirofanos.id, t.quirofanos)
+      }
+    })
+    return Array.from(map.values())
+  }, [turnos])
   const [scanVerifTurnoId, setScanVerifTurnoId] = useState<string | null>(null)
   const [scanVerifRawQR, setScanVerifRawQR] = useState<string>('')
   const [mostrarModalCamara, setMostrarModalCamara] = useState<boolean>(false)
@@ -536,6 +556,23 @@ export default function RecepcionPacientesDia() {
               </button>
             )}
           </div>
+
+          {/* Botón Imprimir Lote de Pulseras del Día */}
+          <button
+            type="button"
+            onClick={() => setMostrarModalLotePulseras(true)}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition shadow-sm shrink-0"
+            title="Imprimir lote continuo de pulseras para todos los pacientes del día en TSC TDP-225"
+          >
+            <Printer size={14} />
+            <span className="hidden sm:inline">Pulseras del Día</span>
+            <span className="sm:hidden">Pulseras</span>
+            {pulserasPendientesCount > 0 && (
+              <span className="px-1.5 py-0.2 bg-amber-400 text-black text-[10px] font-black rounded-full leading-tight">
+                {pulserasPendientesCount}
+              </span>
+            )}
+          </button>
 
           <button
             type="button"
@@ -1057,6 +1094,16 @@ export default function RecepcionPacientesDia() {
       )}
 
       {/* Modales de Pulsera Térmica y Escáner QR */}
+      {mostrarModalLotePulseras && (
+        <ModalImprimirLotePulseras
+          isOpen={mostrarModalLotePulseras}
+          onClose={() => setMostrarModalLotePulseras(false)}
+          fechaDefault={fecha}
+          quirofanos={quirofanosUnicos}
+          onPulserasImpresas={() => fetchTurnosHoy()}
+        />
+      )}
+
       {pulseraTurnoId && (
         <ModalImprimirPulsera
           isOpen={!!pulseraTurnoId}
