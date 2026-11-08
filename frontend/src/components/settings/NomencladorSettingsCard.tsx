@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from 'react'
 import {
   Pill,
+  UserCheck,
+  Stethoscope,
   Search,
   Plus,
   Edit2,
@@ -179,6 +181,17 @@ export default function NomencladorSettingsCard() {
   const [savingIndicacion, setSavingIndicacion] = useState(false)
   const [indicacionModalError, setIndicacionModalError] = useState<string | null>(null)
   const [indicacionesAsignadasModal, setIndicacionesAsignadasModal] = useState<any[]>([])
+  const [prestadoresLista, setPrestadoresLista] = useState<any[]>([])
+  const [nuevaReglaCirujano, setNuevaReglaCirujano] = useState<{
+    prestador_id: string
+    tipo_fase: string
+    plantilla_indicacion_id: string
+  }>({
+    prestador_id: '',
+    tipo_fase: 'postquirurgico',
+    plantilla_indicacion_id: ''
+  })
+  const [mostrandoAgregarRegla, setMostrandoAgregarRegla] = useState(false)
   const [loadingIndicacionesAsignadas, setLoadingIndicacionesAsignadas] = useState(false)
   const [indicacionForm, setIndicacionForm] = useState({
     id: '',
@@ -282,6 +295,15 @@ export default function NomencladorSettingsCard() {
       .then((r) => r.json())
       .then((d) => { if (d.success) setPlantillasIndicacionesCrm(d.plantillas || []) })
       .catch((err) => console.error('Error cargando plantillas indicaciones CRM:', err))
+
+    fetch(`${API_BASE_URL}/api/prestadores`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && Array.isArray(d.prestadores)) {
+          setPrestadoresLista(d.prestadores.filter((p: any) => p.activo !== false))
+        }
+      })
+      .catch((err) => console.error('Error cargando prestadores en nomenclador:', err))
   }, [])
 
   useEffect(() => {
@@ -360,6 +382,66 @@ export default function NomencladorSettingsCard() {
     } finally {
       setLoadingHistorial(false)
     }
+  }
+
+
+  // Helper para asignar o cambiar plantilla institucional base por fase
+  const handleSetProtocoloInstitucional = (tipoFase: string, plantillaId: string) => {
+    setIndicacionesAsignadasModal((prev) => {
+      const filtered = prev.filter((i) => !( (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === tipoFase ))
+      if (!plantillaId) return filtered
+      const pObj = plantillasIndicacionesCrm.find((x) => x.id === plantillaId)
+      return [
+        ...filtered,
+        {
+          plantilla_indicacion_id: plantillaId,
+          prestador_id: null,
+          tipo_fase: tipoFase,
+          orden: filtered.length + 1,
+          es_obligatoria: true,
+          activo: true,
+          plantillas_indicaciones_crm: pObj
+        }
+      ]
+    })
+  }
+
+  // Helper para agregar una regla específica de cirujano
+  const handleAgregarReglaCirujano = () => {
+    if (!nuevaReglaCirujano.prestador_id || !nuevaReglaCirujano.plantilla_indicacion_id) return
+    const pObj = plantillasIndicacionesCrm.find((x) => x.id === nuevaReglaCirujano.plantilla_indicacion_id)
+    const prestObj = prestadoresLista.find((p) => p.id === nuevaReglaCirujano.prestador_id)
+    setIndicacionesAsignadasModal((prev) => {
+      const filtered = prev.filter(
+        (i) => !(String(i.prestador_id) === String(nuevaReglaCirujano.prestador_id) && i.tipo_fase === nuevaReglaCirujano.tipo_fase)
+      )
+      return [
+        ...filtered,
+        {
+          plantilla_indicacion_id: nuevaReglaCirujano.plantilla_indicacion_id,
+          prestador_id: nuevaReglaCirujano.prestador_id,
+          tipo_fase: nuevaReglaCirujano.tipo_fase,
+          orden: filtered.length + 1,
+          es_obligatoria: true,
+          activo: true,
+          plantillas_indicaciones_crm: pObj,
+          prestadores: prestObj
+        }
+      ]
+    })
+    setNuevaReglaCirujano({
+      prestador_id: '',
+      tipo_fase: 'postquirurgico',
+      plantilla_indicacion_id: ''
+    })
+    setMostrandoAgregarRegla(false)
+  }
+
+  // Helper para eliminar una regla de cirujano
+  const handleEliminarReglaCirujano = (prestadorId: string, tipoFase: string) => {
+    setIndicacionesAsignadasModal((prev) =>
+      prev.filter((i) => !(String(i.prestador_id) === String(prestadorId) && i.tipo_fase === tipoFase))
+    )
   }
 
   const loadIndicacionesPractica = async (practicaId?: string) => {
@@ -2485,8 +2567,9 @@ export default function NomencladorSettingsCard() {
               )}
 
               {/* SUB-PESTAÑA: INDICACIONES MÉDICAS QUIRÚRGICAS */}
+                            {/* SUB-PESTAÑA: INDICACIONES MÉDICAS QUIRÚRGICAS (MATRIZ POR CIRUJANO Y FASE) */}
               {modalSubTab === 'indicaciones' && (
-                <div className="space-y-4">
+                <div className="space-y-5">
                   {/* Switch Principal */}
                   <div className="flex items-center justify-between p-3.5 bg-rose-50/70 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800 rounded-xl">
                     <div className="space-y-0.5">
@@ -2497,7 +2580,7 @@ export default function NomencladorSettingsCard() {
                         </span>
                       </div>
                       <p className="text-[11px] text-rose-700/80 dark:text-rose-300/70">
-                        Si se activa, el expediente precargará de forma estricta las gotas, horarios y recomendaciones de esta práctica.
+                        Si se activa, el expediente precargará de forma estricta las gotas, horarios y recomendaciones de esta práctica según cirujano y fase.
                       </p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
@@ -2520,112 +2603,234 @@ export default function NomencladorSettingsCard() {
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="font-bold text-slate-900 dark:text-slate-100 block text-xs">
-                            Protocolos Asignados a esta Práctica ({indicacionesAsignadasModal.filter((i) => i.activo).length})
-                          </span>
-                          <span className="text-[11px] text-slate-500">
-                            Tilda una o más indicaciones médicas de la Biblioteca. Se aplicarán de forma secuencial y modular al generar el expediente.
+                    <div className="space-y-5">
+                      {/* BLOQUE 1: PROTOCOLOS INSTITUCIONALES BASE */}
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Building size={15} className="text-blue-600" />
+                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                              1. Protocolos Institucionales Base (Centro Visión)
+                            </span>
+                          </div>
+                          <span className="text-[10.5px] text-slate-500">
+                            Aplicados a todos los cirujanos sin regla personalizada
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={handleOpenCreateIndicacion}
-                          className="px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg border border-rose-200 dark:border-rose-800 flex items-center gap-1"
-                        >
-                          <Plus size={12} /> Nueva Plantilla
-                        </button>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                          {/* Protocolo Preoperatorio Base */}
+                          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-[var(--background)] space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                <Clock size={13} className="text-amber-500" /> Fase Prequirúrgica (Ayuno / Ingreso)
+                              </span>
+                            </div>
+                            {(() => {
+                              const instPre = indicacionesAsignadasModal.find(
+                                (i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'prequirurgico'
+                              )
+                              return (
+                                <select
+                                  value={instPre?.plantilla_indicacion_id || ''}
+                                  onChange={(e) => handleSetProtocoloInstitucional('prequirurgico', e.target.value)}
+                                  className="w-full text-xs p-2 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--foreground)]"
+                                >
+                                  <option value="">-- Sin protocolo prequirúrgico asignado --</option>
+                                  {plantillasIndicacionesCrm.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.titulo} ({p.categoria || 'General'} - {p.tipo_fase || 'fase'})
+                                    </option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
+                          </div>
+
+                          {/* Protocolo Postoperatorio Base */}
+                          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-[var(--background)] space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                                <Pill size={13} className="text-emerald-500" /> Fase Postquirúrgica (Gotas / Cuidados)
+                              </span>
+                            </div>
+                            {(() => {
+                              const instPost = indicacionesAsignadasModal.find(
+                                (i) => (!i.prestador_id || i.prestador_id === null) && i.tipo_fase === 'postquirurgico'
+                              )
+                              return (
+                                <select
+                                  value={instPost?.plantilla_indicacion_id || ''}
+                                  onChange={(e) => handleSetProtocoloInstitucional('postquirurgico', e.target.value)}
+                                  className="w-full text-xs p-2 rounded-lg border border-[var(--border)] bg-[var(--card-bg)] text-[var(--foreground)]"
+                                >
+                                  <option value="">-- Sin protocolo postquirúrgico asignado --</option>
+                                  {plantillasIndicacionesCrm.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.titulo} ({p.categoria || 'General'} - {p.tipo_fase || 'fase'})
+                                    </option>
+                                  ))}
+                                </select>
+                              )
+                            })()}
+                          </div>
+                        </div>
                       </div>
 
-                      {plantillasIndicacionesCrm.length === 0 ? (
-                        <div className="p-4 text-center border border-dashed rounded-xl bg-slate-50 dark:bg-slate-900/30 text-xs text-slate-500">
-                          No hay plantillas creadas en la Biblioteca. Ve a la pestaña &quot;Biblioteca de Indicaciones&quot; o crea una nueva.
+                      {/* BLOQUE 2: REGLAS ESPECÍFICAS POR CIRUJANO (EXCEPCIONES CLÍNICAS) */}
+                      <div className="p-3.5 bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Stethoscope size={15} className="text-emerald-600" />
+                            <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                              2. Excepciones & Protocolos por Cirujano ({indicacionesAsignadasModal.filter((i) => !!i.prestador_id).length})
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setMostrandoAgregarRegla(!mostrandoAgregarRegla)}
+                            className="px-2.5 py-1 text-[11px] font-bold text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg border border-emerald-300 dark:border-emerald-800 flex items-center gap-1 transition"
+                          >
+                            <Plus size={12} /> {mostrandoAgregarRegla ? 'Cancelar' : '+ Agregar Protocolo de Cirujano'}
+                          </button>
                         </div>
-                      ) : (
-                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                          {plantillasIndicacionesCrm.map((p) => {
-                            const asignacion = indicacionesAsignadasModal.find(
-                              (i) => i.plantilla_indicacion_id === p.id
-                            )
-                            const isSelected = !!asignacion && asignacion.activo !== false
 
-                            return (
-                              <div
-                                key={p.id}
-                                onClick={() => {
-                                  if (isSelected) {
-                                    setIndicacionesAsignadasModal((prev) =>
-                                      prev.filter((i) => i.plantilla_indicacion_id !== p.id)
-                                    )
-                                  } else {
-                                    setIndicacionesAsignadasModal((prev) => [
-                                      ...prev,
-                                      {
-                                        plantilla_indicacion_id: p.id,
-                                        orden: prev.length + 1,
-                                        es_obligatoria: true,
-                                        activo: true,
-                                        plantillas_indicaciones_crm: p
-                                      }
-                                    ])
-                                  }
-                                }}
-                                className={`p-3 rounded-xl border cursor-pointer transition flex items-start gap-3 ${
-                                  isSelected
-                                    ? 'bg-rose-50/70 border-rose-400 dark:bg-rose-950/30 dark:border-rose-700 shadow-xs'
-                                    : 'bg-[var(--background)] border-[var(--border)] hover:border-slate-400 opacity-80 hover:opacity-100'
-                                }`}
+                        {/* Formulario Inline para agregar excepción */}
+                        {mostrandoAgregarRegla && (
+                          <div className="p-3 bg-[var(--card-bg)] border border-emerald-300 dark:border-emerald-800/80 rounded-xl space-y-2.5 animate-in fade-in text-xs">
+                            <span className="font-bold text-slate-800 dark:text-slate-200 block text-[11.5px]">
+                              Asignar Protocolo Personalizado a Cirujano:
+                            </span>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-[10.5px] text-slate-500 block mb-1">Médico Cirujano:</label>
+                                <select
+                                  value={nuevaReglaCirujano.prestador_id}
+                                  onChange={(e) => setNuevaReglaCirujano({ ...nuevaReglaCirujano, prestador_id: e.target.value })}
+                                  className="w-full text-xs p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                                >
+                                  <option value="">-- Seleccionar Cirujano --</option>
+                                  {prestadoresLista.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.nombre_apellido} {p.matricula ? `(Mat: ${p.matricula})` : ''} - {p.rol || 'Cirujano'}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="text-[10.5px] text-slate-500 block mb-1">Fase Quirúrgica:</label>
+                                <select
+                                  value={nuevaReglaCirujano.tipo_fase}
+                                  onChange={(e) => setNuevaReglaCirujano({ ...nuevaReglaCirujano, tipo_fase: e.target.value })}
+                                  className="w-full text-xs p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                                >
+                                  <option value="postquirurgico">Postquirúrgico (Gotas & Colirios)</option>
+                                  <option value="prequirurgico">Prequirúrgico (Ayuno & Preparación)</option>
+                                  <option value="orden_medica">Orden Médica / Solicitud</option>
+                                  <option value="certificado">Certificado Médico</option>
+                                </select>
+                              </div>
+
+                              <div>
+                                <label className="text-[10.5px] text-slate-500 block mb-1">Plantilla Asignada:</label>
+                                <select
+                                  value={nuevaReglaCirujano.plantilla_indicacion_id}
+                                  onChange={(e) => setNuevaReglaCirujano({ ...nuevaReglaCirujano, plantilla_indicacion_id: e.target.value })}
+                                  className="w-full text-xs p-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-[var(--foreground)]"
+                                >
+                                  <option value="">-- Seleccionar Plantilla --</option>
+                                  {plantillasIndicacionesCrm.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.titulo} ({p.categoria || 'General'})
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="flex justify-end pt-1">
+                              <button
+                                type="button"
+                                disabled={!nuevaReglaCirujano.prestador_id || !nuevaReglaCirujano.plantilla_indicacion_id}
+                                onClick={handleAgregarReglaCirujano}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center gap-1.5"
                               >
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => {}}
-                                  className="mt-0.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
-                                />
-                                <div className="flex-1 space-y-1">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                                        {p.titulo}
-                                      </span>
-                                      <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200">
-                                        {p.categoria || 'General'}
-                                      </span>
-                                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 uppercase">
-                                        {p.tipo_fase || 'post-qx'}
-                                      </span>
-                                    </div>
-                                    {isSelected && (
-                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-600 text-white">
-                                        Asignada #{indicacionesAsignadasModal.findIndex((i) => i.plantilla_indicacion_id === p.id) + 1}
-                                      </span>
-                                    )}
-                                  </div>
+                                <Check size={13} /> Vincular Excepción
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
-                                  {p.medicamentos && p.medicamentos.length > 0 && (
-                                    <div className="flex flex-wrap gap-1">
-                                      {p.medicamentos.map((m: any, mIdx: number) => (
-                                        <span
-                                          key={mIdx}
-                                          className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
-                                        >
-                                          💊 {m.droga} ({m.frecuencia})
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-
-                                  <p className="text-[10.5px] text-slate-500 line-clamp-2 font-mono">
-                                    {p.cuerpo_indicaciones}
-                                  </p>
-                                </div>
+                        {/* Listado de excepciones configuradas */}
+                        {(() => {
+                          const reglasCirujanos = indicacionesAsignadasModal.filter((i) => !!i.prestador_id)
+                          if (reglasCirujanos.length === 0) {
+                            return (
+                              <div className="p-3 text-center border border-dashed rounded-xl bg-[var(--background)] text-xs text-slate-500">
+                                No hay protocolos específicos de cirujano configurados. Todos los médicos utilizarán los protocolos institucionales base.
                               </div>
                             )
-                          })}
-                        </div>
-                      )}
+                          }
+                          return (
+                            <div className="space-y-2">
+                              {reglasCirujanos.map((r, rIdx) => {
+                                const prestadorNombre = r.prestadores?.nombre_apellido ||
+                                  prestadoresLista.find((p) => String(p.id) === String(r.prestador_id))?.nombre_apellido ||
+                                  'Cirujano'
+                                const plantilla = r.plantillas_indicaciones_crm ||
+                                  plantillasIndicacionesCrm.find((p) => p.id === r.plantilla_indicacion_id)
+
+                                return (
+                                  <div
+                                    key={rIdx}
+                                    className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-[var(--background)] flex items-center justify-between gap-3 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                      <div className="w-7 h-7 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold text-[11px] shrink-0">
+                                        Dr
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                                            {prestadorNombre}
+                                          </span>
+                                          <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                                            r.tipo_fase === 'prequirurgico'
+                                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                                              : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                                          }`}>
+                                            {r.tipo_fase === 'prequirurgico' ? 'Pre-Qx' : r.tipo_fase === 'postquirurgico' ? 'Post-Qx' : r.tipo_fase}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-0.5 truncate">
+                                          <span className="font-medium text-slate-700 dark:text-slate-300">
+                                            📄 {plantilla?.titulo || 'Plantilla'}
+                                          </span>
+                                          {plantilla?.medicamentos && plantilla.medicamentos.length > 0 && (
+                                            <span className="text-slate-400">
+                                              ({plantilla.medicamentos.length} medicamentos)
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEliminarReglaCirujano(r.prestador_id, r.tipo_fase)}
+                                      className="p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition shrink-0"
+                                      title="Eliminar excepción"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )
+                        })()}
+                      </div>
                     </div>
                   )}
                 </div>

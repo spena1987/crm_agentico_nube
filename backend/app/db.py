@@ -1967,14 +1967,15 @@ def get_practicas_relacionadas(
 
 def get_indicaciones_de_practica(practica_id: str) -> List[Dict[str, Any]]:
     """
-    Retorna la lista ordenada de indicaciones asignadas (1 a N) a una práctica.
+    Retorna la lista ordenada de indicaciones y reglas asignadas a una práctica,
+    incluyendo plantillas institucionales y personalizadas por cirujano y fase.
     """
     if not supabase or not practica_id:
         return []
     try:
         res = (
             supabase.table("nomenclador_practicas_indicaciones")
-            .select("id, practica_id, plantilla_indicacion_id, orden, es_obligatoria, activo, created_at, plantillas_indicaciones_crm(*)")
+            .select("id, practica_id, plantilla_indicacion_id, orden, es_obligatoria, activo, created_at, prestador_id, tipo_fase, plantillas_indicaciones_crm(*), prestadores(id, nombre_apellido, rol, geclisa_pre_id, matricula)")
             .eq("practica_id", practica_id)
             .order("orden")
             .execute()
@@ -1987,7 +1988,8 @@ def get_indicaciones_de_practica(practica_id: str) -> List[Dict[str, Any]]:
 
 def guardar_indicaciones_de_practica(practica_id: str, asignaciones: List[Dict[str, Any]]) -> bool:
     """
-    Reemplaza o sincroniza en bloque las indicaciones vinculadas (1 a N) para una práctica.
+    Reemplaza o sincroniza en bloque las indicaciones vinculadas (institucionales y por cirujano/fase)
+    para una práctica quirúrgica.
     """
     if not supabase or not practica_id:
         return False
@@ -2000,9 +2002,22 @@ def guardar_indicaciones_de_practica(practica_id: str, asignaciones: List[Dict[s
             pid = a.get("plantilla_indicacion_id") or a.get("id")
             if not pid:
                 continue
+            
+            p_id = a.get("prestador_id")
+            if p_id and isinstance(p_id, dict):
+                p_id = p_id.get("id")
+            if not p_id or str(p_id).strip().lower() in ["", "null", "none", "institucional", "todos"]:
+                p_id = None
+
+            tipo_fase = a.get("tipo_fase") or "postquirurgico"
+            if isinstance(tipo_fase, str):
+                tipo_fase = tipo_fase.strip().lower()
+
             filas.append({
                 "practica_id": practica_id,
-                "plantilla_indicacion_id": pid,
+                "plantilla_indicacion_id": str(pid),
+                "prestador_id": p_id,
+                "tipo_fase": tipo_fase,
                 "orden": a.get("orden", idx + 1),
                 "es_obligatoria": bool(a.get("es_obligatoria", True)),
                 "activo": bool(a.get("activo", True))

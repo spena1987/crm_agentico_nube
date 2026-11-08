@@ -4060,7 +4060,7 @@ def guardar_practicas_indicaciones_api(practica_id: str, payload: Dict[str, Any]
 @app.post("/api/indicaciones/resolver-sugerencia")
 def resolver_sugerencia_indicacion_api(payload: Dict[str, Any] = Body(...)):
     """
-    Resuelve inteligentemente la plantilla sugerida (Opción C) según médico cirujano y práctica del nomenclador.
+    Resuelve inteligentemente la plantilla sugerida según médico cirujano, práctica del nomenclador y fase clínica.
     """
     try:
         from app.services.indicaciones_service import resolver_plantilla_sugerida
@@ -4068,7 +4068,9 @@ def resolver_sugerencia_indicacion_api(payload: Dict[str, Any] = Body(...)):
             practica_nombre=payload.get("practica_nombre"),
             practica_codigo=payload.get("practica_codigo"),
             medico_nombre=payload.get("medico_nombre"),
-            practica_id=payload.get("practica_id")
+            practica_id=payload.get("practica_id"),
+            prestador_id=payload.get("prestador_id") or payload.get("medico_id"),
+            tipo_fase=payload.get("tipo_fase") or payload.get("fase") or payload.get("tipo_documento")
         )
         return res
     except Exception as e:

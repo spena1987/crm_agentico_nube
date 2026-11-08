@@ -82,27 +82,70 @@ def resolver_plantilla_sugerida(
     practica_nombre: Optional[str] = None,
     practica_codigo: Optional[str] = None,
     medico_nombre: Optional[str] = None,
-    practica_id: Optional[str] = None
+    practica_id: Optional[str] = None,
+    prestador_id: Optional[Any] = None,
+    tipo_fase: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Algoritmo determinístico y estricto de resolución de plantilla de indicaciones:
-    1. Si la práctica está en el Nomenclador, consulta 'habilitar_indicaciones'.
-       Si está desactivada (False), NO aplica fallback arbitrario y retorna requiere_seleccion_manual = True.
-    2. Si está activada (True), evalúa en orden:
-       a) Reglas específicas por cirujano en 'indicaciones_reglas_cirujano'
-       b) Plantilla institucional vinculada en el CRM ('plantilla_indicacion_id')
-       c) Plantilla predeterminada de Geclisa ('geclisa_pim_id_default')
-       d) Match directo en Geclisa por apellido de cirujano + tipo de práctica
-    3. Si la práctica no existe en el Nomenclador o no tiene plantilla configurada, NO inventa
-       medicamentos (cero fallback ciego a cataratas), sino que solicita selección manual limpia.
+    Algoritmo determinístico y jerárquico de resolución de plantilla de indicaciones
+    basado en la matriz clínica de 3 niveles:
+    1. Regla Específica por Cirujano + Fase (Práctica + Prestador + Fase).
+    2. Regla Específica por Cirujano (Práctica + Prestador).
+    3. Protocolo Institucional Base por Fase (Práctica + Fase, sin prestador).
+    4. Protocolos Institucionales Generales (1 a N modulares).
+    5. Fallback histórico (Geclisa / Reglas JSONB heredadas).
     """
     med_norm = normalizar_texto(medico_nombre or "")
     cirujano_tokens = [tok for tok in med_norm.split() if len(tok) >= 4 and tok not in ["doctor", "dra.", "dr.", "medico"]]
     prac_norm = normalizar_texto(practica_nombre or "")
 
+    # Normalizar tipo_fase si fue provisto
+    fase_norm = None
+    if tipo_fase:
+        tf = str(tipo_fase).strip().lower()
+        if any(k in tf for k in ["preop", "prequirurg", "ayuno", "prep"]):
+            fase_norm = "prequirurgico"
+        elif any(k in tf for k in ["postop", "postquirurg", "gota"]):
+            fase_norm = "postquirurgico"
+        elif any(k in tf for k in ["certif"]):
+            fase_norm = "certificado"
+        elif any(k in tf for k in ["orden", "pedido", "solicitud"]):
+            fase_norm = "orden_medica"
+        else:
+            fase_norm = tf
+
     plantilla_seleccionada = None
     origen = "sin_coincidencia"
     p_db = None
+    cirujano_obj = None
+    resolved_prestador_id = None
+
+    # Intentar resolver objeto prestador si viene prestador_id o medico_nombre
+    if supabase:
+        try:
+            if prestador_id:
+                p_str = str(prestador_id).strip()
+                if is_valid_uuid(p_str):
+                    q_p = supabase.table("prestadores").select("id, nombre_apellido, rol, geclisa_pre_id, firma_url").eq("id", p_str).limit(1).execute()
+                    if q_p.data:
+                        cirujano_obj = q_p.data[0]
+                        resolved_prestador_id = cirujano_obj.get("id")
+                elif p_str.isdigit():
+                    q_p = supabase.table("prestadores").select("id, nombre_apellido, rol, geclisa_pre_id, firma_url").eq("geclisa_pre_id", int(p_str)).limit(1).execute()
+                    if q_p.data:
+                        cirujano_obj = q_p.data[0]
+                        resolved_prestador_id = cirujano_obj.get("id")
+            
+            if not cirujano_obj and cirujano_tokens:
+                # Buscar en prestadores por token de apellido
+                for tok in cirujano_tokens:
+                    q_p = supabase.table("prestadores").select("id, nombre_apellido, rol, geclisa_pre_id, firma_url").ilike("nombre_apellido", f"%{tok}%").limit(1).execute()
+                    if q_p.data:
+                        cirujano_obj = q_p.data[0]
+                        resolved_prestador_id = cirujano_obj.get("id")
+                        break
+        except Exception as e_prest:
+            logger.warning(f"Error resolviendo prestador para indicaciones: {e_prest}")
 
     # 1. Consultar Nomenclador en Supabase
     if supabase and (practica_id or practica_codigo or practica_nombre):
@@ -143,54 +186,128 @@ def resolver_plantilla_sugerida(
         indicaciones_rel = get_indicaciones_de_practica(p_db.get("id"))
         activas_rel = [r for r in indicaciones_rel if r.get("activo") and r.get("plantillas_indicaciones_crm")]
 
-        if activas_rel:
-            plantillas_crm_lista = [r["plantillas_indicaciones_crm"] for r in activas_rel if r["plantillas_indicaciones_crm"].get("activo")]
-            if plantillas_crm_lista:
-                # Si hay una o más indicaciones modulares asignadas (1 a N):
-                todos_meds = []
-                for p in plantillas_crm_lista:
-                    for m in (p.get("medicamentos") or []):
-                        if m not in todos_meds:
-                            todos_meds.append(m)
-
-                titulos = [p.get("titulo", "") for p in plantillas_crm_lista]
-                textos = [p.get("cuerpo_indicaciones", "") for p in plantillas_crm_lista if p.get("cuerpo_indicaciones")]
-                cuidados = [p.get("cuidados_generales", "") for p in plantillas_crm_lista if p.get("cuidados_generales")]
-                alarmas = [p.get("pautas_alarma", "") for p in plantillas_crm_lista if p.get("pautas_alarma")]
-
-                plantilla_seleccionada = {
-                    "crm_plantilla_id": plantillas_crm_lista[0].get("id"),
-                    "titulo": " + ".join(titulos),
-                    "texto_indicaciones": "\n\n---\n\n".join(textos),
-                    "medicamentos": todos_meds,
-                    "cuidados_generales": "\n".join(cuidados),
-                    "pautas_alarma": "\n".join(alarmas),
-                    "config_diseno": plantillas_crm_lista[0].get("config_diseno") or {},
-                    "modulos_asignados": plantillas_crm_lista,
-                    "total_modulos": len(plantillas_crm_lista),
-                    "origen": "nomenclador_modular_1_a_n"
-                }
-                origen = "nomenclador_modular_1_a_n"
-
-        # a) Verificar reglas específicas por cirujano en JSONB
-        reglas_cirujano = p_db.get("indicaciones_reglas_cirujano") or {}
-        if isinstance(reglas_cirujano, dict) and cirujano_tokens:
-            for tok in cirujano_tokens:
-                if tok in reglas_cirujano:
-                    target = reglas_cirujano[tok]
-                    # Puede ser un pimId de Geclisa o un UUID de plantilla CRM
-                    if isinstance(target, int):
-                        for p in plantillas_geclisa:
-                            if p.get("pimId") == target:
-                                plantilla_seleccionada = {
-                                    "geclisa_pim_id": p.get("pimId"),
-                                    "titulo": p.get("pimNombre"),
-                                    "texto_indicaciones": p.get("pimTexto"),
-                                    "origen": "nomenclador_regla_cirujano"
-                                }
-                                origen = "nomenclador_regla_cirujano"
-                                break
+        # =========================================================================
+        # NIVEL 1: Regla Específica por Cirujano + Fase (Máxima Prioridad)
+        # =========================================================================
+        if resolved_prestador_id and fase_norm:
+            for r in activas_rel:
+                r_prest_id = str(r.get("prestador_id") or "")
+                r_fase = str(r.get("tipo_fase") or "").strip().lower()
+                if r_prest_id == str(resolved_prestador_id) and r_fase == fase_norm:
+                    p = r["plantillas_indicaciones_crm"]
+                    med_nombre_display = r.get("prestadores", {}).get("nombre_apellido") if r.get("prestadores") else (cirujano_obj.get("nombre_apellido") if cirujano_obj else "Cirujano")
+                    plantilla_seleccionada = {
+                        "crm_plantilla_id": p.get("id"),
+                        "titulo": p.get("titulo"),
+                        "texto_indicaciones": p.get("cuerpo_indicaciones"),
+                        "medicamentos": p.get("medicamentos") or [],
+                        "cuidados_generales": p.get("cuidados_generales"),
+                        "pautas_alarma": p.get("pautas_alarma"),
+                        "config_diseno": p.get("config_diseno") or {},
+                        "origen": "regla_cirujano_fase",
+                        "cirujano_nombre": med_nombre_display,
+                        "tipo_fase": r_fase
+                    }
+                    origen = "regla_cirujano_fase"
                     break
+
+        # =========================================================================
+        # NIVEL 2: Regla Específica por Cirujano (sin restricción estricta de fase)
+        # =========================================================================
+        if not plantilla_seleccionada and resolved_prestador_id:
+            for r in activas_rel:
+                r_prest_id = str(r.get("prestador_id") or "")
+                if r_prest_id == str(resolved_prestador_id):
+                    p = r["plantillas_indicaciones_crm"]
+                    med_nombre_display = r.get("prestadores", {}).get("nombre_apellido") if r.get("prestadores") else (cirujano_obj.get("nombre_apellido") if cirujano_obj else "Cirujano")
+                    plantilla_seleccionada = {
+                        "crm_plantilla_id": p.get("id"),
+                        "titulo": p.get("titulo"),
+                        "texto_indicaciones": p.get("cuerpo_indicaciones"),
+                        "medicamentos": p.get("medicamentos") or [],
+                        "cuidados_generales": p.get("cuidados_generales"),
+                        "pautas_alarma": p.get("pautas_alarma"),
+                        "config_diseno": p.get("config_diseno") or {},
+                        "origen": "regla_cirujano",
+                        "cirujano_nombre": med_nombre_display,
+                        "tipo_fase": r.get("tipo_fase")
+                    }
+                    origen = "regla_cirujano"
+                    break
+
+        # =========================================================================
+        # NIVEL 3: Protocolo Institucional Base para la Fase solicitada
+        # =========================================================================
+        if not plantilla_seleccionada and fase_norm:
+            for r in activas_rel:
+                if not r.get("prestador_id") and str(r.get("tipo_fase") or "").strip().lower() == fase_norm:
+                    p = r["plantillas_indicaciones_crm"]
+                    plantilla_seleccionada = {
+                        "crm_plantilla_id": p.get("id"),
+                        "titulo": p.get("titulo"),
+                        "texto_indicaciones": p.get("cuerpo_indicaciones"),
+                        "medicamentos": p.get("medicamentos") or [],
+                        "cuidados_generales": p.get("cuidados_generales"),
+                        "pautas_alarma": p.get("pautas_alarma"),
+                        "config_diseno": p.get("config_diseno") or {},
+                        "origen": "institucional_practica_fase",
+                        "tipo_fase": fase_norm
+                    }
+                    origen = "institucional_practica_fase"
+                    break
+
+        # =========================================================================
+        # NIVEL 4: Protocolos Institucionales Generales (1 a N modulares)
+        # =========================================================================
+        if not plantilla_seleccionada:
+            institucionales_rel = [r for r in activas_rel if not r.get("prestador_id")]
+            if institucionales_rel:
+                plantillas_crm_lista = [r["plantillas_indicaciones_crm"] for r in institucionales_rel if r["plantillas_indicaciones_crm"].get("activo")]
+                if plantillas_crm_lista:
+                    todos_meds = []
+                    for p in plantillas_crm_lista:
+                        for m in (p.get("medicamentos") or []):
+                            if m not in todos_meds:
+                                todos_meds.append(m)
+
+                    titulos = [p.get("titulo", "") for p in plantillas_crm_lista]
+                    textos = [p.get("cuerpo_indicaciones", "") for p in plantillas_crm_lista if p.get("cuerpo_indicaciones")]
+                    cuidados = [p.get("cuidados_generales", "") for p in plantillas_crm_lista if p.get("cuidados_generales")]
+                    alarmas = [p.get("pautas_alarma", "") for p in plantillas_crm_lista if p.get("pautas_alarma")]
+
+                    plantilla_seleccionada = {
+                        "crm_plantilla_id": plantillas_crm_lista[0].get("id"),
+                        "titulo": " + ".join(titulos),
+                        "texto_indicaciones": "\n\n---\n\n".join(textos),
+                        "medicamentos": todos_meds,
+                        "cuidados_generales": "\n".join(cuidados),
+                        "pautas_alarma": "\n".join(alarmas),
+                        "config_diseno": plantillas_crm_lista[0].get("config_diseno") or {},
+                        "modulos_asignados": plantillas_crm_lista,
+                        "total_modulos": len(plantillas_crm_lista),
+                        "origen": "nomenclador_modular_1_a_n"
+                    }
+                    origen = "nomenclador_modular_1_a_n"
+
+        # a) Verificar reglas específicas por cirujano en JSONB (compatibilidad legacy)
+        if not plantilla_seleccionada:
+            reglas_cirujano = p_db.get("indicaciones_reglas_cirujano") or {}
+            if isinstance(reglas_cirujano, dict) and cirujano_tokens:
+                for tok in cirujano_tokens:
+                    if tok in reglas_cirujano:
+                        target = reglas_cirujano[tok]
+                        if isinstance(target, int):
+                            for p in plantillas_geclisa:
+                                if p.get("pimId") == target:
+                                    plantilla_seleccionada = {
+                                        "geclisa_pim_id": p.get("pimId"),
+                                        "titulo": p.get("pimNombre"),
+                                        "texto_indicaciones": p.get("pimTexto"),
+                                        "origen": "nomenclador_regla_cirujano"
+                                    }
+                                    origen = "nomenclador_regla_cirujano"
+                                    break
+                        break
 
         # b) Plantilla CRM asociada a la práctica
         if not plantilla_seleccionada and p_db.get("plantillas_indicaciones_crm"):
@@ -252,7 +369,9 @@ def resolver_plantilla_sugerida(
             "habilitada": True if p_db and p_db.get("habilitar_indicaciones") else False,
             "requiere_seleccion_manual": True,
             "origen_resolucion": "sin_plantilla_configurada",
-            "mensaje": "Esta práctica no cuenta con un protocolo de indicaciones médicas preconfigurado. Seleccione una plantilla del catálogo si el cirujano lo solicita.",
+            "prestador_resuelto": cirujano_obj,
+            "fase_solicitada": fase_norm,
+            "mensaje": "Esta práctica no cuenta con un protocolo de indicaciones médicas preconfigurado para esta fase/cirujano. Seleccione una plantilla del catálogo si el cirujano lo solicita.",
             "total_plantillas_geclisa": len(plantillas_geclisa)
         }
 
@@ -262,9 +381,10 @@ def resolver_plantilla_sugerida(
         "habilitada": True,
         "requiere_seleccion_manual": False,
         "origen_resolucion": origen,
+        "prestador_resuelto": cirujano_obj,
+        "fase_solicitada": fase_norm,
         "total_plantillas_geclisa": len(plantillas_geclisa)
     }
-
 
 
 def despachar_indicacion_por_whatsapp(

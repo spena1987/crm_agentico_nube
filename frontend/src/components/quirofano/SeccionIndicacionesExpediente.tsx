@@ -93,6 +93,7 @@ export default function SeccionIndicacionesExpediente({
   const [tituloDocumento, setTituloDocumento] = useState<string>('ORDEN MÉDICA DE PROCEDIMIENTO')
   
   const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<any>(null)
+  const [infoResolucion, setInfoResolucion] = useState<{ origen?: string; cirujano?: string; mensaje?: string } | null>(null)
   const [textoIndicaciones, setTextoIndicaciones] = useState<string>('')
   const [medicamentos, setMedicamentos] = useState<any[]>([])
   const [cuidadosGenerales, setCuidadosGenerales] = useState<string>('')
@@ -194,9 +195,10 @@ export default function SeccionIndicacionesExpediente({
       .catch((e) => console.error('Error cargando biblioteca CRM:', e))
   }, [])
 
-  // 4. Resolver sugerencia inteligente cuando cambia la práctica o el cirujano
-  const resolverSugerencia = useCallback(async () => {
+  // 4. Resolver sugerencia inteligente cuando cambia la práctica, el cirujano o la fase
+  const resolverSugerencia = useCallback(async (faseParam?: string) => {
     if (!practicaNombre && !medicoNombre && !practicaCodigo && !practicaId) return
+    const faseAEnviar = faseParam || tipoDocumento
     setResolviendo(true)
     try {
       const res = await apiFetch('/api/indicaciones/resolver-sugerencia', {
@@ -205,7 +207,10 @@ export default function SeccionIndicacionesExpediente({
           practica_nombre: practicaNombre,
           practica_codigo: practicaCodigo,
           practica_id: practicaId,
-          medico_nombre: medicoNombre
+          medico_nombre: medicoNombre,
+          medico_id: medicoId,
+          prestador_id: medicoId,
+          tipo_fase: faseAEnviar
         })
       })
 
@@ -219,21 +224,14 @@ export default function SeccionIndicacionesExpediente({
           setMedicamentos(sug.medicamentos || [])
           setCuidadosGenerales(sug.cuidados_generales || '')
           setPautasAlarma(sug.pautas_alarma || '')
+          setInfoResolucion({
+            origen: data.origen_resolucion,
+            cirujano: (sug.cirujano_nombre || medicoNombre) || undefined,
+            mensaje: data.mensaje
+          })
 
-          // Auto-detectar categoría
-          const txtL = txt.toLowerCase()
-          if (txtL.includes('certifico') || txtL.includes('certificado')) {
-            setTipoDocumento('certificado')
-            setTituloDocumento('CERTIFICADO MÉDICO')
-          } else if (txtL.includes('solicito:') || txtL.includes('solicito ') || txtL.includes('pedido')) {
-            setTipoDocumento('orden_medica')
-            setTituloDocumento('ORDEN MÉDICA DE PROCEDIMIENTO')
-          } else if (txtL.includes('ayuno') || txtL.includes('preoperatori')) {
-            setTipoDocumento('prequirurgico')
-            setTituloDocumento('INDICACIONES PREQUIRÚRGICAS')
-          } else {
-            setTipoDocumento('postquirurgico')
-            setTituloDocumento('INDICACIONES POSTQUIRÚRGICAS')
+          if (!faseParam && sug.tipo_fase) {
+            setTipoDocumento(sug.tipo_fase)
           }
 
           if (Array.isArray(sug.modulos_asignados) && sug.modulos_asignados.length > 0) {
@@ -244,6 +242,11 @@ export default function SeccionIndicacionesExpediente({
         } else {
           setPlantillaSeleccionada(null)
           setModulosSeleccionadosIds([])
+          setInfoResolucion({
+            origen: data.origen_resolucion,
+            cirujano: medicoNombre || undefined,
+            mensaje: data.mensaje
+          })
         }
       }
     } catch (err) {
@@ -251,7 +254,7 @@ export default function SeccionIndicacionesExpediente({
     } finally {
       setResolviendo(false)
     }
-  }, [practicaNombre, medicoNombre, practicaCodigo, practicaId])
+  }, [practicaNombre, medicoNombre, practicaCodigo, practicaId, medicoId, tipoDocumento])
 
   useEffect(() => {
     resolverSugerencia()
@@ -293,29 +296,22 @@ export default function SeccionIndicacionesExpediente({
     setPautasAlarma(todasAlarmas.join('\n'))
   }
 
-  // Cambio manual de categoría de documento
-  const handleCambiarCategoria = (cat: string) => {
+  // Cambio manual de categoría de documento con resolución jerárquica
+  const handleCambiarCategoria = async (cat: string) => {
     setTipoDocumento(cat)
     if (cat === 'orden_medica') {
       setTituloDocumento('ORDEN MÉDICA DE PROCEDIMIENTO')
-      // Buscar primera plantilla de orden o retina si existe
-      const p = plantillasCrm.find((x) => x.tipo_fase === 'orden_medica' || x.categoria?.toLowerCase().includes('retina'))
-      if (p) handleSelectPlantilla(`crm_${p.id}`)
     } else if (cat === 'prequirurgico') {
       setTituloDocumento('INDICACIONES PREQUIRÚRGICAS')
-      const p = plantillasCrm.find((x) => x.tipo_fase === 'prequirurgico' || x.categoria?.toLowerCase().includes('pre'))
-      if (p) handleSelectPlantilla(`crm_${p.id}`)
     } else if (cat === 'postquirurgico') {
       setTituloDocumento('INDICACIONES POSTQUIRÚRGICAS')
-      const p = plantillasCrm.find((x) => x.tipo_fase === 'postquirurgico' || x.categoria?.toLowerCase().includes('cataratas'))
-      if (p) handleSelectPlantilla(`crm_${p.id}`)
     } else if (cat === 'certificado') {
       setTituloDocumento('CERTIFICADO MÉDICO')
-      const p = plantillasCrm.find((x) => x.tipo_fase === 'certificado' || x.categoria?.toLowerCase().includes('certificado'))
-      if (p) handleSelectPlantilla(`crm_${p.id}`)
     } else {
       setTituloDocumento('INDICACIONES MÉDICAS')
     }
+    // Disparar resolución inteligente para la fase seleccionada y cirujano
+    await resolverSugerencia(cat)
   }
 
   // Selector unificado agrupado
@@ -931,6 +927,39 @@ export default function SeccionIndicacionesExpediente({
                 </div>
               </div>
 
+              {/* Badge de Detección Inteligente de Protocolo (Cirujano / Institucional) */}
+              {infoResolucion && (
+                <div className="animate-in fade-in transition">
+                  {infoResolucion.origen?.startsWith('regla_cirujano') ? (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs">
+                      <Sparkles size={15} className="text-emerald-400 shrink-0" />
+                      <div>
+                        <span className="font-bold">Protocolo Personalizado Activo:</span>{' '}
+                        <span>
+                          Asignado según técnica y esquema de gotas del{' '}
+                          <strong className="text-emerald-300 underline">{infoResolucion.cirujano || medicoNombre}</strong> para esta fase.
+                        </span>
+                      </div>
+                    </div>
+                  ) : infoResolucion.origen?.startsWith('institucional') ? (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs">
+                      <FileCheck2 size={15} className="text-blue-400 shrink-0" />
+                      <div>
+                        <span className="font-bold">Protocolo Institucional Centro Visión:</span>{' '}
+                        <span>Aplicado automáticamente para esta práctica en fase {tipoDocumento}.</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-800/60 border border-slate-700 text-slate-300 text-xs">
+                      <AlertCircle size={15} className="text-amber-400 shrink-0" />
+                      <div>
+                        <span>Sin protocolo preconfigurado para esta fase/cirujano. Seleccione una plantilla o redacte la indicación libremente.</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Información contextual del médico y práctica */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2 bg-[var(--card-bg)] p-2.5 rounded-xl border border-[var(--border-color)] text-[11px]">
                 <div>
@@ -1133,7 +1162,7 @@ export default function SeccionIndicacionesExpediente({
                   </label>
                   <button
                     type="button"
-                    onClick={resolverSugerencia}
+                    onClick={() => resolverSugerencia()}
                     disabled={resolviendo}
                     className="text-blue-600 hover:underline inline-flex items-center gap-1 font-semibold text-[11px]"
                   >
